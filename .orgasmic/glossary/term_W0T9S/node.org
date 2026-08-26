@@ -1,0 +1,12 @@
+#+title: orgasmic glossary term term_W0T9S
+#+orgasmic_version: 2
+
+* term_W0T9S User overrides
+:PROPERTIES:
+:AVOID: settings, config (config.yaml is daemon config, not content)
+:CANONICAL: user overrides
+:DEFINITION: Per-user content under the orgasmic home (user/) that loader rules prefer over shipped content, letting an operator customize prompts, skills, or conventions without forking the runtime tree.
+:ID: term_W0T9S
+:RELATES_TO: term_WQMJJ term_CJ2R4
+:END:
+

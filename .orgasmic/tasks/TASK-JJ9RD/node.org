@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-JJ9RD
+#+orgasmic_version: 2
+
+* DONE TASK-JJ9RD Config node write path + kind registry single-source (silent wrong-file write) :daemon:cli:hardening:
+:PROPERTIES:
+:ID: TASK-JJ9RD
+:PRIORITY: high
+:END:
+
+** Description
+Worst bug of the 2026-07-06 orsl battle-test (friction report F7+F8): =project.org= (=* PROJECT=) and =config.org= (=* CONFIG=) both scaffold =:ID: {{PROJECT_ID}}=, and the daemon's =NodeLayer= enum (crates/orgasmic-daemon/src/api.rs:6883) has no =Config= variant. Consequences: config.org has zero CLI write surface (violating the "no hand-edits" convention — an agent filling TEST_CMD/LINT_CMD/BUILD_CMD has no lawful path), and the natural attempt =node prop set <project> TEST_CMD ... --kind project= silently succeeds against the wrong file (project.org). Separately, the CLI =--kind= flag is a free-form =Option<String>= (crates/orgasmic-cli/src/node.rs:32) — no enum in =--help= at all; the accepted set lives only in =NodeLayer::from_kind= (api.rs:6953), which under-documents =handoff=/=goal= and cannot express =config=.
+
+Fix:
+- Add =NodeLayer::Config= with kind-scoped id resolution (kind+id → file via =org_node_path=, api.rs:7468, routing to config.org). Kind-scoping avoids migrating existing projects' files.
+- Reject CONFIG-reserved keys (TEST_CMD/LINT_CMD/BUILD_CMD/PIPELINE) under =--kind project= with an error naming =--kind config=.
+- Single-source the kind registry (expose from a shared location) so the CLI derives a real clap enum: =--help= lists exactly the daemon-accepted kinds, including =handoff=, =goal=, =config=.
+
+** Acceptance Criteria
+- [ ] =node prop set --kind config= / =node body set --kind config= write config.org; round-trip test.
+- [ ] CONFIG-reserved key under =--kind project= → 400 naming =--kind config= (regression test for the silent wrong-file write).
+- [ ] CLI =--kind= help enumeration generated from / parity-tested against the daemon registry.
+- [ ] Existing projects (shared =:ID:=) work without file migration.
+

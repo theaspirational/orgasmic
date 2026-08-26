@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-FZF2D
+#+orgasmic_version: 2
+
+* DONE TASK-FZF2D Logging sink failures must never affect request handling (SIGPIPE/EPIPE hardening) :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-FZF2D
+:PRIORITY: medium
+:END:
+
+Evidence (2026-07-23): `orgasmic serve | head -100` left the daemon half-dead once head exited — every request that logged hit EPIPE on stdout and failed intermittently, in one case AFTER the write committed to disk but BEFORE the HTTP response was delivered, which caused a client retry to double-create a glossary node (duplicate "Vertical Slice" term in the orsl project, removed by hand for lack of a delete surface). grep shows no SIGPIPE/EPIPE handling anywhere in crates/. Fix: ignore SIGPIPE at startup; make the tracing writer swallow-and-count sink write errors (a dead log sink costs log lines, never requests); default serve logging to a file under $ORGASMIC_HOME/logs with stdout as best-effort mirror. Regression: request succeeds and logs are counted-dropped while stdout is a closed pipe.
+

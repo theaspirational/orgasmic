@@ -1,0 +1,37 @@
+#+title: orgasmic task TASK-G0C5R.1
+#+orgasmic_version: 2
+
+* DONE TASK-G0C5R.1 CLI polish fix-subtask: unauthorized-boundary test + doctor wording + perf double-fetch + footer assertion :cli:dx:test:fix:
+:PROPERTIES:
+:ID:               TASK-G0C5R.1
+:PRIORITY:         P3
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-cli/src/main.rs crates/orgasmic-cli/src/doctor.rs crates/orgasmic-cli/tests/init.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/main.rs crates/orgasmic-cli/src/doctor.rs crates/orgasmic-cli/tests/init.rs
+:READ_SCOPE:       /tmp/orgasmic-codex/task-053-review-report.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-G0C5R
+:END:
+
+** Description
+4 small findings from TASK-G0C5R reviewer (verdict has-issues no-blocks-ship); bundled as one fix round per :FIX_SUBTASK: t discipline. Report: =/tmp/orgasmic-codex/task-053-review-report.md=.
+
+*F-1 (MEDIUM test)* — =check_daemon_for_status= unauthorized boundary not tested. Add =check_daemon_for_status_none_when_unauthorized= mirroring =daemon_status_token_mismatch_emits_one_liveness_warn= (boot daemon, write wrong token, assert =None=).
+
+*F-2 (LOW docs)* — Doctor =after_help= example references =orgasmic update= for missing source checkout, contradicting =cmd_init='s hint pointing at =scripts/install.sh=. On a fresh install =update= cannot succeed; init hint is the accurate path. Fix: change Doctor =after_help= example to reference =scripts/install.sh= or neutral "see orgasmic init hints" for missing source; reserve =orgasmic update= for stale/broken installs.
+
+*F-3 (LOW perf)* — =cmd_status= double-fetches =/daemon/status= when staleness check runs (=check_daemon_for_status= internally fetches; then =cmd_status= fetches again). Harmless but doubles latency. Fix (optional): expose helper returning =(Option<String>, DaemonStatus)= or refactor =check_daemon_for_status= to accept a pre-fetched status.
+
+*F-4 (LOW test)* — =broken_bin_symlink= init test omits =Next:= footer assertion. The missing-source test asserts the footer + =orgasmic doctor=; broken-symlink does not, but =cmd_init= always prints the footer. Fix: add =assert!(stdout.contains("Next:"))= (and optionally =orgasmic doctor=) for parity.
+
+** Acceptance Criteria
+- [ ] *F-1*: =check_daemon_for_status_none_when_unauthorized= test added in =doctor.rs= unit module.
+- [ ] *F-2*: Doctor =after_help= updated; install-path direction consistent with =cmd_init= hint.
+- [ ] *F-3*: ONE of: (a) shared =(Option<String>, DaemonStatus)= helper, OR (b) explicit comment marking the double-fetch as intentional (clarity + simplicity > 1 RTT). Either is acceptable.
+- [ ] *F-4*: broken-symlink init test asserts the =Next:= footer (and optionally =orgasmic doctor=).
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new deps.
+
+** Notes
+:FIX_SUBTASK: t. On close, auto-flips IMPLEMENT → DONE; manager hand-flips TASK-G0C5R REVIEW → DONE for cluster closure.
+

@@ -1,0 +1,168 @@
+#+title: orgasmic task TASK-FZB6T.4
+#+orgasmic_version: 2
+
+* DONE TASK-FZB6T.4 Fix reviewer findings: one owner for the lease, a fail-closed durable ledger, JSON whitespace, and one validated rollback generation
+:PROPERTIES:
+:ID: TASK-FZB6T.4
+:IMPLEMENTS: TASK-FZB6T
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/src/run_catalog.rs, crates/orgasmic-daemon/src/run_history.rs, crates/orgasmic-daemon/src/writer.rs, crates/orgasmic-daemon/src/api.rs, verify/TASK-FZB6T/, verify/TASK-FZB6T.1/, verify/TASK-FZB6T-redraw/, verify/TASK-FZB6T-corruption/
+:FIX_SUBTASK: t
+:DECISION_ROLLBACK_COMPAT: v1 projection covers Staged and Committed — every stage that could have moved the live file; not Planned or Archived
+:DECISION_TOMBSTONE_SCOPE: machine-local; ledger moves to .orgasmic/tmp/run-tombstones.json (gitignored), never travels with the repository
+:END:
+
+** Description
+
+Round-3 review returned NEEDS FIXES / BLOCK SHIP with four P1 findings and one
+P2 (=reviewer.done= tx =tx-20260803-orgasmic-4275=).
+
+READ THE PATTERN BEFORE THE FINDINGS. This is the third consecutive blocking
+round on this chain, and the sharpest finding REOPENS WHAT ROUND 3 CLOSED. The
+findings are narrowing — round 1 was "deletion authority is derived", round 3 is
+"vertical tab is not JSON whitespace" — but each round has introduced at least
+one new defect while closing the last set. Treat that as information about the
+work, not just about the reviewers: this is deletion code with a lot of surface,
+and the parts that keep breaking are the ones where a resource''s lifetime and a
+transaction''s lifetime are not the same thing.
+
+*1. P1 BLOCKS SHIP — request cancellation drops the lease while the transaction
+continues.* =api.rs:7376-7396,7436-7447=, =writer.rs:358-377=.
+
+=post_run_history_compact= and =post_run_history_rollback= hold the
+=SessionLease= in the HTTP HANDLER while awaiting =spawn_blocking=. A started
+=spawn_blocking= task is NOT cancelled when its join handle is dropped — but
+dropping the handler DOES drop the lease, and =SessionLease::drop= immediately
+queues =ReleaseSessions=. So a client disconnect, route cancellation or shutdown
+lets the writer reopen and drain appends while the blocking transaction is still
+between its final fingerprint check and its rename. That is exactly the
+orphaned-inode / lost-lifecycle race round 3 was raised to close, live again.
+Rollback is worse: it hashes the destination, stages the archive and renames with
+no second live-file check.
+
+The regression at =run_history.rs:1947-2049= holds the lease MANUALLY until the
+blocking task returns, so it cannot exercise handler cancellation at all.
+
+FIX: give the blocking transaction and the lease ONE DETACHED OWNER whose
+lifetime is independent of the request future. The handler may await the result;
+dropping the handler must not drop the lease. Add an abort/disconnect regression
+gated at =AfterStage= proving a queued append stays deferred until the detached
+transaction and its journal finish.
+
+*2. P1 BLOCKS SHIP — the tombstone ledger is neither fail-closed nor durable.*
+=run_catalog.rs:1239-1251,1267-1291,902-918=, =api.rs:10774-10827=.
+
+=TombstoneLedger::load= maps absent, unreadable, corrupt AND foreign-version to
+the same empty ledger. Only a positive ledger hit overrules a rebuilt entry''s
+re-derived =Verified=, so a DAMAGED ledger resurrects a dead run and =/api/runs=
+resumes attach probing. =save= then calls that lossy load, writes through one
+fixed =.json.tmp= and renames with no lock and no fsync: two daemons or two
+refreshes can both read generation N, write different N+1 maps, race the same
+temp path and lose a tombstone; a crash can lose a reportedly persisted rename.
+The code comment claiming corrupt state "is never overwritten silently" is
+contradicted by the implementation.
+
+FIX: an explicit =Absent/Loaded/Corrupt/VersionMismatch= result, failing CLOSED
+on the last two. Serialize read-merge-write across processes with a per-project
+flock or the existing authoritative writer boundary. Unique staging, file fsync,
+rename, directory fsync. Regressions for corrupt ledger, foreign ledger,
+concurrent two-writer lost update, and crash durability — each deleting the
+catalog, reusing the old path, and asserting the run never becomes an attach
+candidate.
+
+*3. P1 BLOCKS SHIP — the validator accepts whitespace JSON forbids, and deletes
+the line.* =run_catalog.rs:2009-2014,2294-2301=.
+
+The scanner skips =u8::is_ascii_whitespace=, whose set includes VERTICAL TAB
+=0x0b= and FORM FEED =0x0c=. JSON permits only space, LF, TAB and CR — confirmed
+against the locked =serde_json 1.0.149= parser. So a pane =text_chunk= containing
+=0x0b= or =0x0c= between tokens is classified =rendered_tui= even though
+=serde_json= rejects it, and compaction removes its raw bytes. The 19 invalid
+cases at =run_catalog.rs:3949-3996= omit both bytes, so the claimed two-way
+agreement does not cover this edge.
+
+FIX: a JSON-specific whitespace predicate at BOTH scanner sites, vertical-tab and
+form-feed fixtures cross-checked against =serde_json=, and ideally a
+generated/property differential over token boundaries so a future validator
+change cannot reopen the class.
+
+*4. P1 BLOCKS SHIP — rollback is not bound to one validated generation.*
+=run_history.rs:1507-1518,1639-1655,1384-1429,860-888=.
+
+Three edges: (a) format-1 normalization hashes and reconstructs from an archive
+read at one point and rollback REREADS the archive later, and because
+=recorded_original_sha256= is deliberately =None= for legacy records the second
+generation is never compared against the digest that authorized the decision — so
+bytes B can be renamed over a session whose overwrite was authorized against
+bytes A. (b) =read_manifest= validates only the version ceiling and the
+both-arrays-empty special case: it does not require requested id, embedded id and
+plan id/root to agree, does not require one journal record per planned file, and
+does not confine =archived=/=staging= paths to the manifest directory — so a
+crafted or cross-wired record can copy an arbitrary readable file over a session
+path. (c) the backward rendering is not crash-compatible: =result_of= renders
+=Staged= as =Failed=, while the real format-1 reader restores only =Compacted=,
+so a crash after rename but before the committed journal leaves a live
+replacement an older runtime skips while reporting success.
+
+FIX: decode into a fully validated immutable =RollbackPlan= under the maintenance
+lock, requiring one-to-one plan/journal correlation, matching ids/root/run ids and
+archive/staging confinement. Read each legacy archive ONCE and carry those exact
+bytes and digests through authorization and staging. Define a v1-compatible
+result for every crash stage an older reader must recover, and test REAL
+=9bee827=-format bytes plus the after-rename crash state — not a completed v2
+manifest with fields deleted.
+
+*5. P2, not blocking — the ledger dirties the repo and leaks absolute paths.*
+=run_catalog.rs:72-83,1231-1237=. =.orgasmic/run-tombstones.json= sits at the
+project root storing absolute machine-specific worktree paths, and
+=.orgasmic/.gitignore= ignores only =tmp/=. First tombstone makes =git status=
+dirty and commits machine identity into repo-local state. Decide whether this
+authority is machine-local (put it in an ignored durable runtime location, store
+minimum stable identity) or repo-shared (ignore the file and drop absolute
+paths).
+
+** Two open questions the reviewer raised — DECIDE, do not code around
+
+1. Is tombstone authority meant to survive only daemon/catalog replacement on ONE
+   MACHINE, or to travel with the repository? Storage, privacy, retention and
+   locking all depend on the answer, and finding 5 cannot be resolved without it.
+2. Does the backward-rollback promise include v2 manifests interrupted at
+   =Archived=/=Staged=, or only completed ones? The comments and tests claim
+   broad compatibility while the emitted format-1 projection represents only
+   =Committed= as restorable.
+
+Record the answers through the CLI as a dec_ revision or on this task, and say
+which way you went.
+
+** A scoping question for the manager, raised deliberately
+
+Three rounds, fourteen blocking findings, and each round has introduced at least
+one new defect. The CATALOG and INVENTORY work has held up well across all three
+reviews; the repeated breakage is concentrated in =run history compact= — the
+maintenance transaction that ARCHIVES AND DELETES session evidence.
+
+Worth an explicit decision rather than a fourth reflexive round: should the
+compaction/rollback verb be split out and deferred, shipping the catalog and
+inventory improvements alone? Nothing currently reachable calls compaction, and
+the installed runtime does not contain any of this code, so deferring costs
+nothing today and removes the entire class of findings that keeps blocking.
+
+This task proceeds on the assumption of fixing rather than deferring. If the
+operator or a later manager prefers the split, findings 1, 2 and 4 all disappear
+with it and only finding 3 remains.
+
+** Acceptance
+
+- All four P1 findings closed per the fix directions, with the fail-closed rule
+  applied throughout: where validity, authority or generation cannot be PROVEN,
+  refuse rather than delete or restore.
+- Both open questions answered and recorded, with the code matching.
+- The four injection artifacts keep replaying red-then-green. Re-cut anything
+  whose hunks move and say so.
+- fmt, clippy -D warnings, and the focused crate tests. RUN THE FULL DAEMON LIB
+  ONCE on a calm machine — a regression reached main in this very chain because
+  every party ran focused filters — and use the isolation control on whatever it
+  reddens.
+- Do NOT run the billed harness test (TASK-099T6). Do NOT loop the full workspace
+  suite.
+

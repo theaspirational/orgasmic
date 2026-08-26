@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-TWCP9
+#+orgasmic_version: 2
+
+* BACKLOG TASK-TWCP9 DECISION: keep the live ledger out of the worked tree — sibling dir / ledger branch / own worktree; workers never carry .orgasmic churn    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-TWCP9
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 7. The daemon writes `.orgasmic/tx/*.org` and `.orgasmic/tasks/*.org` into the main checkout every few minutes. Costs: `git checkout <branch>` refused until unauthored churn is committed; every worker branch carries ledger churn that must be stripped at merge; a reviewer cannot tell its writes from the daemon's.
+** Expected
+- Live ledger not in the tracked tree being worked on (sibling directory, dedicated branch, or its own worktree); `orgasmic ledger commit` as an explicit atomic action.
+- Worker worktrees do not contain the ledger (sparse checkout or .git/info/exclude).
+** Note
+This is a decision task (grill first). Overlaps the dec_E01MC node-kernel redesign (TASK-AP971 chain) — the per-node dir layout should be decided with ledger placement in mind.
+

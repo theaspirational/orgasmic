@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_HY3E0
+#+orgasmic_version: 2
+
+* dec_HY3E0 Should the manager popover render uniformly or adapt to each driver's medium?    :ui-manager:
+:PROPERTIES:
+:ID:            dec_HY3E0
+:DECIDED_AT:    [2026-05-23 Sat 14:38]
+:SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_DTJPD
+:END:
+** Context
+The manager runs under one of four drivers, and the popover must decide between uniform rendering and adapting to each driver's native medium. Always-chat loses terminal fidelity for the default driver; a chat/terminal toggle adds UI surface.
+** Decision
+Render adaptively: a live tmux pane via xterm.js through a daemon WS bridge for =tmux_tui= (full terminal fidelity), and structured chat bubbles from the JSONL session for the ACP-family drivers (claude_acp / codex_appserver / hermes). The popover header tags the active driver, mirroring HAR's transport-aware UI.
+** Consequences
+The default driver keeps terminal fidelity while ACP-family drivers render as chat. xterm.js is added in the model refactor; the daemon =/ws/tmux/:run_id= bridge proxies the tmux session.
+

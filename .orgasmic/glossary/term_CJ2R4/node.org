@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_CJ2R4
+#+orgasmic_version: 2
+
+* term_CJ2R4 Orgasmic home
+:PROPERTIES:
+:ID:                 term_CJ2R4
+:CANONICAL:          orgasmic home
+:AVOID:              repo root, source checkout, workspace
+:RELATES_TO:         term_WQMJJ term_FM60Y term_W0T9S
+:DEFINITION:         The developer-local runtime and data area that contains user overrides, registered projects, runtime state, sessions, secrets, logs, config, and optional CLI shims; contributor installs may also link an editable source checkout from it.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

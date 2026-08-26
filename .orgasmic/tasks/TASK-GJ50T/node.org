@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-GJ50T
+#+orgasmic_version: 2
+
+* BACKLOG TASK-GJ50T Release-reason strings are structured data parsed by two hand-rolled consumers — extract a shared release_reason module on the third
+:PROPERTIES:
+:ID: TASK-GJ50T
+:PRIORITY: P3
+:END:
+
+From TASK-JK66P (2026-07-29): the stall reason now carries structured detail in a String; is_stall_sweep_release_reason (CLI) and anomalous_without_finalize_release_reason (api) both match its leading token by hand, each with a regression test. Rule: on the THIRD consumer, extract the shared release_reason module in core that arch_EAVPP §4.3 already specifies. Also from the same report: no test pins the rmux pane-pid probe against a real session (proven by hand in report §4.3) — a real-rmux-gated test spawning a disposable session on an owned endpoint and asserting '#{pane_pid}' resolves would close it; fold into this task or the EAVPP reconcile, whichever lands first.
+

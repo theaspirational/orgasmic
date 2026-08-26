@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-41B0T
+#+orgasmic_version: 2
+
+* DONE TASK-41B0T Design semantic progress detection for worker runs :design:
+:PROPERTIES:
+:ID: TASK-41B0T
+:PRIORITY: medium
+:RELATES_TO: TASK-2D0EJ
+:END:
+
+TASK-2D0EJ deliberately leaves supervisor timeout semantics unchanged. Design a provider-agnostic runtime contract that separates transport activity (ACP heartbeats and tool poll events) from useful worker progress, so a stale yielded command token cannot keep a run healthy indefinitely. Preserve explicit finalize, cancellation, recovery authority, and existing timeout compatibility. Specify observables, configuration/migration, escalation ownership, and deterministic regressions for live heartbeats plus a vanished subprocess before implementation.
+** Notes
+2026-07-23 manager audit: keep open. Commits 3bbd958 and 61dbe37 implement bounded manager command-session polling (TASK-2D0EJ), but they do not satisfy this task broader provider-agnostic semantic-progress runtime design, observables/configuration/migration/escalation contract, or its requested heartbeat-plus-vanished-process regression design. The prior handoff statement that TASK-41B0T was closed was inaccurate. Schedule after the urgent boot/reliability chain.
+** Reviewer Pass
+Claude Code rmux / Opus 4.8 high returned SHIP WITH FIXES. It required a positive normalized progress predicate, complete timeout-reason migration, explicit bounded wait lifecycle, one deadline authority, backward-clock-safe recovery, adapter equivalence coverage, concrete delay-only Probe semantics, and progress_* naming. TASK-636D8 resolved every finding; manager independently accepted the revised contract.
+** Evidence
+Cursor Grok 4.5 high-fast produced the source-backed design report. Claude Opus 4.8 high reviewed it as SHIP WITH FIXES. Codex GPT-5.6 Terra high resolved all findings, including exact fresh-acquire and recovery behavior. The reviewed provider-neutral contract, compatibility rules, observability schema, deterministic matrix, rollout gates, and explicit rmux/tmux limitation are persisted as arch_EAVPP.
+

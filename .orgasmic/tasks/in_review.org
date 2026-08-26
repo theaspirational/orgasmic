@@ -1,3 +1,0 @@
-#+title: In Review
-#+orgasmic_version: 1
-

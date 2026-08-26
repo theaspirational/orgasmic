@@ -1,0 +1,53 @@
+#+title: orgasmic decision dec_RDHX7
+#+orgasmic_version: 2
+
+* dec_RDHX7 How should the Run Dock present sizing and the manager after the taskbar redesign?
+:PROPERTIES:
+:DECIDED_AT: 2026-07-15
+:GLOSSARY_REFS: term_5V9F8 term_YTD8X term_Z5EZJ term_6QE1M
+:ID: dec_RDHX7
+:PARENT: dec_FBBT2
+:SOURCE: RunDock taskbar redesign session (grill-with-docs)
+:END:
+
+** Context
+dec_FBBT2 gave the dock a peek/workbench/focus size triad, a pinned Manager
+tab keyed by a sentinel (=MANAGER_TAB_ID=), and a resting one-line manager bar;
+peek later grew a windowed sub-state that hosted a run's transcript as a small
+overlay. Three named sizes plus two peek forms meant the same run could be
+looked at in four visually distinct ways, each with its own chrome, while the
+bar carried five competing controls (drag grip, Manager pin, expand chevron,
+fullscreen toggle, minimize). The Manager tab also kept =ManagerWorkbench=
+alive purely as a launcher: a ~1.4k-line surface reachable only through that
+one tab.
+
+** Decision
+The Run Dock (term_5V9F8) is binary: a Taskbar (term_YTD8X) that is always
+visible, and one session panel above it.
+- Every run is a peer keyed by run id. There is no special tab: the manager is
+  an ordinary Taskbar button rendered through =RunSurface= like any terminal or
+  worker. =MANAGER_TAB_ID= and =ManagerWorkbench= are deleted; manager launch
+  and driver choice move to a terminal session or the CLI. The Taskbar's only
+  pinned launcher is Terminal (bare PTY, =custom= pseudo-harness).
+- The size triad and the windowed peek are replaced by one continuous height,
+  persisted as a viewport fraction. Raising (term_Z5EZJ) any run shows the panel
+  at that height; an unresized dock raises full-screen.
+- Resize is a drag anywhere along the dock's top border — the Taskbar's own top
+  edge — not a dedicated grip. Dragging below a floor threshold minimizes
+  (term_6QE1M) instead of clamping.
+- The bar carries no expand chevron and no fullscreen control: a run button
+  raises, the same button minimizes, and =⌄= appears only while open. =Cmd+`=
+  toggles; Escape minimizes unless a composer/terminal holds focus.
+
+** Consequences
+The taskbar reads as a taskbar: what is running, and one launcher. Dispatch
+still only adds a button — a session is never raised for you (dec_FBBT2's
+no-noise rule survives), and closing a tab still detaches only. The cost is
+that the app can no longer launch a manager or pick its driver: that is
+terminal/CLI-only now, accepted because the driver matrix is CLI territory and
+the workbench existed solely to host it. Pointer capture must own the drag
+end-to-end on the Taskbar element (splitting pointerdown/pointermove across
+elements silently drops the gesture). Supersedes the sizing and Manager-tab
+clauses of dec_FBBT2; the Running Agents menu now raises a run exactly as its
+button does, rather than opening a peek window.
+

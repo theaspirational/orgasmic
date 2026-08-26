@@ -1,0 +1,73 @@
+#+title: orgasmic task TASK-CB6GQ
+#+orgasmic_version: 2
+
+* DONE TASK-CB6GQ Sections can be created by typo and never removed: give node body an inverse verb and explicit creation
+:PROPERTIES:
+:ID: TASK-CB6GQ
+:PRIORITY: P2
+:TEST_CMD: cargo test -p orgasmic-cli -p orgasmic-daemon -p orgasmic-core
+:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**,crates/orgasmic-core/**
+:END:
+
+** Description
+
+=orgasmic node body set --section <TITLE>= routes to
+=Rewriter::upsert_section_text=, which **appends the section when it is
+missing** (=orgasmic-core/src/org.rs=). Any string becomes a permanent heading:
+a typo, or a section name borrowed from the wrong node kind. That is how
+=handoff-current= acquired a task-shaped =** Description= section, whose own
+body reads "superseded — this section was created in error".
+
+It cannot be removed through supported tooling, and not because removal is
+hard. Every layer below the CLI implements it:
+
+| layer | create | remove |
+|-------|--------|--------|
+| =orgasmic-core= | =upsert_section_text= / =append_section= | =remove_section= (round-trip tested) |
+| daemon =NodeEditOp= | =AddSection= / =SetSectionBody= | =RemoveSection= |
+| route =POST /api/org/node/:id/edit= | yes | yes |
+| =orgasmic-cli= | =node body set --section= | **nothing** |
+
+The neighbouring surface is symmetric — =node prop= has =set= and =unset=.
+=node body --section= has only the creating half. =node delete= cannot stand in:
+it addresses nodes by =:ID:= and a =**= section has none.
+
+So there are two defects, and fixing only the first would make the mistake
+easier to clean up rather than harder to make:
+1. no inverse verb, though the op exists and is already wired to the route;
+2. creation is implicit, so nothing catches the moment the wrong name is
+   written — which is when the error is cheap.
+
+** Acceptance
+
+- =orgasmic node body unset --section <TITLE> <ID>= removes a named section
+  through the existing =RemoveSection= op. =--section= is required; the verb
+  never clears a node's free prose body by omission.
+- Removing a section that does not exist is refused by name, listing the
+  sections the node does have. It is never a silent no-op.
+- =node body set|append --section= **refuses to create** a section that does not
+  yet exist unless =--create= is passed. The refusal names the title and lists
+  the existing sections, so a typo shows itself as a typo.
+- Writes to sections that already exist are unchanged — no new flag needed for
+  the ordinary case, and no existing caller breaks.
+- A round trip is byte-exact: =--create= a section, write it, =unset= it, and
+  the org file matches its pre-creation bytes.
+- A parity test asserts every =NodeEditOp= variant the daemon accepts is either
+  reachable from the CLI or listed in one place as deliberately not exposed.
+  This asymmetry existed because nothing compared the two surfaces.
+- Finish by removing the dead =** Description= section from =handoff-current=
+  with the new verb, so the fix is demonstrated on the node that motivated it.
+
+** Prior Evidence
+
+Section-creating write path: =crates/orgasmic-core/src/org.rs= =upsert_section_text=
+falling through to =append_section=. Unexposed removal: =NodeEditOp::RemoveSection=
+in =crates/orgasmic-daemon/src/api.rs=, =Rewriter::remove_section= in
+=orgasmic-core=. CLI surface: =crates/orgasmic-cli/src/node.rs= =NodeBodyCmd=
+(=Set=, =Append=) versus =NodePropCmd= (=Set=, =Unset=). =NodeKind= in
+=orgasmic-core/src/node_kind.rs= already carries a CLI/daemon parity test and is
+the precedent for asserting two surfaces agree.
+
+Related gotcha already recorded (=0a054b3=): =node body set= replaces prose only,
+so =**= headings inside a body are refused or silently truncated.
+

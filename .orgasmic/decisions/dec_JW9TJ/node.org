@@ -1,0 +1,16 @@
+#+title: orgasmic decision dec_JW9TJ
+#+orgasmic_version: 2
+
+* dec_JW9TJ How does the daemon pick which worker to spawn on a stage transition?    :project-model:
+:PROPERTIES:
+:ID:            dec_JW9TJ
+:DECIDED_AT:    [2026-05-23 Sat 14:57]
+:SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:END:
+** Context
+With ownership auto-derived (dec_CX17K) and no manual agent template per task, the daemon needs a way to pick which worker to spawn on a stage transition. Per-kind defaults alone do not capture stage-specific semantics like "explore stage uses griller."
+** Decision
+=.orgasmic/config.org= (the =* CONFIG <id>= heading) carries a per-stage worker map: =:STAGE_WORKER_BACKLOG:=, =:STAGE_WORKER_EXPLORE: griller=, =:STAGE_WORKER_PLAN: planner=, =:STAGE_WORKER_IMPLEMENT:=, =:STAGE_WORKER_REVIEW:=, =:STAGE_WORKER_SHIP:= (empty), =:STAGE_WORKER_DONE:= (empty). On transition into a stage with a configured worker, the supervisor auto-spawns a run and ownership flips per dec_CX17K; an empty mapping means no auto-spawn (human owner only). The map is the sole input to dispatch worker resolution — there is no =DEFAULT_WORKER= fallback. The map lives in =config.org=, not =project.org=, per dec_FD6M7.
+** Consequences
+The mapping is editable in Settings (which reads and writes =config.org=) and seeded during orgasmic project init.
+

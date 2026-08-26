@@ -1,0 +1,33 @@
+#+title: orgasmic task TASK-HPJ16
+#+orgasmic_version: 2
+
+* DONE TASK-HPJ16 Schema docs follow-up: register `auto_spawn.failed` tx type in shipped/schema/tx.org :docs:schema:tx:followup:
+:PROPERTIES:
+:ID:               TASK-HPJ16
+:PRIORITY:         P3
+:WORKER:           manager-housekeeping
+:IMPLEMENTS:
+:PRODUCES:         shipped/schema/tx.org
+:WRITE_SCOPE:      shipped/schema/
+:READ_SCOPE:       crates/orgasmic-daemon/src/api.rs shipped/schema/tx.org
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-YVZ9V
+:END:
+
+** Description
+TASK-YVZ9V added a new =auto_spawn.failed= tx type emitted by =record_auto_spawn_failed= in =crates/orgasmic-daemon/src/api.rs= but did not register it in =shipped/schema/tx.org=. Reviewer flagged the schema-vs-runtime drift as a docs follow-up. Tiny mechanical fix: add the =auto_spawn.failed= entry to the tx-type allowlist + a one-line description matching the existing =auto_spawn.created= entry style.
+
+** Acceptance Criteria
+- [X] =shipped/schema/tx.org= lists =auto_spawn.failed= with the same shape as the existing =auto_spawn.*= entries (extras: REASON + WORKER + STAGE + AGENT_KIND + RUN_ID(optional) + ORIGIN=auto_spawn).
+- [X] Workspace test suite still green (this change is org-text only; no Rust changes expected).
+
+** Notes
+Folded into a manager-housekeeping commit alongside the TASK-RF3J1.1 dispatch lifecycle housekeeping (commit =c3a6061=) — same pattern as =shipped/workers/reviewer.org= earlier. The dispatch overhead (worktree + brief + codex spawn + merge cycle) would exceed the actual work (one tx-type section + drift-stale =auto_spawn.created= correction). Manager-edit is acceptable here because the file is org-text under =shipped/= (not Rust/TS source); per the dispatch-only rule's spirit (don't edit /code/ paths), schema text follow-ups can land as housekeeping.
+
+** Evidence
+- [2026-05-24 Sun 23:20] Manager housekeeping commit =c3a6061= ("Housekeeping: close TASK-HPJ16 ..."). 21-line edit to =shipped/schema/tx.org=:
+  - Added a new =*** Auto-spawn failures= subsection registering =auto_spawn.failed= with extras: =:ORIGIN: auto_spawn=, =:WORKER:= (requested or selected), =:STAGE:=, =:AGENT_KIND:=, =:ERROR:= (escaped single-line, paths sanitised), =:TARGET:= (optional session path, populated only post-reservation).
+  - Bonus: corrected drift-stale =Auto-spawn records reuse run.created with extras= docs — pre-edit it mentioned =:AGENT_TEMPLATE:= (legacy term from before TASK-G6EV7 worker schema); now reflects =:WORKER:=, =:AGENT_KIND:=, =:DRIVER:=, =:HARNESS:= matching =record_auto_spawn_created= at =api.rs:3278=.
+- Verification: no test delta (org-docs only); =cargo test --workspace= remained green (315 passing on the TASK-RF3J1.1 merge above this commit).
+- No dispatch tx (manager-housekeeping). No reviewer pass needed (org-text correction matched 1:1 against the emission function — verified by inspection during the edit).
+

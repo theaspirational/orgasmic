@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_QQYXM
+#+orgasmic_version: 2
+
+* dec_QQYXM Should a task's lifecycle state be a property, a keyword, or its file location?    :schema:tasks:layout:kanban:state-machine:
+:PROPERTIES:
+:ID:            dec_QQYXM
+:DECIDED_AT:    [2026-06-12 Fri]
+:SOURCE:        operator directive 2026-06-12 (round-4 critique response, P.S.)
+:PARENT:        dec_P24WF
+:END:
+** Context
+Tasks live in =sprint.org=/=backlog.org=/=archive.org=, and a task's state is carried redundantly: heading keyword + =:STATE:= property (221 of each in the live census, written in lockstep by =apply_task_lifecycle_transitions=), plus file membership as a third, unenforced copy — =backlog.org= holds 11 DONE headings, =archive.org= has been empty since inception because nothing ever moves a heading, and =sprint.org= has grown to ~9.7k lines mixing 194 DONE with the live queue. The redundant copies drift; the file names carry no machine meaning.
+** Decision
+One org file per lifecycle state under =tasks/=: =backlog.org=, =todo.org=, =in_progress.org=, =in_review.org=, =done.org=, =cancelled.org=. File membership IS the canonical state surface; a lifecycle transition = the daemon moving the heading between files (through the single writer loop and structural guard, atomically with the keyword rewrite — file and keyword may never disagree). =sprint.org= and =archive.org= are retired. =goal.org= and =handoff.org= are unchanged (manager surfaces, not task states). New tasks file into =backlog.org=. Whether the heading keyword and =:STATE:= property survive as redundant display copies is decided by the schema slim-down (TASK-55DH1) — the file makes both derivable. Live-state migration is script-driven and lands as one commit, same method as =id-migration=.
+** Consequences
+TASK-2C3WZ implements: core =TASK_FILE_NAMES=/scaffold lists, daemon index + creation defaults (new headings currently hardcode sprint.org), CLI transition rewrite becomes a cross-file move, scaffold templates, UI org-file list, prompt-spec/doc references, test fixtures (~70 sprint.org references), and the live split (23 BACKLOG / 194 DONE / 3 CANCELLED at decision time). Kanban reads become trivially file-scoped (the board never parses DONE bulk to render the backlog).
+

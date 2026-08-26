@@ -1,0 +1,91 @@
+#+title: orgasmic task TASK-2C3WZ
+#+orgasmic_version: 2
+
+* DONE TASK-2C3WZ One task file per lifecycle state; transitions move headings between files (implements dec_QQYXM) :schema:tasks:layout:daemon:cli:ui:migration:
+:PROPERTIES:
+:ID:               TASK-2C3WZ
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:WRITE_SCOPE:      crates/orgasmic-core/src/ crates/orgasmic-daemon/src/ crates/orgasmic-cli/src/manager.rs ui/src/components/OrgView.tsx shipped/skills/orgasmic/scaffold/ shipped/prompt-studio/ crates/orgasmic-core/tests/ crates/orgasmic-daemon/tests/ crates/orgasmic-cli/tests/
+:READ_SCOPE:       crates/ ui/src/ shipped/ scripts/id-migration.py
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-NP5H6
+:END:
+
+** Description
+Implements dec_QQYXM: =tasks/= holds one org file per kanban state
+(backlog/todo/in_progress/in_review/done/cancelled.org); file membership is
+the canonical state; a lifecycle transition = the daemon moving the heading
+between files atomically with the keyword rewrite. =sprint.org= and
+=archive.org= retire. Blast radius (audited 2026-06-12):
+
+- core: =TASK_FILE_NAMES= (paths.rs:6) + =iter_task_file_paths=; scaffold list
+  =SCAFFOLD_FILES= (projects.rs:85-101). =LifecycleStage= already has all six
+  states (schema.rs:60-93) — no schema change.
+- daemon: index iteration (index.rs ~514); creation defaults hardcode
+  sprint.org (api.rs ~1172/1190/1758) → new tasks land in backlog.org;
+  watcher rename-detection paths (watcher.rs ~512-553).
+- cli: =apply_task_lifecycle_transitions= (manager.rs ~1310-1339) rewrites
+  keyword + =:STATE:= in place → becomes a daemon-executed cross-file move
+  (writer loop + structural guard; file and keyword may never disagree).
+  =find_task_file_path= is already filename-agnostic.
+- ui: =ORG_FILES= hardcoded list (OrgView.tsx ~25-28).
+- shipped: scaffold tasks/ templates (6 state files + goal/handoff, no seed
+  headings — the phantom-heading lint fires on =* (empty)= seeds);
+  prompt-spec/doc references (manager.org ~32-34, manager-dispatch.org ~105,
+  init.md, sprint_tasks.org context pack :FILE:, tx.org schema doc).
+- tests: ~70 sprint.org references across daemon/cli/core suites.
+
+TWO-PHASE method per TASK-YRK1V precedent: the worker lands code + scaffold +
+a migration script (split live headings by their keyword; verify zero dupes,
+every heading's file matches its keyword); the MANAGER executes the live
+split on quiesced main as one commit. Live distribution at filing: 23
+BACKLOG / 194 DONE / 3 CANCELLED / 0 others.
+
+Coordinate: TASK-55DH1 decides whether the keyword/=:STATE:= property remain
+as display copies — do not pre-empt; keep writing both, just relocated.
+
+** Acceptance Criteria
+- [ ] Task discovery = the six state files; sprint.org/archive.org gone from
+  code, scaffold, docs, and prompt specs.
+- [ ] Lifecycle transition moves the heading to the target state file through
+  the daemon writer atomically with the keyword rewrite; a crash cannot leave
+  the heading in zero or two files (test).
+- [ ] =task create= (TASK-NP5H6) and daemon subtask creation default to
+  backlog.org.
+- [ ] UI org-file list shows the new files; kanban renders correctly from
+  file-scoped reads.
+- [ ] Migration script + verify mode delivered; live split rehearsed in a
+  worktree (manager executes on main separately).
+- [ ] Gates: cargo test --workspace, clippy -D warnings, fmt --check, UI build.
+
+** Evidence
+- One cursor round (run-20260612T125537); worker commit =0d84ac1=, merge
+  =09737d9=, manager fix-ups =148c0b6=, close tx-0233. Delivered the six
+  state files (paths.rs canonical list + lifecycle_stage_file_name),
+  cross-file lifecycle moves as ONE writer.transaction with 1-2
+  FileRewrites + crash-atomicity test at the writer boundary, CLI
+  lifecycle transitions re-routed through the daemon (direct flock
+  rewrites deleted — whole concurrent-writer hazard class gone), watcher
+  rename tests, UI OrgView list, scaffold + docs, and
+  scripts/task-split-migration.py (dry-run/apply/verify/self-test).
+- Manager review-and-fix (=148c0b6=): task_state_flip_regression had
+  merged STALE and failing (asserted the heading stayed in backlog.org —
+  drowned in known flake noise); subtask creation appended a born-BACKLOG
+  heading to the PARENT's file (file=state violation) — now lands in
+  backlog.org; the scaffold bootstrap tree (TASK-C9V29+.1-.4, dec_056)
+  had been deleted instead of relocated — restored into
+  scaffold/tasks/backlog.org with its fixtures test + init.md anchoring;
+  --apply was not idempotent (second run would wipe done.org) — sources
+  now include the state files, self-test covers double-apply; identity
+  lint duplicate test had both writes clobbering one file.
+- Gates post-fix: core 116 lib green (+ fixtures 4 pending the live
+  split by design), daemon lib 149/149 incl. the corrected cross-file
+  flip test, cli bins 31, clippy daemon lib/bin + cli/core all-targets,
+  fmt. Live split executed manager-side as ONE commit (see tx + the
+  =task-split= commit); split verify + post-split fixtures + API smoke
+  recorded in the handoff.
+- Residual: split_headings in the migration script is line-based, not
+  org-block-aware — verified zero non-heading column-0 star lines in the
+  live corpus before executing; hazard documented for any future reuse.
+

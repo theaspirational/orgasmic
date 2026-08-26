@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_S0CPP
+#+orgasmic_version: 2
+
+* dec_S0CPP Does config.org survive once the pipeline moves out and its fields prove soft?
+:PROPERTIES:
+:ID: dec_S0CPP
+:PARENT: dec_FD6M7
+:RELATES_TO: dec_YTJ0G dec_T949W
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+dec_FD6M7 split machine config out of =project.org= because the stage-worker map bloated it; that map's successor =:PIPELINE:= is now superseded by workflows (dec_T949W). A hardness audit of the remaining fields: =TEST_CMD=/=LINT_CMD=/=BUILD_CMD= are =or_default()= prompt slots (=prompt_compiler.rs=) — empty when absent; =WRITE_SCOPE= is injected as advisory prompt text with task-level override and no hard lease enforcement; =DEFAULT_BRANCH= is a prompt slot with a hardcoded ="main"= fallback and an =Option= read at registration. The single hard consumer is =:PIPELINE:= via =first_pipeline_worker_for_kind= (=api.rs=), which resolves no-worker dispatches.
+** Decision
+Delete =config.org= from the scaffold and the schema. Repo facts (verification commands, branch, write scope) go free-form: stated in =project.org= prose or a repo convention, read by agents like any durable state — no dedicated machine fields. =:PIPELINE:= is dropped with no replacement map: a dispatch must always name its worker explicitly; a no-worker dispatch is rejected with the house-style error listing candidates, the UI worker picker becomes mandatory (preselecting last-used), and =--worker= is required on the CLI. =ProjectConfig= and its readers (=schema.rs=, =index.rs::load_project=, =api.rs= config reads) are removed; =SettingsView= is reworked off its =config.org= splice. The =default_branch= prompt fallback changes from hardcoded ="main"= to git-derived or empty — never a wrong injected value.
+** Consequences
+One fewer scaffold file and the last per-project machine-config surface disappears; project identity stays on =project.org='s PROJECT heading (=:ID:= was the only schema-required field and is already there). Partially reverses dec_FD6M7 — its cause (the bloated map) evaporated. Cost accepted: dispatch prompts may carry empty command slots (workers discover commands from prose), and every dispatch caller (API/CLI/UI) must name a worker. Rejected alternatives: folding the four fields into PROJECT heading properties; deriving commands automatically; a kind-based worker defaulting rule (deterministic single-candidate auto-select was declined in favor of always-explicit).
+

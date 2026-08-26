@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-DKVXF
+#+orgasmic_version: 2
+
+* DONE TASK-DKVXF TASK-QPKCD fix round 3 continuation: complete salvaged recovery authority refactor
+:PROPERTIES:
+:ID: TASK-DKVXF
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Continue from salvaged WIP b862674 after prior Composer exit. First restore formatting/compilation, then complete no-PID early-exit ownership, daemon-home project-scoped claims, crash-atomic Pending reconciliation, and trusted structured Claude resume with full tests.
+

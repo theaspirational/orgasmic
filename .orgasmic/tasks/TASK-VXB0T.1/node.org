@@ -1,0 +1,28 @@
+#+title: orgasmic task TASK-VXB0T.1
+#+orgasmic_version: 2
+
+* DONE TASK-VXB0T.1 Lifecycle v3 backend: schema rewrite, parser allowlist, performer sub-states, pipeline config, data migration :schema:state-machine:run-substate:pipeline:
+:PROPERTIES:
+:ID:               TASK-VXB0T.1
+:PRIORITY:         P2
+:WORKER:           implementer-codex-acp
+:WRITE_SCOPE:      shipped/schema/state-machine.org shipped/skills/orgasmic/scaffold/config.org .orgasmic/config.org crates/orgasmic-core/src/org.rs crates/orgasmic-core/src/schema.rs crates/orgasmic-core/src/projects.rs crates/orgasmic-core/src/session.rs crates/orgasmic-core/tests/fixtures.rs crates/orgasmic-daemon/src crates/orgasmic-daemon/tests crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/tests shipped/workers .orgasmic/tasks/sprint.org
+:READ_SCOPE:       .orgasmic/decisions.org .orgasmic/gotchas.org
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-PT2DC
+:END:
+
+** Description
+Backend half of TASK-VXB0T (dec_WV1ZH/068/069). State-machine v3 doc rewrite; org.rs TODO_KEYWORDS allowlist swap (BACKLOG, TODO, IN_PROGRESS, IN_REVIEW, DONE, CANCELLED); dispatch lifecycle transitions in daemon api + CLI; RunSubState performer-namespace validation; supervisor TransitionState -> sub_state wiring; STAGE_WORKER_* -> :PIPELINE: in config scaffold + live config + readers; workers :APPLICABLE_STATES: alignment; sprint.org keyword/:STATE: data migration in the same commit as the parser change.
+
+** Acceptance Criteria
+- [ ] Per dispatch brief (.orgasmic/tmp/dispatch/task-132.1-brief.md); gates: cargo test --workspace, clippy -D warnings, fmt --check, git diff --check, MSRV 1.78.
+
+** Evidence
+- *Implementer*: =implementer-codex-acp= (gpt-5.5 high), run =run-20260610T153101-e44026d70d744b2c83b7b3c199f73b4a=, ~24 min wall, no quota incidents (monitored). Single commit =6150739= with the exact briefed message; merged no-ff as =f57de5a=. 37 files +397/-395.
+- *Scope notes*: one off-scope touch accepted — =rmux.rs= test fmt fix (pre-existing =cargo fmt= violation from the rmux WIP commit, forced by the fmt gate). =main.rs=/=sandbox.rs=/=ws.rs=/=index.rs=/=watcher.rs= touched by the keyword-enum ripple, within the daemon/cli write scope.
+- *Gates on merged main*: clippy -D warnings OK; fmt --check OK; git diff --check OK; cargo test --workspace green EXCEPT =manager_dispatch_status_close_done_with_stub_codex= — environment-specific: fails only when run in parallel from THIS main checkout (45s suite wall vs 2-3s elsewhere; stub-daemon connection refused); passes serial here, isolated here, and parallel in fresh worktrees (/tmp and home-dir) on BOTH pre-merge (ea977d1) and post-merge (f57de5a) code. Not attributable to this diff; left for the reviewer + a possible test-hygiene follow-up.
+- *Daemon*: rebuilt release binary in place, restarted (pid 82798); =parse_errors: 0= against the migrated sprint.org; TASK-VXB0T* indexed under new keywords.
+- *Lifecycle vocabulary note*: dispatch-time flip BACKLOG→IMPLEMENT (old daemon binary) was discarded at merge in favor of the worktree's migrated IN_PROGRESS heading.
+- *Reviewer pass* (=reviewer-codex-acp=, run-20260610T161322): verdict =has-issues, no-blocks-ship= (0H/1M/1L), report at =.orgasmic/tmp/dispatch/task-132.1-review-report.md=. F-1 MEDIUM (SettingsView still edits =STAGE_WORKER_*= + v2 lifecycle labels) → folded into TASK-VXB0T.2 scope. F-2 LOW (shipped =recall-resume.md= referenced dead IMPLEMENT/REVIEW/READY keywords) → fixed manager-side same day. Reviewer independently verified data-migration completeness over sprint.org AND backlog.org (not in implementer scope) and ran targeted core tests; daemon tests env-blocked in its worktree (npm node_modules), already green manager-side.
+

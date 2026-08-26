@@ -1,0 +1,44 @@
+#+title: orgasmic task TASK-RF3J1
+#+orgasmic_version: 2
+
+* DONE TASK-RF3J1 Dispatch CLI on-rail: refactor `orgasmic manager dispatch` to route through daemon endpoint + supervisor + driver + worker eligibility :cli:dispatch:supervisor:architecture:foundation:
+:PROPERTIES:
+:ID:               TASK-RF3J1
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_A53QX arch_C87Z9
+:PRODUCES:         crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/
+:READ_SCOPE:       /tmp/orgasmic-codex/task-060-brief.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-YVZ9V
+:END:
+
+** Description
+The final step: refactor =orgasmic manager dispatch= to be a thin HTTP client over a new daemon endpoint (=POST /projects/:project/tasks/:task/dispatch=). Daemon looks up worker via eligibility (or =--worker= override flag); composes prompt bundle (persona + skills + conventions + brief); calls =supervisor.acquire(driver_for(worker.driver), AcquireRequest{...})=; returns dispatch result. Driver-emitted DriverEvents drive lifecycle transitions through supervisor → tx pipeline. CLI's =spawn_codex= (=manager.rs:957=) is removed; both codex and cursor-agent and any future harness dispatch via the same uniform path.
+
+Brief: =/tmp/orgasmic-codex/task-060-brief.md=.
+
+** Acceptance Criteria
+- [ ] =POST /projects/:project/tasks/:task/dispatch= endpoint shipped on daemon; takes =kind=, =worker_id= (optional), =brief_path=, =worktree_path= (manager-side worktree management preserved).
+- [ ] Daemon endpoint resolves worker (explicit =worker_id= or eligibility match), composes prompt bundle, calls =supervisor.acquire=.
+- [ ] CLI =cmd_dispatch= refactored to call the new endpoint; =spawn_codex= removed entirely.
+- [ ] CLI =cmd_dispatch_close= refactored to use daemon-side run lifecycle (auto-terminal from DriverEvent) + manager-side cleanup.
+- [ ] CLI =cmd_dispatch_status= refactored to query daemon for active runs.
+- [ ] Backward compat for legacy CLI flags (=--model=, =--effort=) — they override worker defaults for this dispatch.
+- [ ] End-to-end test: dispatch a tiny task via cursor-agent (composer-2.5-fast) AND via codex (gpt-5.5) through the same =orgasmic manager dispatch= surface, observe session JSONL captures both with proper terminal lifecycle.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green.
+- [ ] Implementer commits the work themselves.
+
+** Notes
+After this lands, the dispatch CLI drift originally surfaced by the user is fully closed: every implementer/reviewer dispatch goes through worker → driver → supervisor → session JSONL. Reviewer pass after merge per persona rule 2.
+
+** Evidence
+- [2026-05-24 Sun 19:15] TASK-RF3J1 implementer landed via codex (commit =6ff791b= merged as =3434b81=). 13 files +1148/-126. New =POST /projects/:project/tasks/:task/dispatch= endpoint + CLI =cmd_dispatch= refactor (=spawn_codex= removed) + supervisor lease release on close + =cmd_dispatch_status= daemon liveness annotation + cursor-agent + codex e2e tests. Tests 304 → 309 (+5, 1 ignored — codex appserver e2e).
+- [2026-05-24 Sun 23:25] Pre-cluster TASK-RF3J1.1 (acp-stdio + codex auto-spawn via HAR pattern + =--worker= CLI flag) shipped (own Evidence below).
+- [2026-05-24 Sun 23:55] Bundled reviewer pass on TASK-RF3J1 + TASK-RF3J1.1 via cursor-agent =reviewer-cursor=. Verdict =has-issues, no-blocks-ship=: 0 HIGH, 5 MEDIUM, 3 LOW. Report =/tmp/orgasmic-codex/task-060-bundled-review-report.md=. =reviewer.done= =tx-20260524-org-0248=. Two manager-surfaced findings (daemon classifier interrupted-while-alive bug + dispatch RunComplete doesn't write last.txt or auto-commit) filed as TASK-RF3J1.4 + TASK-RF3J1.5 alongside the original 5 reviewer findings. Bundled into TASK-RF3J1.6.
+- [2026-05-25 Mon 00:27] TASK-RF3J1.6 bundled fix-subtask landed via cursor-agent (commit =15a6dbd= merged as =94a31ae=). 5 findings closed in one round: F-1 (watch hint) + F-2 (worktree validation) + F-5 (override semantics) + F-6 (classifier; supervisor-live runs excluded + session-jsonl-aware terminal_noop classification) + F-7 (RunComplete last.txt writer + =implementer.commit_pending= tx signal gated by =dispatch.auto_commit_signal= config). 8 files +822/-23. Tests 329 → 336 (+7). New =implementer.commit_pending= tx type registered in =shipped/schema/tx.org=. =implementer.done= =tx-20260524-org-0277=.
+- *Cluster close*: TASK-RF3J1 hand-flipped REVIEW → DONE. TASK-RF3J1.2/.3/.4/.5 flipped BACKLOG → DONE with =:superseded:= tag (their content was absorbed by TASK-RF3J1.6). TASK-RF3J1.1 + TASK-RF3J1.6 are the actual fix-subtasks shipped this cycle.
+- *Dogfood scoreboard this cluster*: 8+ live dispatches (TASK-G0C5R + TASK-DFEDX + TASK-CPA74 implementer + 3 reviewers + TASK-G0C5R.1 + TASK-DFEDX.1 + TASK-RF3J1.6) routed through the new on-rail endpoint; =--worker= CLI flag worked every time; acp-stdio+codex auto-spawn proven viable (subprocess spawned cleanly but JSON-RPC handshake deferred); cursor-agent subprocess-stream-json driver proven reliable for both implementer and reviewer roles.
+- **Foundation 4/4 DONE. The on-rail abstraction-correction arc (TASK-S81TJ → 058 → 059 → 060) is COMPLETE.** orgasmic's coordination plane is dispatch-ready end-to-end: every implementer/reviewer dispatch flows through worker → driver → supervisor → session JSONL via the daemon endpoint.
+

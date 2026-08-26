@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-1TY4M
+#+orgasmic_version: 2
+
+* BACKLOG TASK-1TY4M RuntimeOptionsRequest still carries alias=effort — the 4YC8E landmine one client change away
+:PROPERTIES:
+:ID: TASK-1TY4M
+:PRIORITY: P3
+:END:
+
+From TASK-4YC8E (2026-07-29): runtime_options.rs:12 declares #[serde(default, alias = "effort")] on RuntimeOptionsRequest — the exact shape that killed hermes dispatches, safe today only because no client sends both key names (UI sends reasoning_effort only, RuntimeOptionsBar.tsx:52). No test holds it. Either pin 'both names in one body is rejected loudly' with a test, or drop the alias once no client sends effort (client-facing API change — check external consumers first). Also from the same report, P4-grade: TmuxConfig.effort / RmuxConfig.effort are now write-only-by-history (no live writer emits effort; kept for driver configs persisted by older daemons) — remove after the dual-key-writing runtime ages out; fold into this task when touched.
+

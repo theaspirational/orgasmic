@@ -1,0 +1,100 @@
+#+title: orgasmic task TASK-C7NVH
+#+orgasmic_version: 2
+
+* BACKLOG TASK-C7NVH tmux dispatches silently drop --effort for codex, cursor-agent and hermes, so the tx records an effort the process never ran    :drivers:dispatch:
+:PROPERTIES:
+:DEPENDS_ON: TASK-A55J7
+:ID: TASK-C7NVH
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-drivers/**
+:END:
+
+** READ THIS FIRST — STATUS
+Found [2026-08-08] by reading a LIVE PANE, which is exactly how the
+=manager-dispatch= convention says this class of defect gets discovered, and it
+is the second of the two failures that convention was written to prevent.
+
+A =tmux= dispatch with =--harness codex --model gpt-5.6-sol --effort high=
+recorded =:EFFORT: high= on its =manager.dispatch_started= tx
+(=tx-20260808-orgasmic-5309=) while the running TUI's statusline read
+=gpt-5.6-sol xhigh=. *The record is not merely incomplete — it is false.*
+
+** Mechanism, read out of the source
+=crates/orgasmic-drivers/src/modes/tmux.rs=, harness argv composition:
+
+- the =claude= branch (~:962-1002) pushes =--model= AND =--effort=;
+- the =codex | cursor-agent | hermes= branch (~:1004-1011) pushes *=--model= only*.
+
+So for three of the four TUI harnesses the effort value is accepted at the CLI,
+resolved, stored on the tx, and then DROPPED on the way to the process. The
+harness runs at whatever its own configuration defaults to.
+
+=--effort= is documented as "unvalidated passthrough" — passthrough is precisely
+what does not happen here.
+
+** Why it matters, beyond the obvious
+The convention states the rule this breaks: "carry all four into every place you
+report that run ... the record says what ran without anything reading it back as
+a setting". A tx that says =high= when the process ran =xhigh= is worse than a tx
+with no effort field, because a later manager weighing a worker's claim will
+believe it. Every past codex/cursor-agent dispatch record on this board carries
+an effort value that may never have reached the process.
+
+The 2026-08-08 instance was BENIGN in direction — =xhigh= exceeds the requested
+=high=, so the review was more thorough and more expensive, not less. The reverse
+is the dangerous case: a manager choosing =low= for a cheap mechanical round
+silently gets the harness default, and the convention's own advice ("a fix pass
+may carry less effort than the pass that produced its findings") cannot be
+followed at all on these harnesses.
+
+Related but distinct: *TASK-A55J7* is that nothing forces the manager to RESOLVE
+the four values. This is the next link — the value is resolved, recorded, and
+then discarded. Fixing A55J7 alone would still produce a false record.
+
+** Check before implementing
+Codex may not accept an =--effort= flag at all. =codex-cli 0.144.5= configures
+reasoning effort through a config override (=-c model_reasoning_effort=...=), and
+the app-server path in =adapters/codex.rs= already carries =reasoning_effort=
+through =cfg= (:78, :228, :442-443, :918-919) — so the stdio/ws lane may be
+correct while only the TUI lane is broken. Establish per harness what the real
+mechanism is; do not assume the claude flag shape generalises. Same question for
+=cursor-agent= and =hermes=.
+
+** Direction
+1. Determine, per TUI harness, how reasoning effort is actually set on a pane
+   launch. Measure it — launch one and read the statusline, as this was found.
+2. Plumb it. If a harness genuinely cannot accept an effort at launch, then
+   =--effort= must not be silently recorded as though it applied: either refuse
+   the flag for that pair, or record what actually took effect.
+3. A regression that pins argv/config composition per harness, so a harness
+   gaining or losing the capability fails a test rather than rotting.
+
+** Acceptance
+- A =tmux= dispatch on codex, cursor-agent and hermes either runs at the
+  requested effort, or is refused, or records what actually applied — never
+  records a value that did not reach the process.
+- A test pins the composition for every TUI harness, and fails if an effort value
+  is accepted but not delivered.
+- The same question is answered for =--model= on those harnesses (it IS pushed;
+  confirm it takes effect) and for the =rmux= mode, which composes argv
+  separately in =modes/rmux.rs= and was not examined.
+** Evidence
+SECOND CONFIRMED INSTANCE [2026-08-08]. Dispatch =tx-20260808-orgasmic-5331=
+(TASK-2QK4P reviewer) was created with =--effort high=. The tx records
+=:EFFORT: high=. The live pane reports =gpt-5.6-sol xhigh= — the harness
+default, because the tmux driver's codex/cursor-agent/hermes branch pushes
+=--model= and never pushes an effort flag at all, while the claude branch pushes
+=--effort=.
+
+The SAME dispatch round sent a claude implementer with =--effort high=, and its
+pane shows =thinking with high effort= against the argv
+=claude --model claude-opus-5 ... --effort high=. *Same manager invocation, same
+flag, one harness honours it and one silently discards it.*
+
+The harm is not that =xhigh= is worse than =high= — it is higher. The harm is
+that *the dispatch record asserts a parameter that was never sent*, so any later
+comparison of review quality against effort reads a fabricated column. Fail
+loudly on an unsupported flag, or map it, but do not record it as sent.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 5). `--model` is unvalidated passthrough too: a wrong id does not fail loudly; the manager confirmed the model by grepping the session jsonl for `"model":"…"`. The driver/harness substitution half of item 5 is TASK-XC9N4.
+

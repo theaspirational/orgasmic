@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_MKC0A
+#+orgasmic_version: 2
+
+* dec_MKC0A Should kanban columns reflect work lifecycle or agent kind?    :task-model:
+:PROPERTIES:
+:ID:            dec_MKC0A
+:GLOSSARY_REFS: term_RG690 term_9B3V8
+:DECIDED_AT:    [2026-05-23 Sat 14:50]
+:SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_P24WF
+:END:
+** Context
+The current task model puts each agent's internal workflow on the task heading, conflating two layers — what column a card belongs in (human-facing lifecycle) and what the agent is doing internally (engine-facing run sub-state). This mismatches standard issue-tracker convention, producing kanban columns that reflect agent kind rather than work status. Deriving a coarse UI bucket leaves the model lie in code; keeping the current model rejects the standard mental model.
+** Decision
+Realign to one human-facing lifecycle for every task kind: the task heading TODO keyword carries one of BACKLOG, EXPLORE, PLAN, IMPLEMENT, REVIEW, SHIP, DONE, BLOCKED, CANCELLED, and the kanban has exactly these stages (plus blocked/cancelled lanes) regardless of kind. Agent sub-states move off the heading onto run records (dec_RECYG). Allowed transitions: backlog → explore | plan | implement; explore → plan | implement; plan → implement; implement → review; review → implement | ship; ship → review (CI fail) | done; any active → blocked; blocked → previous active; any → cancelled.
+** Consequences
+Kanban and list views can use standard issue-tracker stages. "ship" is the post-review stage (PR/CI/deploy/publish); each stage hosts any kind, and stage-to-agent mapping (dec_JW9TJ) picks the default agent on transition (e.g. EXPLORE may carry agent.grilling, agent.exploring, or human.answering). The migration touches =state-machine.org=, the =schema.rs= TaskState enum, the =TODO_KEYWORDS= allowlist, and all existing sprint headings in one coherent refactor.
+

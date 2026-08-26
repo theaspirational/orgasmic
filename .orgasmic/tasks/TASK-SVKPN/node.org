@@ -1,0 +1,60 @@
+#+title: orgasmic task TASK-SVKPN
+#+orgasmic_version: 2
+
+* DONE TASK-SVKPN A fast-exiting harness loses its transcript and run_complete: subprocess_stream_json breaks its select loop without draining stdout
+:PROPERTIES:
+:ID: TASK-SVKPN
+:PRIORITY: P1
+:END:
+
+From TASK-Z7VQK (2026-07-29), measured and causally confirmed: a fast-exiting
+harness on subprocess-stream-json LOSES ITS TRANSCRIPT and its run_complete —
+the run is flagged protocol_end_without_finalize and orphaned with an empty
+transcript. Product-visible data loss, not a test defect.
+
+Mechanism (subprocess_stream_json.rs:418 at Z7VQK's base): the driver's select
+loop covers stdout, stderr and a command channel; the command branch `break`s
+on release OR channel-close WITHOUT draining stdout, and tokio::select! picks
+at random among ready branches. A harness that runs to completion quickly (the
+fixture ran 9.5ms, printed all 16 lines) can have its entire output pending
+when the loop exits; finalize_subprocess_exit then distills an empty summary
+(`exit_code=Some(0) distill_is_some=false assistant_len=0 system_chunks=0`).
+
+Causal confirmation: identical build plus a 200ms sleep before the harness
+body (the latency Gatekeeper used to supply) suppresses most failures — fixed
+4 failures vs delayed-start 1 in one window. The effect scales with load.
+Historically masked because every fresh fixture paid ~160ms first-exec
+evaluation; TASK-Z7VQK's shared pre-warmed fixture removes that sedative, which
+is why its branch is held unmerged pending this fix.
+
+Candidate shape (from Z7VQK's report, verify by reading): `biased;` with
+stdout first, plus a bounded drain of stdout after `released` before
+finalize_subprocess_exit. Adjacent precedents: TASK-HAREX's DrainGate bounds a
+release-requested drain in the SUPERVISOR; this is the DRIVER-side sibling —
+do not conflate them, but the derived-bound discipline applies.
+
+=== Ask
+
+1. Fix the drain so a harness's produced output is never lost to loop-exit
+   ordering: whatever it wrote before exit reaches the session and run_complete
+   synthesis. Bounded (derived) so a harness that never stops producing cannot
+   wedge a release — state the bound and its derivation.
+2. Audit the OTHER stream-consuming drivers (acp-stdio bridge, anything with a
+   select over child stdout + command channel) for the same break-without-drain
+   shape; fix or report per instance.
+3. Prove end-to-end with Z7VQK's un-sedated fixtures (your worktree is based on
+   its branch): the six-test dispatch_endpoint family green suite-concurrently
+   — the acceptance BOTH tasks share. Pin A/B counts (Z7VQK's report has the
+   baseline table).
+
+=== Acceptance
+
+- The family (all six named tests) survives >=3 suite-concurrent rounds green
+  with the fast shared fixture, counts pinned.
+- A deterministic test pins the property: a harness that exits immediately
+  after printing N lines yields all N in the session (no sleep-masking — the
+  Z7VQK report's warning: a fixture-side delay would hide the defect, never
+  add one).
+- Injection per TCTTD standard, git apply-clean, self-tested with
+  `orgasmic verify --artifact` before reporting.
+

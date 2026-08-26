@@ -1,0 +1,138 @@
+#+title: orgasmic task TASK-4WKNX.1
+#+orgasmic_version: 2
+
+* DONE TASK-4WKNX.1 Reserve manager-owned close-tx keys from the generic --property channel
+:PROPERTIES:
+:ID: TASK-4WKNX.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:WRITE_SCOPE: crates/orgasmic-cli/
+:END:
+
+** Description
+
+Fix round for the one BLOCK SHIP on TASK-4WKNX's review, confirmed by the manager
+against the code. The full mechanism is on the parent under "Review round 1 —
+REJECT (confirmed)"; read it there rather than re-deriving it.
+
+In one line: ~close_done_request~ pushes caller ~--property~ entries before it
+pushes its own typed keys, and ~parse_close_property~ accepts any uppercase key,
+so a bypass-audit key can be forged or contradicted by the caller it is meant to
+audit.
+
+** The class, not the instance
+
+The reviewer found it on ~FIX_ROUND_FINAL~. The manager found the same hole on
+~NO_REVIEW_REQUIRED~ (manager.rs:4720), which is PRE-EXISTING — 4WKNX did not
+introduce it, it introduced a second instance of it. ~VERDICT~ is the only key of
+this class currently fenced (TASK-YN5FJ.1 RULING 3), and it is fenced by a
+hand-written one-off ~if let (Some, Some)~ pair.
+
+Three keys, two unfenced, one bespoke fence: the fix is a rule about
+manager-owned tx keys, not a third copy of the same ~if~.
+
+** Acceptance
+
+- A caller cannot forge or contradict any manager-owned close-tx key through
+  ~--property~. Covers at minimum ~FIX_ROUND_FINAL~, ~NO_REVIEW_REQUIRED~ and
+  ~VERDICT~.
+- ~VERDICT~'s existing behaviour is preserved exactly: ~--property VERDICT=~ is a
+  supported legacy free-text spelling and must keep working alone, while
+  flag-plus-property still refuses by name. Whatever rule replaces the one-off
+  must reproduce this, not flatten it.
+- The refusal happens with the other early close refusals — before run release,
+  worktree cleanup, and any tx append.
+- Tests pin property-only forgery AND typed-flag/property collision on the
+  production path, and assert the close was refused before the worktree was
+  cleaned up.
+
+** Not in scope
+
+The reviewer's usability suggestion (a close-time next-action line, or a
+~dispatch-status~ diagnostic for a ~FIX_SUBTASK~ parked ~in_review~ with no
+reviewer dispatch). That is a follow-up on a workflow that now works. File it
+separately if it earns a task.
+** Landed and verified by the manager
+** Review round 1 — REJECT (confirmed, and the severity is higher)
+Reviewer =reviewer-codex-tmux= (tmux/codex/gpt-5.6-sol/high) on merge =caf06ae=
+vs base =f60af0a=. Verdict REJECT, one BLOCK SHIP. Manager confirmed it against
+the code and confirmed the severity is HIGHER than the report states.
+
+=== The finding, confirmed
+
+=MANAGER_OWNED_CLOSE_PROPERTIES= is a three-key denylist, not the class rule the
+task asked for. =close_done_request= pushes caller properties (=:4751=) and THEN
+appends manager-derived structural keys — =CLOSED_TX= (=:4763=),
+=push_lifecycle_extra=, =push_cleanup_extra=, =GOAL_ID= — none of which are in
+the table. With =extra()= first-wins, the caller's forged value is the one every
+reader sees.
+
+=== Why this is worse than the report says: these keys are CONSUMED
+
+The report frames the risk as forged audit data. Manager checked the consumers
+and it is not only audit:
+
+- =close_matching_dispatch= (=:7033=) selects WHICH open dispatch record a close
+  terminates by matching =CLOSED_TX=. A forged value marks the WRONG generation
+  closed and leaves the real one open.
+- =close_tx_ran_cleanup= (=:7059=) sets =record.cleanup_already_run= from
+  =CLEANUP_STATUS=. A forged =ok= makes a close that never ran cleanup look like
+  it did — and cleanup is the path that SALVAGES uncommitted worker output before
+  removing a worktree. This project has already destroyed a worker's work once
+  (TASK-2BPWM, TASK-D0GA3).
+- =cleanup_status_reports_failure= (=:7158=) scans the ledger for cleanup
+  failures; a forged =ok= hides a real one from that report.
+
+So the vector is state corruption and suppressed salvage, not a false record.
+BLOCK SHIP stands and the severity is right.
+
+=== This is MY scoping failure, not the implementer's
+
+The round-2 brief said "a rule about manager-owned close-tx keys, not a third
+copy of the same =if=" — and then named exactly three keys, in a table, in the
+brief's own markdown. The implementer built precisely what was described. The
+table it produced is good work: the =const fn reserved(...)= default and the
+verbatim =VERDICT= text are both right and both survive into round 3. What was
+missing was in the specification.
+
+=== The structural answer, found while verifying
+
+*Every tx-extra reader in the workspace is first-wins.* Verified:
+=manager.rs:7101=, =crates/orgasmic-daemon/src/index.rs:2008=, and the assertion
+helpers — all =.iter().find(...)=. No last-wins reader exists.
+
+So pushing the manager's own extras BEFORE the caller's =--property= loop makes
+every forged duplicate INERT for consumption, for every manager-owned key
+including ones nobody has written yet, with no list to maintain and no drift to
+detect. That is the property the acceptance actually wants and it costs a
+reorder.
+
+It is not sufficient alone, and saying why matters: an inert duplicate still sits
+in the ledger where a human reads it, and for the three deliberate bypass keys a
+silent no-op is the wrong answer — forging =FIX_ROUND_FINAL= should be a loud
+refusal, not a shrug. Hence two layers in round 3.
+
+=== Accepted from the review, no action
+
+- Placement verified independently: validation at =:1010= precedes merge
+  verification (=:1022=), reservation/release (=:1096=), cleanup (=:1163=), tx
+  append (=:1201=) and lifecycle mutation; the only mutating call before it is
+  the explicitly accepted =reconcile_torn_closes_best_effort=.
+- =VERDICT= collision text is byte-for-byte identical to base =f60af0a:969-971=;
+  =reviewer_done_stage= and =close_verdict_value= unchanged, still reading either
+  spelling. Independently exercised typed-only, property-only and collision.
+- Duplicate handling for the three listed keys is sound: the =Reserved= arm
+  refuses regardless of value, so duplicates cannot slip past.
+- =parse_close_property= rejects lower-case, padded and non-ASCII-uppercase keys.
+
+=== The =NO_REVIEW_REQUIRED= judgement is SETTLED, with a better argument
+
+The brief asked for a real opinion including "the author was wrong". The reviewer
+said Reserved is right and gave a stronger reason than the implementer's
+absence-of-callers evidence: =project.org:12-18= records an explicit greenfield
+bias — do not assume backward compatibility absent an explicit requirement.
+And unlike =VERDICT=, whose property form preserves free-text values outside the
+typed enum, a =NO_REVIEW_REQUIRED= alias adds no vocabulary and no capability
+except bypassing the mandatory reason. Reserved, and the reasoning is now on the
+record instead of in a report.
+

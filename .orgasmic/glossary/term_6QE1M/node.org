@@ -1,0 +1,12 @@
+#+title: orgasmic glossary term term_6QE1M
+#+orgasmic_version: 2
+
+* term_6QE1M Minimize
+:PROPERTIES:
+:AVOID: close the dock; collapse to peek
+:CANONICAL: Minimize
+:DEFINITION: To put the Run Dock panel away, leaving the Taskbar and the run untouched. Minimizing is a view action: it never stops, releases, or detaches a run.
+:ID: term_6QE1M
+:RELATES_TO: term_5V9F8 term_YTD8X term_Z5EZJ
+:END:
+

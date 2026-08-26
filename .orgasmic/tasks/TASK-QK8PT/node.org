@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-QK8PT
+#+orgasmic_version: 2
+
+* CANCELLED TASK-QK8PT Temporary daemon refresh benchmark 2026-08-12 :perf-probe:
+:PROPERTIES:
+:ID: TASK-QK8PT
+:PRIORITY: P3
+:BASELINE_16: 16
+:UPGRADED_16: 16
+:END:
+

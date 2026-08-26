@@ -1,0 +1,28 @@
+#+title: orgasmic task TASK-RZM4B
+#+orgasmic_version: 2
+
+* DONE TASK-RZM4B Gate live-AI-binary driver smoke tests behind opt-in env var (stop auto-running flaky smokes) :drivers:tests:hygiene:flaky:
+:PROPERTIES:
+:ID:               TASK-RZM4B
+:PRIORITY:         P2
+:WORKER:           implementer-codex-acp
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/modes/tmux.rs
+:READ_SCOPE:       crates/orgasmic-drivers/tests/cursor_agent.rs crates/orgasmic-daemon/src/supervisor.rs
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+=real_claude_input_ready_smoke= (=crates/orgasmic-drivers/src/modes/tmux.rs= ~1500) spawns a live =claude= binary and waits 10s for the TUI input field. It runs automatically whenever tmux+claude are on PATH and flakes on claude's per-folder trust prompt / timing (observed: failed in a /tmp worktree, passed on main; TASK-KMWZ6 gate run). Live tests that spawn a real external AI binary must NOT run in the default =cargo test --workspace=.
+
+1. Gate =real_claude_input_ready_smoke= behind the existing opt-in =ORGASMIC_RUN_REAL_CLAUDE_SMOKE=1= (mirror the early-return skip + eprintln at =supervisor.rs:2759=). Reuse the existing var for consistency.
+2. Audit the other =real_*= tests in tmux.rs: those spawning only =bash=/=sh= stubs are deterministic tmux-mechanics tests — LEAVE them (valuable coverage, not flaky). Only gate tests that spawn a real AI binary.
+3. Confirm no other auto-running test spawns a live AI binary (cursor + daemon-claude smokes are already gated).
+
+** Acceptance Criteria
+- [ ] =cargo test --workspace= with claude+tmux on PATH runs NO test that spawns a live AI binary; =real_claude_input_ready_smoke= skips unless =ORGASMIC_RUN_REAL_CLAUDE_SMOKE=1=.
+- [ ] Deterministic bash/sh tmux-mechanics =real_tmux_*= tests still run (not gated).
+- [X] Gates green; the previously-flaky smoke no longer appears in default runs.
+
+** Evidence
+Landed to main in merge =ea690fc= (impl =0fe8733=). =real_claude_input_ready_smoke= now early-returns unless =ORGASMIC_RUN_REAL_CLAUDE_SMOKE= is set (mirrors =supervisor.rs:2759= byte-for-byte in spirit); the six deterministic =bash=/=sh= =real_tmux_*= mechanics tests left ungated. Spot-check with the var UNSET: the test finishes in 0.03s (skips, no live claude spawn). Gates: =cargo test --workspace= 0 failed, =clippy -D warnings=, =fmt --check=, =git diff --check= all green.
+

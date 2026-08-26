@@ -1,0 +1,102 @@
+#+title: orgasmic task TASK-A55J7
+#+orgasmic_version: 2
+
+* BACKLOG TASK-A55J7 Persist model and effort on the run record and the dispatch tx    :dispatch:runtime:observability:
+:PROPERTIES:
+:ID: TASK-A55J7
+:PRIORITY: P1
+:END:
+
+Filed 2026-07-26 alongside a manager prompt change requiring every dispatch to
+state driver, harness, model and effort. That rule is currently unenforceable
+after the fact, because two of the four are never written down.
+
+WHAT IS RECORDED TODAY
+
+`manager.dispatch_started` carries `:WORKER:`, `:DRIVER:`, `:HARNESS:` and no
+model or effort (verified on tx-20260726-orgasmic-2861 and -2869).
+`orgasmic run list` reports `driver`, `harness`, `worker_id`, `kind`, `role`,
+`sub_state` — and no model or effort field on the live run object.
+
+`orgasmic manager dispatch` accepts `--model` and `--effort` and passes them
+through to the adapter, so the values exist at dispatch time. They are simply
+dropped before anything durable is written. A manager who sets them cannot prove
+it afterwards, and a manager who omits them cannot discover what the harness
+chose instead.
+
+WHY IT MATTERS
+
+Two failures on 2026-07-26 came from exactly this blind spot. A reviewer was
+dispatched over a P1 concurrency fix and the manager could not afterwards say
+what model was reviewing it. Separately, a TASK-STWVB implementer ran on
+claude-opus-5 when nothing had selected it, discovered only by reading argv on a
+live process (TASK-SGRTX).
+
+The cost is not tidiness. Worker output is treated as a claim to be weighed, and
+weighing a claim requires knowing its author. An evidence section that says "the
+implementer measured +5 sessions per run" means something different depending on
+what produced it, and today that is unrecoverable the moment the process exits.
+
+WORK
+
+1. Thread the resolved model and effort — the values actually sent to the
+   adapter, not the ones requested — onto RunMeta, so they survive boot reattach
+   the way last_path/stdout_path/worktree do.
+2. Emit them on `manager.dispatch_started` as `:MODEL:` / `:EFFORT:`, and on
+   `run.created`.
+3. Surface them in `orgasmic run list` and `orgasmic manager dispatch-status`.
+4. Record what the harness actually resolved when the manager passed nothing.
+   The default is the case most worth capturing — it is the one nobody chose.
+   Where the harness does not report its own resolved model, record the request
+   as absent rather than inventing a value, and say so in the field.
+5. Show them wherever a run is displayed in the UI Runs surface.
+
+Note the task node already carries `model` and `reasoning_effort` properties
+(both null on most headings). Decide whether those are the requested values and
+the new run fields are the resolved ones, or whether the task properties should
+be retired in favour of run-level truth. Two half-populated surfaces for the same
+fact is how this became invisible in the first place.
+
+Acceptance:
+- a completed dispatch can be asked what model and effort ran it, from state
+  alone, after the process is gone
+- a dispatch where the manager passed neither still records what was resolved,
+  or records explicitly that nothing was requested and the harness default
+  applied
+- `orgasmic run list` and `dispatch-status` both show all four of driver,
+  harness, model, effort
+
+=== WIDENED 2026-07-29 (operator directive) — enforcement, not reporting
+
+The 2026-07-28/29 session dispatched FZB6T, JQ8AV and 95SGV believing they ran
+claude-opus-5; they ran claude-fable-5, inherited from the ambient harness
+default because no --model was passed. The commit trailers
+(=Co-Authored-By: Claude Fable 5=) are the only surviving proof, and they are an
+accident of the harness, not a record orgasmic kept. This is the reporting gap
+above, but the fix is to make the state impossible rather than merely visible.
+
+ADD to the work items:
+
+6. REFUSE TO DISPATCH WITH AN UNRESOLVED MODEL. If neither --model nor the task
+   drawer supplies one, the dispatch fails loudly and writes nothing. Silent
+   inheritance of whatever the operator shell/settings happen to say is the
+   defect; a hard failure at dispatch time is the fix. Same for --effort.
+
+7. NO PROJECT-LEVEL DEFAULT MODEL. Explicitly ruled out by the operator
+   2026-07-29: models and operator preferences both change faster than a
+   checked-in config key would track, and a stale default is the same silent
+   inheritance wearing a different hat. The resolution order is exactly
+   --model > task drawer > REFUSE. Do not add a config key for this; if a
+   future reader is tempted, this paragraph is the rationale for why not.
+
+8. The session-start ask is the ergonomic counterpart, and it belongs to
+   TASK-0JY7M ("ask once per session for agent selection"), not here. A55J7
+   makes the unresolved state impossible; 0JY7M makes supplying it convenient.
+   Neither substitutes for the other — ship A55J7 even if 0JY7M slips.
+
+Acceptance ADDS:
+- a dispatch with no --model and no task-drawer model exits nonzero, names the
+  missing field, and leaves no run record, no worktree and no lease behind
+- the refusal is proven by a shipped injection artifact under verify/, like any
+  other correctness claim on this project
+

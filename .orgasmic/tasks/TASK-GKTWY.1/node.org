@@ -1,0 +1,49 @@
+#+title: orgasmic task TASK-GKTWY.1
+#+orgasmic_version: 2
+
+* DONE TASK-GKTWY.1 Coalesced stderr diagnostics truncate to the first chunk (review M1 of TASK-GKTWY) :ui:manager:transcript:bug:
+:PROPERTIES:
+:ID:               TASK-GKTWY.1
+:PRIORITY:         P3
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      ui/src/components/manager/** ui/src/lib/**
+:READ_SCOPE:       ui/src/components/manager/ManagerChatTranscript.tsx ui/src/lib/transcriptUtils.ts
+:TEST_CMD:         npm --prefix ui run test -- --run
+:END:
+
+** Description
+TASK-GKTWY reviewer finding M1 (MEDIUM, latent): in =coalesceTextChunks=,
+consecutive stderr chunks sharing =mergeKey: 'tool:stderr-diagnostics'=
+append clean text to =previous.text= but never update =previous.activity=.
+ActivityRow renders only =activity.preview=/=activity.raw= (first chunk),
+and =entry.text= is ignored when =activity= exists — so chunks 2..N are
+invisible and the raw-behind-disclosure guarantee breaks. Doesn't trigger
+in the evidence session (single stderr chunk) but will under repeated
+websocket-retry noise.
+
+Fix direction (from review): when merging tool-diagnostics entries, also
+append the incoming clean text to =previous.activity.preview= and the
+incoming raw to =previous.activity.raw=. Also cover review L1: unit test
+for orphaned command-result silent-drop in =groupToolEntries=.
+
+** Acceptance Criteria
+- [X] Multi-chunk consecutive stderr renders all chunks in the visible row
+  and full raw behind disclosure (unit test with 3+ chunk fixture).
+- [X] Orphaned command-result behavior covered by a test (L1).
+- [X] vitest green.
+
+** Evidence
+- Moved =coalesceTextChunks= into =ui/src/lib/transcriptUtils.ts= and kept
+  =ManagerChatTranscript.tsx= wired to the shared helper.
+- Fixed stderr diagnostic coalescing so consecutive
+  =tool:stderr-diagnostics= chunks append not only =entry.text= but also
+  =activity.preview= and =activity.raw=. This keeps both the visible row and
+  disclosure body complete for repeated stderr websocket diagnostic chunks.
+- Added a 3-chunk regression in =ui/src/lib/__tests__/transcriptUtils.test.ts=
+  covering merged visible preview, raw disclosure content, and merge-key
+  stripping. Added the L1 test proving an orphaned =command result= with a
+  =callId= and no request/start pair is silently dropped by =groupToolEntries=.
+- Gates: =npm --prefix ui run test -- --run src/lib/__tests__/transcriptUtils.test.ts=
+  passed (27 tests); =npm --prefix ui run test -- --run= passed (7 files, 70
+  tests); =npm --prefix ui run typecheck= passed.
+

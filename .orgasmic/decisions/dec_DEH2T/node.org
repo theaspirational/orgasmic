@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_DEH2T
+#+orgasmic_version: 2
+
+* dec_DEH2T Where should worker ordering live once stage-based columns collapse?    :schema:config:pipeline:
+:PROPERTIES:
+:ID:            dec_DEH2T
+:GLOSSARY_REFS: term_P9JK1
+:DECIDED_AT:    [2026-06-10 Wed]
+:SOURCE:        TASK-PT2DC griller session 2026-06-10
+:PARENT:        dec_JW9TJ
+:END:
+** Context
+With EXPLORE/PLAN/IMPLEMENT collapsed into In Progress (dec_WV1ZH), config.org's per-stage `STAGE_WORKER_*` mapping loses its key axis, but the griller -> planner -> implementer -> reviewer ordering still has to live somewhere machine-readable.
+** Decision
+Replace `STAGE_WORKER_*` with an ordered worker pipeline: a project default in config.org (e.g. `griller planner implementer reviewer`), overridable per task via a `:PIPELINE:` property or implied by the task's `:WORKER:` (whose kind names the routing family). The task's position in the pipeline is whatever the latest run sub-state says (`griller.done` means the planner is next). Phases are skippable — most tasks go straight to the implementer.
+** Consequences
+Dispatch logic reads the pipeline instead of mapping stage keywords to workers; `:WORKER:` survives as shorthand for single-phase tasks (tasks carry no `:KIND:` — kind lives only on workers; worker-less tasks default to the pipeline implementer). The config scaffold migrates in the same follow-up IMPLEMENT task as dec_WV1ZH/dec_P7EY8.
+

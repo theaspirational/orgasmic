@@ -1,0 +1,40 @@
+#+title: orgasmic decision dec_PVDP3
+#+orgasmic_version: 2
+
+* dec_PVDP3 Should the desktop app or the CLI runtime own and serve the full UI?    :ui:tauri:daemon:lifecycle:
+:PROPERTIES:
+:ID:            dec_PVDP3
+:GLOSSARY_REFS: term_N5SJT term_TDNG3
+:DECIDED_AT:    [2026-06-09 Tue 15:10]
+:SOURCE:        user direction 2026-06-09 (thin app + daemon UI)
+:PARENT:        dec_XV9AK
+:END:
+** Context
+The desktop app and CLI both tried to carry pieces of the same local runtime:
+the app bundled a full React UI plus a private =orgasmic= child process and spawned
+=orgasmic serve= when port 4848 was closed, while the CLI-only path now owns a
+detached local daemon lifecycle (dec_SCVKG). That split made app exit semantics
+ambiguous: if the app spawned the daemon and the CLI later used it, quitting the
+app could kill the daemon out from under the CLI. It also duplicated the full UI
+between the app bundle and CLI-only installs.
+** Decision
+Make the CLI/daemon runtime the owner of the full product UI. The daemon serves
+the embedded built React app at =/app/= and exposes =orgasmic ui= /
+=orgasmic ui --print-url= as the browser/Tauri launch surface. The desktop app
+ships only a tiny bootstrap webview that discovers an installed canonical CLI,
+asks it for a one-time launch URL, and navigates to the daemon-served UI. The app
+does not spawn a private daemon process, does not link bundled CLI shims, and does not
+kill the daemon on exit. Native desktop affordances remain optional bridges for
+the trusted local daemon UI origin; filesystem browsing for remote daemon
+profiles belongs to daemon endpoints so the listed paths are on the daemon host,
+not the UI host.
+[2026-06-25 Thu] The bootstrap webview now also covers the no-local-CLI case (Android/mobile, or any host without the CLI). When runtime_probe finds no CLI it shows a "Connect to runtime" form (daemon URL + bearer token), mints the same one-time UI-session ticket against the *remote* daemon, and navigates to its served UI: the local-CLI path and the remote path converge on the identical ticket->cookie->served-UI handshake, so the phone always runs the daemon's matching UI build (no app-bundled SPA, no version skew). The entered URL+token persist in bootstrap-origin storage for auto-reconnect; an unreachable saved URL falls back to the editable form. This makes the thin-launcher model real for Android, where there is no local runtime to discover. Cleartext HTTP to the daemon is permitted on Android via a network-security-config (HTTPS endpoints still validated) so a LAN/VPN/tunnel daemon is reachable; untrusted networks should use a TLS tunnel. Daemon LAN reachability stays operator config (bind_host 0.0.0.0 + lan_enabled per arch_C87Z9), and the daemon already accepts cross-origin clients. Source: ui/bootstrap.html, ui/src/bootstrap.ts, src-tauri/gen/android/app/src/main/res/xml/network_security_config.xml, src-tauri/gen/android/app/src/main/AndroidManifest.xml.
+[2026-06-25 Thu] App-update checks run from the bootstrap on the remote path. The connected UI lives on the daemon origin (no Tauri IPC, and the dynamic daemon URL can't be capability-whitelisted), so the SPA's own updater can't run on the phone. The bootstrap (Tauri origin, IPC present) instead auto-checks the saved channel (stable/nightly -> apps-stable/apps-nightly android-latest.json) on launch, time-boxed so it never blocks connecting, and gates auto-connect behind an 'update available' banner: Download opens the signed APK via the android-sideload path, Continue proceeds. It also offers a manual re-check and a channel toggle, since the phone has no Settings page until connected. Reuses ui/src/lib/appUpdate.ts (checkAppUpdate/installAppUpdate). A true in-session or background checker is out of scope: while connected there is no IPC, and while closed it would require a native Android background worker.
+** Consequences
+CLI-only users and app users see the same UI build. App updates become mostly
+bootstrap-shell updates; runtime/UI updates are CLI releases. Local app launch
+now requires a discoverable CLI in =$ORGASMIC_HOME/bin/orgasmic=, =PATH=, or
+=ORGASMIC_CLI=. Browser clients, Android, and remote Tauri profiles use the
+daemon-backed filesystem browser; the native directory picker is only a
+convenience for the built-in local profile.
+

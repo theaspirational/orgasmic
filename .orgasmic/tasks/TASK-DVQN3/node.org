@@ -1,0 +1,41 @@
+#+title: orgasmic task TASK-DVQN3
+#+orgasmic_version: 2
+
+* DONE TASK-DVQN3 Sweep additional glossary debt :glossary:debt:
+:PROPERTIES:
+:ID:               TASK-DVQN3
+:PRIORITY:         P3
+:WORKER:           glossarist
+:IMPLEMENTS:       arch_MPAQT arch_QXS5W
+:PRODUCES:         .orgasmic/glossary.org
+:WRITE_SCOPE:      .orgasmic/glossary.org
+:READ_SCOPE:       .orgasmic/glossary.org .orgasmic/architecture.org .orgasmic/decisions.org shipped/** archive/21_05_26_init/spec.org
+:TEST_CMD:         cargo build
+:DEPENDS_ON:       TASK-QTR08
+:END:
+
+** Description
+TASK-QTR08 glossarist surfaced six additional terms used as plain-English nouns across arch_QXS5W, arch_MPAQT, the spec, and the convention-bundle audit but without =term:= entries in =.orgasmic/glossary.org=. None blocking; sweep when planner schedules. List:
+
+1. =skill manifest= — distinct concept from raw skill bodies; arch_QXS5W interface bullet and findings.md reference it. Define alongside =prompt-bundle= (manifest is one of its inputs).
+2. =persona= and =operating rules= — both used by arch_QXS5W's prompt-bundle composition list and =shipped/manager/persona.org=; undefined. Either one =persona= term or a paired definition.
+3. =dry-run compile= — arch_QXS5W constraint and TASK-ZA4EW acceptance criterion use the phrase; needs a short defined term.
+4. =spawn-time injection= vs =continuation injection= — arch_QXS5W distinguishes; could be one =prompt-injection= term with two flavours.
+5. =finalize gate= — referenced in arch_MPAQT and findings.md with specific semantics (rejects pending decisions and cross-scope reference mismatches); undefined.
+6. =semantic hash= — drives stale-propagation; =term_J5X55= mentions it under =:RELATES_TO:= but it has no entry.
+
+** Acceptance Criteria
+- [X] Six (or paired-down equivalent) new =term:= headings exist with the existing glossary style (=:CANONICAL:=, =:AVOID:=, =:RELATES_TO:=, =:DEFINITION:=, =:DECIDED_AT:=).
+- [X] Definitions remain abstract per arch_MPAQT constraint (no code paths, type signatures, function names).
+- [X] arch_QXS5W / arch_MPAQT :GLOSSARY_REFS: extensions flagged for architector (out of glossarist scope).
+
+** Evidence
+- [2026-05-21 Thu 22:46] Added glossary terms =skill-manifest=, =persona=, =operating-rules=, =dry-run-compile=, =prompt-injection=, =finalize-gate=, and =semantic-hash= with the existing canonical/avoid/relates/definition/decided-at style.
+- [2026-05-21 Thu 22:46] Definitions stay abstract: no code paths, type signatures, or function names.
+- [2026-05-21 Thu 22:46] Integrated the flagged architecture backrefs: arch_MPAQT now references =term_C3A8T= and =term_ERXMF=; arch_QXS5W now references =term_ZYE1R=, =term_C9YBH=, =term_H2GAN=, =term_VD1MY=, and =term_T2NSV=. No semantic hash bump: =:GLOSSARY_REFS:= is bookkeeping, not part of the canonical semantic hash input.
+- [2026-05-21 Thu 22:46] Verification passed: =cargo test -p orgasmic-core --test fixtures=, =git diff --check=.
+
+** Worklog
+- [2026-05-21 Thu 22:28] Dispatched a glossary-only worker with write scope limited to =.orgasmic/glossary.org=.
+- [2026-05-21 Thu 22:46] Manager integrated the worker output and applied the arch_MPAQT / arch_QXS5W glossary-reference bookkeeping.
+

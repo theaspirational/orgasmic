@@ -1,0 +1,74 @@
+#+title: orgasmic task TASK-3TQ0R
+#+orgasmic_version: 2
+
+* BACKLOG TASK-3TQ0R Extend the driver-resolution fence to daemon integration tests
+:PROPERTIES:
+:ID: TASK-3TQ0R
+:IMPLEMENTS: TASK-3NJ9K
+:PRIORITY: P2
+:TEST_CMD: cargo test -p orgasmic-daemon
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:END:
+
+** Description
+
+TASK-3NJ9K routed daemon driver resolution through =crate::driver_resolution=
+and fenced it under =cfg(test)=: =resolve_driver= default-denies harness-exec
+modes, and =resolve_launch_driver= additionally refuses a mux address whose
+harness that mode would exec.
+
+=cfg(test)= is enabled only while compiling the lib's own test harness. An
+integration test in =crates/orgasmic-daemon/tests/= links the lib built
+*without* it, so both functions there are the production pass-through. The
+entire fence — default-deny, the panic, the launch seam — is absent for that
+whole body of tests.
+
+This is not hypothetical reach. =tests/dispatch_preflight.rs= boots a real
+daemon and =POST=s =/dispatch= with ={"mode": "acp-stdio", "harness":
+"claude"}=, i.e. the ordinary dispatch surface with a provider address, over
+HTTP. Others carry provider harnesses too: =tests/integration.rs=
+(=acp-stdio=/=codex=), =tests/dispatch_credential_plan.rs=,
+=tests/recovery_fault_restart.rs= (=tmux=/=claude= session fixtures driving boot
+reattach).
+
+Audited 2026-07-30: those dispatches are refused before any spawn, because each
+test engineers an unusable credential and asserts the 400. That is genuinely
+host-independent — =classify_bare_api_key= refuses an empty key without reading
+the Keychain — so **no integration test is known to spawn a provider today**.
+
+The defect is structural, not a live leak: the safety is a property each test
+supplies for itself, exactly the shape of the ="unreachable without a hermes
+binary"= comment that caused the original incident. Nothing stops the next
+integration test from posting the same address without engineering a refusal,
+and the fence that exists to catch precisely that cannot see it.
+
+** Acceptance
+
+- A daemon integration test that resolves or launches a real harness-exec
+  address is refused the same way a lib unit test is, with the same named,
+  host-independent message pointing at the stub.
+- The mechanism cannot be =cfg(test)=. Options to weigh and decide in writing:
+  a runtime test-profile flag the daemon sets when booted by
+  =Daemon::run(.., test_options())=; a cargo feature the =[dev-dependencies]=
+  self-dependency enables; or moving the launch seam behind a trait the test
+  harness substitutes. Whichever is chosen must not be settable in a production
+  build.
+- Production behaviour is byte-for-byte unchanged, and the guard costs nothing
+  in a release build.
+- The existing integration coverage keeps working: the preflight tests must
+  still reach their 400 refusals, and the recovery/reattach tests must still
+  resolve mux drivers for sessions they created themselves.
+- A regression test proves the guard from inside =tests/=: an integration test
+  that asks for =acp-stdio=/=claude= is refused, on any host, with and without
+  the provider binary installed.
+- Audit every file under =crates/orgasmic-daemon/tests/= for provider
+  addresses; migrate those whose address is incidental to the stub, and list in
+  the worklog the ones that legitimately need a real address and why.
+
+** Prior Evidence
+
+TASK-3NJ9K fence: =crates/orgasmic-daemon/src/driver_resolution.rs=, merged
+=75fe95f=. Launch-seam gap found in manager review and closed in =32c3f8c=.
+Original incident: =tx-20260730-orgasmic-3992=. Integration reach:
+=crates/orgasmic-daemon/tests/dispatch_preflight.rs= around line 200.
+

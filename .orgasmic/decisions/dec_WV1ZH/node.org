@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_WV1ZH
+#+orgasmic_version: 2
+
+* dec_WV1ZH Should task lifecycle columns be worker phases or the standard kanban set?    :schema:state-machine:tasks:
+:PROPERTIES:
+:ID:            dec_WV1ZH
+:GLOSSARY_REFS: term_RG690 term_VV48W
+:DECIDED_AT:    [2026-06-10 Wed]
+:SOURCE:        TASK-PT2DC griller session 2026-06-10
+:PARENT:        dec_MKC0A
+:END:
+** Context
+The v2 lifecycle (BACKLOG, EXPLORE, PLAN, IMPLEMENT, REVIEW, SHIP, DONE, BLOCKED, CANCELLED) encoded worker phases as human-facing columns. In practice SHIP was never used in sprint.org, BLOCKED duplicated the `:BLOCKED_BY:` dependency property, and the worker-phase columns (EXPLORE/PLAN/IMPLEMENT) forced a column move every time a different worker kind picked up the same task.
+** Decision
+The task lifecycle is the industry-standard set: Backlog, Todo, In Progress, In Review, Done, Cancelled. EXPLORE/PLAN/IMPLEMENT collapse into In Progress; which worker phase a task is in is carried by the run sub-state (dec_P7EY8), not the column — one In Progress task can be in `griller.working` and later `implementer.working`. In Review covers reviewer runs, human verdicts, and fix iterations. SHIP is dropped: merge plus a passing reviewer verdict IS the transition to Done. BLOCKED is dropped as a column: blocked-ness is the `<performer>.blocked` sub-state plus the existing `:BLOCKED_BY:` property, rendered as a badge so the task keeps its column. Todo replaces any "ready"-style naming.
+** Consequences
+state-machine.org needs a v3 rewrite (keywords + transition table); sprint.org headings, the heading parsers, dispatch lifecycle transitions, and the kanban columns all migrate in a follow-up IMPLEMENT task. Tasks no longer lose their position when blocked.
+

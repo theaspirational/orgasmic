@@ -1,0 +1,10 @@
+#+title: orgasmic task TASK-2DFTX.1
+#+orgasmic_version: 2
+
+* DONE TASK-2DFTX.1 Core: generic path/tree helper + DecisionNode.parent + :PARENT: edge vocab :decision-model:
+:PROPERTIES:
+:ID: TASK-2DFTX.1
+:END:
+
+Part of [[TASK-2DFTX]]. In orgasmic-core: (1) extract a generic, class-agnostic path/tree helper — validate :PARENT:, derive parent + ancestor chain, cycle/self-parent check — reusable by tasks later; (2) DecisionNode gains parent parsed from :PARENT: (schema.rs:328); (3) add :PARENT: to the canonical edge vocabulary ([[dec_HJENQ]]). Same-class + create-time-existence rules live here.
+

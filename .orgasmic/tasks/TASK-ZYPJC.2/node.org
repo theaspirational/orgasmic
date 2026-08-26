@@ -1,0 +1,34 @@
+#+title: orgasmic task TASK-ZYPJC.2
+#+orgasmic_version: 2
+
+* DONE TASK-ZYPJC.2 NodeModal data lifecycle and node-body polish :ui:perf:notifications:
+:PROPERTIES:
+:ID:               TASK-ZYPJC.2
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_A1FGY arch_M8JQT
+:PRODUCES:         ui/src/components/node-views/NodeModal.tsx ui/src/components/AdrView.tsx
+:WRITE_SCOPE:      ui/src/components/node-views/NodeModal.tsx ui/src/components/AdrView.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-047-review-report.md .orgasmic/decisions.org
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-ZYPJC
+:MERGE_SHA:        6862918
+:CODEX_COMMIT:     8c26232
+:END:
+
+** Description
+Addresses reviewer findings F-4 (medium perf), F-11 (medium design), F-13 (medium design). =NodeModal= currently runs all per-kind fetchers (decisions / architecture / glossary / ADR / three orgFile reads) on every page even when the modal is closed — wasteful network + auth-noise; glossary IDs leak through to modal header chrome and the mobile Sheet description even though dec_E394G requires the canonical name as the primary key in UI; ADR promote/demote actions live only in the row kebab menu and the source decision in the row renders as a passive badge instead of a clickable chip linking into the source decision modal.
+
+** Acceptance Criteria
+- [ ] *F-4 fix.* Detail loaders inside =NodeModal= are gated on =open=. When the modal is closed (no =?<kind>= path segment + no top-of-stack id), no fetchers run. When opening from a list page, the matching list response is reused if it already contains the needed fields — only fetch a detail endpoint (=GET /architecture/:id= / =GET /glossary/:id= / =GET /adr/:id=) when the body needs fields that the list summary lacks.
+- [ ] *F-11 fix.* Glossary modal hides the raw =:ID:= everywhere user-facing: header shows canonical name only; mobile Sheet description shows canonical name; the back-stack chip uses canonical name. The id stays in the URL =?drawer_stack=glossary-NNN= but is not rendered as a code span anywhere in the UI.
+- [ ] *F-13 fix part 1.* ADR row's "Generated from dec_NNN" is a clickable chip that pushes =dec_NNN= onto the drawer stack (opens the source decision modal). Keep the kebab menu for Promote/Demote at the row level.
+- [ ] *F-13 fix part 2.* ADR modal header carries Promote + Demote buttons (mirror the row kebab actions). Disabled states: Promote disabled when status is already =accepted=; Demote disabled when status is already =proposed= or =deprecated=. Both fire the existing =postAdrPromote= / =postAdrPromote= helpers with sonner toast feedback.
+- [ ] =cd ui && npm run build= passes.
+- [ ] =git diff --check= clean.
+
+** Evidence
+- [2026-05-23 Sat 18:26] Shipped in bundled fix-implementer commit =8c26232= (merged =6862918=). =NodeModal.tsx= now gates detail loaders on =open= (no fetchers run when stack is empty + nodeId is null); list-page payloads are reused as seed data for the modal body (no re-fetch when the list already carries the needed fields); glossary modal chrome shows canonical name in the header + mobile Sheet description (id stays in URL only); ADR row source-decision is a clickable chip that pushes the source decision id onto the drawer stack via the router seam; ADR modal header carries Promote + Demote buttons with disabled-state logic (Promote disabled at =accepted=; Demote disabled at =proposed= / =deprecated=).
+- Verification: =cd ui && npm run build= clean. No network burst on page load.
+- Reviewer F-4 (medium perf), F-11 (medium design), F-13 (medium design) closed.
+

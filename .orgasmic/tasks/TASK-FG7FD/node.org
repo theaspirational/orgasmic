@@ -1,0 +1,20 @@
+#+title: orgasmic task TASK-FG7FD
+#+orgasmic_version: 2
+
+* DONE TASK-FG7FD Upgrade rmux to 0.9 and harden macOS daemon lifecycle :drivers:rmux:macos:hardening:
+:PROPERTIES:
+:ID: TASK-FG7FD
+:PRIORITY: HIGH
+:WRITE_SCOPE: Cargo.toml Cargo.lock crates/orgasmic-drivers crates/orgasmic-daemon crates/orgasmic-cli .orgasmic/decisions.org .orgasmic/architecture.org .orgasmic/gotchas.org
+:IMPLEMENTS:  arch_V4DKF
+:END:
+
+Upgrade the rmux CLI/daemon/SDK stack from 0.5 to 0.9 as one protocol-compatible unit. Harden macOS startup so rmux is not silently reused from a terminated launch coalition; add a bounded Keychain usability preflight in a disposable rmux child before launching Cursor; fail fast with an actionable stale-daemon diagnostic; treat pane exit 139 or disappearance as terminal failure without continued polling; enforce CLI/SDK version compatibility. Preserve existing sessions unless an explicit migration step is authorized.
+
+Acceptance:
+- rmux-sdk and external provisioning/version checks require 0.9.x compatibility.
+- macOS stale-coalition/Keychain failure is detected before Cursor launch and returns a bounded actionable error.
+- terminal exit/disappearance ends the run immediately, including signal 11/exit 139.
+- deterministic unit/integration tests cover version mismatch, preflight failure, and terminal propagation.
+- cargo fmt --all --check, cargo test --workspace, cargo clippy --workspace --all-targets -- -D warnings pass.
+

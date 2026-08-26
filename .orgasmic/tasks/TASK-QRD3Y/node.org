@@ -1,0 +1,124 @@
+#+title: orgasmic task TASK-QRD3Y
+#+orgasmic_version: 2
+
+* DONE TASK-QRD3Y Generic ID-collision lint + mechanical merge-time repair (tasks AND decisions) :daemon:cli:identity:concurrency:reliability:
+:PROPERTIES:
+:ID:               TASK-QRD3Y
+:PRIORITY:         P3
+:WORKER:           implementer-cursor
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/index.rs crates/orgasmic-cli/src/ crates/orgasmic-core/src/ crates/orgasmic-daemon/tests/
+:READ_SCOPE:       crates/orgasmic-daemon/src/index.rs crates/orgasmic-core/src/org.rs .orgasmic/decisions.org
+:TEST_CMD:         cargo test -p orgasmic-core -p orgasmic-daemon -p orgasmic-cli
+:DEPENDS_ON:       TASK-GBT5W TASK-YRK1V
+:END:
+
+** Description
+Implements dec_X72P5(c) lint + repair under the FULL-MIGRATION decision
+(shape 3b escalated: short-random IDs everywhere, legacy re-keyed by
+TASK-YRK1V). The random ID is the stable key; collisions are freak events,
+but detection must be certain and repair mechanical. This lint is also the
+standing guard that the migration stays complete.
+
+1. *Lint (detection)*: post-pull/post-merge doctor lint flags, across all
+   live org state (tasks, decisions.org, architecture.org, glossary.org):
+   (i) duplicate IDs; (ii) malformed identity IDs (wrong alphabet/length,
+   all-digit) — which GENERICALLY catches sequential-numeric leftovers and
+   writers still on max+1 doctrine, with zero legacy-specific knowledge.
+   The lint is GREENFIELD-CLEAN (dec_X72P5b v4): it scans identity positions
+   in org state only — it knows no legacy grammar, polices no code prose,
+   needs no exemption lists. One-time legacy-leftover verification belongs
+   to TASK-YRK1V. Precedent: the phantom-heading lint through the
+   parse-errors channel (TASK-HC7PW).
+2. *Repair verb (mechanical resolution)*: =orgasmic doctor
+   --fix-id-collisions= (or equivalent) — for a freak random duplicate,
+   RE-MINT the incoming side (per merge-parent attribution; first-to-main
+   keeps its ID) and rewrite ALL in-repo references in the same pass
+   (heading, =DEPENDS_ON= / =PARENT_TASK= drawers, org-file prose);
+   provenance is the repair COMMIT itself — no provenance drawers
+   (dec_X72P5c, git-is-history). Ambiguous loose-prose refs: attribute by
+   which merge parent's diff introduced the line; refuse with a clear
+   message rather than guess. Idempotent: re-running after repair is a
+   no-op.
+
+3. *Riders from the post-migration audit [2026-06-12 Fri]* (the 6 legacy
+   code markers the audit found were fixed manager-side same day):
+   - Dangling-reference lint: reference positions — =:RELATES_TO:= /
+     =:GLOSSARY_REFS:= tokens, and indexed advisory-marker ids — that
+     resolve to no node =:ID:=. Generic, zero legacy knowledge. Known
+     catches at filing: 17 bare slugs in glossary =:RELATES_TO:=
+     (worker-run ×12 — likely deserves a real term) + ~17 more in
+     cross-file =:GLOSSARY_REFS:=; all pre-existed the migration. Decide
+     mint-term-or-prune per slug at implementation.
+   - Marker-grammar alignment: scripts/id-migration.py
+     =is_structured_marker_payload= requires an ids-only payload and
+     =should_skip_path= drops =crates/*/tests/= wholesale, while the
+     daemon's =parse_marker_payload= (index.rs) prefix-parses annotated
+     markers anywhere — that mismatch is exactly how the migration missed
+     6 markers. Pick ONE canonical marker grammar and make script and
+     daemon share it (or spec it in one place both assert against).
+     Concrete divergences verified live [2026-06-12 Fri]: (a) daemon
+     =is_marker_id_byte= excludes =.= — subtask marker task_CJWT3.1
+     indexes truncated as task_CJWT3; (b) the daemon line-scans string
+     literals — id-migration.py's SELF_TEST_TREE fixtures index as
+     dangling markers (task_156/task_999/task_1860D/dec_V056D →
+     scripts/id-migration.py), same class as index.rs's dec_001..007
+     test literals.
+
+(The shape-1 renumber-to-next-free and hash-qualified late-collision
+fallback are moot in random space — a re-mint costs the same as any other
+new ID.)
+
+** Acceptance Criteria
+- [ ] Lint flags duplicate IDs (synthetic merged tree, both sides minted
+  the same random ID) and malformed identity IDs (synthetic all-digit /
+  wrong-alphabet cases — covers sequential leftovers generically); zero
+  false positives on the real post-migration repo.
+- [ ] Repair re-mints the incoming side, rewrites references across all
+  org task files + decisions.org, leaves no provenance drawers (the repair
+  commit is the provenance); re-run is a no-op (test).
+- [ ] Decisions (dec_* in decisions.org) covered by the same lint + repair
+  path as tasks (test).
+- [ ] Ambiguous reference attribution refuses with an actionable message
+  (test).
+- [X] Gates: =cargo test -p orgasmic-core -p orgasmic-daemon -p orgasmic-cli=,
+  clippy -D warnings, fmt --check.
+
+** Evidence
+- implementer-cursor / composer-2.5-fast,
+  run-20260612T101126-60a1ff9901d84503a67261d9dd52a347, worker commit
+  =7ecd152= merged --no-ff =6cc4f15=; manager review-and-fix at
+  integration (no reviewer stage per round-4 operator process), fix-ups
+  in =4440acc=: select_incoming_occurrence refuses instead of guessing
+  occs.last() when git attribution is empty (+ regression test);
+  replace_id_token treats =.= as boundary unless it opens a =.<digit>=
+  suffix (sentence-final refs now rewrite, + test); 3 annotated org.rs
+  markers split into structured-marker + prose lines (ids-only canonical
+  grammar would have silently dropped them from the index); chore fmt
+  sweep + fixtures.rs snake-case + identity_lint.rs useless-format.
+- Delivered: orgasmic-core marker.rs (canonical grammar: ids-only
+  payloads, comment-region scan skips string literals, =.= id byte for
+  subtask markers, crates/*/tests/ skip — shared by daemon index.rs and
+  scripts/id-migration.py), identity_lint.rs (duplicate + malformed +
+  dangling RELATES_TO/GLOSSARY_REFS/marker lint via the parse-errors
+  channel, TASK-HC7PW precedent; malformed gate activates only once a
+  project contains minted ids), id_repair.rs + =orgasmic doctor
+  --fix-id-collisions=base..incoming= (re-mint incoming side by git
+  path attribution, ambiguous → refuse).
+- Gates on merged main: TEST_CMD suites green except the documented
+  pre-existing set — 3 dispatch_endpoint PID tests + 2 integration
+  assertions (TASK-ZD72S) + the load-dependent dispatch-close flake
+  (passes isolated, handoff Divergence); clippy -D warnings clean
+  (lib/bin all crates; --all-targets clean for core+cli; daemon
+  writer_durability.rs + id_mint.rs test-target lints are C2PQ3/GBT5W
+  debt, noted for TASK-ZD72S); fmt --check clean workspace-wide.
+- FIRST REAL CATCH: duplicate TASK-VXB0T (both were legacy TASK-132 —
+  pre-existing max+1 collision carried through the migration). Repaired
+  manager-side =3fe554b= (attribution pre-dates any merge range, so the
+  CLI verb correctly refuses): BACKLOG OS-service-adapters task
+  re-keyed to minted TASK-R3TWA, DONE lifecycle-v3 task keeps the id.
+  Post-repair probe: 0 duplicates, 0 malformed.
+- Dangling-reference lint flags 56 pre-existing bare slugs in
+  =:RELATES_TO:=/=:GLOSSARY_REFS:= (worker-run, task, state-machine,
+  acp, tmux_tui, …) — pre-existing data debt, surfaces in parse-errors
+  by design; mint-term-or-prune drain is follow-up data work.
+

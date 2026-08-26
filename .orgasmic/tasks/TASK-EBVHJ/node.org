@@ -1,0 +1,27 @@
+#+title: orgasmic task TASK-EBVHJ
+#+orgasmic_version: 2
+
+* DONE TASK-EBVHJ Blocking "Connect to daemon" token gate for tokenless visitors :ui:auth:onboarding:run-dock:dec_WTM5Y:
+:PROPERTIES:
+:ID:               TASK-EBVHJ
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:WRITE_SCOPE:      ui/src/components/ConnectGate.tsx ui/src/components/AppShell.tsx ui/src/components/ConnectionBanner.tsx
+:READ_SCOPE:       ui/src/lib/transport.ts ui/src/lib/backend.ts ui/src/components/SettingsView.tsx ui/src/components/ui/dialog.tsx ui/src/components/ui/input.tsx ui/src/components/ui/button.tsx
+:TEST_CMD:         npm --prefix ui run build
+:END:
+
+** Description
+A tokenless visitor (e.g. first open over the cloudflare tunnel) currently only sees a passive "check bearer token in Settings" banner, because bearer tokens live in the connection profile in PER-ORIGIN localStorage. Replace the dead-end with an active, blocking, self-validating prompt.
+
+Accepted design (operator-decided): a *blocking modal gate* with *live validation*. On load with no token (=!activeProfile.token=) OR on any 401, a non-dismissible modal opens over a locked app: bearer-token input (masked), hint =Find it in $ORGASMIC_HOME/user/auth/token=, *Connect* button, *Advanced →* (opens full Settings). On Connect: =testConnection({ ...activeProfile, token })= — if =ok= persist via =updateProfile(activeProfile.id, { token })= and close; else inline error, stay open. Token saved ONLY through =updateProfile= (flows through the existing profile/transport pipeline; persists per-origin). Reuse the existing =setUnauthorizedHandler= 401 hook in =AppShell= (~180) and shadcn dialog/input/button. WRITE_SCOPE is =ui/= only.
+
+** Acceptance Criteria
+- [ ] Tokenless load (or a 401) opens a blocking, non-dismissible modal; the app behind is not usable until connected.
+- [ ] Valid token → =testConnection= passes → saved via =updateProfile= → modal closes → app loads; invalid token → inline error, modal stays open.
+- [ ] Token input masked; no new localStorage key or parallel token store; transport/backend logic untouched (import only).
+- [~] "Advanced →" opens full Settings (works with an active project; routes to =/board= for a projectless visitor — Settings is project-scoped, =pathForView= falls back to =/board= when =projectId= is null). Follow-up: TASK-K3Y04. =npm run build= + =tsc --noEmit= green.
+
+** Evidence
+Landed to main in merge =e26d906= (impl =ed66154=). New =ConnectGate.tsx= (122 lines): =<Dialog open={needsToken}>= with =showCloseButton={false}=, =onPointerDownOutside=/=onEscapeKeyDown= → =preventDefault= (non-dismissible); masked =type="password"= token input; =testConnection({...activeProfile, token})= validate → =updateProfile(id,{token})= persist → =onConnected()=. =AppShell= wires =needsToken = !activeProfile.token || Boolean(authError)= and =onConnected=() => setAuthError(null)=. =ConnectionBanner= auth-error branch removed (gate owns 401 UX; banner keeps ws-state). No new localStorage key — token flows through the existing profile pipeline (per-origin). Gates: =npm run build= + =tsc --noEmit= green on merged main. Caveat: in-browser click-through unverified this session (no browser-automation tool) — vite HMR serves it on :5180 / the tunnel. Known edge → TASK-K3Y04 ("Advanced →" projectless routing).
+

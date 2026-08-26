@@ -1,0 +1,47 @@
+#+title: orgasmic task TASK-DK0Y2.1
+#+orgasmic_version: 2
+
+* DONE TASK-DK0Y2.1 Graph focus + lazy fallback + ?layout preservation :ui:routing:graph:
+:PROPERTIES:
+:ID:               TASK-DK0Y2.1
+:MERGE_SHA:        005a423
+:CODEX_COMMIT:     1e1aa30
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_A1FGY
+:PRODUCES:         ui/src/components/GraphView.tsx ui/src/app/router.tsx
+:WRITE_SCOPE:      ui/src/components/GraphView.tsx ui/src/app/router.tsx ui/src/components/TasksPage.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-048-review-report.md /tmp/orgasmic-codex/task-048-brief.md
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-DK0Y2
+:END:
+
+** Description
+Bundle of three small UI follow-ups from the TASK-DK0Y2 reviewer pass. All three live in =ui/src/=, share no overlap with the daemon-side TASK-DK0Y2.2, and can be implemented in one coupled commit.
+
+*F-1 (medium bug):* =GraphView= still runs two viewport ops when =?focus= is set with no saved viewport. React Flow receives =fitView={!viewportSeed.viewport}= and fits the whole graph on mount; the focus effect schedules a second =fitView({ nodes: [{ id: focus }] })=. Result: full-graph flash, or viewport race if RF's initial fit completes after the focus fit. Fix: gate the initial full-graph fit on =!focus= AND trigger the focused fit from a single flow-ready path (=onInit=-only or a single explicit ready-state effect) so exactly one viewport action wins when focus is present.
+
+*F-4 (low design):* The bonus lazy-load uses =<Suspense fallback={null}>= in =router.tsx:366-392=, so the first task click or hard reload at =/tasks?task=...= updates the URL but shows nothing until the TaskDialog chunk resolves. The data-loading skeleton inside TaskDialog only appears AFTER the chunk is fetched. Fix: light dialog/skeleton fallback (e.g., a stub =<Dialog>= with empty =<DialogContent>= showing the existing TaskDialog loading skeleton, or a small inline placeholder), OR prefetch the chunk from TasksPage row intent (=onMouseEnter= / =onFocus= on the row).
+
+*F-5 (low bug):* =tasksRoute.validateSearch= only preserves =task=, but =TasksPage= still owns =layout= via the legacy =useQueryState('layout')=. Opening or closing a task through TanStack navigation rebuilds search from the route search shape, dropping =?layout=kanban= from the URL even though the page still treats it as URL state. Fix: either (a) add =layout?: 'list' | 'kanban'= to =TasksSearch= validateSearch and preserve it through the open/close reducers, OR (b) migrate TasksPage layout fully onto the route search API (kill the =useQueryState= usage). (a) is smaller; (b) is more consistent with dec_JSX48.
+
+** Acceptance Criteria
+- [ ] *F-1:* Loading =/projects/.../graph?focus=decision:dec_GRDFB= does NOT flash a full-graph fit first — exactly one viewport action happens and it's the focused fit. If =?focus= is absent the existing fit-on-init behavior is preserved unchanged.
+- [ ] *F-1:* Verify by reading the code: `fitView` prop on =<ReactFlow>= is conditional on `!focus`, AND the focus effect runs once per focus value (no double-fitView for the same focus).
+- [ ] *F-4:* First click on a Tasks row shows SOME UI surface (skeleton dialog, fallback shell, or pre-fetched ready dialog) before the chunk-load completes — not a frozen-looking nothing.
+- [ ] *F-5:* Setting =?layout=kanban= then opening a task (=?task=TASK-NNN=) preserves both params in the URL after the modal opens. Closing the modal preserves =?layout=. Hard reload at =/tasks?layout=kanban&task=TASK-NNN= opens both correctly.
+- [ ] =cd ui && npm run build= clean (tsc --noEmit + vite build). Main chunk stays under 360 kB. No new dependencies.
+- [ ] =git diff --check= clean.
+
+** Notes
+Single coupled commit bundled with TASK-DK0Y2.2 fix-subtask per the TASK-EBWZ9.{1..5} pattern (one merge SHA, two implementer.done tx). Fix-implementer dispatch — no reviewer-of-reviewer pass per discipline.
+
+** Evidence
+- [2026-05-23 Sat 22:02] Shipped in single coupled commit =1e1aa30= on =task-048.fixes-impl=; merged no-ff as =005a423= on main. Codex gpt-5.5 xhigh, ~8m50s wall, 149,389 tokens (shared with TASK-DK0Y2.2), session =019e562f-456e-7cf0-9d1a-6c8724860abd=. =implementer.done= =tx-20260523-org-0153= via =orgasmic manager dispatch-close= (shared =:MERGE_SHA: 005a423= + =:CODEX_COMMIT: 1e1aa30= with TASK-DK0Y2.2's hand-coded =tx-20260523-org-0154=).
+- *F-1 (medium bug) closed:* =ui/src/components/GraphView.tsx= (+16 LOC net) — initial RF =fitView= prop now gated on =!focus= (i.e., only fires when no focus param); focused-fit driven from a single ready-state path (no double-fitView). No more full-graph flash when =?focus= is set.
+- *F-4 (low design) closed:* =ui/src/app/router.tsx= (+75 LOC net for both F-4 and F-5) — lazy =TaskDialog= now renders a visible dialog skeleton shell as Suspense fallback while the chunk loads, instead of =fallback={null}=. First task click shows immediate UI feedback.
+- *F-5 (low bug) closed:* =tasksRoute.validateSearch= now also reads =layout?: 'list' | 'kanban'=; open/close reducers spread =prev= so =?layout=kanban= survives task-modal navigation; verified by hard-reload at =/tasks?layout=kanban&task=TASK-NNN= opening both correctly.
+- Verification (re-run on worktree + merged main): =cargo test --workspace= 190 → 194 (+4 tests across parser robustness + last-good behavior); =cargo clippy --workspace --all-targets -- -D warnings= clean; =cargo fmt --check= clean; =git diff --check= clean; MSRV 1.78 preserved. =cd ui && npm run build= clean (vite 6.4.2; main =index= chunk 348.54 → 351.33 kB = +2.79 kB from lazy fallback shell, well under 360 kB budget; vendor-codemirror 390.51 kB unchanged).
+- No new deps in =package.json= or =Cargo.toml=. Worktree =/tmp/orgasmic-worktrees/task-048.fixes= removed; local branch =task-048.fixes-impl= deleted (origin retains as audit ref).
+- TASK-DK0Y2 parent flipped =REVIEW → DONE= in this commit (cluster closure); 0 open findings.
+

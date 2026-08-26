@@ -1,0 +1,78 @@
+#+title: orgasmic task TASK-ZFNE1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-ZFNE1 The README hero image labels an architect agent the product cannot launch
+:PROPERTIES:
+:ID: TASK-ZFNE1
+:PRIORITY: P3
+:END:
+
+** Description
+
+=README.md:6= embeds =ui/public/brand/orgasmic-framework-loop.png=, the project's
+hero graphic. The illustration *visibly labels =architect= as one of the LLM
+agent roles*, in a cluster with implementer, reviewer and glossarist, feeding the
+depicted Prompt Studio and workflow.
+
+Stage A (TASK-RQ270.1) retired the ability to produce architecture content:
+=DispatchEndpointKind= accepts only implementer and reviewer, =stage_spec_for=
+only grill and plan, and no architect prompt spec ships. So the front page of the
+project advertises an agent the product cannot launch.
+
+Found by the TASK-RQ270.1.1 second review, which inspected the rendered PNG at
+its original 1672x941 resolution. Confirmed by the manager by viewing it.
+
+** THE FIFTH AUDIT FAILURE SHAPE, and the reason this task exists separately
+
+The stage-A doctrine round was audited four times and each audit missed one level
+deeper. Recorded because the sequence is the lesson, not any single instance:
+
+1. grepped =arch:= — missed the =@arch= prefix entirely;
+2. anchored the pattern to the comment prefix — missed prose;
+3. searched the whole tree — but only for the token;
+4. searched for the token — when the claim was the SYNONYM "architecture";
+5. searched TEXT — when the claim was *rasterized into an image*.
+
+*No text instrument can reach step 5.* A repository audit that asks "does
+anything still advertise X" has to include rendered assets — images, diagrams,
+screenshots, recorded demos — or it is answering a narrower question than it
+claims to.
+
+** Why this is filed rather than fixed in the stage-A round
+
+The graphic depicts the WHOLE framework loop, and most of what it shows is still
+true. =architecture.org= still exists; architecture-as-CONTENT is stage D's to
+remove, not stage A's. Regenerating a hand-illustrated hero image is also not a
+mechanical edit.
+
+Fixing it now would mean either redrawing the graphic before the excision has
+finished — guaranteeing a second redraw — or pulling the project's front-page
+image, which is a product-presentation decision rather than a manager cleanup.
+
+*The cheap interim option is an operator call*: remove the embed until the
+graphic is regenerated, accepting a plainer README. Recorded here rather than
+taken, because it is outward-facing.
+
+** Do this ONCE, after the excision lands
+
+The natural owner is stage E (=TASK-RQ270= "SHIPPED DOCTRINE REWRITE"), or
+immediately after stage D. By then the true picture is known: which agent roles
+exist, whether =architecture= remains a pipeline stage at all, and what
+=.orgasmic/= actually contains.
+
+** Also check when regenerating
+
+The same image shows =glossarist= as an agent role and =architecture.org= in the
+=.orgasmic/= folder listing, and =README.md:10= states the loop as
+"Grilling -> Decisions+Glossary -> Architecture -> Tasks -> Code -> Repeat".
+Whether a glossarist is dispatchable was NOT verified by this task; check it
+rather than assuming, and correct the loop line in the same pass.
+
+** Acceptance
+
+- No current-facing rendered asset labels an agent role the product cannot
+  launch.
+- =README.md:10='s loop matches the post-excision pipeline.
+- The audit that closes this task inspects RENDERED assets, not only source text,
+  and says so.
+

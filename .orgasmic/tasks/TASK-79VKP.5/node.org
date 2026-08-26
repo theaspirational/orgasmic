@@ -1,0 +1,21 @@
+#+title: orgasmic task TASK-79VKP.5
+#+orgasmic_version: 2
+
+* BACKLOG TASK-79VKP.5 Record exact verification attestations and reuse only identical gate inputs    :framework:testing:verification:
+:PROPERTIES:
+:DEPENDS_ON: TASK-DTCBP TASK-8Q92K TASK-4BBA6 TASK-P4XKT
+:ID: TASK-79VKP.5
+:PRIORITY: P2
+:END:
+
+** Description
+TASK-K9WWM repeatedly ran targeted gates in isolated workers and then repeated format, clippy, build, exact tests, and the complete manager suite. The final test-only correction compiled once in its worktree and again from the manager tree. Existing tasks improve artifact coverage, stale-artifact discovery, host safety, and intermittent-test detection; none defines when a prior gate result is safe to reuse.
+
+Design content-addressed local verification attestations. An attestation must bind the exact git tree, dirty-state proof, command and arguments, relevant environment and toolchain versions, test binary or artifact hashes, host classification, start and end times, exit status, and durable logs. Decide which gates always require independent rerun and which purely deterministic results can be accepted on identical inputs. Reuse must fail closed when any input is unknown or when a test is classified load-sensitive or intermittent.
+
+** Acceptance
+- Worker and manager gates emit one machine-readable attestation schema with durable log references.
+- Identical clean-tree deterministic gates can be reused with an explicit audit line; changing source, command, toolchain, environment contract, or classification forces execution.
+- Independent review and final-tree policies state which gates are never reusable and why.
+- A TASK-K9WWM-shaped reproduction measures time saved while negative controls prove no stale or wrong-worktree green can be accepted.
+

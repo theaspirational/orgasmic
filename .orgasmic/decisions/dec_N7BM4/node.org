@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_N7BM4
+#+orgasmic_version: 2
+
+* dec_N7BM4 Where does the project scaffold live once the skill no longer needs to be self-contained?
+:PROPERTIES:
+:ID: dec_N7BM4
+:PARENT: dec_YTJ0G
+:RELATES_TO: dec_RX4DF dec_HR8D8 dec_GRDFB
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+dec_RX4DF bundled the scaffold templates inside the skill at =shipped/skills/orgasmic/scaffold/= so the copied skill could init a project offline with no binary or =$ORGASMIC_HOME=. With the runtime now mandatory (dec_YTJ0G) that founding rationale is dead — =init= already requires =orgasmic status= to succeed. The user-override key is already the skill-free name =user/project-scaffold/= (=resolve_scaffold=, =orgasmic-core/src/projects.rs=), so shipped and user tiers are asymmetric for historical reasons only.
+** Decision
+Move the scaffold to =shipped/project-scaffold/=. =SCAFFOLD_SHIPPED_DIR= repoints; the loader tiers become symmetric (=user/project-scaffold/<rel>= shadows =shipped/project-scaffold/<rel>= per dec_GRDFB). The skill sheds its =scaffold/= folder and slims to router + references (the dec_HR8D8 thin-router ideal); the skill install/copy prompt no longer carries scaffold assets. Doctor's =REQUIRED_SHIPPED=, the fixtures parse test, and =references/init.md= update to the new path.
+** Consequences
+One scaffold tree, symmetric with its override key; the skill is lighter and purely a UX surface over the CLI. Reverses the "no shipped/project-scaffold path at all" clause of dec_RX4DF — the drift-risk argument made there is void now that the path is the single source rather than an alias. Scaffold membership itself shrinks separately (dec on conventions/config).
+

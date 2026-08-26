@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_TEKEB
+#+orgasmic_version: 2
+
+* dec_TEKEB How should design flow from user answers through architecture to implementation?    :design-graph:
+:PROPERTIES:
+:ID:            dec_TEKEB
+:GLOSSARY_REFS: term_X4JGJ term_P94BF term_H5YHC term_RG690
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Pipeline: griller -> architector -> planner -> implementer
+:PARENT:        dec_X6Q0S
+:END:
+** Context
+Orgasmic needs a durable handoff from user answers to architecture and implementation. A single universal design agent reduces orchestration but blurs file ownership and produces premature downstream proposals; manual human conversion gives clear control but no autonomous architecture pipeline.
+** Decision
+Use one agent per graph layer: griller owns decisions, architector owns architecture and ADR triage, planner owns tasks, implementers own code. The manager advances a stage only after the prior layer produces a reviewable artifact. The current state represents a completed griller pass.
+** Consequences
+File ownership stays clear and token use stays bounded; mid-grilling answer changes do not waste work on downstream architecture that should not exist yet. Architector composes architecture via mechanism-split decomposition — each subsystem yields 2–6 functional-component leaves whose nodes are stable contracts (a trait, a REST endpoint group, a watcher loop, a hook, a parser) rather than features or pages — guided by ten encoded principles (stable contract per leaf; verb-namable; mechanism not feature; 1–10 source paths; 2–6 children per parent; no mechanism-as-mechanism or cross-cutting-concern leaves; tests/build scripts/fixtures excluded from =:SOURCE_PATHS:=; bootstrap from existing module boundaries; target/planned nodes kept visually separate and excluded from drift enforcement). The design-graph's auto-consistency machinery (semantic-hash, stale propagation, finalize-validate gate, generated ADRs, snapshots) was later removed; the architecture graph survives as an authored, materialized, React-Flow-visualized graph, the glossary as a plain authored doc, and decisions as ADR records.
+

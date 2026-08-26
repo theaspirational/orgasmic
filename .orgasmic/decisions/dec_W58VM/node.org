@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_W58VM
+#+orgasmic_version: 2
+
+* dec_W58VM How should the cross-project board store data without owning project state?    :project-model:
+:PROPERTIES:
+:ID:            dec_W58VM
+:GLOSSARY_REFS: term_FM60Y term_CJ2R4 term_CEQFS
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Board (Q10)
+:PARENT:        dec_G38EC
+:END:
+** Context
+The board must support project aggregation without becoming the source of project data. A denormalized board duplicates state and invites merge conflicts; a runtime-only board loses project registration across restarts.
+** Decision
+=board.org= is a properties-only pointer list with no prose and no auto-scan. It records project identity, path, repo, branch, status, and timestamps; aggregation is derived from the index. Project registration is explicit add/init only.
+** Consequences
+The board stays small and conflict-light while project data remains in each repo's =.orgasmic/=.
+

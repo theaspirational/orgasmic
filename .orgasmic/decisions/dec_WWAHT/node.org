@@ -1,0 +1,15 @@
+#+title: orgasmic decision dec_WWAHT
+#+orgasmic_version: 2
+
+* dec_WWAHT How should the Graph page persist hand-arranged layout without persisting topology?
+:PROPERTIES:
+:ID: dec_WWAHT
+:TAGS: graph,ui,layout,overlay,daemon
+:END:
+
+Context: The daemon already derives the full cross-layer graph (/graph/nodes, /graph/edges). The existing graph surface (arch_M8JQT) is read-only, persists node positions only in localStorage, never in files, and deliberately excludes tasks. We want an editable, hand-arranged cross-layer map (decisions, architecture, active tasks) without persisting topology.
+
+Decision: The Graph page persists only a layout overlay - per-node geometry (x,y,w,h) plus curation (hidden,pinned), keyed by node id - and never topology, which stays live-derived. On disk the overlay is .orgasmic/graph_layout.org (one heading per intentionally-placed node, geometry in the property drawer) and is served to the UI as JSON via a /graph/layout endpoint, reusing the flocked org writer and parser. Per-node resolution is: machine-local localStorage > shared graph_layout.org > deterministic default band layout. The shared overlay is a baseline arrangement written only deliberately (the graph_curator agent or an explicit publish), not an authority. Dragging writes localStorage only and never touches git. Reset is two-level (global reset-to-shared plus per-node snap-to-shared) with a quiet shared-map-updated nudge when the baseline changes for locally-overridden nodes. Viewport (pan/zoom) stays machine-local. Default curation = decisions union architecture union active-tasks (backlog/todo/in_progress/in_review); glossary and artifacts are off by default (glossary renders as a left column); backbone edges (motivated_by, implements, supersedes) are on, dense edges (depends_on, dataflow, task deps) are toggle layers; containment renders as nesting. Topology is read-only on the page (no node create/delete).
+
+Consequences: Reverses arch_M8JQT's localStorage-only-positions, tasks-excluded, and read-only constraints; arch_M8JQT is revised accordingly by a follow-up architector task. Routine dragging never hits git, so the committed overlay has minimal merge surface (heading-per-node). A republished baseline reaches personalized users only via the nudge/reset, by design. Relies on dec for retained superseded decisions for the gray decisions band.
+

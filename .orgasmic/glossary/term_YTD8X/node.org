@@ -1,0 +1,12 @@
+#+title: orgasmic glossary term term_YTD8X
+#+orgasmic_version: 2
+
+* term_YTD8X Taskbar
+:PROPERTIES:
+:AVOID: peek bar; tab strip; dock header
+:CANONICAL: Taskbar
+:DEFINITION: The always-visible strip of the Run Dock. It carries the Terminal launcher, one button per live run, and the Running Agents menu. When the dock is collapsed it is the whole dock; when a session is raised it becomes the dock's top row, browser-tab style.
+:ID: term_YTD8X
+:RELATES_TO: term_5V9F8
+:END:
+

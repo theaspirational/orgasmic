@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_WH9PD
+#+orgasmic_version: 2
+
+* dec_WH9PD Who may write each file, and how are concurrent writes arbitrated?    :file-substrate:
+:PROPERTIES:
+:ID:            dec_WH9PD
+:GLOSSARY_REFS: term_N5SJT term_YC32J term_P94BF term_H5YHC
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Write surface
+:END:
+** Context
+The system needs a clear answer to who may mutate each file role. Append-only everywhere gives strong audit semantics but poor ergonomics for tasks, prompts, and templates; direct edits everywhere give simple files but weak auditability and race protection for graph state.
+** Decision
+Use role-based write authority. The daemon serializes tx, sessions, graph files, snapshots, and generated artifacts, while selected working files remain directly editable through RPC and advisory flock. Workers mutate only their own claimed task's evidence and worklog directly, with state transitions mediated by the daemon.
+** Consequences
+Graph and audit integrity have one writer, but task bodies and user-authored content stay ergonomic. Daemon-owned artifacts are RPC-only; other working files use advisory flock.
+

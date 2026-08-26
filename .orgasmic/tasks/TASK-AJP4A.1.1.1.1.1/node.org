@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-AJP4A.1.1.1.1.1
+#+orgasmic_version: 2
+
+* DONE TASK-AJP4A.1.1.1.1.1 Finish coordinator-delay classification and timeout validation
+:PROPERTIES:
+:ID: TASK-AJP4A.1.1.1.1.1
+:PRIORITY: P1
+:READ_SCOPE: crates/orgasmic-daemon/src/index.rs,crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/src/daemon_service.rs
+:TEST_CMD: cargo test -p orgasmic-daemon --lib tx_coverage && cargo test -p orgasmic-daemon --lib index:: && cargo test -p orgasmic-cli --bins daemon_service::tests
+:WRITE_SCOPE: crates/orgasmic-daemon/src/index.rs,crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/src/daemon_service.rs
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Close the two correctness/performance follow-ups from Claude Opus review tx-20260811-orgasmic-5823 while keeping the lazy per-project discovery design.
+
+** Acceptance Criteria
+- [ ] /tx classifies a coordinator timeout as delayed from its typed outcome even if a detached scan published Ready before the delay record; it never renders that path as a genuine failed project.
+- [ ] The regression covers a Ready-with-delay diagnostic and verifies the coverage header uses delayed=[…], preserves the bare JSON array, and excludes the target from failed.
+- [ ] Unscoped /tx avoids one full Index snapshot clone per failed/delayed project; use one post-loop snapshot or eliminate the snapshot classification dependency.
+- [ ] Captured scan-timeout control-character validation is common to macOS and systemd render paths, preserving ordinary raw values and daemon 1..300 validation.
+- [ ] Run focused Rust/CLI tests, formatting, clippy, and build; do not run the classified broad daemon aggregate or mutate any live service/daemon.
+

@@ -1,0 +1,63 @@
+#+title: orgasmic task TASK-G7E4R
+#+orgasmic_version: 2
+
+* DONE TASK-G7E4R MACOS_UNLOAD_TIMEOUT is the last literal on the shutdown-budget axis and can fail a healthy stop
+:PROPERTIES:
+:ID: TASK-G7E4R
+:PRIORITY: P1
+:TAGS: cli,lifecycle,budgets,macos
+:END:
+** Description
+Surfaced by the TASK-QRB8S worker and deliberately left alone — it is a
+different constant in a different function and that task's ask did not cover it.
+
+=== MACOS_UNLOAD_TIMEOUT is the remaining literal on the shutdown-budget axis
+
+`crates/orgasmic-cli/src/daemon_service.rs:495` is a 5s literal. It polls for
+the *orgasmic* agent to disappear after `launchctl bootout` (`:518-529`).
+`bootout` can return before the job is gone — that is precisely why TASK-VXXQC
+added the poll — and the job only goes when the daemon finishes a shutdown that
+may legitimately take `ShutdownBudgets::default().total()` = 40s.
+
+So a 5s poll can expire during a **healthy** drain and fail a stop with
+"launchd still reports … loaded 5s after bootout". That is the same operator
+experience TASK-QRB8S just fixed on the start path: a failure message for
+something that was working.
+
+The rest of this axis is now derived — `service_stop_timeout()` (TASK-Q07Y5),
+`stop_timeout()` (TASK-WGXKD.2), `start_timeout()` (TASK-QRB8S). This is the
+last one that is not.
+
+=== Second, unrelated observation from the same review
+
+`daemon_service.rs:448-451`: the `bootout` of the **rmux** agent is
+fire-and-forget (`let _ = …`), unlike the orgasmic agent's verified unload. A
+slow-exiting previous `rmux-daemon` can therefore race the subsequent
+`bootstrap`. This predates TASK-ATAXN and is bounded by rmux's own exit, but it
+is an unverified teardown on the path that cycles the rmux LaunchAgent — the
+same path that destroyed three dispatched workers during the 2026-07-28 outage.
+Decide whether it deserves the same verified-unload treatment.
+
+=== Ask
+
+1. Derive `MACOS_UNLOAD_TIMEOUT` from `ShutdownBudgets` plus a named margin, in
+   the shape the other three now use, and say what the margin covers.
+2. Decide and state whether the rmux `bootout` should be verified like the
+   orgasmic one. If yes, do it; if no, record why fire-and-forget is correct
+   there.
+3. Confirm no other literal remains on this axis. List what you checked.
+
+=== Acceptance
+
+- A regression in which a stop overlaps a drain longer than the old 5s literal
+  and still succeeds. Prove it by injection: restore the literal, watch it fail,
+  restore the derivation, watch it pass — with output.
+- The value is asserted as a relationship, never as a number.
+- A genuinely stuck unload still fails in a bounded, actionable time; say what
+  that time is.
+
+=== Non-goals
+
+- Do not change `ShutdownBudgets`, `service_stop_timeout`, `stop_timeout` or
+  `start_timeout`. This task consumes all four.
+

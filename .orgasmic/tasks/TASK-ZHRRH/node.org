@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-ZHRRH
+#+orgasmic_version: 2
+
+* DONE TASK-ZHRRH TASK-AFE5Q fix round 3: bounded Cursor trust and exact attempt cleanup
+:PROPERTIES:
+:ID: TASK-ZHRRH
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve final review findings after 1bff4b9: replace remaining text-triggerable Cursor trust heuristics with bounded startup-state proof; cleanup only exact attempt artifacts; cancel and join startup tasks; clear delta warning; use collision-safe full attempt identity.
+

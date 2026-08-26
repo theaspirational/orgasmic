@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-6ADDB
+#+orgasmic_version: 2
+
+* BACKLOG TASK-6ADDB Unowned load flake: post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record keeps the old launch address
+:PROPERTIES:
+:ID: TASK-6ADDB
+:PRIORITY: P2
+:END:
+
+Observed 2026-07-29 in TASK-6HJYT's gate run (workspace suite under load), green in isolation, no registry entry: api::tests::post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record (crates/orgasmic-daemon/src/api.rs:29094 at 6HJYT's HEAD) — 'launch address kept model=old-model/effort=high instead of model=new-model/effort=None'. The regenerated launch address did not replace the persisted one under suite concurrency. Spawns a real rmux session. Per the DJ1WV rule an unowned flake cannot be registered, so recurrence classifies REAL and taxes gates. Diagnose per the 5FEN5 standard: reproduce under suite-concurrent load, fix at the synchronization if the cause is an observer racing background persistence, or fix the product if regenerate genuinely can lose the replacement; register with this task as owner only as the fallback, with the measured signature. Injection per TCTTD standard, self-tested.
+

@@ -1,0 +1,80 @@
+#+title: orgasmic task TASK-C2PQ3
+#+orgasmic_version: 2
+
+* DONE TASK-C2PQ3 tx append durability: fsync before ack + cached project-tx sequence :daemon:tx:reliability:durability:
+:PROPERTIES:
+:ID:               TASK-C2PQ3
+:PRIORITY:         P3
+:WORKER:           implementer-cursor
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/writer.rs crates/orgasmic-daemon/tests/
+:READ_SCOPE:       crates/orgasmic-daemon/src/writer.rs crates/orgasmic-daemon/src/api.rs
+:TEST_CMD:         cargo test -p orgasmic-daemon
+:DEPENDS_ON:       TASK-E9K1B
+:END:
+
+** Description
+From the round-3 critique (point 3a — conceded after source verification):
+
+1. *Durability gap*: =append_tx_inner= (writer.rs:347) acks through the
+   oneshot after the write syscall but never calls =sync_all=/=sync_data= —
+   the rewrite path fsyncs (writer.rs:550), the append path does not. The tx
+   log is the audit ground truth; a success response must mean the record
+   survives a kernel crash. Low rate path — fsync-per-append is affordable.
+2. *O(history) sequencer*: =next_project_tx_id= (writer.rs:380) re-reads and
+   re-parses the ENTIRE tx directory on every project-sequenced append, and
+   a single corrupt tx file fails ID assignment for all subsequent appends.
+   Cache the max sequence per (project, month) in the writer task; fall back
+   to a scan only on cache miss.
+3. *Group commit (round-4 critique §3 — adopted)*: naive fsync-per-append
+   serializes throughput to disk-flush latency (macOS =F_FULLFSYNC= can run
+   10-20ms). At today's tx rates that would survive, but the serialized
+   writer loop makes group commit nearly free: batch-drain whatever appends
+   are queued in the mpsc, write them all, fsync ONCE, then ack all the
+   oneshots. Make batching the design rather than retrofitting it later.
+
+Scope overlaps TASK-E9K1B (same writer/api tx path) — hence DEPENDS_ON; do not
+dispatch while TASK-E9K1B is in flight.
+
+** Acceptance Criteria
+- [ ] Tx append response is sent only after the appended bytes are fsynced
+  (=sync_data= acceptable); test asserts the ordering hook-level or via
+  injected fs error.
+- [ ] Concurrent appends are coalesced into one fsync (group commit): test
+  drives N concurrent appends and asserts fewer syncs than appends, with
+  every ack still ordered after the sync covering its bytes.
+- [ ] Project-tx sequence assignment is O(1) amortized (cached); regression
+  test proves no full-directory re-parse on the hot path.
+- [ ] Corrupt sibling tx file no longer blocks new appends (degraded-scan
+  behavior defined and tested).
+- [X] =cargo test -p orgasmic-daemon= green (lib + new suite; 5 full-suite
+  failures verified pre-existing on main, see Evidence).
+
+** Evidence
+- Worker: =implementer-cursor= / composer-2.5-fast,
+  run-20260611T211608-604c81a; worker commit 8e91fbd; merged 862833a
+  (--no-ff). Reviewer stage SKIPPED per operator override 2026-06-12 —
+  manager reviewed the full diff directly.
+- Implementation: =WriterCommand::Tx= batch-drains queued appends via
+  =try_recv= (non-Tx command stashed and handled next iteration), writes
+  all, =sync_data= once per touched file via =sync_tx_path=, then acks
+  every oneshot; sync failure flips affected acks to Err.
+  =ProjectTxSeqCache= caches per (project, month) with project_max
+  fallback; directory scan only on cache miss; corrupt/unreadable siblings
+  skipped with =warn!= (degraded scan accepts possible seq reuse if the
+  corrupt file hid the true max — recorded tradeoff). =transaction_inner=
+  also fsyncs the tx append before success and rolls back rewrites on sync
+  failure.
+- Tests (=tests/writer_durability.rs=, 4/4 green, serialized via static
+  mutex over global hook counters): ack-after-fsync via injected failure;
+  8 concurrent appends coalesce to fewer syncs than appends; hot path does
+  not re-scan (12-file fixture, scan_count stays 1, exact IDs 0013/0014
+  assert cross-month max semantics); corrupt sibling skipped (mints 0037
+  past 2026-05's 0036).
+- Manager verification in worktree: lib 143 green (one flaky
+  =stall_detector_revalidates_after_driver_event_race= failure under
+  parallel suite load, 5/5 green in isolation — pre-existing race test);
+  =--no-fail-fast= full suite: only 3 dispatch_endpoint PID tests
+  (cursor-agent resolves to a bash wrapper on this machine) + 2
+  integration tests fail — all 5 replayed on main without these changes
+  and fail identically (pre-existing, not regressions).
+

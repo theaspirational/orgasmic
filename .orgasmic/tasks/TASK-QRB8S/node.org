@@ -1,0 +1,85 @@
+#+title: orgasmic task TASK-QRB8S
+#+orgasmic_version: 2
+
+* DONE TASK-QRB8S START_TIMEOUT is a literal 20s but a replacement may now legitimately take 40s to become ready
+:PROPERTIES:
+:ID: TASK-QRB8S
+:PRIORITY: P1
+:TAGS: cli,lifecycle,budgets
+:END:
+** Description
+`START_TIMEOUT` is a literal 20 s that is not derived from the shutdown budgets
+it now has to outlast. Flagged by the TASK-ATAXN worker as out of its write scope
+(`crates/orgasmic-daemon/**`) and out of its non-goals, so it was correctly left
+alone there.
+
+=== The gap
+
+`crates/orgasmic-cli/src/daemon_lifecycle.rs:31`:
+
+```rust
+const START_TIMEOUT: Duration = Duration::from_secs(20);
+```
+
+Used at `:142` (`wait_until_ready_after_start`) and `:169`
+(`wait_until_ready_after_start_async`).
+
+TASK-ATAXN (merged) makes a replacement daemon **wait out a departing
+predecessor** on a budget derived from `ShutdownBudgets::default().total()`,
+which is 40 s in production. So the daemon layer may now legitimately take up to
+~40 s to take the lock and become ready.
+
+The CLI layer still gives it 20 s.
+
+A `daemon start` or `daemon restart` that overlaps a predecessor in a full drain
+therefore **reports failure at 20 s for a daemon that is going to come up
+correctly at ~40 s.** The operator sees a failed start; the daemon then boots
+anyway. That is a worse diagnostic than the bug ATAXN fixed, because the machine
+ends up healthy while the tool says it did not.
+
+This is the same category error as TASK-Q07Y5/TASK-R74E8 and as ATAXN itself:
+an unexplained constant that was correct when written and is now sized against
+the wrong thing. `ExitTimeOut` was already converted to a derivation
+(`service_stop_timeout()`); this is the remaining literal on the same axis.
+
+=== Chain as it stands after ATAXN
+
+- connection drain 10 s + release finalization 20 s + writer shutdown 10 s
+  = `ShutdownBudgets::default().total()` = **40 s**
+- replacement lock wait: capped at that same **40 s**
+- `service_stop_timeout()` -> `ExitTimeOut` = 40 + `SERVICE_STOP_MARGIN` 10 = **50 s**
+- `START_TIMEOUT` = **20 s** — the only one still a literal, and now the smallest
+
+=== Ask
+
+1. Derive `START_TIMEOUT` from the same constants, so a start is allowed to
+   outlast a predecessor's whole shutdown plus the margin a replacement needs to
+   bind and answer. Do not simply write `60`; the reason ATAXN and R74E8 both
+   insisted on derivation is that a literal cannot be shown to still be correct
+   after the thing it was sized against changes.
+2. Say what the new value is composed of, in the code, the way
+   `service_stop_timeout()` does.
+3. Check `MACOS_RMUX_START_TIMEOUT` (`daemon_service.rs:497`, 5 s) against the
+   same question and report whether it is sized for something that can now take
+   longer. Do not change it without a reason.
+4. Confirm whether `stop_timeout()` / `wait_until_down` is already derived or is
+   another literal on this axis.
+
+=== Acceptance
+
+- A regression in which a replacement start overlaps a predecessor holding the
+  lock for longer than the *old* 20 s and the CLI still reports success.
+  Prove it by injection: restore the 20 s literal, watch it fail, restore the
+  derivation, watch it pass — with output.
+- The value is derived from `ShutdownBudgets` and a named margin; changing
+  `ShutdownBudgets` moves it, demonstrated by a test that asserts the
+  relationship rather than the number.
+- A genuinely failing start still reports in a bounded, actionable time; say
+  what that time now is and why it is acceptable.
+
+=== Non-goals
+
+- Do not change `ShutdownBudgets` or the ATAXN marker protocol. This task
+  consumes both.
+- Do not touch `ExitTimeOut`'s derivation; it is correct and reviewed.
+

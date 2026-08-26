@@ -1,0 +1,51 @@
+#+title: orgasmic task TASK-0KP3T
+#+orgasmic_version: 2
+
+* BACKLOG TASK-0KP3T the stdout-mirror fallback keys on handle presence, not write success: a failed durable write loses the line and wedges the sink for the process lifetime    :daemon:ops:
+:PROPERTIES:
+:ID: TASK-0KP3T
+:PRIORITY: P2
+:WRITE_SCOPE: crates/**,verify/**
+:END:
+
+** Description
+From the TASK-G64ZH.1.1 review (F-1, MEDIUM, non-blocking, PRE-EXISTING).
+=logging.rs:573-587=, =:594-601=, =:520=.
+
+TASK-G64ZH.1.1's whole framing is that "do not double-write" must be decided from
+whether the durable sink ACTUALLY TOOK THE LINE. The shipped code decides it from
+=state.durable.is_none()= — handle PRESENCE, not write SUCCESS. A handle that
+exists and whose =write_all= returns =Err= is a live handle that got nothing:
+
+1. =:574= =write_all= fails -> =record_drop()= at =:575=, and THE HANDLE IS
+   RETAINED (never set to =None=).
+2. =:598= then sees =durable.is_some()= -> stdout suppressed.
+3. The line is in no file, on no fd, in no terminal.
+
+AND IT COMPOUNDS: because =state.durable= stays =Some=, =maybe_reopen_durable= at
+=:520= short-circuits =true= on every subsequent line forever. No reopen, no
+backoff, no recovery — the sink is wedged for the daemon's lifetime.
+
+Trigger class: =ENOSPC=, =EDQUOT=, =EIO= — a full disk, a quota, a failing volume.
+Distinct from the open-failure class the G64ZH chain closed, which is why three
+rounds of that chain did not reach it.
+
+** Why it was not blocking
+Genuinely PRE-EXISTING: identical at =eaa88da^=, before the chain started. It is
+the last surviving proxy after four rounds removed the others, and it is outside
+every acceptance bullet those rounds were written against.
+
+** Direction
+Treat a failed durable write like a failed open: drop the handle so
+=maybe_reopen_durable= owns recovery, and let the write-time fallback send the
+line to stdout. That reuses machinery TASK-G64ZH and TASK-G64ZH.1.1 already
+built. Consider whether =write_all= failure should count toward the same
+=dropped_log_writes= meaning the chain just settled on ("one per line that never
+landed").
+
+** Acceptance
+- A live handle whose =write_all= fails does not lose the line, and does not wedge
+  the sink for the process lifetime.
+- A test drives it — a handle that accepts the open and fails the write, which no
+  existing test does.
+

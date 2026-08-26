@@ -1,0 +1,40 @@
+#+title: orgasmic task TASK-RHDQE
+#+orgasmic_version: 2
+
+* DONE TASK-RHDQE Split architecture.org into IMPLEMENTED v0.0.1 and TARGET ARCHITECTURE sections :architecture:conformance:
+:PROPERTIES:
+:ID:               TASK-RHDQE
+:PRIORITY:         P1
+:WORKER:   architector
+:IMPLEMENTS:       arch_WZFAX arch_QFQTD arch_BVH7M arch_A53QX arch_R3EPE arch_C87Z9 arch_MK2Q2 arch_MPAQT arch_PCSQE arch_Z3Z3V arch_QXS5W
+:PRODUCES:         .orgasmic/architecture.org
+:WRITE_SCOPE:      .orgasmic/architecture.org .orgasmic/sprint.org
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org .orgasmic/sprint.org .orgasmic/backlog.org crates/** ui/** shipped/**
+:TEST_CMD:         cargo test -p orgasmic-core --test fixtures
+:END:
+
+** Description
+Establish the v0.0.1 split inside =.orgasmic/architecture.org=: separate the architecture nodes that have shipped code backing as of v0.0.1 from the target architecture that describes design intent beyond v0.0.1.
+
+The split is structural (top-level =* IMPLEMENTED v0.0.1= and =* TARGET ARCHITECTURE= dividers) plus per-node classification properties (=:V0_0_1: shipped|partial=, =:V0_0_1_EVIDENCE:= closing tasks, =:V0_0_1_GAPS:= follow-up tasks). Partial nodes carry an =** v0.0.1 status= body section enumerating the shipped surface, the simulated/inert/stub fallback, and the follow-up task that owns the gap.
+
+Daemon-parser invariants preserved: =arch_NNN= nodes remain top-level, the dividers are top-level non-arch headings, and =load_architecture= / =find_by_id= / stale propagation all filter or look up by =arch_= prefix and =:ID:= property — the dividers are transparent to them.
+
+** Acceptance Criteria
+- [X] =.orgasmic/architecture.org= contains =* IMPLEMENTED v0.0.1= and =* TARGET ARCHITECTURE= top-level dividers.
+- [X] Every arch_NNN node carries =:V0_0_1:= classifying it as =shipped= or =partial=, plus =:V0_0_1_EVIDENCE:= naming the closing tasks.
+- [X] Every partial node (arch_A53QX, arch_R3EPE, arch_PCSQE) carries =:V0_0_1_GAPS:= naming its gap-closure follow-up task and an =** v0.0.1 status= body section enumerating the shipped surface vs the simulated/inert/stub fallback.
+- [X] =* TARGET ARCHITECTURE= is documented as intentionally empty today, with a note describing the categories that land there next (MCP server, WRITE_SCOPE sandbox, telemetry, etc.) and naming TASK-M1MZ4 as the roll-up.
+- [X] =cargo test -p orgasmic-core --test fixtures= passes (architecture.org still parses, =parses_real_architecture= still finds =arch_BVH7M=).
+- [X] No =arch_NNN= node title or =:ID:= property changed; =:SEMANTIC_HASH:= values unchanged (the split is a new property family and a new body section, not a semantic content edit).
+
+** Evidence
+- [2026-05-22 Fri 00:55] Inserted file-header keywords =#+status: v0_0_1-split=, =#+v0_0_1_split_at: [2026-05-22 Fri 00:55]=, =#+v0_0_1_split_task: TASK-RHDQE=. Added =* IMPLEMENTED v0.0.1= divider with body explaining the classification + linking to the gap-closure tasks (TASK-XB874..TASK-M1MZ4). Added =* TARGET ARCHITECTURE= divider at end-of-file with body explaining that it is intentionally empty today.
+- [2026-05-22 Fri 00:55] Added =:V0_0_1:=, =:V0_0_1_EVIDENCE:= (and =:V0_0_1_GAPS:= where partial) to every arch_NNN PROPERTIES drawer at the existing column-22 alignment.
+- [2026-05-22 Fri 00:55] Authored =** v0.0.1 status= body sections under arch_A53QX (drivers: simulated for claude_acp/codex_appserver/hermes, inert fallback for tmux_tui), arch_R3EPE (manager.tick spawns shell instead of tmux_tui+persona), arch_PCSQE (=/grill /architect /plan= record tx-only, no driver-backed agent acquisition).
+- [2026-05-22 Fri 00:55] Daemon parser invariants verified statically: =crates/orgasmic-daemon/src/index.rs::load_architecture= filters by =heading.title.starts_with("arch_")=; =crates/orgasmic-core/src/org.rs::find_by_id= matches by =:ID:= property; =crates/orgasmic-daemon/src/api.rs= stale propagation iterates =file.headings= guarded by =heading.property("ID")=. The new dividers carry no =:ID:= and don't begin with =arch_=, so all three are transparent.
+
+** Worklog
+- [2026-05-22 Fri 00:55] Read the architecture file, decisions, sprint, daemon parser, and the simulated/inert call sites in =crates/orgasmic-drivers/src/{claude_acp,codex_appserver,hermes,tmux_tui}.rs= and =crates/orgasmic-daemon/src/api.rs::post_manager_tick / post_stage= to ground the partial classifications in real code paths.
+- [2026-05-22 Fri 00:55] Surgical edits via =Edit= tool only (no full-file rewrite): file header keywords, per-node property additions, partial-node body sections, end-of-file divider.
+

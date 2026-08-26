@@ -1,0 +1,76 @@
+#+title: orgasmic task TASK-HC7PW
+#+orgasmic_version: 2
+
+* DONE TASK-HC7PW Structural-invariance guard on body-write ops + doctor lint for phantom headings :daemon:core:parser:security:hardening:
+:PROPERTIES:
+:ID:               TASK-HC7PW
+:PRIORITY:         P3
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      crates/orgasmic-core/src/org.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-cli/src/ crates/orgasmic-daemon/tests/
+:READ_SCOPE:       crates/orgasmic-core/src/org.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/index.rs
+:TEST_CMD:         cargo test -p orgasmic-core -p orgasmic-daemon
+:END:
+
+** Description
+From the round-3 architecture critique (archive/org-harness-critique-round-3-reply.md,
+point 1 — conceded): =OrgRewriter::set_section_body= / =set_node_body=
+(org.rs:794/825) splice caller payloads verbatim with no structural
+validation. A body containing a column-0 =* anything= line becomes a phantom
+top-level heading at the next parse — silently, and the existing
+parse-validation on writes cannot catch it because the poisoned file parses
+fine into a different tree. Same class as the TASK-B2P1Z.1 Org-injection fix,
+but for the body-edit surface (RPC/UI editor and any free-text field flowing
+into a body write).
+
+Two layers:
+1. *Write-time guard*: after applying body-edit ops, re-parse and assert the
+   heading structure (count + IDs + levels) is identical modulo the intended
+   change; reject the edit otherwise (typed error per the sanitized-envelope
+   pattern). Alternative escape-on-write (indent column-0 stars) is
+   acceptable if invariance-check proves too strict for legitimate edits —
+   implementer picks with rationale.
+2. *Read-time lint*: doctor/index lint that flags task files whose level-1
+   headings lack the expected task shape (=:ID:= property, known state
+   keyword) — catches phantom headings from hand-written (CLI-absent
+   fallback) writes after the fact. Precedent: =lint_goal_liveness= in
+   index.rs.
+
+** Acceptance Criteria
+- [ ] Body-edit op whose payload would add/remove/relevel any heading is
+  rejected with a typed error; legitimate body edits (incl. multi-paragraph
+  prose, lists, src blocks) pass.
+- [ ] Regression test: payload with column-0 =* X= line → rejected; same
+  payload escaped/indented → accepted and round-trips byte-stable.
+- [ ] Lint surfaces a task-file heading without =:ID:=/state keyword via the
+  parse-errors channel (or doctor finding); test included.
+- [ ] =cargo test -p orgasmic-core -p orgasmic-daemon= green.
+
+** Evidence
+- Implementer: claude rmux, run-20260611T124916, worker commit =55de289=,
+  merged =a4f2145=. Write-time =assert_structural_invariant= (re-parse +
+  heading count/ID/level compare, single-edit undo on violation) + read-time
+  phantom-heading lint through the parse-errors channel. New
+  =tests/body_write_guard.rs= 28/28; core suite green; clippy+fmt green.
+- Lint's first production catch, minutes after restart: the scaffold seed
+  heading =* (empty)= in =.orgasmic/tasks/archive.org= — true positive by
+  spec (non-task level-1 heading in a task file); manager removed the
+  placeholder, parse_errors back to 0. Scaffold-template follow-up noted in
+  handoff Divergence (operator owns shipped/ working area).
+- Residual (worker-reported): invariant precondition = call immediately
+  after a single replace_with_view; doc-commented. One extra re-parse per
+  body write, negligible at human file scale.
+- Reviewer pass [2026-06-11 18:19], codex gpt-5.5 high
+  (run-20260611T144846-52062dba): =VERDICT=has-issues= 1H/2M/1L → task
+  bounced IN_REVIEW→IN_PROGRESS (close tx-0160). The HIGH is an in-scope
+  guard bypass (the guard misses the append/new-section body path); fix
+  subtask TASK-HC7PW.1 filed. Full findings verbatim in tx-0160.
+- CLOSED DONE [2026-06-11 18:34]: fix subtask TASK-HC7PW.1 landed (codex
+  gpt-5.5 high, worker commit =46f7136=, merged =fa79c2d=, close
+  implementer.done tx-0163). Guard now covers replace AND append/new-section
+  body paths (fails closed with =BodyHeadingInjection=), parser is
+  block-aware, leading-star escapes preserved. Manager diff-review + gates on
+  main: body_write_guard 8/8 (incl. the =body_edit_rejects_column0_star_heading=
+  bypass regression), core lib 92/92, clippy clean. Original AC fully met.
+  Runtime note: the live daemon still runs the pre-fix binary — guard fix
+  takes effect on the next daemon rebuild/restart (deferred, operator-timed).
+

@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-KE0JW
+#+orgasmic_version: 2
+
+* DONE TASK-KE0JW TASK-AFE5Q fix round 5: atomic cleanup authority and startup child ownership
+:PROPERTIES:
+:ID: TASK-KE0JW
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve review findings after 271fc38: restore daemon compilation; fence full cleanup and boot-reattach token; safe RAII pair reservation; no-follow identity-bound cleanup; exact paired trust variants with recapture; atomically own/kill/reap every startup send child.
+

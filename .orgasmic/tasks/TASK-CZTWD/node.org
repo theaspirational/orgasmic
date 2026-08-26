@@ -1,0 +1,20 @@
+#+title: orgasmic task TASK-CZTWD
+#+orgasmic_version: 2
+
+* DONE TASK-CZTWD Delete config.org and PIPELINE; dispatch requires explicit worker :config:dispatch:
+:PROPERTIES:
+:DEPENDS_ON: dec_S0CPP
+:ID: TASK-CZTWD
+:PRIORITY: P1
+:WRITE_SCOPE: crates/** ui/src/** shipped/project-scaffold/**
+:END:
+
+** Description
+Implement dec_S0CPP. Remove =config.org= from =SCAFFOLD_FILES= and delete =ProjectConfig= (=schema.rs=), the =index.rs::load_project= config read, and =api.rs= config readers (=read_config_default_branch=, =project_prompt_defaults= config sourcing). Drop =first_pipeline_worker_for_kind=: a dispatch naming no worker returns the house-style 400 listing candidates ("pass worker=…; available <kind>s: …"); CLI =--worker= becomes required; UI worker picker becomes mandatory with last-used preselect. Rework =SettingsView= off its config.org splice (drop the pipeline editor; decide what remains on the page as part of this task). Change the =default_branch= prompt fallback from hardcoded "main" to git-derived or empty. Prompt slots for TEST/LINT/BUILD_CMD/WRITE_SCOPE stay but may be empty — workers read repo facts from =project.org= prose or conventions.
+
+** Acceptance Criteria
+- [ ] Fresh init emits no =config.org=; daemon indexes a project without one and without parse errors.
+- [ ] No-worker dispatch 400s with candidates named; UI and CLI updated accordingly.
+- [ ] No injected "main" for repos whose default branch differs.
+- [ ] =cargo test= + UI tests (configSplice removal) green.
+

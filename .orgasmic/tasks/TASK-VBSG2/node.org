@@ -1,0 +1,30 @@
+#+title: orgasmic task TASK-VBSG2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-VBSG2 Add explicit Claude evidence materialization and manual multi-run retro dispatch    :retro:claude:evidence:
+:PROPERTIES:
+:DEPENDS_ON: TASK-FZB6T
+:ID: TASK-VBSG2
+:MOTIVATED_BY: dec_PC6T2 dec_WDR5K
+:PRIORITY: P1
+:END:
+
+Implement the smallest end-to-end slice of arch_RN73Z after operational run storage is bounded. This is an explicit diagnostic feature, not part of normal dispatch, completion, startup, recovery, or run listing.
+
+Slice A — materializer:
+- expose `orgasmic run evidence materialize --run <id>` and one equivalent daemon/agent-callable function
+- reuse verified NativeRuntime provider/session/path metadata and the existing native-transcript resolver; fail closed when correlation is missing or ambiguous
+- parse Claude native JSONL through a Claude-local adapter into the existing DriverEvent/activity vocabulary, including tool_use, tool_result, timestamps, token/context fields when present, and terminal signals
+- write an idempotent, versioned `derived_native` cache keyed by source digest + converter version under `.orgasmic/tmp/retro/evidence`; enforce per-event/per-run limits and return a compact summary + reference, never the full transcript
+- prove derived events cannot enter supervisor recovery/liveness/finalization paths
+
+Slice B — manual retro:
+- add `orgasmic manager retro` accepting repeated run ids, task ids, or an explicit ordered task sequence
+- resolve those selectors once into an immutable scope manifest with run ordering, task/dispatch links, source digests, missing evidence, and requested questions
+- dispatch a read-only retrospector that starts from catalog summaries, lazily calls the materializer for only needed runs, and reports evidence-linked bottlenecks: repeated equivalent tool calls, retries/failures, tool latency, idle/auth/permission waits, redundant reads, context resets, circular reasoning, output volume, token use, and progress per wall time/token
+- restrict writes to the derived evidence directory and report artifact; no task transitions, cleanup, lease/recovery action, dispatch closure, source/vendor mutation, or code edits
+
+Use a backlog-to-done task with multiple implementer/reviewer/recovery runs as the integration fixture. Assert a second materialization is a cache hit, a source change creates a new digest entry, an ambiguous transcript is refused, and a retro spanning several runs produces cross-run findings without injecting raw transcript volume. Routine scheduling is explicitly deferred: a future routine must call this same manager path and be user configured; do not add an automatic trigger here.
+** Notes
+Blocked in practice for the acp-stdio transport by TASK-VB9DQ. Measured 2026-07-25: the acp-stdio claude adapter passes `--no-session-persistence` and writes zero native transcripts (0 new files under `~/.claude/projects` versus 1 for an otherwise identical run), never passes `--session-id`, and never emits a `NativeRuntime` lifecycle event. Slice A's materializer resolves verified NativeRuntime metadata and parses Claude native JSONL, so for acp-stdio runs there is nothing to resolve and nothing to parse. The rmux/tmux transport is unaffected — it mints an explicit session id and records launch/resume argv. Land TASK-VB9DQ first, or scope this task to TUI-transport runs and say so explicitly.
+

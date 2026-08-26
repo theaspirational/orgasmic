@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_K06Z5
+#+orgasmic_version: 2
+
+* term_K06Z5 Slot registry
+:PROPERTIES:
+:ID:                 term_K06Z5
+:CANONICAL:          slot registry
+:AVOID:              free-form variables, template macros, dynamic include map
+:RELATES_TO:         term_VQ3F1 term_Z5XDF term_KH8TX term_X4JGJ
+:DEFINITION:         The fixed catalog of slot namespaces the prompt compiler will resolve, combining static task, project, worker, run, evidence, and worklog namespaces with dynamic skill and convention namespaces.
+:DECIDED_AT:         [2026-05-21 Thu 21:13]
+:END:
+

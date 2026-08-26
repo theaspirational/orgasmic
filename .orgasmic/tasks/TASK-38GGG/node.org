@@ -1,0 +1,31 @@
+#+title: orgasmic task TASK-38GGG
+#+orgasmic_version: 2
+
+* DONE TASK-38GGG decision create emits tokenless headings (KY80Q lint catch); audit create verbs + add title repair verb :daemon:cli:schema:lints:
+:PROPERTIES:
+:ID: TASK-38GGG
+:PRIORITY: P3
+:TEST_CMD: cargo test -p orgasmic-daemon
+:WORKER: implementer-codex-acp
+:WRITE_SCOPE: crates/orgasmic-daemon/src/ crates/orgasmic-cli/src/ crates/orgasmic-daemon/tests/
+:END:
+
+Caught in production by the TASK-KY80Q equality lint (its first real
+finding, 2026-06-13): =orgasmic decision create= wrote dec_WC1PW's heading
+as =* <title>= without the leading ID token, violating the dec_HJENQ
+identity amendment (heading token is the display copy; every other
+decision heading carries it). The manager repaired the one heading by
+interim direct edit — there is no title-edit verb to do it through the
+daemon. Fix the create path(s) and close the verb gap:
+
+- =decision create= must emit =* <id> <title>= (and accept tags).
+- Audit the other node-create verbs for the same omission (task create
+  already emits the token; check glossary/architecture create paths if
+  they exist).
+- Add a daemon-surface way to repair a heading title (title-edit verb or
+  equivalent), so the next drift needs no direct edit.
+- The KY80Q lint is the regression net: creating a node through every
+  daemon create verb must yield zero heading-token findings.
+** Evidence
+implementer-codex-acp (gpt-5.5 medium), combined round with TASK-PYZ9W, worker commit =bde3202=, close tx-0410. api.rs render_graph_heading: decision + architecture create now emit the leading ID token (* dec_X title / * arch_X title), with a title==id guard to avoid a doubled token when no title is given; glossary + task already tokened. node_display_title rewritten to strip the prefix via the drawer :ID: (not blind split_once) and to SHOW the full title when a heading is tokenless, so drift surfaces rather than hides. Title repair: the existing /org/node/:id/edit set_title op now recomposes a tokenless heading from the drawer :ID: while preserving TODO keyword + tags. Regression: daemon_create_verbs_emit_heading_tokens_without_identity_lint (every create verb -> zero KY80Q heading-token findings) + org_node_title_edit_repairs_tokenless_heading_from_drawer_id. Closes the dec_WC1PW tokenless-create gap (KY80Q's first production catch); the manager no longer needs an interim direct edit to repair a heading title. Gates green; parse-errors 0.
+

@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_WTM5Y
+#+orgasmic_version: 2
+
+* dec_WTM5Y Should the manager launch via a compiled daemon tick or via the /orgasmic skill?    :manager:run-dock:skill:
+:PROPERTIES:
+:ID:            dec_WTM5Y
+:GLOSSARY_REFS: term_X4JGJ term_KH8TX
+:DECIDED_AT:    [2026-06-08 Mon 13:55]
+:SOURCE:        grill session 2026-06-08 (manager-surface merge)
+:PARENT:        dec_DK7AZ
+:END:
+** Context
+Two disjoint manager entry paths had grown up: the daemon-compiled =POST /manager/tick= (which compiled =manager_orchestrator.org= + its =:USES_PARTS:= and auto-sent the result) and the =/orgasmic resume= skill (which reads =manager.org= + the manager conventions from disk). The "tick" implied an autonomous loop that was never built — nothing internal fires it, every call spawns a fresh run, and mid-session interaction already flows through the composer (=postRunInput=). Because the skill installs to the shared =~/.agents/skills= path (dec_GG6B9), any driver can reach it, so a spawned manager can bootstrap itself with no compiled prompt at all. This also dissolves the =manager.org= (skill, raw) vs =manager_orchestrator.org= (daemon, compiled) duplication.
+** Decision
+Collapse to one skill-delivered manager. Remove =POST /manager/tick= and the =manager_orchestrator.org= compile path; add a slim =POST /manager/launch { project_id, mode, harness } → { run_id }= that only acquires an *idle* manager run on the given driver with cwd = the project root. The RunDock manager button opens the active project's live manager if one exists, else launches via the last-used =(mode, harness)= and prefills the composer with an editable =/orgasmic resume= draft the human sends (per dec_C6510 — never auto-sent). Delete =manager_orchestrator.org= + the manager-exclusive =orchestration_policy= part, porting their unique nuggets (typed-pipeline stage authority; "no hidden shared context — pass summaries/gates/findings in each brief"; disjoint parallel write scopes) into =manager.org= / the =manager-dispatch= convention. The other three parts (=dynamic_workflow_policy=, =verification_policy=, =security_policy=) stay — they are shared by every worker spec. One manager per project; managers for other projects coexist and filter by the project tab. The CLI =manager tick= is removed.
+** Consequences
+There is one manager doctrine, read from disk by the skill — the =manager.org= vs =manager_orchestrator.org= split is gone, and the daemon no longer compiles any manager prompt (it only spawns/opens sessions). UI ↔ daemon contract: =POST /manager/launch { project_id, mode, harness } → { run_id }=. Supersedes the per-tick state-injection clause of dec_DK7AZ and the "Tick default driver" affordance under dec_HY3E0/dec_FBBT2. Deferred follow-up: a manager spawned by =/orgasmic= *outside* the app self-registering with the daemon (via the CLI when a daemon is installed) so the app can show it as running-elsewhere — attachable only when it runs in tmux.
+

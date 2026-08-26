@@ -1,0 +1,21 @@
+#+title: orgasmic task TASK-79VKP.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-79VKP.1 Measure and eliminate repeated worker entry and context boot work    :framework:dispatch:performance:
+:PROPERTIES:
+:DEPENDS_ON: TASK-YBCYQ
+:ID: TASK-79VKP.1
+:PRIORITY: P2
+:END:
+
+** Description
+Nine dispatched workers in TASK-K9WWM repeatedly paid entry routing, task and project context reads, prompt-spec assembly, and harness boot before useful work. TASK-YBCYQ owns incorrect worktree wording inside the compiled prompt, but no task measures or reduces repeated context construction.
+
+Instrument dispatch preparation and worker startup so the time and bytes for entry routing, task materialization, prompt assembly, and harness readiness are visible separately. Then introduce only content-addressed reuse whose key includes the committed git ref, runtime and prompt-spec version, task node version, brief content, governance overlay, and harness inputs. A cache miss must preserve current source-of-truth behavior; stale project or task context must never be served.
+
+** Acceptance
+- Status or dispatch evidence reports context-build duration, prompt bytes, cache outcome, and harness-ready latency.
+- A nine-dispatch reproduction establishes the baseline and demonstrates a material reduction on identical committed context.
+- Changing any authority input invalidates reuse deterministically.
+- A regression proves a new task or decision edit is visible to the next worker rather than hidden behind the optimization.
+

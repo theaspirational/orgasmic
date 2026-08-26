@@ -1,0 +1,36 @@
+#+title: orgasmic task TASK-RF3J1.2
+#+orgasmic_version: 2
+
+* DONE TASK-RF3J1.2 dispatch-CLI on-rail fix-subtask: F-1 watch hint + F-2 worktree directory validation :cli:dispatch:daemon:bug:fix:superseded:
+:PROPERTIES:
+:ID:               TASK-RF3J1.2
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/tests/dispatch.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs
+:READ_SCOPE:       /tmp/orgasmic-codex/task-060-bundled-review-report.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-RF3J1
+:END:
+
+** Description
+Two MEDIUM bugs from TASK-RF3J1 + TASK-RF3J1.1 bundled reviewer report (= /tmp/orgasmic-codex/task-060-bundled-review-report.md =), bundled as one fix-implementer round per :FIX_SUBTASK: t discipline.
+
+*F-1 (MEDIUM bug)* — =crates/orgasmic-cli/src/manager.rs:383-384= prints =watch: orgasmic run {run_id}= for non-subprocess modes (acp-ws codex, tmux). But =RunCmd= requires an explicit subcommand (=list=, =show=, =continue=); bare =orgasmic run <id>= exits with usage error. Fix: print =watch: orgasmic run show {run_id}= (or =orgasmic manager dispatch-status --task ...= when task context is available).
+
+*F-2 (MEDIUM correctness)* — =crates/orgasmic-daemon/src/api.rs validate_dispatch_path= only checks absoluteness; missing worktree flows into spawn and surfaces as 500 instead of 400. Fix: after the absoluteness check for =worktree_path=, =metadata()= and reject with =ApiError::bad_request= when not =is_dir()=.
+
+** Acceptance Criteria
+- [ ] *F-1*: =cmd_dispatch= watch-line for =pid=0= modes prints a usable command (e.g. =orgasmic run show {run_id}= or task-scoped dispatch-status). Manual smoke: copy the printed command and execute — should succeed with usage matching the run.
+- [ ] *F-2*: =POST /projects/:project/tasks/:task/dispatch= returns 400 with sanitised message when worktree_path does not exist or is not a directory. Path is NOT echoed in the public envelope (TASK-PYW86 pattern).
+- [ ] Regression tests: CLI test asserts the new watch-line shape; daemon test asserts 400 for non-existent worktree + 400 for file-not-directory worktree.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new deps.
+- [ ] Implementer commits the work themselves (escalates to manager-on-behalf if dispatch endpoint auto-commit gap persists — see TASK-RF3J1.5).
+
+** Notes
+:FIX_SUBTASK: t. On close, auto-flips IMPLEMENT → DONE; manager hand-flips TASK-RF3J1 REVIEW → DONE for cluster closure (after TASK-RF3J1.3 also lands).
+
+** Evidence
+Superseded by TASK-RF3J1.6 bundled fix-subtask: 5 findings (including this one) closed in one cursor-agent round, commit =15a6dbd= merged as =94a31ae=. Tests 329 → 336 (+7). See TASK-RF3J1.6 Evidence for full per-finding breakdown.
+

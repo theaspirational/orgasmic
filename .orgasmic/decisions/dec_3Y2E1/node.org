@@ -1,0 +1,15 @@
+#+title: orgasmic decision dec_3Y2E1
+#+orgasmic_version: 2
+
+* dec_3Y2E1 Running Agents lists supervised agents only; external managers join by registering
+:PROPERTIES:
+:ID: dec_3Y2E1
+:RELATES_TO: dec_FBBT2 dec_RDHX7
+:END:
+
+The Running Agents menu (and its count badge) answers "which agents is orgasmic supervising?". Bare terminals (manager.launch runs with the custom pseudo-harness) are PTYs the operator drives, not agents: they stay taskbar-only and never appear in the menu or the count. Workers and agent-harness managers remain.
+
+A manager started outside the app (plain terminal, even outside rmux) can become visible by registering. Settled design: registration acquires a REAL supervisor run (driver 'external', no PTY) on the normal manager.launch:<project> lease, so the manager singleton is enforced by the same mechanism as app launches and the run appears in /runs live with no parallel presence concept. Liveness: register captures the terminal session-leader PID; the daemon polls it (~30s) and releases on death, with a TTL fallback (refreshed by re-running register) when no PID is available; UI Stop stays the manual override — this matters because a wedged external lease would 500 the app's own manager launch. Collisions: re-register from the same session is an idempotent refresh (doubles as heartbeat); a different holder gets a readable refusal, never a silent takeover. CLI: 'orgasmic manager register' / 'orgasmic manager release'; drivers start exporting ORGASMIC_RUN_ID into launched PTYs so register no-ops with exit 0 when already supervised, letting the entry router carry one unconditional Manager-startup step with no conditional prose. UI renders an external manager as an info row with an inline End control (attach is impossible; no dock tab ever).
+
+Rejected: a separate presence record (duplicates 'something is running' across two APIs and splits the singleton rule into two mechanisms that cannot see each other); pure TTL heartbeat (drops a live manager that thinks for N minutes without CLI writes, or lingers and wedges launches); registration as a side effect of existing commands like 'orgasmic status' (a human poking at status in a spare terminal would silently claim the manager lease).
+

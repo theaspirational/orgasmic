@@ -1,0 +1,63 @@
+#+title: orgasmic task TASK-HY0QT
+#+orgasmic_version: 2
+
+* DONE TASK-HY0QT Codex acp-stdio JSON-RPC handshake: drive codex app-server over stdio so reviewer/implementer dispatches go fully on-rail (unlocks UI real-time agent chat) :drivers:acp:stdio:codex:foundation:ux:
+:PROPERTIES:
+:ID:               TASK-HY0QT
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-drivers/src/modes/acp_stdio.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/modes/acp_stdio.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/tests/driver_modes.rs crates/orgasmic-drivers/src/lib.rs
+:READ_SCOPE:       crates/orgasmic-drivers/src/modes/acp_ws.rs crates/orgasmic-drivers/src/r#trait.rs crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs crates/orgasmic-drivers/src/adapters/claude.rs shipped/workers/implementer-codex-stdio.org shipped/workers/reviewer-codex-stdio.org
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-RF3J1.1
+:END:
+
+** Description
+The =acp-stdio= driver mode spawns =codex app-server= as a subprocess (auto-spawn shipped in TASK-RF3J1.1 via HAR pattern) but never drives it over JSON-RPC. As a result every dispatch routed through =implementer-codex-stdio= / =reviewer-codex-stdio= idles: codex app-server reads nothing from stdin, never receives =initialize= / =thread/start= / =turn/start=, and the orgasmic daemon eventually marks the run as stuck (TASK-J95T2 early-exit classifier was added precisely because this gap kept jamming the supervisor pipeline). Workaround for the last ~3 weeks: route every dispatch through the working =implementer-cursor= / =reviewer-cursor= path (cursor-agent CLI + subprocess-stream-json driver).
+
+Closing this gap unlocks two things:
+
+1. *On-rail codex dispatches*: =--worker implementer-codex-stdio= becomes a usable choice in =orgasmic manager dispatch=; reviewer-codex-stdio can run reviewer passes. Removes the "cursor-agent only" footgun.
+2. *UI real-time agent chat* (TASK-C7ZG5 follow-up): user direction this session — "user can via task dialog (ui) click the current agent status to open the chat with the running agent and in real time monitor the session via the same chat interface as manager uses in har app for acp driver type". The chat UX only makes sense over a real ACP wire, so this task is its enabler.
+
+Concrete code-level diagnosis (the implementer brief expands on each):
+
+- =crates/orgasmic-drivers/src/modes/acp_stdio.rs= today is just a compose-adapter wrapper that hands work to =SubprocessStreamJsonDriver=. It spawns the binary correctly but =SubprocessStreamJsonDriver::run_subprocess_stream_json= treats stdout as line-delimited stream-json and calls =adapter.parse_stdout_line(&line)= for each line. The =HarnessEventAdapter::parse_stdout_line= default deserialises one JSON value per line and delegates to =parse_event= — so codex notifications WOULD route through =CodexAdapter::parse_event= correctly if codex were already in a session. But nothing sends the JSON-RPC requests (=initialize=, =thread/start=, =turn/start=) that get codex into that state, and the adapter's control surface (=transition_state=, =babysitter_action=, =release=) emits =WireMessage::JsonRpc { method, params }= values that the subprocess driver also has no codepath to send.
+- =crates/orgasmic-drivers/src/modes/acp_ws.rs::run_acp_ws= is the closest analog: it implements exactly this JSON-RPC client lifecycle (request_response → on_ws_thread_started → ws_turn_start_params → loop driving =parse_event= against incoming notifications + handling control wire-messages). It just happens to do so over a WebSocket. The natural refactor is either: (a) factor =request_response= / =handle_outcome= / =RpcIds= into a transport-agnostic helper that both =acp_ws.rs= and a new =acp_stdio.rs= runtime can drive, or (b) duplicate the loop in =acp_stdio.rs= and reach for the shared helper later — implementer's call based on how clean the abstraction comes out.
+
+Note: =codex app-server= speaks newline-delimited JSON-RPC on its stdio (HAR convention), not LSP-style Content-Length framing. Confirm by spawning it locally — but assume newline-delimited unless evidence otherwise.
+
+** Acceptance Criteria
+- [ ] =acp-stdio= mode drives a real JSON-RPC client lifecycle when the harness adapter's =compose_request= returns a =HarnessRequest::Subprocess= (today's path) AND the adapter's =stdio_initial_payload= surface is enough to seed the session:
+  - sends an =initialize= request, waits for response,
+  - sends =thread/start= with the params from the adapter's session_init shape (or a new adapter method — see "Open implementation choices" below) and routes the result through =adapter.on_ws_thread_started(endpoint, response)= so =CodexAdapter= can record the thread id and emit =Ready=,
+  - sends =turn/start= with =adapter.ws_turn_start_params()= and feeds the result through =adapter.on_ws_response("turn/start", value)=,
+  - loops reading notifications from stdout (one JSON-RPC value per line) and feeds each through =adapter.parse_event(value)=,
+  - dispatches control =WireMessage::JsonRpc { method, params }= writes to stdin (one JSON-RPC envelope per line) when =transition_state= / =babysitter_action= / =release= produce them,
+  - detects terminal events (=adapter.terminal_emitted() = true= after =turn/completed= / =thread/closed=) and shuts down cleanly.
+- [ ] The "endpoint" parameter for =on_ws_thread_started= is replaced with a transport-neutral identifier (e.g., the path-or-binary the subprocess was spawned as) so the same =CodexAdapter::on_ws_thread_started= works for both acp-ws and acp-stdio without lying about the URL. If renaming the trait param crosses too many call sites, document the carry-over in the brief.
+- [ ] A new fixture-style integration test in =crates/orgasmic-drivers/tests/driver_modes.rs= (or a sibling) that pairs an =AcpStdioDriver= against a mocked codex peer (e.g., a child process running a tiny Rust helper or a python one-liner that reads JSON-RPC requests from stdin and writes scripted responses + notifications) and asserts the same envelope shape the existing acp-ws fixture asserts: =Ready { simulated: false, thread_id: ... }= → =TextChunk { Assistant, "hello" }= → =ToolCall { transition_state }= → =RunComplete=. Gate the test on the helper being available; gracefully skip otherwise (mirroring =codex_available()= in =adapters/codex.rs::tests=). Real-binary verification with =codex app-server= itself is allowed but not required (codex CLI may not be on CI). If the helper-process approach is too fiddly, an in-process =tokio::io::DuplexStream= mock that gets handed to a refactored "run_acp_stdio over arbitrary AsyncRead/AsyncWrite" function is also acceptable — implementer's call.
+- [ ] Existing tests stay green: =cargo test --workspace= (currently 365), =cargo clippy --workspace --all-targets -- -D warnings=, =cargo fmt --check=, =git diff --check= all green. MSRV 1.78. Pay attention to the CLAUDE.md MSRV pitfall list: =fs2::FileExt::lock_exclusive=, no =Option::is_none_or=, etc.
+- [ ] Live-validate locally if =codex= is on PATH: dispatch this task itself or any subsequent task with =--worker implementer-codex-stdio= (post-merge) and observe a working session: the run reaches =run.created= → emits Ready + at least one TextChunk → terminates with RunComplete or RunFail (whichever codex returns for a small no-op prompt). If codex isn't on PATH, document the constraint in the Evidence section and rely on the mock-peer fixture for correctness.
+
+** Notes
+- *NOT* =:FIX_SUBTASK: t= — full IMPLEMENT → REVIEW → DONE lifecycle with reviewer pass per persona rule 2.
+- *Out-of-scope*: don't touch the Claude ACP-stdio path (=adapters/claude.rs= uses a slightly different stream-json shape that pre-dates the JSON-RPC pattern). Don't touch the cursor-agent path. Don't touch tmux. Don't add UI bits — the TASK-C7ZG5 follow-up (UI agent-chat overlay) is a separate dispatch.
+- *Open implementation choices the brief should let the implementer decide*:
+  - whether to refactor a shared "json-rpc-over-arbitrary-line-stream" helper now or duplicate the loop and refactor later
+  - whether to seed the stdio session via =stdio_initial_payload= (already present on the adapter trait) or to introduce a small new method like =stdio_session_init() -> Value= mirroring the acp-ws =session_init= shape
+  - whether to add a real-binary smoke test gated on =codex_available()= or rely entirely on a mocked peer
+- *Worker for this dispatch*: =implementer-cursor= (chicken-and-egg — codex stdio is what we're fixing). The brief should say so explicitly.
+
+** Evidence
+- Implementer: cursor-agent (implementer-cursor, composer-2.5-fast), ~12min wall, self-commit =ad7bf15= on =task-077-impl=. Merged no-ff as =cbdf079=.
+- Implementation: Choice 1 (shared transport-agnostic JSON-RPC client) per the brief. New =crates/orgasmic-drivers/src/modes/jsonrpc.rs= (+177 LOC) holds =JsonRpcTransport= trait, =RpcIds=, =request_response=, =handle_outcome=, =run_jsonrpc_handshake=. =modes/acp_stdio.rs= +495 introduces =run_acp_stdio= runtime that owns the subprocess lifecycle and drives =initialize → thread/start → turn/start= over stdin/stdout; codex no longer routes through =SubprocessStreamJsonDriver=. =modes/acp_ws.rs= -254 net (refactored to consume the shared module, behaviour intended identical). =adapters/codex.rs= +15 implements =stdio_session_init= emitting the same ={ initialize, thread_start }= bundle the WS path uses. =r#trait.rs= +12 adds =HarnessEventAdapter::stdio_session_init=. =tests/driver_modes.rs= +146 (=acp_stdio_codex_jsonrpc_handshake_mock_peer= fixture).
+- Tests: 365 → 366. cargo test/clippy/fmt/diff all green. MSRV 1.78.
+- Reviewer: cursor-agent (reviewer-cursor, composer-2.5-fast), ~3min wall. Verdict =has-issues, no-blocks-ship= (5 findings). Report at =/tmp/orgasmic-codex/task-077-review-report.md=. Findings: F-1 MEDIUM (run_acp_stdio missing TASK-J95T2 exit synthesis), F-2 MEDIUM (no child.kill on commands.recv()=None — orphan risk), F-3 MEDIUM (mock-peer fixture doesn't exercise wire_messages control plane on stdin), F-4 LOW (no ToolCall ordering / intervening-notification test on stdio), F-5 LOW (stdio_session_init invoked twice per acquire). acp_ws refactor verified clean (no material regression — intervening notifications routed through =adapter.parse_event= preserved in =jsonrpc.rs:96-97=, =handle_outcome= close semantics preserved, =RpcIds= start=1 monotonic, =Send= bound preserved).
+- 3 of 5 reviewer findings closed by TASK-HY0QT.1 fix-subtask (F-1, F-2, F-3 + F-5 piggyback). F-4 deferred — folded into the post-cluster live-codex-dogfood follow-up if it surfaces as a real risk.
+- *Manager discipline gap recovered mid-cluster*: TASK-HY0QT heading was edited in working tree but not committed in a handoff commit (same pattern as TASK-B2P1Z last week). Recovered via =f9b27c2= "File TASK-HY0QT + TASK-HY0QT.1: ..." which committed both headings + all dispatch tx entries so the fix-implementer worktree inherited them. Pattern to internalise: commit sprint.org heading insertions BEFORE dispatch, not at cluster-close.
+- *Live-codex validation deferred*: no codex CLI on PATH for this dispatch. The mock-peer fixture covers correctness; live validation can land as a small dogfood task once codex CLI is present (would just be invoking =--worker implementer-codex-stdio= on any subsequent task and confirming Ready + TextChunk + RunComplete in the session JSONL).
+- Hand-flipped TASK-HY0QT REVIEW → DONE in this cluster-close commit. Bumps =:LIVENESS:= =e4c77b7= → parent SHA of this commit.
+

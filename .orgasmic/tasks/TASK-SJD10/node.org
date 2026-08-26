@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-SJD10
+#+orgasmic_version: 2
+
+* BACKLOG TASK-SJD10 Per-run evidence directory outside the worktree (ORGASMIC_EVIDENCE_DIR), retained past close, referenced from dispatch-status and handed to --for reviewers    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-SJD10
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 8. Briefs ask for durable logs; `.orgasmic/tmp` is gitignored so workers write inside the worktree; the manager prunes the worktree after close; the reviewer on TASK-GVQM0 found none of five mutation logs. Only the report is copied out.
+** Expected
+- `~/.orgasmic/runs/<run-id>/evidence/` exported as `ORGASMIC_EVIDENCE_DIR`, retained past close, shown in dispatch-status; a reviewer dispatched `--for <run>` gets the implementer's path in its env.
+Related: TASK-CQM2X (run inventory / retention).
+

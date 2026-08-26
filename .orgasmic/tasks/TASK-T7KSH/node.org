@@ -1,0 +1,90 @@
+#+title: orgasmic task TASK-T7KSH
+#+orgasmic_version: 2
+
+* BACKLOG TASK-T7KSH inspect_rmux_binary execs an unbounded child on the daemon's probe path, defeating the JQ8AV.1 child deadline    :drivers:rmux:hardening:
+:PROPERTIES:
+:ID: TASK-T7KSH
+:IMPLEMENTS: TASK-JQ8AV
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-drivers/**
+:END:
+
+CONFIRMED BY AN INDEPENDENT REVIEWER [2026-08-03], =tx-20260802-orgasmic-4104=
+(rmux / codex / gpt-5.6-sol / high), reviewing =9017514..7ade8af=:
+
+#+begin_quote
+MEDIUM correctness — not an independent tmux-default blocker:
+=crates/orgasmic-drivers/src/modes/rmux.rs:207-237= and
+=crates/orgasmic-daemon/src/supervisor.rs:4881-4888=. rmux pane probing still
+runs =probe_rmux_binary()=, whose =inspect_rmux_binary= executes =rmux -V=
+through unbounded =Command::output()=. The outer five-second =spawn_blocking=
+timeout cannot cancel that child or reap it, so a wedged rmux executable leaves
+the blocking task and process alive. This confirms the declared residual as a
+live hole in the same ownership defect class and warrants its own task.
+#+end_quote
+
+So this is no longer one author self-report — two independent readers, one of
+whom measured it, reached the same conclusion from the source.
+
+PRIORITY ARGUMENT, unchanged in substance but sharper in context: rmux is
+currently the ONLY pane transport with a liveness channel in the installed
+daemon (=57e35de= has JQ8AVs rmux channel, not TASK-4CSMYs tmux one), so every
+dispatch on this host goes over rmux and therefore over this probe path. The
+exposure is not hypothetical while that remains true.
+
+The reviewers fix direction matches the acceptance already recorded here: owned
+child process group, absolute deadline, group kill, reap, bounded stdout drain,
+and a wedged-=-V= concrete-PID regression.
+
+** Description
+
+TASK-JQ8AV.1 funnelled all four supervisor probe subprocesses through
+=probe_command_stdout=, which gives each child its own process group, enforces
+=PROBE_CHILD_DEADLINE= (2s) against the CHILD, and SIGKILLs the group then reaps.
+
+One probe subprocess escapes that funnel, and it is on the production rmux path.
+=orgasmic-drivers/src/modes/rmux.rs::inspect_rmux_binary= runs
+=StdCommand::new(&path).arg("-V").output()= with no deadline. The daemon reaches
+it through =pane_probe_command= -> =probe_rmux_binary=.
+
+** Evidence
+
+Measured by the JQ8AV.1 implementer while building the hung-mux regression, not
+inferred. With a shim that wedged on EVERY invocation rather than only on the
+server-contacting verb:
+
+- the supervisor sweep took *5.012s* — the outer =WORK_PROBE_TIMEOUT=, NOT the
+  2s child deadline, proving the child was outside the funnel;
+- the test binary then took *120s to exit*, i.e. the tokio runtime was waiting on
+  a blocking task stuck in a child the funnel never saw.
+
+The shipped test was then deliberately weakened to answer =-V= normally, which
+keeps =inspect_rmux_binary= out of its timed section. That is realistic — =rmux -V=
+is answered locally and never contacts a server, so a wedged rmux SERVER does not
+hang it — but it means *the shipped regression cannot catch this*.
+
+** Why it matters
+
+A wedged or hung rmux BINARY (as opposed to a wedged server) reintroduces exactly
+what JQ8AV.1 set out to eliminate: a blocking-pool thread and a live subprocess
+leaked per sweep, at one sweep every =RUN_TIMEOUT_CHECK_INTERVAL= (50ms), for as
+long as the condition lasts. rmux is currently the transport of choice for
+dispatches on this daemon, because it is the only pane transport with a liveness
+channel in the installed runtime.
+
+The tmux path has no equivalent exposure: =real_tmux_on_path()= only stats PATH.
+
+** Acceptance
+
+- =inspect_rmux_binary= (and any sibling in orgasmic-drivers that the daemon
+  execs on a probe path) runs under an explicit deadline with kill-and-reap,
+  owning its child the way =probe_command_stdout= does.
+- A deterministic regression proves it, with a shim that wedges on EVERY
+  invocation including =-V= — the case the current test deliberately avoids.
+  Assert supervisor latency strictly below =WORK_PROBE_TIMEOUT= and that the
+  recorded child pid disappears.
+- The test binary exits promptly afterwards; a 120s teardown is itself the
+  symptom and should be asserted against.
+- fmt, clippy -D warnings, and the focused drivers + daemon tests green. Do not
+  run the billed harness test (TASK-099T6).
+

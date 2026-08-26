@@ -1,0 +1,14 @@
+#+title: orgasmic glossary term term_H29TQ
+#+orgasmic_version: 2
+
+* term_H29TQ Materialized index
+:PROPERTIES:
+:ID:                 term_H29TQ
+:CANONICAL:          materialized index
+:AVOID:              database, cache, persisted store
+:RELATES_TO:         term_N5SJT term_CEQFS term_RG690 term_FM60Y
+:DEFINITION:         The daemon's in-memory read projection of board, projects, tasks, activity, and graph nodes, rebuilt from the .org files at boot and incrementally refreshed by the watcher; the API, CLI, and UI read from it rather than re-parsing files, and on a parse failure the last-good projection for that file is kept. Also called the materialized read index.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:PRIMARY_LEAF:       arch_C87Z9.4
+:END:
+

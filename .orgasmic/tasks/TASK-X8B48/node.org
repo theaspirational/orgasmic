@@ -1,0 +1,49 @@
+#+title: orgasmic task TASK-X8B48
+#+orgasmic_version: 2
+
+* DONE TASK-X8B48 orgasmic status surfaces doctor staleness check :cli:status:doctor:dx:polish:
+:PROPERTIES:
+:ID:               TASK-X8B48
+:PRIORITY:         P3
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-cli/src/status.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/status.rs
+:READ_SCOPE:       crates/orgasmic-cli/src/doctor.rs crates/orgasmic-cli/src/status.rs crates/orgasmic-cli/src/lib.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-FWBYB TASK-FWBYB.1
+:END:
+
+** Description
+TASK-FWBYB shipped =orgasmic doctor=' staleness check (binary mtime vs daemon-code merge SHA + uptime; multi-line =Finding::Warn=). TASK-FWBYB.1 hardened it (=DaemonLiveness= enum + exactly-one liveness signal when daemon not-Running). The check is real, validated end-to-end, and silent when daemon is fresh.
+
+Open follow-up (cited in goal.org and TASK-FWBYB notes): users running their normal =orgasmic status= command don't see the staleness warning — only =orgasmic doctor= surfaces it. =orgasmic status= is the more common liveness check (one-line output: boot_id + uptime + projects + parse_errors + tx count). Surfacing the staleness Warn there means users notice "you're running a stale daemon binary" without needing to remember to run doctor.
+
+Fix shape (small, ~30-100 LOC):
+1. =crates/orgasmic-cli/src/status.rs= currently renders the daemon-status JSON envelope from =/daemon/status= (bearer-authed via =DaemonClient=).
+2. After rendering the normal status output, call into =doctor.rs='s existing =check_daemon_staleness= (or equivalent function — read =doctor.rs= for the exact name) using the same =SystemTime::now()= + git-log path as TASK-FWBYB.1. If the check returns =Finding::Warn=, render it as a trailing block (e.g., =WARN: daemon binary appears stale: <message>=).
+3. Skip the staleness check entirely if =DaemonLiveness= is not =Running= (= same TASK-FWBYB.1 F-1 invariant: don't double-warn when daemon is down).
+4. New integration test in =crates/orgasmic-cli/tests/= (or wherever status has tests) that seeds a tempdir git repo + stale binary mtime + running daemon fixture and asserts =orgasmic status= output contains the WARN line.
+
+** Acceptance Criteria
+- [ ] *AC-1 status emits staleness Warn when daemon is Running AND check fires*: =orgasmic status= output includes a trailing =WARN: ...= block matching the same format =orgasmic doctor= uses, when the daemon-code-since-binary-mtime check fires. Format: multi-line Warn (binary path + most-recent merge SHA + commits-since-boot count), same as doctor.
+- [ ] *AC-2 status is silent when daemon is fresh*: =orgasmic status= does NOT emit the WARN block when binary mtime is newer than all daemon-code merges since boot. No extra noise on the happy path.
+- [ ] *AC-3 status skips check when daemon not-Running*: same =DaemonLiveness::Running= gate as TASK-FWBYB.1 F-1. When daemon is unreachable / unauthorized, the existing status error path stays untouched; do NOT add a staleness check on top of it (no double-warn).
+- [ ] *AC-4 integration test*: =cargo test -p orgasmic-cli= covers (i) status-with-stale-binary outputs WARN, (ii) status-with-fresh-binary does NOT, (iii) status-with-daemon-down does NOT call the staleness check. Reuse the test seeds from TASK-FWBYB.1 if they're in a shared test-helper module; otherwise duplicate the tempdir-git fixture pattern.
+- [ ] *AC-5 no helper duplication*: do NOT copy-paste the doctor staleness logic into status.rs. Extract =check_daemon_staleness= (or rename if private) to be callable from both =doctor.rs= and =status.rs=. If it currently lives in =doctor.rs= as a private fn, lift it to =pub(crate)= or move to a shared module under =crates/orgasmic-cli/src/=. Choose the minimum-disruption refactor.
+- [ ] All gates green: =cargo test --workspace=, =cargo clippy --workspace --all-targets -- -D warnings=, =cargo fmt --check=, =git diff --check=. MSRV 1.78. No new deps.
+
+** Notes
+- *NOT* =:FIX_SUBTASK: t= — earns a reviewer pass.
+- *Worker*: =implementer-codex-stdio=.
+- *Out-of-scope*: don't change the doctor staleness HEURISTIC itself (no bracket-aware filter — that's a separate TASK-FWBYB follow-up). Don't touch the daemon side. Don't change the =DaemonLiveness= enum.
+- *Anchor read*: =crates/orgasmic-cli/src/doctor.rs= (find =check_daemon_staleness= and =DaemonLiveness=); =crates/orgasmic-cli/src/status.rs= (current status command implementation); the existing TASK-FWBYB.1 integration test (template for the new one).
+- *Pre-existing diagnostics*: per persona.org housekeeping rule, fix any pre-existing clippy/test/MSRV warnings encountered in the task's read scope.
+
+** Evidence
+- *Implementer*: =implementer-codex-stdio= (7th in-row clean). Self-commit =74b49be=. 4 files +224/-59 across =crates/orgasmic-cli/=: =src/main.rs= (status fn wires staleness Warn to stderr after JSON stdout), =tests/common/mod.rs= (new +76, shared fixtures lifted from doctor), =tests/doctor.rs= (-58, consumes shared fixtures), =tests/status.rs= (new +138, stale/fresh/daemon-down coverage). Helper reuse via existing =doctor::check_daemon_for_status_with_status= — no duplication (AC-5 satisfied without new module extraction). Merged no-ff as =27abf41=.
+- *Brief vs reality*: brief named =crates/orgasmic-cli/src/status.rs= as write scope, but status command lives in =main.rs= (no separate status.rs file). Implementer correctly routed to =main.rs= — brief was imprecise, not a design issue.
+- *Reviewer*: =reviewer-codex-stdio= (4th in-row clean). Verdict =clean, ships-as-is= with 0 findings. Stream split confirmed (JSON stdout / Warn stderr), daemon-down skip preserved (AC-3), 3 integration test branches (stale/fresh/daemon-down) with stale/fresh spawning real daemons (AC-4 fully covered).
+- *Gates*: =cargo test --workspace= + =cargo clippy --workspace --all-targets -- -D warnings= + =cargo fmt --check= + =git diff --check= all clean. MSRV 1.78. No new deps.
+- *Tx*: =implementer.done= =tx-20260527-org-0388= + =reviewer.done= =tx-20260527-org-0396=.
+

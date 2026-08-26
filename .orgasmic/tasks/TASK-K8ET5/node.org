@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-K8ET5
+#+orgasmic_version: 2
+
+* DONE TASK-K8ET5 TASK-AFE5Q fix round 7 continuation: verify and finish atomic cleanup
+:PROPERTIES:
+:ID: TASK-K8ET5
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Continue salvaged AFE5Q fix-round-7 WIP at 90d9de7 after the prior Cursor run hit stall_timeout_exceeded. Complete every TASK-NW4WV acceptance item, resolve compile/clippy/test failures, add any missing deterministic race/security tests, and finalize with a clean committed branch.
+

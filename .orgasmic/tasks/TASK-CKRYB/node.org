@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-CKRYB
+#+orgasmic_version: 2
+
+* DONE TASK-CKRYB UI: three-tier layout precedence, persist-on-drag, two-level reset and update nudge :ui:graph:
+:PROPERTIES:
+:DEPENDS_ON: TASK-JH9DD
+:ID: TASK-CKRYB
+:IMPLEMENTS: arch_M8JQT
+:WRITE_SCOPE: ui/src/components/GraphView.tsx ui/src/components/node-views/NodeGraph.tsx ui/src/lib/api.ts
+:END:
+
+Description: Implement the local-first precedence and reset model from dec_WWAHT.
+
+Acceptance Criteria:
+- Per-node resolution: machine-local localStorage > shared graph_layout.org (baseline, term_FJ883) > deterministic default. Per-node granularity (a node present in the shared overlay is owned wholesale by the tier that defines it; local presence wins over shared).
+- Dragging persists geometry/curation to localStorage only (never PATCHes shared, never touches git). Viewport (pan/zoom) stays machine-local (existing mechanism).
+- Publish action PATCHes the shared overlay via /graph/layout (the deliberate write path; also the graph_curator agent's path).
+- Two-level reset: global Reset to shared map (clear all local) and per-node snap-to-shared (right-click). 
+- Quiet shared-map-updated nudge when the baseline changes for locally-overridden nodes, with a Reset affordance.
+- cd ui && npm run typecheck passes.
+** Evidence
+Merged d46a18f (worker commit 905f833, implementer-claude-rmux/opus-4-7). api.ts: patchGraphLayout(project, entry) PATCH /graph/layout + GraphLayoutPatchEntry. GraphView.tsx: applyOverlay resolves per-node local>shared>default (owned-wholesale); buildFlowGraph exported with localOverrides; localOverrides + baselines hydrated from localStorage (graph-layout-local:<project>, graph-layout-baseline:<project>) with isLayoutEntry validation + try/catch; handleNodeDragStop writes geometry to localStorage ONLY (manager-verified: never calls patchGraphLayout, never network/git - the dec_WWAHT invariant); handleNodeContextMenu right-click snap-to-shared; handleResetAll global reset; handlePublish is the ONLY write-to-shared path; driftedNodeIds drives the quiet shared-map-updated nudge with Reset affordance. NodeGraph.tsx: onNodeDragStop/onNodeContextMenu props on NodeGraphCanvas; ArchitectureView call site unchanged. New __tests__/buildFlowGraph.test.ts (4 cases: determinism, active-task filtering [done excluded], default-curation edges, three-tier precedence) = the folded JH9DD F4. Gates: ui typecheck exit 0; npm run test 9 files / 77 tests pass incl. the 4 new. Residual: live browser UX deferred to operator restart; publish PATCHes serially. Reviewer-claude-rmux pass pending.
+Reviewer (opus-4-8, run ...98103c): all invariants confirmed (drag never writes shared/git, three-tier precedence owned-wholesale, two-level reset clears baselines, no ArchitectureView regression). Findings fixed in 126c5ac: HIGH (drag coords are React Flow floats but GraphLayoutEntry x/y are i64 -> publish of a dragged node failed; now Math.round at handleNodeDragStop); MEDIUM (publish now advances baselines[id] to the published entry so a self-publish is not read as external drift; local override stays - local-first); LOW (added owned-wholesale partial-local + reorder-determinism tests -> 6 buildFlowGraph cases). typecheck + vitest green. TASK-CKRYB DONE.
+

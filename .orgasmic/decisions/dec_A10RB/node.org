@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_A10RB
+#+orgasmic_version: 2
+
+* dec_A10RB How should the entry point and per-project conventions reach new projects?    :scaffold:onboarding:conventions:
+:PROPERTIES:
+:ID:            dec_A10RB
+:GLOSSARY_REFS: term_CEQFS term_WQMJJ
+:DECIDED_AT:    [2026-06-07 Sun 13:51]
+:SOURCE:        .orgasmic/entry.org
+:END:
+** Context
+=entry.org= is the single required-reading orientation file for anyone (human or agent) opening a coordinated repo, but it was a one-off untracked file in this repo's =.orgasmic/= with no shipped source, so a freshly =init=-ed project got no entry point. It also mixed two distinct concerns into the orientation map: durable file descriptions and prescriptive "how to contribute" / "if orgasmic is installed" rules. Those rules are working agreements that vary per project and should be addable without editing the entry map.
+** Decision
+Ship =entry.org= as a universal (placeholder-free) scaffold member under =shipped/project-scaffold/=, copied verbatim into =<project>/.orgasmic/entry.org= at init. Extract the prescriptive sections into a per-project =.orgasmic/conventions/= directory — one file per convention — seeded with =contributing.org= and =orgasmic-tooling.org=, also shipped via the scaffold. =entry.org= now only maps where things live (including =conventions/=) and points at =conventions/contributing.org= as the contribution gate. Projects extend =conventions/= with their own files; the loader's user-override rule still lets a user shadow any shipped scaffold member. This is distinct from =shipped/conventions/= (reusable prompt-rule bodies for prompt specs), which is unrelated.
+** Consequences
+=init= now writes nine scaffold members instead of six; =init_project= creates each member's parent directory generically rather than only =tasks/=, so nested scaffold paths work. =entry.org= is genericized (no "Rust/TS workspace" wording). Doctor's =REQUIRED_SHIPPED=, the fixtures parse test, the daemon scaffold-seed helper, and the CLI shipped-seed mirror all gain the three new files. A new project's =.orgasmic/= is self-orienting on first commit without orgasmic installed.
+

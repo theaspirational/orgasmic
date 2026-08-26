@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_XJM14
+#+orgasmic_version: 2
+
+* term_XJM14 Orgasmic
+:PROPERTIES:
+:ID:                 term_XJM14
+:CANONICAL:          orgasmic
+:AVOID:              HAR migration, Emacs workflow, team SaaS
+:RELATES_TO:         term_CJ2R4 term_CEQFS term_X4JGJ term_3YTBK
+:DEFINITION:         A local coordination app that lets a developer manage AI-agent work using plain-text project state.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

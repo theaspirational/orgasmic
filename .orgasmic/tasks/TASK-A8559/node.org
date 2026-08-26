@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-A8559
+#+orgasmic_version: 2
+
+* DONE TASK-A8559 Relocate scaffold to shipped/project-scaffold; slim the skill :scaffold:
+:PROPERTIES:
+:DEPENDS_ON: dec_N7BM4
+:ID: TASK-A8559
+:PRIORITY: P2
+:WRITE_SCOPE: crates/** shipped/** scripts/install.sh
+:END:
+
+** Description
+Implement dec_N7BM4. Move =shipped/skills/orgasmic/scaffold/= → =shipped/project-scaffold/=; repoint =SCAFFOLD_SHIPPED_DIR= so the loader tiers are symmetric with =user/project-scaffold/=. Remove the =scaffold/= folder from the skill; update the skill layout map in SKILL.md, =references/init.md= path references, doctor =REQUIRED_SHIPPED=, fixtures parse test, and the daemon/CLI shipped-seed mirrors. Check =scripts/install.sh= and the README skill-copy prompt for scaffold-path references.
+
+** Acceptance Criteria
+- [ ] =orgasmic project init= scaffolds from the new path; user override still shadows per dec_GRDFB.
+- [ ] Skill folder contains only SKILL.md + references/.
+- [ ] doctor and fixtures tests updated; =cargo test= green.
+

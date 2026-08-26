@@ -1,0 +1,22 @@
+#+title: orgasmic task TASK-QRTT8
+#+orgasmic_version: 2
+
+* DONE TASK-QRTT8 boot_reattach_candidate refutably matches credential_mode: None — any run with a resolved credential mode is never rehydrated after restart
+:PROPERTIES:
+:ID: TASK-QRTT8
+:PRIORITY: P1
+:END:
+
+From TASK-KPMFK (2026-07-29), HIGH, pre-existing, found by reading: api.rs's boot_reattach_candidate destructures Ok(Lifecycle::RunMeta { …, credential_mode: None, driver_config, .. }) — a REFUTABLE pattern, not a binding. A RunMeta carrying credential_mode: Some(_) does not match, falls to _ => {}, meta stays None, and the run is not a boot-reattach candidate AT ALL. Production writes Some: adapters/claude.rs:578 puts the resolved mode into NativeRuntime and supervisor.rs:1650-1661 lifts it into RunMeta (asserted by the_resolved_credential_mode_round_trips_through_run_meta, supervisor.rs:7249). So a claude run that resolved native_login or bare_api_key is NEVER rehydrated after a daemon restart. Introduced by TASK-S0QRM's field addition; every existing boot-reattach test passes credential_mode: None, which is why nothing caught it.
+
+=== Ask
+1. Fix the pattern to bind rather than refute (and audit boot_reattach_candidate for any OTHER refutable field the same way — this is a pattern-shape bug class, not a one-field bug).
+2. CAUTION from the finder: the fix starts reattaching a whole class of runs that currently never reattach — reason through the blast radius (what does a reattached credential-mode run do that a never-reattached one did not?) and test it, don't just flip the pattern.
+3. A test whose RunMeta carries Some(mode) must round-trip through boot reattach (the missing test that would have caught this).
+4. Note the interaction recorded by KPMFK: its stage-watcher fix is only as reachable as this function — a stage on a credential-resolving transport would be dropped here first.
+
+=== Acceptance
+- Runs with resolved credential modes are boot-reattach candidates, proven by test.
+- The pattern-shape audit result is in the report.
+- Injection per TCTTD standard (natural red: a Some(mode) session yielding no candidate), self-tested.
+

@@ -1,0 +1,55 @@
+#+title: orgasmic task TASK-TQQQR
+#+orgasmic_version: 2
+
+* DONE TASK-TQQQR Implement serialized writer, materialized index, watcher, and HTTP/WS API foundation :daemon:
+:PROPERTIES:
+:ID:               TASK-TQQQR
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_BVH7M arch_C87Z9 arch_Z3Z3V arch_QXS5W
+:PRODUCES:         crates/orgasmic-daemon/src/writer.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/ws.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/events.rs crates/orgasmic-daemon/src/auth.rs crates/orgasmic-daemon/src/config.rs crates/orgasmic-daemon/src/runtime.rs crates/orgasmic-daemon/tests/integration.rs crates/orgasmic-cli/src/main.rs crates/orgasmic-cli/src/daemon_client.rs crates/orgasmic-cli/src/home.rs crates/orgasmic-core/src/home.rs crates/orgasmic-core/src/lib.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/** crates/orgasmic-daemon/tests/** crates/orgasmic-daemon/Cargo.toml crates/orgasmic-cli/src/** crates/orgasmic-cli/Cargo.toml crates/orgasmic-core/src/home.rs crates/orgasmic-core/src/lib.rs Cargo.toml
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org docs/adr/*.org crates/orgasmic-core/src/**
+:TEST_CMD:         cargo test -p orgasmic-daemon
+:DEPENDS_ON:       TASK-VWBDJ TASK-V3DWJ
+:END:
+
+** Description
+Build the daemon's serialized write surface and read model: append tx and sessions, rewrite direct-edit files through flocked RPC, maintain an in-memory projection, and expose localhost REST plus WebSocket streams.
+
+** Acceptance Criteria
+- [X] Daemon startup rebuilds the materialized index from project and home files before serving normal reads.
+- [X] Working-file parse failures keep last-good indexed state and report file plus line.
+- [X] Tx append uses property-drawer-only Org headings and append-only file handles.
+- [X] API and CLI share stable request IDs for retriable mutations.
+- [X] REST and WS surfaces cover board/project/task/run/manager/tmux/daemon/auth/question/recovery and graph endpoints.
+- [X] WebSocket streams emit board, task, run, manager, graph, and daemon events needed by the UI.
+
+** Evidence
+- [2026-05-21 Thu 21:35] Lifted =Home= + =resolve_loader= from orgasmic-cli into orgasmic-core (crates/orgasmic-core/src/home.rs) so the daemon and the CLI share one layout/loader implementation — closes the TODO implementer-001 left in TASK-V3DWJ worklog. The CLI's =src/home.rs= is now a thin re-export. Net test count unchanged (3 tests moved from cli to core).
+- [2026-05-21 Thu 21:35] Implemented the daemon's serialized writer (crates/orgasmic-daemon/src/writer.rs) as a single tokio task fed by an mpsc channel. Wraps orgasmic-core::tx::TxWriter (which already handles the macOS append-mode pitfall per CLAUDE.md) and orgasmic-core::session::SessionWriter; direct-edit graph rewrites take an advisory fs2 flock per dec_WH9PD and use a tmp+rename for atomicity. Idempotency cache keyed on request_id closes AC #4.
+- [2026-05-21 Thu 21:35] Implemented the in-memory materialized index (crates/orgasmic-daemon/src/index.rs) with board+projects+tx projections. =Index::rebuild= runs at boot before the daemon serves normal reads (AC #1). On per-file parse failure, the prior project entry is retained and the error surfaces through =/graph/parse-errors= (AC #2). Tested by =index::tests::parse_failure_keeps_last_good=.
+- [2026-05-21 Thu 21:35] Implemented the notify-based filewatcher with daemon-side debounce (crates/orgasmic-daemon/src/watcher.rs) per dec_YYMSK. Default 200ms window, configurable via =config.yaml::watcher_debounce_ms=. Macos path canonicalization fix (=/private/var/...= vs =/var/...=) discovered during integration testing.
+- [2026-05-21 Thu 21:35] Built the axum router (crates/orgasmic-daemon/src/api.rs) covering the arch_C87Z9 inventory. Real handlers: =/board=, =/projects[/:id[/tasks[/:task_id]]]=, =/tx= (GET + POST), =/daemon/status=, =/recovery/status= (stub payload tagged TASK-WG82T), =/auth/whoami=, =/graph/parse-errors=, =/ws=. Stub handlers return 501 with =tracked_by= naming the owner task (TASK-C7C8P/-007/-008/-010), mirroring TASK-V3DWJ's CLI stub pattern. Constant-time bearer auth via subtle::ConstantTimeEq; tokens generated at first =orgasmic serve= and stored at =$ORGASMIC_HOME/user/auth/token= (perms 0600, gitignored).
+- [2026-05-21 Thu 21:35] Wired the WebSocket stream (crates/orgasmic-daemon/src/ws.rs) at =GET /ws?topic=board,task,run,manager,graph,daemon=. Topic filter is comma-separated; omitted topic forwards all. AC #6 closed by =end_to_end_ws_emits_event_after_tx_post= integration test.
+- [2026-05-21 Thu 21:35] Boot identity (crates/orgasmic-daemon/src/runtime.rs) generates a fresh UUID per daemon start and is exposed via =/daemon/status.boot_id=. The 7th implicit AC ("boot id changes per daemon start, expose via status endpoint") is covered by =tests::daemon_boots_and_status_reports_boot_id=.
+- [2026-05-21 Thu 21:35] Promoted CLI subcommands (crates/orgasmic-cli/src/main.rs + new crates/orgasmic-cli/src/daemon_client.rs): =serve=, =status=, =restart= (501 from daemon, tracked by TASK-WG82T), =recovery= (501 stub payload tracked by TASK-WG82T), =auth show=, =tx record=, =tx list=. The CLI's HTTP client honors =ORGASMIC_DAEMON_URL= for non-default daemon ports.
+- [2026-05-21 Thu 21:35] Tests: 69 total (8 cli + 25 core unit + 12 core integration + 20 daemon unit + 4 daemon integration). Previous 45 still pass; this task adds 24. =cargo test --workspace= green, =cargo clippy --workspace --all-targets -- -D warnings= clean, =cargo fmt --check= clean, =git diff --check= clean.
+- [2026-05-21 Thu 21:35] Manual smoke against an isolated =$ORGASMIC_HOME=:
+  =./target/release/orgasmic init= scaffolded the home + auth dir.
+  =./target/release/orgasmic serve --port 0= bound 127.0.0.1:57141 and generated =user/auth/token= (64-char hex, perms 0600).
+  =ORGASMIC_DAEMON_URL=http://127.0.0.1:57141 ./target/release/orgasmic status= returned the boot_id, pid, projects=0, parse_errors=0, rebuilt_at.
+  =curl -H 'Authorization: Bearer $TOKEN' http://127.0.0.1:57141/board= returned =[]=.
+  =./target/release/orgasmic tx record --type manager.action --project orgasmic --target .orgasmic/sprint.org --reason 'TASK-TQQQR smoke test' --request-id smoke-1 --extra FROM_STATE=ready --extra TO_STATE=in_progress= appended a real tx entry through the daemon; replaying with the same =--request-id= returned the cached tx_id and the on-disk heading count stayed at 1 (idempotency proven).
+  =curl -H 'Authorization: Bearer $TOKEN' http://127.0.0.1:57141/skills= returned =501 {"error":"not implemented","tracked_by":"TASK-D6Y0Y"}=.
+- [2026-05-21 Thu 21:35] Advisory code markers applied per dec_BP4NH: writer.rs (arch_BVH7M, arch_C87Z9, dec_WH9PD, dec_R75SW); index.rs (arch_C87Z9, dec_YYMSK); watcher.rs (arch_C87Z9, dec_YYMSK); api.rs (arch_C87Z9, dec_XV9AK, dec_N17XX); ws.rs (arch_C87Z9, arch_Z3Z3V); auth.rs (arch_C87Z9, dec_XV9AK, dec_N17XX); config.rs (arch_C87Z9, dec_N17XX); runtime.rs (arch_Z3Z3V); home.rs (arch_WZFAX, arch_C87Z9, arch_QXS5W, dec_XSV21, dec_N17XX); lib.rs (arch_BVH7M, arch_C87Z9, arch_Z3Z3V); daemon_client.rs (arch_C87Z9, dec_XV9AK, dec_N17XX).
+- [2026-05-21 Thu 21:35] WRITE_SCOPE notes: extended to (a) crates/orgasmic-core/src/home.rs + lib.rs (loader lift, explicitly authorized by the team-lead brief), (b) crates/orgasmic-cli/src/{home.rs,daemon_client.rs,Cargo.toml} (home re-export + daemon HTTP client + new deps), (c) crates/orgasmic-daemon/tests/ (integration tests), (d) Cargo.toml (workspace deps: tower, tower-http, futures, subtle, reqwest, rand, tokio-tungstenite). These additions stay within the team-lead-authorized scope (loader-rule lift + daemon foundation + CLI talks-to-daemon).
+
+** Worklog
+- [2026-05-21 Thu 21:35] Read CLAUDE.md (incl. Pitfalls), .orgasmic/{project,sprint,architecture,decisions}.org, docs/adr/{0003,0004,0008,0014}-*.org, and walked the prior TASK-VWBDJ + TASK-V3DWJ outputs (crates/orgasmic-core/src/{org,schema,tx,session,slots}.rs, crates/orgasmic-cli/src/{main,home,project,board,doctor,update}.rs) to fully map the dependency surface before designing the daemon.
+- [2026-05-21 Thu 21:35] First architectural decision (recorded here per brief): lift =Home= + =resolve_loader= from orgasmic-cli into orgasmic-core::home so daemon and CLI share the layout. Implementer-001's hint in TASK-V3DWJ worklog. Net effect: zero behaviour change in CLI, daemon imports the same primitives, three former CLI unit tests now live in core.
+- [2026-05-21 Thu 21:35] Implemented modules in the order: events bus → auth (token gen + middleware) → config → runtime identity → writer (mpsc + idempotency) → index (boot rebuild + last-good fallback) → watcher (notify + debounce + canonicalize) → api (real handlers + 501 stubs) → ws (broadcast→websocket) → lib (Daemon::run wiring).
+- [2026-05-21 Thu 21:35] CLI side: added daemon_client.rs (DaemonClient::from_home reads token + base URL from config.yaml; ORGASMIC_DAEMON_URL overrides). Promoted serve/status/restart/recovery/auth/tx in main.rs.
+- [2026-05-21 Thu 21:35] Hit and fixed two surprises during testing: (1) clippy::incompatible_msrv on std =File::unlock= (stable 1.89; workspace MSRV 1.78) — qualified the calls as =FileExt::unlock= / =FileExt::try_lock_exclusive= from fs2 to keep MSRV; (2) notify reports macOS paths with the =/private= prefix while the in-memory board carries the unprefixed =/var/folders/...= path — added canonicalization on both sides before the starts_with comparison in watcher.rs::flush.
+- [2026-05-21 Thu 21:35] Final verification: =cargo test --workspace= (69 green), =cargo clippy --workspace --all-targets -- -D warnings= clean, =cargo fmt --check= clean, =git diff --check= clean. Manual smoke described in Evidence.
+

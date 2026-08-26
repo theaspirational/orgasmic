@@ -1,0 +1,51 @@
+#+title: orgasmic task TASK-FWBYB
+#+orgasmic_version: 2
+
+* DONE TASK-FWBYB orgasmic doctor: warn when running daemon binary is older than most-recent daemon-code merge :cli:doctor:dx:dispatch:followup:smoke:
+:PROPERTIES:
+:ID:               TASK-FWBYB
+:PRIORITY:         P3
+:WORKER:   implementer-claude
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-cli/src/doctor.rs crates/orgasmic-cli/src/main.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/doctor.rs crates/orgasmic-cli/src/main.rs crates/orgasmic-cli/tests/doctor.rs
+:READ_SCOPE:       crates/orgasmic-daemon/src/api.rs
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+Live evidence from the [[2026-05-24]] TASK-B2P1Z chrome smoke: the running daemon (PID 97809, ~15h uptime) predated the TASK-B2P1Z merges, so the first =POST /projects= attempt returned =405 Allow: GET, HEAD= and the dialog rendered "405 Open Manage" — confusing for a real user who'd hit the same case after pulling latest without restarting their daemon.
+
+This is a class problem: any merge that adds/changes daemon-facing routes (api.rs, projects.rs, watcher.rs, drivers, supervisor, writer, RPC) needs a daemon restart, but the developer has no surface telling them. =orgasmic doctor= already exists as the catch-all DX/diagnostics command (per polish-phase-1 plans in goal.org). Add a check:
+
+1. Read the running daemon's =/daemon/status= (=boot_id=, =started_at=, optionally =git_sha=).
+2. Read the on-disk binary at =$ORGASMIC_HOME/bin/orgasmic= mtime (or =stat=).
+3. Read =git log --since=<daemon start> --oneline -- crates/orgasmic-daemon/ crates/orgasmic-core/= for merges since boot.
+4. If binary mtime > daemon start_at OR there are daemon-code commits since boot, emit a yellow warning: =⚠ running daemon predates recent merges; restart recommended (orgasmic restart)=. Print the offending SHAs.
+
+Optionally surface in =orgasmic status= too (since users hit that more often than =doctor=).
+
+** Acceptance Criteria
+- [ ] =orgasmic doctor= acquires daemon status + binary mtime + recent commits and emits the warning when stale.
+- [ ] Warning includes: daemon uptime, binary build time, count of daemon-code commits since boot, first 3 SHAs + subjects.
+- [ ] Clean state (no stale): silent or single ✓ line.
+- [ ] Daemon down: skip the check, emit "daemon not running" once (don't double-warn).
+- [ ] Bracket-aware: don't false-positive on doc-only commits under =crates/orgasmic-daemon/= (e.g., commits that only touch =*.md=). Acceptable to be conservative — first cut can flag any commit under those paths and refine later.
+- [ ] Integration test: spawn an older binary, fake a newer mtime + git commit, assert =doctor= emits the warning. (Use =tempfile= for the binary stub.)
+- [ ] All tests pass; clippy/fmt/diff clean. No new deps. MSRV 1.78.
+
+** Notes
+Cluster-traceable to the 2026-05-24 TASK-B2P1Z chrome smoke. Manager-discipline gap that exposed this: TASK-B2P1Z cluster-close commit did NOT include a daemon restart even though merges shipped a new daemon route. The discipline rule will likely be folded into =shipped/manager/persona.org= ("after merging any daemon-facing commit, restart the daemon before continuing") once this check exists to make it mechanical.
+
+Companion thought (out of scope for this task; capture only): could also become a =dispatch-close= post-hook that auto-restarts daemon when =--merge-sha= touched daemon-facing paths. Cleaner DX but more invasive — defer until the doctor check proves the heuristic.
+
+** Evidence
+- [2026-05-24 Sun 15:24] Implementer shipped =56eae40= on =task-052-impl=; merged no-ff as =81f60e9=. Codex gpt-5.5 xhigh, ~7m wall, dispatched via =orgasmic manager dispatch=. =implementer.done= =tx-20260524-org-0184=. 2 files +369/-0: =doctor.rs= +313 (reuses existing =DaemonClient= bearer-auth path for =GET /daemon/status=; canonicalizes =$ORGASMIC_HOME/bin/orgasmic= for mtime; shells out =git log --since=<started_at> --oneline --no-merges -- crates/orgasmic-daemon/ crates/orgasmic-core/=; emits multi-line =Finding::Warn= with uptime/boot/pid/start/build-time/commit-count/SHAs+subjects/restart-hint), =tests/doctor.rs= +56 (binary stub + status injection). Tests 219 → 225 (+5). clippy/fmt/diff clean. MSRV 1.78. **DOGFOOD #25+#26 PASS**.
+- *Live first-use validation* (META-DOGFOOD): rebuilt binary post-merge; ran =orgasmic doctor= against the still-running pre-merge daemon (PID 10673, ~52m uptime). The brand-new TASK-FWBYB check fired correctly: =[warn] running daemon predates recent daemon-code merges= with uptime, pid+boot, binary build time, =1 daemon-code commit since boot: 08133ac TASK-PYW86: sanitize GET endpoint error envelopes=, and =restart recommended (orgasmic restart)= action. After =kill + serve=, doctor went silent (clean). End-to-end heuristic validated on first try.
+- Reviewer pass (codex gpt-5.5 xhigh, ~3m wall, =tx-20260524-org-0188=): verdict =has-issues, blocks-ship=. 6 findings. **F-1 HIGH bug** — acceptance breach: when daemon's down, doctor emits ZERO liveness signal (stale check skips on =None= status AND no other check covers liveness). F-2 medium design (decision fn reads wall clock → non-deterministic); F-3 low (=<1m= renders as =Ns=); F-4 medium test (git-path integration test missing); F-5 medium test (connection-refused/401 not tested through acquisition layer); F-6 low (truncation lacks =...and N more=).
+- TASK-FWBYB.1 fix-subtask filed + dispatched (=:FIX_SUBTASK: t=). Codex gpt-5.5 xhigh, ~12m wall, shipped =ad51da0= → merged as =fc8e152=. =implementer.done= =tx-20260524-org-0192=. 2 files +363/-34: F-1 introduced =DaemonLiveness= enum (=Running(DaemonStatus)= / =Unavailable= / =Unauthorized=) with one liveness Warn when not-Running and stale check silent on not-Running (no double-warn); F-2 =check_daemon_staleness= now takes =now: SystemTime=; F-3 =human_duration= returns =<1m= for <60s; F-4 CLI integration test with tempdir git repo + daemon-code commit + boot-fixture; F-5 connection-refused + 401 tests through acquisition layer; F-6 truncation renders =...and N more=. Tests 232 → 241 cluster (TASK-FWBYB.1 share +9). **DOGFOOD #27+#28 PASS** (=:FIX_SUBTASK: t= IMPLEMENT→DONE shortcut).
+- Manager hand-flipped TASK-FWBYB REVIEW → DONE for cluster closure in this commit. All 6 reviewer findings closed.
+
+** Reviewer pass
+**Done.** Reviewer ran on the merged =81f60e9= surface, surfaced 6 findings (F-1 HIGH acceptance breach + 5 medium/low), all addressed by TASK-FWBYB.1 fix-subtask in one round per =:FIX_SUBTASK: t= discipline. Manager verified in-scope diff + green gates + that =orgasmic doctor= now reports daemon-not-running correctly when daemon down.
+

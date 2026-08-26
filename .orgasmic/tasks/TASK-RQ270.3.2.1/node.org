@@ -1,0 +1,286 @@
+#+title: orgasmic task TASK-RQ270.3.2.1
+#+orgasmic_version: 2
+
+* DONE TASK-RQ270.3.2.1 Carve retired arch_ ids out of the identity lint too, or stage D floods the board
+:PROPERTIES:
+:ID: TASK-RQ270.3.2.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:WRITE_SCOPE: crates/,verify/TASK-RQ270.3.2.1/
+:END:
+
+** Description
+
+Fix round for the BLOCK SHIP on TASK-RQ270.3.2's review. The finding and its
+confirmed mechanism are on that task under "Review round 1 — REJECT: a second
+parse-error path; stage D is not safe yet". Read it there.
+
+*Stage D must not run until this lands.*
+
+** The mechanism, confirmed by the manager
+
+Stage C part 2 carved =arch_= out of =lint_dangling_graph_edges=. A SECOND,
+independent path survives:
+
+1. =index.rs:685= scans source markers and runs =lint_project_identity_state=;
+   =index.rs:1172= pushes every finding into =parse_errors=.
+2. =identity_lint.rs:253= collects architecture identities into the known-id
+   universe *only while =.orgasmic/architecture.org= exists* — gated on
+   =path.exists()=.
+3. =identity_lint.rs:358= (=lint_dangling_references=) emits
+   =dangling advisory marker `{id}` in {file}= for every scanned marker id not in
+   that universe. There is no retired-=arch_= carve-out.
+
+*Measured blast radius*: *59 scanned =orgasmic:arch_= marker lines naming 36
+distinct ids* across =crates/=, =ui/= and =scripts/=.
+
+The vivid case: =crates/orgasmic-daemon/src/index.rs:1= carries
+=// orgasmic:arch_C87Z9=, which resolves today only because
+=.orgasmic/architecture.org:572= defines it. After stage D, *the file that runs
+the lint flags itself*.
+
+** The ruling
+
+Exclude retired =arch_= ids from *index-time* identity-lint dangling enforcement,
+in BOTH branches of =lint_dangling_references= — the advisory-marker branch,
+which is the measured blocker, and the reference-token branch.
+
+The reviewer recommended both and the manager agrees: one canonical rule beats
+two, and the second branch is a latent repeat in any project that does have
+=arch_= values under a reference property. This repository currently has zero
+such values under =RELATES_TO=, =GLOSSARY_REFS= or =PARENT= — so the second
+branch is prevention, not repair, and should be stated as such.
+
+*Keep the generic marker scanner and =/graph/markers= behaviour unchanged.* The
+markers stay indexed and queryable; only their dangling ENFORCEMENT changes.
+
+*Do not weaken write-time rejection of new unresolved references.* A retired id
+should stop being an error to HAVE; it should not become a legal thing to ADD.
+If that distinction is not expressible where the lint sits, say so rather than
+guessing.
+
+** Acceptance
+
+- A production-shaped index test with NO =architecture.org= present, a scanned
+  =// orgasmic:arch_GONE99= source marker, asserting BOTH that the marker
+  remains indexed AND that no parse error names it.
+- The same treatment for the reference-token branch, with its own test.
+- =parse_errors= is 0 against this repository's own state.
+- =orgasmic verify TASK-RQ270.3.2= still passes — the graph-edge carve-out is
+  correct and must not regress.
+- Generic markers for =dec_=, =TASK-= and =term_= still lint exactly as before;
+  an unresolved =dec_GONE99= marker must STILL be an error.
+
+That last one is the guard against over-carving: it is easy to silence the lint
+for everything while trying to silence it for one prefix.
+** Landed and verified by the manager
+Merged =a4a22dc= (worker =7c5b34a=, base =f5ecdab=).
+
+=== One named rule, and the boundary is stated in the code
+
+=is_retired_architecture_id= (=identity_lint.rs:377=) is used in BOTH branches of
+=lint_dangling_references= — the reference-token branch and the advisory-marker
+branch. Its comment carries the boundary the brief demanded:
+
+: // Index-time history carve-out only. `unresolved_reference_tokens` stays
+: // prefix-agnostic so write-time guards still reject newly added arch_ refs.
+
+*Manager verified the write-time half independently*: no =arch_= special case
+exists in =unresolved_reference_tokens=, and a core test asserts
+=unresolved_reference_tokens("RELATES_TO", "arch_GONE99", &empty)= still returns
+the token. So a retired id stopped being an error to HAVE without becoming legal
+to ADD — which is exactly the distinction the brief asked for and warned might
+not be expressible.
+
+=== The over-carve guard exists and is real
+
+=index.rs:2864= scans =// orgasmic:dec_GONE99,TASK-GONE99,term_GONE99= and asserts
+all three STILL produce dangling-advisory errors. That is the guard against
+silencing the lint for everything while aiming at one prefix, and it is asserted
+rather than described.
+
+=== The producer audit is the part worth copying
+
+The brief demanded enumeration of every producer of =parse_errors=, not another
+grep for the function just edited. The report enumerates *seven* semantic
+producers — file read/parse failures, heading lints, phantom-task lint,
+decision-parent-tree validation, =lint_dangling_graph_edges=,
+=lint_project_identity_state=, derived task-parent validation — and states for
+each whether it can turn an unresolved =arch_= id into an error. Only two could;
+both now carve out.
+
+That is the seventh audit failure shape of this excision answered properly: *a
+second independent code path implementing the same policy.*
+
+=== Gates on the merged tree
+
+- =scripts/run-tests.sh -p orgasmic-core= — GREEN, 0 failures.
+- =cargo test -p orgasmic-cli --test cli_parity= — 3 passed.
+- =cargo clippy --workspace --all-targets -- -D warnings= — exit 0; =fmt --check=
+  exit 0.
+- =orgasmic verify TASK-RQ270.3.2.1= — PASS.
+- =orgasmic verify TASK-RQ270.3.2= — PASS; the graph-edge carve-out did not
+  regress.
+- =orgasmic status --errors= — *0 parse errors*.
+- Daemon suite: implementer reported 713 passed / 1 failed, the failure
+  isolation-green and in the =supervisor::tests::a_probe_child_*= family — the
+  measured nondeterminism on TASK-STWVB, correctly reported and not chased.
+
+=== A manager error during gating, recorded rather than buried
+
+The manager attempted to validate "is stage D safe" by moving
+=.orgasmic/architecture.org= aside on the LIVE repository and counting parse
+errors. *That experiment could not answer the question* — the running daemon is
+the installed =05e1813= build, which predates both carve-outs — and it perturbed
+the operator's daemon index badly enough that restoring the file left 78 residual
+errors until =orgasmic daemon restart=.
+
+No data was lost; the file stayed byte-identical and =git status= stayed clean.
+The correct instruments were already in hand: the two injection proofs and the
+tests, which run against BUILT code.
+
+*A live-daemon experiment is a write to operator state, not a read.* And the
+number it produced — 311 — turned out to matter for a different reason, recorded
+on TASK-RQ270 as the stage D sequencing warning.
+** Review attempt 1 — ORPHANED (tmux server died), abandoned and re-dispatched
+Reviewer run =run-20260806T063152-…= produced nothing and was released without a terminal declaration.
+
+*The tmux SERVER exited entirely*, not just the pane: =tmux ls= reported =no server running on /private/tmp/tmux-501/default=. Every other dispatch this session ran on tmux without transport trouble, so this is a first.
+
+Evidence gathered per =rescue-policy= before choosing, rather than re-dispatching on reflex:
+- *Release tombstone*: run released, =[run-gone]=, =live_runs: 0= — already ended, so per the policy there is nothing to release and abandon is a tx entry rather than a =run recover= command.
+- *Terminal declaration*: NONE. =[unreported]=, =last.txt= 0 bytes, stdout log 0 bytes.
+- *Task lifecycle*: =in_review=, not superseded by a newer dispatch.
+- *Native transcript*: nothing produced.
+- *Worktree*: clean — and it was a REVIEWER, whose contract is read-only, so there was never work to salvage.
+- *Runtime liveness*: dead and not reattachable; the server is gone, not idle.
+
+Judgment from the policy's menu: *abandon and re-dispatch under a fresh lease.* Reattach is impossible, resume/fork needs a trustworthy native session identity that does not exist here, and fresh recovery is pointless when the attempt produced nothing.
+
+Closed =--status aborted= so the ledger records an orphan rather than a completion. The hard rule the policy states — never treat a failed release as silent success — is the reason this got a tx entry of its own instead of a quiet re-dispatch.
+** Root cause of three orphans — codex workspace out of credits
+Three consecutive reviewer dispatches orphaned. *Root cause is quota exhaustion, not transport.*
+
+*The diagnostic*: dispatch, then =tmux capture-pane= within 30 seconds instead of waiting for the stall detector. The pane showed:
+
+: ■ Your workspace is out of credits. Ask your workspace owner to refill in order to continue.
+:   Usage limit reached
+:   Request a limit increase from your owner to continue using codex. Request increase?
+:   1. Yes (y)
+: › 2. No (default) (n)
+
+*The full chain, which is worth recording because every link looked like something else:*
+
+1. Codex launches, hits the workspace quota, and blocks on an INTERACTIVE prompt.
+2. It consumes no CPU and writes nothing — =last.txt= and the stdout log stay 0 bytes.
+3. After 600s the stall detector releases: =stall_timeout_exceeded: no work
+   evidence for 600s; 6 process(es) under pid 60457 at 0.0% cpu=.
+4. The release kills the pane. That was the tmux server's only session, so *the
+   server exits*.
+5. =tmux ls= then reports =no server running=, which reads exactly like a
+   transport failure — and that is what the first two orphans were misdiagnosed
+   as.
+
+*Two hypotheses were tested and killed before the right one*, both worth naming
+so they are not re-tested: the manager's earlier =daemon restart= did NOT break
+the environment (the running daemon has the correct =PATH=, =ORGASMIC_HOME=,
+=USER=, =HOME=, =LOGNAME=), and tmux itself is healthy (a plain detached session
+created from a shell survived 45s while orgasmic's died).
+
+*The instrument that mattered*: capture the pane EARLY. The release tombstone
+says "0.0% cpu, no work evidence", which is true and tells you nothing about
+why. The pane says exactly why. For any future silent-hang orphan, capture before
+the stall clock expires.
+
+*Consequence*: every codex dispatch will orphan identically until the workspace
+is refilled. The board's reviewers and implementers have both been codex today.
+Claude remains available as a harness. Refilling is an operator action; the
+manager cannot resolve it.
+** Review round 2 — APPROVE WITH FOLLOW-UPS; stage D cleared
+Reviewer =reviewer-claude-tmux= (tmux / claude / claude-opus-5 / high — the first
+dispatch after the harness switch). *APPROVE WITH FOLLOW-UPS. Stage D: YES.*
+Three NON-BLOCKING findings, no BLOCK SHIP.
+
+=== It ran the experiment the manager botched, correctly
+
+The manager tried to validate stage D by deleting =architecture.org= on the LIVE
+repository against a daemon that predates the carve-outs — invalid, and it
+perturbed operator state. The reviewer did it properly and *explicitly declined
+to repeat the live version*:
+
+a read-only probe running the *MERGED* lint against a *COPY* of this repository's
+real state with =architecture.org= deleted, reproducing the daemon's own scanner
+(=should_scan_marker_file=, =should_skip_marker_dir=, =should_skip_marker_path=,
+=marker_node_ids_in_line=) line by line — *and with a pre-fix CONTROL*:
+
+| repo copy | rule | findings |
+|---|---|---|
+| =architecture.org= absent (stage D) | merged | *0* |
+| absent | pre-fix control | *78* |
+| present (today) | merged | 0 |
+| present | pre-fix control | 0 |
+
+The control is what makes the 0 a real negative rather than a vacuous one. The
+live repo was never touched: =git status --porcelain= empty throughout,
+=architecture.org= still 119773 bytes.
+
+*The 78 corroborates the mechanism from a second direction* — it is exactly the
+residual count the manager measured after restoring the file.
+
+=== It corrected the count WITH the mechanism
+
+The brief said 59 marker lines naming 36 distinct ids. Measured against the
+scanner's own normalisation: *57 lines, 14 distinct INDEXED ids*. The 36 counted
+=.N= subtask suffixes separately; =normalize_marker_node_id= (=marker.rs:96=)
+collapses =arch_X.1= -> =arch_X=. Nothing to fix — but *stage D's real surface is
+14 ids, not 36*, and the manager's number was raw grep output rather than what
+the indexer sees.
+
+=== The producer enumeration went finer than the implementer's
+
+*14 call sites* through the =push_parse_error= funnel plus 7 direct pushes,
+versus the implementer's "seven semantic producers" — same conclusion, more
+granular evidence, and it checked =api.rs= only READS =parse_errors=. *No eighth
+producer.* It also established that =lint_dangling_references= has exactly one
+production caller, which itself has exactly one, so the comment's "index-time
+only" claim is literally true.
+
+=== FINDING 1 is the one worth carrying into stage D
+
+The comment credits the write-time boundary to =unresolved_reference_tokens=
+staying prefix-agnostic. *That is accurate but not what actually holds the line.*
+The guard resolves against =graph.nodes=, and =arch_= ids never enter it — which
+is true only because =looks_like_structured_node_id= KEEPS =arch_=, so
+=:PRODUCES: arch_X= is not materialised as an artifact node.
+
+So the real invariant is "=arch_= is never materialised into =graph.nodes=", and
+after stage D that one list entry becomes the SOLE thing preventing a retired id
+from becoming addable again. Someone "cleaning up" that entry post-excision —
+which reads like cosmetic tidying — would silently stop
+=reject_unresolved_reference_token= firing on all four write handlers. *Nothing
+fails; the guard just goes quiet.*
+
+It verified the boundary holds today by code path (all four handlers call the
+guard under =if !req.force=), and that existing values are not re-validated
+unless re-set — so stage D creates no trap for the two live backlog tasks
+carrying =:IMPLEMENTS: arch_RN73Z=.
+
+=== The anti-vacuity check that could have cost the repo
+
+It confirmed the marker-shaped STRING LITERALS the new tests embed
+(=\"// orgasmic:arch_GONE99\\n\"=) are NOT picked up by the real scanner, because
+=comment_region_from_slash_slash= (=marker.rs:120=) is quote-aware. It checked
+this specifically because a false =dec_GONE99= marker would have injected three
+parse errors into this repository's own index and broken the =parse_errors = 0=
+criterion. That is checking whether the test can poison the thing it measures.
+
+=== Manager rulings on the three findings
+
+- *Finding 2 (unconditional carve-out)*: KEEP unconditional — one canonical rule,
+  and =arch_= is a formally retired class the daemon can no longer grow. But the
+  comment under-describes the code, so the manager is correcting it. Reviewer
+  leaned the same way.
+- *Findings 1 and 3 (test gaps)*: filed rather than fixed here; finding 1's
+  =looks_like_structured_node_id= pin goes into *stage D's* brief, because stage D
+  is what makes that entry load-bearing.
+

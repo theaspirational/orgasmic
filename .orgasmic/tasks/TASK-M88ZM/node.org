@@ -1,0 +1,53 @@
+#+title: orgasmic task TASK-M88ZM
+#+orgasmic_version: 2
+
+* DONE TASK-M88ZM Add cursor-agent WorkerDriver (composer-2.5-fast) + agent template + end-to-end test :drivers:driver:cursor:composer:worker:capacity:
+:PROPERTIES:
+:ID:               TASK-M88ZM
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/src/cursor_agent.rs crates/orgasmic-drivers/src/lib.rs shipped/agent-templates/implementer-composer.org
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/cursor_agent.rs crates/orgasmic-drivers/src/lib.rs crates/orgasmic-drivers/tests shipped/agent-templates/implementer-composer.org crates/orgasmic-daemon/tests
+:READ_SCOPE:       /tmp/orgasmic-codex/task-056-brief.md
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+Add =cursor-agent= (Cursor Agent CLI, model =composer-2.5-fast=) as a first-class orgasmic worker type alongside =claude-acp= / =codex-appserver= / =hermes= / =tmux-tui=. Unblocks parallel implementer dispatch when Codex quota is exhausted; introduces a second production-grade implementer driver with independent quota. Mirror =claude_acp.rs= structure exactly: =CursorAgentDriver= + =CursorAgentConfig= + simulated-vs-real branch gated on =which cursor-agent= + =DriverEvent= stream from =cursor-agent --print --output-format stream-json --stream-partial-output --model <cfg.model> --force=. Register in =lib.rs= =TRANSPORTS= + =driver_for=. Add =shipped/agent-templates/implementer-composer.org= with =:DEFAULT_DRIVER: cursor-agent= and =:DEFAULT_MODEL: composer-2.5-fast=. Integration test gated on =which cursor-agent= validates supervisor acquire → driver event flow → release cycle.
+
+Brief: =/tmp/orgasmic-codex/task-056-brief.md=. Local prereqs verified by manager (=cursor-agent= at =~/.local/bin/cursor-agent= v2026.05.20-2b5dd59).
+
+** Acceptance Criteria
+- [ ] New file =crates/orgasmic-drivers/src/cursor_agent.rs= implements =WorkerDriver= for transport id ="cursor-agent"=. Mirror =claude_acp.rs= structure: =Config= deserialize, simulated-vs-real branch in =acquire=, =cursor_agent_available()= probe, =CursorAgentControl: DriverControl= with =transition_state= / =babysitter_action= / =release=.
+- [ ] Real-wire mode spawns =cursor-agent --print --output-format stream-json --stream-partial-output --model <cfg.model> --force= via =tokio::process::Command=. stream-json events parsed line-by-line; mapped to =DriverEvent= variants per existing patterns.
+- [ ] Simulated mode emits deterministic =Ready= + small canned flow + =Completed= for tests without the binary on PATH.
+- [ ] =lib.rs= updated in three places: =pub mod cursor_agent=, =pub use cursor_agent::CursorAgentDriver=, =TRANSPORTS= adds ="cursor-agent"=, =driver_for= match adds the arm.
+- [ ] =shipped/agent-templates/implementer-composer.org= matches the format used by =implementer-claude.org= with =:DEFAULT_DRIVER: cursor-agent= + =:DEFAULT_MODEL: composer-2.5-fast= + =:DEFAULT_EFFORT: high= + the same persona/operating-rules sections.
+- [ ] Unit tests in =crates/orgasmic-drivers/= cover: registry, simulated-mode acquire, real-wire acquire (gated on =which cursor-agent=), validate-config rejection paths.
+- [ ] Integration test in =crates/orgasmic-daemon/tests/= exercises supervisor acquire → driver events → release path against the new template (gated on =which cursor-agent=).
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new heavyweight deps.
+- [ ] Manager-side end-to-end: post-merge, manager dispatches a tiny throwaway test task that acquires the new driver via the daemon's supervisor seam (NOT via =orgasmic manager dispatch=, which is out of scope), watches a real =cursor-agent= process emit events, and releases cleanly. Result captured as an Evidence-section note on this task.
+
+** Notes
+Unblocks the polish-phase-1 batch (TASK-G0C5R/TASK-DFEDX/TASK-CPA74) when codex quota is hit — once 056 lands, those three can re-dispatch via cursor-agent / composer-2.5-fast. Driver follows the goal.org constraint: detect matching CLI at acquire-time; if present, real wire; otherwise simulated. Tests gated on =which cursor-agent=. Manager-dispatch CLI (=orgasmic manager dispatch=) integration is explicitly OUT OF SCOPE (separate follow-up candidate); end-to-end test uses the daemon's supervisor seam instead.
+
+** Evidence
+- [2026-05-24 Sun 17:12] Codex (gpt-5.5 xhigh, ~43m wall, 223,203 tokens) implemented driver + tests; manager-committed as =478960b= (codex left work uncommitted this run — noted as behavior drift). Merged no-ff as =98bb9d5=.
+- 6 files +1491/-3: =crates/orgasmic-drivers/src/cursor_agent.rs= (new, 1158 LOC), =crates/orgasmic-drivers/src/lib.rs= (+11/-3 registry), =crates/orgasmic-drivers/tests/cursor_agent.rs= (new, 145 LOC), =crates/orgasmic-daemon/src/api.rs= (+5/-1 stage_driver_config routes endpoint=stdio for cursor-agent), =crates/orgasmic-daemon/tests/integration.rs= (+142 daemon auto-spawn live test), =shipped/agent-templates/implementer-composer.org= (new, 31 LOC).
+- Driver structure mirrors =claude_acp.rs= exactly: =CursorAgentDriver= + =CursorAgentConfig= (endpoint/model/api_key_env/sandbox/force/prompt_bundle_text) + simulated-vs-real branch + =CursorAgentControl= (transition_state/babysitter_action/idempotent release).
+- Real-wire mode: =cursor-agent --print --output-format stream-json --stream-partial-output --model <cfg.model> --force= via =tokio::process::Command=. stream-json events translated to =DriverEvent= variants (Ready, TextChunk, ToolCall, RunComplete, RunFail, DriverError).
+- Simulated mode: deterministic Ready + TextChunk + TextChunk + RunComplete for tests without binary on PATH.
+- Registry: =lib.rs= updated in 4 places — =mod cursor_agent=, =pub use CursorAgentDriver=, =TRANSPORTS= (now 5 entries), =driver_for= match arm.
+- agent-template =implementer-composer.org= matches =implementer-claude.org= shape: =:DEFAULT_DRIVER: cursor-agent=, =:DEFAULT_PROVIDER: cursor=, =:DEFAULT_MODEL: composer-2.5-fast=.
+- =implementer.done= =tx-20260524-org-0200= via =dispatch-close=. **DOGFOOD #29 PASS** (BACKLOG→IMPLEMENT on dispatch). Cleanup =:CLEANUP_STATUS: ok=.
+- Verification: =cargo test --workspace= 247 → 256 (+9: 4 driver tests + 5 daemon integration tests); =cargo clippy -D warnings= clean; =cargo fmt --check= clean; =git diff --check= clean. MSRV 1.78. No new deps.
+- **Live end-to-end verified**: =real_cursor_agent_stream_json_bridge_emits_events_and_releases= ran against installed =cursor-agent v2026.05.20-2b5dd59= during cargo test and asserted non-simulated Ready + progress events + terminal completion + idempotent release.
+
+** Reviewer pass
+- [2026-05-24 Sun 17:36] Codex reviewer (gpt-5.5 xhigh, ~6m wall) produced =/tmp/orgasmic-codex/task-056-review-report.md=. Verdict: =has-issues, blocks-ship=. 4 findings (1 high + 1 medium + 2 low; 0 critical). =reviewer.done= =tx-20260524-org-0202=. **DOGFOOD #30 PASS** (REVIEW→REVIEW idempotent NO-OP because RECOMMENDED_SUBTASKS=TASK-M88ZM.1 non-empty + parent stays REVIEW until fix-subtask closes).
+- *F-1 HIGH bug*: =cursor_agent.rs:748= maps real =result= event to =RunComplete= then drops sender at =:402=; supervisor at =supervisor.rs:339= treats stream-close as =Interrupted=; stage outcome treats interrupted as failure. Reviewer's live cursor-agent smoke confirmed real CLI emits =system/init=, =user=, =assistant=, =result= then exits — successful Cursor runs race to interrupted-status. Closed by TASK-M88ZM.1.
+- *F-2 MEDIUM bug*: =cursor_agent.rs:653/706= emit =DriverEvent::ToolCall= for arbitrary Cursor tool names bypassing =WorkerTool=/=BabysitterTool= policy; =translate_value= at =:543= has no top-level =tool_use= arm. Closed by TASK-M88ZM.1.
+- *F-3 LOW bug*: =validate()= at =:82= never rejects non-empty endpoint values other than =stdio=. Closed by TASK-M88ZM.1.
+- *F-4 LOW test*: =tests/cursor_agent.rs:109= stops at first terminal without asserting terminal-uniqueness; no fixture for cumulative-partial-output pattern. Closed by TASK-M88ZM.1.
+

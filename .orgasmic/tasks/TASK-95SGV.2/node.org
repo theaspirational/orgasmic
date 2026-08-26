@@ -1,0 +1,44 @@
+#+title: orgasmic task TASK-95SGV.2
+#+orgasmic_version: 2
+
+* DONE TASK-95SGV.2 Prove cleanup reservation diagnostics through the ordinary dispatch endpoint
+:PROPERTIES:
+:ID: TASK-95SGV.2
+:IMPLEMENTS: TASK-95SGV
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**, verify/TASK-95SGV.2/**
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+TASK-95SGV.1 merged the production fixes for both independent reviewer
+findings. Its API regression proves the shared structured conflict renderer and
+the recovery mapper, but it does not drive the ordinary dispatch endpoint or
+=spawn_worker_run= match arm. The reviewer explicitly required that link to be
+tested end to end; the worker acknowledged it as residual risk.
+
+** Acceptance
+
+- Add a deterministic =post_task_dispatch= / =spawn_worker_run= endpoint test
+  that installs or injects a real =CleanupInProgress= acquire refusal and
+  invokes the ordinary dispatch surface.
+- Assert HTTP 409 and the exact caller-visible =guard_id=, =owner_pid= and
+  =owner_alive= fields, plus the task, kind and worktree identity.
+- The test must fail if the ordinary dispatch match arm is reverted to the
+  generic =supervisor_acquire_error= mapper, even while the shared renderer and
+  recovery unit tests remain green.
+- Use existing stub-driver and daemon API fixtures; do not require real provider
+  credentials or submit a billed turn.
+- If the end-to-end test exposes a product defect, fix only that defect and keep
+  the TASK-95SGV.1 shared response shape.
+- Ship an injection proof under =verify/TASK-95SGV.2=, run the focused endpoint
+  test, fmt, and clippy with warnings denied.
+
+** Prior Evidence
+
+TASK-95SGV.1 worker commit =4baad32=, merge =f55cf6e=. Independent reviewer
+=reviewer.done= tx =tx-20260729-orgasmic-3940= requested the endpoint-level
+regression. Manager independently replayed TASK-95SGV and both new focused
+tests before merge.
+

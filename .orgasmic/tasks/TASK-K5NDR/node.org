@@ -1,0 +1,47 @@
+#+title: orgasmic task TASK-K5NDR
+#+orgasmic_version: 2
+
+* DONE TASK-K5NDR ORGASMIC_RUN_ID leaks into test subprocesses, so the CLI suite fails inside a dispatch :tests:defect:dispatch:
+:PROPERTIES:
+:ID: TASK-K5NDR
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-cli
+:END:
+
+`ORGASMIC_RUN_ID` leaks from the operator's (or a worker's) environment into
+test subprocesses, so every `dispatch finalize` test in
+`crates/orgasmic-cli/tests/dispatch.rs` resolves the AMBIENT run id instead of
+the one its fixture created, and fails with `no live run ...`.
+
+Reported by the TASK-6AYEJ implementer, and it reproduced the failure on
+UNMODIFIED code before touching anything —
+`dispatch_finalize_commit_flag_leaves_clean_committed_worktree` fails when run
+from inside a live dispatch and passes outside one. All of that task's gates had
+to be run as `env -u ORGASMIC_RUN_ID cargo test -p orgasmic-cli`.
+
+This is the same class of defect as TASK-RRT4T (tests that silently skip when
+tooling is absent) and TASK-STWVB (tests that pass alone and fail in-suite): the
+suite's result depends on who is running it and from where, rather than on the
+code. It is worse than either in one respect — it makes the CLI suite
+UNRUNNABLE from inside a dispatch, which is exactly where every dispatched
+worker runs it. A worker that does not know the incantation reports a red suite
+it cannot explain, or worse, works around it.
+
+The manager's own runs of this suite pass because a manager shell has no
+ORGASMIC_RUN_ID set (verified: unset). So the manager and the worker see
+different results from the same command on the same tree, and the manager's
+green is the misleading one.
+
+Fix direction: the test harness must not inherit ambient orgasmic run identity.
+Clear `ORGASMIC_RUN_ID` (and audit sibling `ORGASMIC_*` variables that steer
+resolution) in the fixture that builds the command, not in a wrapper the caller
+has to remember. A test whose correctness depends on the operator's environment
+is not a test.
+
+Acceptance:
+- `cargo test -p orgasmic-cli` passes with `ORGASMIC_RUN_ID` set to an arbitrary
+  value in the environment
+- the fixture, not the caller, is responsible for the isolation
+- an audit of other `ORGASMIC_*` variables that can steer CLI resolution is in
+  the report, with each one either cleared or explicitly justified as safe
+

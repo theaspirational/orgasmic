@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_RECYG
+#+orgasmic_version: 2
+
+* dec_RECYG How should run state signal who is acting on a task right now?    :task-model:
+:PROPERTIES:
+:ID:            dec_RECYG
+:GLOSSARY_REFS: term_3YTBK
+:DECIDED_AT:    [2026-05-23 Sat 14:52]
+:SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_MKC0A
+:END:
+** Context
+A single lifecycle stage can host multiple legitimate run states depending on the active agent, so the model needs a vocabulary that signals "who is acting now." A flat verb vocabulary loses the at-a-glance "is the manager waiting on me" signal.
+** Decision
+Run records carry a namespaced state field with three namespaces: =agent.<verb>= (LLM driver active), =human.<verb>= (daemon waiting on a human), and =ci.<verb>= (external automation) — e.g. agent.grilling, agent.implementing, human.answering, human.reviewing, ci.running, ci.failed. The task card renders the active run's state under the stage pill, with namespace driving color (teal=agent, amber=human, blue=ci); no active run means no run-state chip.
+** Consequences
+A task can have concurrent runs (babysitter + implementer); the card shows the primary while the drawer lists all.
+

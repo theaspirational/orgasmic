@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_HR8D8
+#+orgasmic_version: 2
+
+* dec_HR8D8 How can the /orgasmic skill avoid loading its whole body into context up front?    :scaffold:onboarding:skill:dynamic-discovery:
+:PROPERTIES:
+:ID:            dec_HR8D8
+:GLOSSARY_REFS: term_CEQFS
+:DECIDED_AT:    [2026-06-07 Sun 16:00]
+:SOURCE:        shipped/skills/orgasmic/SKILL.md
+:PARENT:        dec_RX4DF
+:END:
+** Context
+=shipped/skills/orgasmic/SKILL.md= is orgasmic's first interactive surface and likely its most-used entry point, and its body loads into the agent's context whenever the skill triggers. After install/init/recall/resume were added it had grown to ~519 lines — a wall of text dropped up front, which directly contradicts orgasmic's core dynamic-discovery principle (read the one or two things your task needs, never load whole documents wholesale).
+** Decision
+Apply the one-parent-skill + internal-modules pattern. =SKILL.md= becomes a thin (~50-line) router: a subcommand table, the bootstrap-from-nothing vs existing-project distinction, the roadmap, and a layout map — instructing the agent to read the matching reference file in full before acting. The detailed procedures move to bundled modules loaded on demand: =references/install.md=, =references/init.md=, and =references/recall-resume.md= (the shared manager bootstrap + resume + recall + when-it-writes + related conventions, ~300 lines that no longer load for an install or init). The frontmatter =description= (the always-loaded skill-list entry) is rewritten to describe the router and subcommands compactly while keeping full trigger coverage. The bundled =scaffold/= templates are already externalized (loaded only when =init= reads them) and stay in place; this is the references/assets/scripts module taxonomy applied to the skill.
+** Consequences
+Invoking =/orgasmic= now loads ~50 lines instead of ~519, and the agent pulls only the single module the requested subcommand needs — the recall/resume manager machinery no longer enters context during an install or scaffold. The reference modules travel with the skill via the symlink/copy install (the README install prompt is updated to copy the whole folder incl. =references/=). Editing one subcommand's procedure now touches one file. The scaffold drift test is unaffected (=scaffold/= path unchanged). The skill now models the same progressive-disclosure discipline it asks projects to follow (entry.org → open only what your task needs). Open follow-up: for strict Agent-Skills layout conformance, =scaffold/= could later move under =assets/= (deferred to avoid churning the drift test and the dec_RX4DF/dec_GG6B9 path references for cosmetic gain).
+

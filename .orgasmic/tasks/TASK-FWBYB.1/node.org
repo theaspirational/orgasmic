@@ -1,0 +1,60 @@
+#+title: orgasmic task TASK-FWBYB.1
+#+orgasmic_version: 2
+
+* DONE TASK-FWBYB.1 doctor liveness + deterministic uptime fix-subtask: emit daemon-down finding + inject =now= + render =<1m= / =...and N more= + git-path integration test :cli:doctor:dx:bug:test:fix:
+:PROPERTIES:
+:ID:               TASK-FWBYB.1
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-cli/src/doctor.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/doctor.rs crates/orgasmic-cli/tests/doctor.rs
+:READ_SCOPE:       /tmp/orgasmic-codex/task-052-review-report.md /tmp/orgasmic-codex/task-052-brief.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-FWBYB
+:END:
+
+** Description
+Six reviewer findings from TASK-FWBYB bundled as one fix-implementer round per one-round-of-fixes discipline. F-1 is HIGH (acceptance breach: daemon-down emits zero liveness signal). Report at =/tmp/orgasmic-codex/task-052-review-report.md=.
+
+*F-1 (HIGH bug) — =orgasmic doctor= emits no daemon-down signal.* Stale check skips when =daemon_status= returns =None= (=doctor.rs:83,122=); =daemon_status()= collapses connection failures, token read failures, 401s, decode failures into =None= (=doctor.rs:130=); =cmd_doctor= only prints =diagnose()= findings (=main.rs:674=); no other check emits =daemon not running=. Acceptance breach: criterion says daemon-down should skip stale AND emit =daemon not running= once.
+
+*F-2 (MEDIUM design) — Decision fn reads wall clock.* =check_daemon_staleness()= calls =SystemTime::now()= internally for uptime (=doctor.rs:203=). Non-deterministic; prevents precise unit coverage of boundary cases.
+
+*F-3 (LOW bug) — Sub-minute uptime renders as seconds.* =human_duration()= falls through to =format!("{secs}s")= for <60s (=doctor.rs:260=). Focus list called out =<1m= explicitly.
+
+*F-4 (MEDIUM test) — Integration test misses the git-backed warning path.* Only test (=tests/doctor.rs:23=) creates a newer binary symlink and asserts =0 daemon-code commits=. Git path is only unit-tested (=doctor.rs:364=). Acceptance says integration test must spawn older binary + fake newer mtime + git commit + assert warning.
+
+*F-5 (MEDIUM test) — Daemon-down + unauthorized not tested through acquisition layer.* Only daemon-down test calls =check_daemon_staleness(None, ...)= directly (=doctor.rs:405=). Doesn't prove connection-refused / missing-token / 401 are correctly classified by =daemon_status()= (=doctor.rs:130=).
+
+*F-6 (LOW design) — Commit truncation loses remaining-count.* Lists first three, then bare =...= (=doctor.rs:226,229=). Focus area asked for =...and N more=.
+
+** Acceptance Criteria
+- [ ] *F-1*: Make daemon status acquisition return a small status enum (=Running(DaemonStatus)=, =Unavailable=, =Unauthorized=) OR add one separate daemon-liveness doctor finding. Keep stale check silent on unavailable/unauthorized status, but emit exactly ONE non-stale warning (=daemon not running= on connection refused; =daemon auth token mismatch= on 401, or a single combined message — pick one deliberately). NOT a double-warn with the stale check.
+- [ ] *F-2*: Pass =now: SystemTime= into =check_daemon_staleness()= (or split rendering so uptime is supplied by caller). Unit tests assert exact uptime strings for =<1m=, =59s=, =1m=, =1h 4m=, =2d 3h=, =30d 5h= without sleeping or racing the clock.
+- [ ] *F-3*: =human_duration()= returns =<1m= for =secs < 60=. Add direct tests for the listed boundaries.
+- [ ] *F-4*: Extend or add a CLI integration test that creates =home.source()= as a git repo with a commit under =crates/orgasmic-daemon/= or =crates/orgasmic-core/=, seeds the minimal required =shipped/= files so doctor doesn't fail layout checks, boots the daemon, asserts CLI output includes the commit SHA/subject.
+- [ ] *F-5*: Once F-1's daemon liveness is represented explicitly, add tests for connection-refused AND token-mismatch acquisitions. Assert stale warning is absent AND daemon-down/auth finding emits at most once.
+- [ ] *F-6*: Render =...and N more= for =len > 3=. Update unit test to assert remaining count.
+- [ ] All 232 tests still pass; new tests per F-2 + F-3 + F-4 + F-5 + F-6 (estimate +6-10). clippy/fmt/diff clean. MSRV 1.78. No new deps.
+
+** Notes
+*Fix-subtask of TASK-FWBYB* — =:FIX_SUBTASK: t= set. On close, auto-transition flips IMPLEMENT → DONE (skip-review per one-round-of-fixes discipline). Manager hand-flips TASK-FWBYB REVIEW → DONE for cluster closure.
+
+*F-1 priority bump to HIGH*: it's an acceptance-criteria breach surfaced by the reviewer, not a polish item. Without daemon-down liveness, =doctor= gives users zero signal when the daemon's down — defeats the diagnostic purpose.
+
+** Evidence
+- [2026-05-24 Sun 15:51] Shipped =ad51da0= on =task-052.1-impl=; merged no-ff as =fc8e152= on main. Codex gpt-5.5 xhigh, ~12m wall. =implementer.done= =tx-20260524-org-0192= via =dispatch-close=. **DOGFOOD #27+#28 PASS** (BACKLOG→IMPLEMENT on dispatch; IMPLEMENT→DONE via =:FIX_SUBTASK: t= shortcut).
+- 2 files changed, +363 / -34 within =WRITE_SCOPE=: =doctor.rs= +303/-34, =tests/doctor.rs= +94/-0.
+- *F-1 fix (HIGH)*: =DaemonLiveness= enum introduced — =Running(DaemonStatus)= / =Unavailable= (connection refused, DNS, timeout) / =Unauthorized= (401, missing token, decode mismatch). =diagnose()= now emits exactly ONE liveness Warn when not-Running (=daemon not running= or =daemon auth token mismatch=); stale check stays SILENT on not-Running (no double-warn). Acceptance criterion now satisfied: daemon-down case emits =daemon not running= once.
+- *F-2 fix*: =check_daemon_staleness= now takes =now: SystemTime= parameter; pure decision function. Thin wrapper acquires =now= via =SystemTime::now()= and passes it in. Tests assert exact uptime strings without clock racing.
+- *F-3 fix*: =human_duration()= returns =<1m= for =secs < 60=. Direct tests added for =<1m= / =59s= / =1m= / =1h 4m= / =2d 3h= / =30d 5h=.
+- *F-4 fix*: CLI integration test creates tempdir git repo, seeds minimal =shipped/= layout, commits under =crates/orgasmic-daemon/=, sets up =Home= with stub binary mtime EARLIER than commit (so git-staleness is load-bearing), boots fixture daemon with =started_at= BEFORE commit, runs =cmd_doctor=, asserts output includes commit SHA + subject.
+- *F-5 fix*: Tests for connection-refused acquisition (=DaemonLiveness::Unavailable= path → one =daemon not running= Warn, zero stale Warns) and token-mismatch (=DaemonLiveness::Unauthorized= path → one =daemon auth token mismatch= Warn, zero stale Warns). "At most one" assertion load-bearing.
+- *F-6 fix*: Commit truncation renders =...and N more= for =len > 3=. Unit test updated to assert remaining count.
+- Verification: 232 → 241 tests in worktree (+9); 247 on merged main post both fix-subtasks. clippy/fmt/diff clean. MSRV 1.78. No new deps.
+- *Live re-validation*: post-merge daemon restart, =orgasmic doctor= silent on fresh daemon (clean state). Pre-restart, doctor correctly warned about TASK-PYW86.1 daemon-code merge — heuristic now end-to-end validated AND robust to daemon-down (F-1 acceptance criterion live-confirmed).
+
+** Reviewer pass
+**SKIPPED per =:FIX_SUBTASK: t= one-round-of-fixes discipline.** TASK-FWBYB had its reviewer pass (6 findings, all addressed by this fix-subtask). Manager verified in-scope diff + green gates + live daemon-down behavior.
+

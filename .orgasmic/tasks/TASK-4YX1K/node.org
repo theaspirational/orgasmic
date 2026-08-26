@@ -1,0 +1,29 @@
+#+title: orgasmic task TASK-4YX1K
+#+orgasmic_version: 2
+
+* DONE TASK-4YX1K Default to proceeding; confirm only for irreversible or outward-facing actions :workflow:runtime:process:
+:PROPERTIES:
+:ID: TASK-4YX1K
+:DEPENDS_ON: TASK-YGB1R
+:PRIORITY:   P1
+:END:
+
+Problem: the runtime tells a manager what work to do and how much process to apply, but says nothing about when to stop and ask a human. Agents fill that vacuum with timidity. Observed 2026-07-25: a manager finished TASK-KWSTJ, correctly identified that a reviewer cannot see uncommitted source, and then asked the user for permission to commit to a local branch — a reversible, machine-local step that was already the precondition for a review the user had asked for. The question contained no decision. It cost a round-trip and stalled the work.
+
+This is the mirror image of TASK-3CM0Q. That task stops an agent from silently proceeding through a decision that is genuinely the user's. This one stops an agent from interrupting on something that is not a decision at all. An agent without an explicit line between them oscillates: the same session skipped a real tier decision, was corrected, then over-corrected into asking about a mechanical step. Both failures are the human checkpoint landing in the wrong place, and neither is fixed by telling the agent to "use judgement".
+
+Work:
+1. State the default in `shipped/entry/router.org` and `shipped/workflows/default.org`: proceed. Asking is the exception and needs a reason that names which property of the action triggers it.
+2. Define confirmation triggers by property, not by feeling. Confirm when an action is hard to reverse, leaves the machine, or spends someone else's resources — pushing to a remote, publishing a release or artifact, force-pushing or rewriting history, deleting or rewriting operator session/run history, touching the LaunchAgent or a live production daemon, or anything that mutates a shared or external service.
+3. Name the proceed class just as explicitly, because a bare "proceed by default" will not survive contact with a cautious agent: committing to a local branch, creating and removing worktrees, running gates and test suites, reading anything, and `.orgasmic/` state writes through the CLI.
+4. Cover the standing-authorization case: once a user has approved a plan, the mechanical steps that plan obviously entails do not each need their own approval. Re-asking inside an approved plan is itself the defect.
+5. Say what to do instead of asking when an agent is unsure but the action is in the proceed class: act, then report what was done plainly enough to be reversed.
+
+Non-goal: expanding autonomy on the confirm class. This narrows *where* the human is asked, it does not reduce *whether* they are asked about the things that matter.
+
+Acceptance:
+- committing to a branch, creating a worktree, or running gates never produces a permission question
+- pushing, publishing, force-pushing, or touching the live daemon still does
+- the router text distinguishes the two classes by a stated property, so an agent reaching an unlisted action can classify it rather than guess
+- reads coherently against TASK-3CM0Q: one task puts a checkpoint where a decision exists, this one removes checkpoints where none does
+

@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_H9SJX
+#+orgasmic_version: 2
+
+* term_H9SJX Prompt part
+:PROPERTIES:
+:ID:                 term_H9SJX
+:CANONICAL:          prompt part
+:AVOID:              macro, include snippet, hidden instruction
+:RELATES_TO:         term_GBTJS term_HPKAZ term_VQ3F1
+:DEFINITION:         A reusable `.org` prompt fragment with a declared target section, applied by the prompt compiler so overlapping agent behavior is shared without duplicating full prompt specs.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:END:
+

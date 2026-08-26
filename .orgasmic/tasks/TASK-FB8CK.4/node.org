@@ -1,0 +1,58 @@
+#+title: orgasmic task TASK-FB8CK.4
+#+orgasmic_version: 2
+
+* DONE TASK-FB8CK.4 Daemon watcher reload: direct sprint.org edits must trigger project refresh :daemon:watcher:reliability:
+:PROPERTIES:
+:ID:               TASK-FB8CK.4
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_C87Z9
+:PRODUCES:         crates/orgasmic-daemon/src/watcher.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/tests
+:READ_SCOPE:       CLAUDE.md crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/lib.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-C7C8P
+:END:
+
+** Description
+**Symptom**: direct edits to =.orgasmic/sprint.org= (via Claude Code's Edit tool, the new TASK-FB8CK.3 CLI auto-flip writer, or any other path that's not a daemon tx-route write) do NOT trigger a daemon project-index refresh. =/projects/:id/tasks/:task_id= continues to serve the pre-edit lifecycle stage until either (a) someone POSTs to =/tx= (the dispatch CLI's pre-flight tx-file write triggers this side effect), or (b) the daemon is restarted. The Tasks-page kanban displays stale state, undermining the lifecycle-stage discipline shipped in TASK-FB8CK.3.
+
+**Observed 3× this session**: (1) manual =BACKLOG → IMPLEMENT= flip via Edit tool for TASK-DK0Y2 mid-dispatch — daemon stale until restart; (2) post-TASK-DK0Y2 merge — sprint.org changes weren't reflected until daemon rebuild + restart; (3) TASK-FB8CK.5 auto-flip via the new CLI write path — daemon stale until restart (verified live moments before this task was filed).
+
+**Watcher code state (current)**: The =RecommendedWatcher= IS spawned (=crates/orgasmic-daemon/src/watcher.rs:80-89=). Per-project =.orgasmic/= directory IS watched recursively via =WatcherCommand::WatchProject= sent from =Daemon::run= for each project in the initial board snapshot (=lib.rs:170-174=). =flush()= canonicalizes both sides of the path comparison (=watcher.rs:230, 237=, mirrors the CLAUDE.md macOS pitfall). =record_event= filters to =.org=-extension files only (=watcher.rs:218=). So the watcher LOOKS like it should fire on sprint.org changes — but empirically it doesn't.
+
+**Hypotheses to investigate** (codex picks ones to verify):
+
+1. **Atomic-write event-shape mismatch.** Editors (and likely Claude Code's Edit tool, and the new CLI's =set_title_line= writer) often use a write-temp-file-then-rename pattern, which produces =EventKind::Create=, =EventKind::Modify(Name(_))=, possibly =EventKind::Remove= on the temp file rather than a direct =EventKind::Modify(Data)= on sprint.org. The =record_event= filter (=watcher.rs:206-216=) accepts =Create/Modify/Remove/Any/Other=. So this *should* be covered — but verify. Add debug tracing on each raw event, reproduce the edit, see what arrives.
+
+2. **Path canonicalization mismatch on macOS.** On macOS, FSEvents may report =/System/Volumes/Data/Users/...= or =/private/Users/...= paths. The watcher's =canonical()= helper (=watcher.rs:202-204=) calls =fs::canonicalize= (resolves all symlinks). The snapshot =entry.path= used in =touched_projects= is canonicalized inside =flush= (=watcher.rs:247=). But the initial =WatchProject= passes =entry.path.clone()= raw (=lib.rs:171=). If the raw path doesn't match the FSEvent-reported canonical form, the watch handle might be registered on a path that FSEvents never reports against. Investigate.
+
+3. **Notify watch handle silently dropped.** The watcher =watch()= return is checked (=watcher.rs:145-148= warns on error), but daemon logs don't appear to write to disk (=~/.orgasmic/logs/= is empty). Run with =RUST_LOG=debug= or capture stderr to see if =watch project failed= ever fires.
+
+4. **=record_event= filter dropping non-=.org= temp files.** Editors writing to =sprint.org.tmp= or =sprint.org.swp= or =.#sprint.org= produce non-=.org= extensions; the filter at line 218 drops them. The atomic rename's final event (CREATE/MODIFY of sprint.org) should still fire — unless the rename event lacks the extension or arrives only on the source side. Trace it.
+
+5. **=record_event= path-tracking gap.** =record_event= uses =path.extension()= to filter. If FSEvents reports parent-directory events (no extension), they're dropped. Verify the event paths carry sprint.org specifically, not just =.orgasmic/=.
+
+**Approach**: write a focused reproduction first — an integration test that simulates the Edit-tool write pattern AND the new CLI's =set_title_line= write pattern. Read =crates/orgasmic-cli/src/manager.rs= for the latter (it's the most relevant new-write path). Add tracing or a test bus subscriber to capture what events arrive. Then fix the gap.
+
+** Acceptance Criteria
+- [ ] Reproduce the bug in an integration test: edit =.orgasmic/sprint.org= using one of the write patterns that empirically fails to trigger reload (Claude Code's Edit tool — likely temp-file + rename; OR the new TASK-FB8CK.3 CLI =set_title_line= writer — read the actual writer code to identify). Assert =index.refresh_project= is NOT called within (debounce + 100ms) on the failing path — to capture the bug.
+- [ ] Fix the root cause. Add a code comment near the fix naming the failure mode + reproduction pattern.
+- [ ] Regression test passes: same write pattern → daemon refreshes within (debounce + 100ms). Repurpose the bug-capture test by flipping the assertion, or add a sibling positive test. The existing =fs_event_triggers_project_refresh= test (=watcher.rs:304=) probably uses a simpler write that doesn't hit the bug — extend it OR add a sibling test that exercises the bug path.
+- [ ] If the bug is in =record_event='s filter, document the new accepted event shapes in a code comment.
+- [ ] =cargo test --workspace= clean (with the new test). =cargo clippy --workspace --all-targets -- -D warnings= clean. =cargo fmt --check= clean. =git diff --check= clean. MSRV 1.78 preserved. No new deps.
+- [ ] No regressions on EXISTING reload paths: dispatch CLI tx-file writes still trigger refresh.
+
+** Notes
+**Disjoint scope from TASK-FB8CK.5 in flight** (TASK-FB8CK.5 = =crates/orgasmic-cli/=, TASK-FB8CK.4 = =crates/orgasmic-daemon/=). Parallel dispatch is safe.
+
+Polish-subtask of TASK-FB8CK (NOT a reviewer-finding fix-subtask). The new =:FIX_SUBTASK:= heuristic shipping in TASK-FB8CK.5 will correctly classify TASK-FB8CK.4 as polish (no =:FIX_SUBTASK: t= property) → normal IMPLEMENT → REVIEW lifecycle. BUT note: if TASK-FB8CK.4 lands BEFORE TASK-FB8CK.5, the OLD heuristic (=:PARENT_TASK:=-presence) will still apply at close time and incorrectly flip IMPLEMENT → DONE; manager will hand-correct DONE → REVIEW. If TASK-FB8CK.4 lands AFTER TASK-FB8CK.5, the new heuristic correctly flips IMPLEMENT → REVIEW. Order doesn't matter for ship — just for the dogfood-gap count.
+
+Reviewer pass dispatches after merge per persona.org rule 2.
+
+** Evidence
+- [2026-05-23 Sat 23:13] Shipped =2c03b64= on =task-045.4-impl=; merged no-ff as =238cc74=. Codex ~11m9s wall, 149,362 tokens, session =019e5664-cb3b-7b30-98a4-a9dc0cc33afa=. =watcher.rs= +190/-50. =implementer.done= =tx-20260523-org-0164=, DOGFOOD #7 (IMPLEMENT → REVIEW auto-flip fired). ⚠️ **LIVE BEHAVIOR FAILED**: after kill+spawn-fresh daemon (boot_id =0aaf691d=, pid 45319), =touch=, =sed -i.bak=, Python =open(...,'w').write= ALL fail to trigger refresh on real =/Users/.../.orgasmic=. Tests pass in =tempfile::tempdir()= but don't reproduce. Reviewer (=tx-20260523-org-0166=) verdict =has-issues, no blocks-ship=: F-1 re-verification check (manager confirmed boot_id changed so gap IS real); F-2 medium observability gap; F-3 medium tests don't cover real path. Recommends TASK-FB8CK.6. Heading stayed REVIEW (DOGFOOD #8 — RECOMMENDED_SUBTASKS non-empty rule fired).
+
+** Reviewer pass
+Dispatched + DONE per persona.org rule 2 — pid 48605, brief =/tmp/orgasmic-codex/task-045.4-review-brief.md=, =reviewer.done= =tx-20260523-org-0166= via dispatch-close. Full text at =/tmp/orgasmic-codex/task-045.4-review-report.md=.
+

@@ -1,0 +1,26 @@
+#+title: orgasmic task TASK-CM5KV
+#+orgasmic_version: 2
+
+* BACKLOG TASK-CM5KV Evaluate real ACP as an orgasmic transport :drivers:research:
+:PROPERTIES:
+:ID: TASK-CM5KV
+:PRIORITY: P2
+:DEPENDS_ON: TASK-XCJYC
+:END:
+
+Evaluate adding the Agent Client Protocol as a real orgasmic transport, once TASK-XCJYC frees the name.
+
+ACP is an open standard from Zed Industries (August 2025, Apache-licensed): JSON-RPC 2.0 over stdio for local agents, HTTP/WebSocket for remote (work in progress). It standardises the editor-to-agent boundary; MCP standardises tool access beneath it. Adopted by JetBrains, Google and GitHub, with 25+ agents.
+
+The draw is consolidation. Zed's ACP Registry already lists Claude Agent, Codex, Gemini CLI, OpenCode, Copilot, Cursor and Pi Coding Agent. Orgasmic currently maintains a bespoke adapter per harness — `adapters/claude.rs` (stream-json), `adapters/codex.rs` (app-server), `adapters/cursor_acp.rs`, `adapters/hermes.rs` — each with its own event mapping, session identity story and transcript-finder strategy. One ACP transport could in principle serve several of them through a single event mapping.
+
+Open questions to answer before committing to it:
+1. Does ACP expose what orgasmic's supervisor actually needs — terminal declaration, tool-call visibility, stall signals, and a resumable native session identity? A protocol built for editor UX may not carry the lifecycle facts recovery depends on.
+2. Does an ACP-launched agent still write its vendor-native transcript, or does the adapter layer hide it? The retro contract depends on vendor JSONL existing and being resumable (see dec on transcript ownership).
+3. Is the ACP adapter an extra process between orgasmic and the harness, and what does that mean for the startup preflight (TASK-TJKFC) and for credential handling (TASK-Z8WEJ)?
+4. Would it replace the bespoke adapters or sit alongside them? A fifth transport that duplicates four existing ones is a cost, not a saving.
+
+This is deliberately a research-and-decide task, not an implementation commitment. If the answer is that ACP does not carry orgasmic's lifecycle needs, recording that is a complete and useful result.
+
+Depends on TASK-XCJYC only for the name; the evaluation can start earlier.
+

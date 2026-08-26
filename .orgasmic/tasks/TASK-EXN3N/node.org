@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-EXN3N
+#+orgasmic_version: 2
+
+* BACKLOG TASK-EXN3N Read-only reviewer is a request, not a guarantee: pin cwd to the worktree and report main_checkout_dirty in dispatch-status    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-EXN3N
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 13. A reviewer mutated the main checkout (ran an in-place script after cd'ing there to read implementer logs). Found only by `git status` on main; every reviewer brief now carries a STAY OUT paragraph.
+** Expected
+- Reviewer run pinned to its worktree (cwd fixed; main checkout not writable from the worker process — sandbox profile), or at minimum a post-run `git status` diff on main reported in dispatch-status as `main_checkout_dirty: <files>`.
+Related: orphaned-acp-reverts-tx memory (same class: workers touching main).
+

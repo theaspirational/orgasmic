@@ -1,0 +1,36 @@
+#+title: orgasmic task TASK-RF3J1.5
+#+orgasmic_version: 2
+
+* DONE TASK-RF3J1.5 dispatch-CLI on-rail fix-subtask: implementer auto-commit + last.txt-writer at dispatch RunComplete :daemon:dispatch:implementer:lifecycle:bug:fix:superseded:
+:PROPERTIES:
+:ID:               TASK-RF3J1.5
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-daemon/src/api.rs crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/api.rs crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs crates/orgasmic-daemon/tests
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-RF3J1
+:END:
+
+** Description
+TASK-RF3J1 dispatch endpoint accepts =last_path= as part of =DispatchRequest= but does not WRITE to it on =RunComplete=. Result: TASK-G0C5R + TASK-DFEDX (and TASK-RF3J1.1 itself) finished with =run_complete= in session jsonl but no =last.txt= on disk, breaking the manager's watcher convention (`until [ -s '$last_path' ]`).
+
+Additionally: cursor-agent in =--sandbox enabled --force= mode does NOT commit the worktree even though the brief asks it to. Symptom: cursor-agent finishes with =run_complete=, leaves uncommitted changes in the worktree, watcher times out waiting for last.txt. Manager has to inspect session jsonl, run cargo gates manually, and =git commit -m "$summary"= on behalf.
+
+Fix two surfaces:
+1. *last.txt writer*: dispatch endpoint registers a =RunComplete= subscriber that writes the assistant's terminal summary to =last_path=. Source: session jsonl =run_complete= event's =event.summary= (or the last assistant text_chunk if summary missing).
+2. *Auto-commit*: when an implementer dispatch's terminal event is =RunComplete= AND the worktree has uncommitted changes AND verification gates pass (cargo test/clippy/fmt/diff), append an =implementer.commit_pending= tx so manager can confirm. (Don't auto-commit silently — too risky; just signal.) Alternatively: ship a small =manager dispatch-finalize --task TASK-NNN= subcommand that does verify+commit+merge in one shot.
+
+** Acceptance Criteria
+- [ ] *last.txt writer*: dispatch RunComplete writes assistant summary to =last_path=; integration test asserts the file content. Watcher convention =until [ -s '$last_path' ]= works.
+- [ ] *Implementer-commit-signal*: either auto-tx =implementer.commit_pending= on RunComplete with uncommitted worktree, OR new =manager dispatch-finalize --task TASK-NNN= subcommand that runs verify+commit+merge.
+- [ ] Regression tests for both surfaces; the existing TASK-RF3J1 e2e tests still pass.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new deps.
+
+** Notes
+This is the most impactful TASK-RF3J1 follow-up — without it, every dispatch requires manager-on-behalf inspection + commit, doubling the dispatch overhead. :FIX_SUBTASK: t — bundled with TASK-RF3J1 cluster.
+
+** Evidence
+Superseded by TASK-RF3J1.6 bundled fix-subtask: 5 findings (including this one) closed in one cursor-agent round, commit =15a6dbd= merged as =94a31ae=. Tests 329 → 336 (+7). See TASK-RF3J1.6 Evidence for full per-finding breakdown.
+

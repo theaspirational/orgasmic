@@ -1,0 +1,23 @@
+#+title: orgasmic decision dec_GDEXE
+#+orgasmic_version: 2
+
+* dec_GDEXE How should run recovery classify and resume runs after a daemon restart?    :run-recovery:
+:PROPERTIES:
+:ID:            dec_GDEXE
+:DECIDED_AT:    [2026-06-05 Fri 00:00]
+:SOURCE:        archive/2026-06-04-run-recovery-run-dock-grill.md
+:PARENT:        dec_CSKBD
+:END:
+** Context
+A manager run launched in the UI through tmux/Claude survived a daemon restart as a still-live tmux session, but the boot reconciler classified it =interrupted= purely because its =boot_id= predated the current boot, and the UI's =Continue= button spawned a placeholder shell (=sh -lc "echo orgasmic run continuation; exec sh"=) instead of the live session. The bug was not only missing native Claude session tracking: an older-boot tmux pane can still be alive and should be reattached before any continuation/fork path is offered. Recovery was also implicit (one =Continue= action, generic label) and not harness-aware, so it could neither resume a native Claude conversation deterministically nor explain to the user what it would do.
+** Decision
+Recovery is an explicit, ordered, backend-owned resolution. The backend computes harness-aware =recovery_actions= for every recovered run and embeds them in =/recovery/status= and =/runs= rows; the UI renders the concrete first-action label (=Reattach=, =Resume Claude (fork)=, =Start Recovery Run=) and executes through one generic endpoint =POST /runs/:id/recover= with an explicit =action=. =POST /runs/:id/continue= is removed (no alias); the CLI =run continue <id>= becomes =run recover <id> --action <action>=.
+- Action priority: =reattach_tmux= (live tmux pane proven via =tmux has-session=) first, =resume_native_fork= (=claude --resume <old-session-id> --fork-session=) second — exposed only when recorded native metadata supports it — and =start_recovery_run= last.
+- Classification proves liveness before marking interrupted: an older-boot tmux session that still answers =has-session= is =reattachable=, not =interrupted=.
+- Reattach rehydrates the original run into supervisor state keeping the original =run_id= and =runtime_id=, appends a =reattach= lifecycle event (carrying the new boot id) to the *original* session JSONL, and resumes event drain into that same file. A held =(task_id, kind)= lease blocks automatic reattach and returns a structured conflict (active run id + task) so the UI can offer open / stop / start-recovery-anyway.
+- Native runtime identity is a typed lifecycle event (=native_runtime=) carrying provider, session id, session path, launch argv, and resume argv. Every future tmux launch records it; Claude gets a deterministic session id/path and exact =--resume <id> --fork-session= argv, while other harnesses store only real launch metadata until their native session semantics are known. Prompt drafts (=prompt_draft=, pending/sent) and composer sends (=composer_send=) are also typed lifecycle events so the JSONL is the durable record.
+- =start_recovery_run= and =resume_native_fork= launch idle with a persisted recovery prompt draft that the user must send manually; the draft includes the prior run id, the absolute prior session JSONL path, a mechanical summary, the current diff stat, and inspect-before-acting instructions. =start_recovery_run= uses the original harness; provider choice is deferred. Model-generated summaries and =~/.claude/projects= best-effort discovery for legacy runs without native metadata are explicitly out of scope: with no live tmux and no native metadata, the only offered action is =start_recovery_run=.
+- Successful recovery clears the run from "Needs you" while history remains in Activity/Runs.
+** Consequences
+Recovery never silently spawns a placeholder shell, the user always sees the concrete action the backend will take, and a still-live older-boot tmux session is reattached rather than discarded. The session JSONL becomes the authoritative recovery record (native identity, drafts, sends), which TASK-CJWT3's Run Dock composer reuses. Pairs with arch_Z3Z3V (boot reconciliation), arch_A53QX (session event vocabulary), and dec_CSKBD (recovery classification); the Run Dock UX is recorded separately.
+

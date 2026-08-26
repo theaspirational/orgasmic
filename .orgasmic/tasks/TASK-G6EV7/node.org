@@ -1,0 +1,38 @@
+#+title: orgasmic task TASK-G6EV7
+#+orgasmic_version: 2
+
+* DONE TASK-G6EV7 Worker schema: rename agent-template to worker; add providers/models/efforts capability lists; ship workers for each (mode, harness) combo :workers:templates:schema:abstraction:foundation:
+:PROPERTIES:
+:ID:               TASK-G6EV7
+:PRIORITY:         P1
+:WORKER:           implementer-claude
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-core/src/workers.rs shipped/workers/
+:WRITE_SCOPE:      crates/orgasmic-core/ shipped/workers/ shipped/agent-templates/
+:READ_SCOPE:       /tmp/orgasmic-codex/task-058-brief.md ../har/src/workers.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-S81TJ
+:END:
+
+** Description
+Migrate orgasmic's =shipped/agent-templates/= to =shipped/workers/= with HAR-style capability lists. Each worker org file declares =:DRIVER:= (mode-only, e.g. =subprocess-stream-json=), =:HARNESS:= (e.g. =codex=), =:PROVIDERS:= (list e.g. =openai anthropic cursor=), =:MODELS:= (list), =:REASONING_EFFORTS:= (list), plus =:DEFAULT_*:= per field. Ship workers for each meaningful (mode, harness) combo so the user can pick how to use codex (cli/appserver/tmux) and which harness reaches their target provider/model.
+
+Brief: =/tmp/orgasmic-codex/task-058-brief.md=.
+
+** Acceptance Criteria
+- [ ] New schema in =crates/orgasmic-core/src/workers.rs= parses worker org files with the new property set.
+- [ ] Backward compat: existing =shipped/agent-templates/*.org= still parse (mapped to new schema with defaults).
+- [ ] New workers shipped in =shipped/workers/=: =implementer-codex-cli=, =implementer-codex-appserver=, =implementer-codex-tmux=, =implementer-claude-acp= (rename of current), =implementer-claude-tmux=, =implementer-cursor= (multi-provider), =implementer-hermes=. Architector/babysitter/griller/planner migrated likewise.
+- [ ] =.orgasmic/project.org= =:STAGE_AGENT_*:= properties updated to reference new worker ids.
+- [ ] Tests cover schema parse + capability-list parsing + backward-compat aliasing.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green.
+- [ ] Implementer commits the work themselves.
+
+** Notes
+Out of scope: eligibility matcher (TASK-YVZ9V), dispatch CLI refactor (TASK-RF3J1). Reviewer pass after merge per persona rule 2.
+
+** Evidence
+- [2026-05-24 Sun 17:57] Implementer codex (gpt-5.5 xhigh, ~22m wall) committed =4073bdc= ("TASK-G6EV7: worker schema + ship shipped/workers/ for SUPPORTED (mode, harness) matrix"). Merged no-ff as =ad7390f=. 28 files +1424/-513. New =crates/orgasmic-core/src/workers.rs= (356 LOC) + 11 worker org files under =shipped/workers/= (one per SUPPORTED (mode, harness) row plus migrated architector/griller/planner/babysitter). Daemon + core consumers of =AgentTemplate=/=agent_template_id= renamed to =Worker=/=worker_id=. HTTP route =/agent-templates= → 308 alias to =/workers=. =.orgasmic/project.org= + =.orgasmic/sprint.org= migrated to =:STAGE_WORKER_*:= / =:WORKER:=. Tests 273 → 281 (+8). clippy/fmt/diff clean. =implementer.done= =tx-20260524-org-0212= (after a daemon-staleness recovery — see goal.org).
+- [2026-05-24 Sun 18:12] Reviewer codex (gpt-5.5 xhigh, ~7m wall): verdict =has-issues, blocks-ship=. 9 findings (1 HIGH session-JSONL compat regression + 4 MEDIUM UI rename propagation + repo-local backlog migration miss + 4 LOW including 2 CLI items routed to TASK-RF3J1 + 2 test-depth items). =reviewer.done= =tx-20260524-org-0214= with =RECOMMENDED_SUBTASKS=TASK-G6EV7.1=. Report at =/tmp/orgasmic-codex/task-058-review-report.md=.
+- [2026-05-24 Sun 21:20] Fix-implementer codex (gpt-5.5 xhigh, ~7m wall) committed =952cb94= ("TASK-G6EV7.1: worker-schema fix-subtask"). Merged no-ff as =2fed387=. 10 files +151/-24 closing 7 of 9 reviewer findings (F-1 session JSONL compat via =#[serde(alias = "agent_template_id")]=, F-2/F-3/F-4 UI rename propagation in =SettingsView.tsx= + =types.ts= + =TaskView/TaskDialog/ManagerChatTranscript=, F-5 =.orgasmic/backlog.org= mechanical migration, F-8 workspace integration test asserting =orgasmic_core= SUPPORTED matrix equals =orgasmic_drivers= SUPPORTED, F-9 table-driven legacy-alias coverage). F-6/F-7 (CLI surface rename) deferred to TASK-RF3J1 per recommended split. Tests +4. =cargo test/clippy/fmt/diff= + =cd ui && npm run build= all clean. =implementer.done= =tx-20260524-org-0216= (auto-DONE via =:FIX_SUBTASK: t= heuristic). **Foundation 2 of 4 in the abstraction-correction arc done; TASK-YVZ9V (eligibility matcher) ready to dispatch next.**
+

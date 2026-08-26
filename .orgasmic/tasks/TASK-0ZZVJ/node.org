@@ -1,0 +1,25 @@
+#+title: orgasmic task TASK-0ZZVJ
+#+orgasmic_version: 2
+
+* DONE TASK-0ZZVJ Make stable releases exact-SHA CI-certified
+:PROPERTIES:
+:ID: TASK-0ZZVJ
+:PRIORITY: P1
+:READ_SCOPE: Cargo.toml Cargo.lock .github/workflows/** scripts/** crates/** shipped/** ui/** src-tauri/** verify/**
+:TEST_CMD: bash scripts/certify-release.sh
+:WRITE_SCOPE: Cargo.toml Cargo.lock rust-toolchain.toml .github/workflows/ci.yml scripts/** crates/** shipped/** ui/** src-tauri/**
+:END:
+
+** Description
+Fix the current Clippy and classified-suite failures, make the CI contract deterministic and release-complete, and fail stable publication closed unless the exact HEAD is certified.
+
+** Acceptance Criteria
+- Current Clippy and seven classified-suite failures are fixed without weakening the classifier.
+- CI pins a certification toolchain, checks MSRV, UI, classifier self-tests, and exposes one aggregate release-certified job.
+- Stable publishers verify a successful exact-HEAD certification run before GitHub mutation.
+- Runtime and app stable versions are bumped and republished only after the release commit is certified.
+- Main protection requires the aggregate certification check after the release lands.
+
+** Verification
+Run rustfmt, pinned Clippy, classified workspace suite, classifier self-tests, Rust 1.87 check, UI typecheck/tests/build, GitHub CI on the exact SHA, and stable runtime/app dry-runs.
+

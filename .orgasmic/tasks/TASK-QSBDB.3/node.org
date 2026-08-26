@@ -1,0 +1,32 @@
+#+title: orgasmic task TASK-QSBDB.3
+#+orgasmic_version: 2
+
+* DONE TASK-QSBDB.3 fix-subtask: cursor tool-policy regression test negative cases :drivers:cursor:fix:test:low:
+:PROPERTIES:
+:ID:               TASK-QSBDB.3
+:PRIORITY:         P3
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/tests/driver_modes.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/tests/driver_modes.rs
+:READ_SCOPE:       crates/orgasmic-drivers/src/adapters/cursor.rs crates/orgasmic-drivers/tests/driver_modes.rs
+:TEST_CMD:         cargo test -p orgasmic-drivers --test driver_modes cursor_tool_policy
+:DEPENDS_ON:       TASK-QSBDB.1 TASK-QSBDB.2
+:END:
+
+** Description
+TASK-QSBDB reviewer F-3 LOW test: =cursor_tool_policy_allows_brief_read_and_worktree_git= is positive-only. Doesn't assert known-dangerous cases remain blocked: =/etc/passwd= read, unsafe =git -C= path, redirection on otherwise-allowed shell command, unsafe target + safe cwd decoy, symlink traversal.
+
+** Acceptance Criteria
+- [ ] Add =cursor_tool_policy_blocks_dangerous_cases= (or similar) test in =driver_modes.rs= covering:
+  - read of /etc/passwd or arbitrary host path
+  - git -C <non-worktree>
+  - allowed-command + redirection (=git -C <worktree> diff > /tmp/leak=)
+  - unsafe target + safe cwd decoy
+  - symlink traversal under /tmp/orgasmic-codex
+- [ ] Each case asserts NO =ToolCall= event emitted (i.e., system telemetry blocks them).
+- [ ] All gates green.
+
+** Evidence
+(populated at task close)
+

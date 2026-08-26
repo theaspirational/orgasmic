@@ -1,0 +1,33 @@
+#+title: orgasmic decision dec_J2YM8
+#+orgasmic_version: 2
+
+* dec_J2YM8 How should the skill-first install wizard route users across every platform?    :install:skill:mobile:
+:PROPERTIES:
+:ID:            dec_J2YM8
+:GLOSSARY_REFS: term_ZYE1R term_TDNG3
+:DECIDED_AT:    [2026-06-09 Tue 15:59]
+:SOURCE:        user direction 2026-06-09 (skill-first installer wizard)
+:PARENT:        dec_A6CXY
+:END:
+** Context
+The product has multiple installable surfaces: a CLI/runtime, a supported host
+desktop app, a remote daemon, Android client builds, and browser access through
+an HTTPS tunnel. Asking users to choose scripts or package paths up front makes
+the first-run experience fragile and duplicates installer guidance across docs.
+The agent skill is already usable without a binary and can route platform-aware
+setup.
+** Decision
+Make the agent skill the first and only public install front door. Users first
+install the plain-text =/orgasmic= skill, then invoke =/orgasmic install= for
+everything else. The install subcommand is an interactive wizard: it detects the
+host, recommends a path, confirms system-changing commands, installs the
+CLI/runtime, suggests a supported host app when available, covers remote daemon
+setup, and always explains mobile choices (Android app when available, or
+mobile browser through an HTTPS tunnel for iOS/no-app users).
+** Consequences
+Public docs can stay simple: install skill, then run =/orgasmic install=. The
+agent remains responsible for choosing and verifying scripts instead of sending
+users to manual installer fragments. Mobile access becomes part of the normal
+install conversation, and tunnel guidance remains tied to daemon security
+rather than exposing a raw public daemon.
+

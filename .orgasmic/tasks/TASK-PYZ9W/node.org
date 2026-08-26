@@ -1,0 +1,20 @@
+#+title: orgasmic task TASK-PYZ9W
+#+orgasmic_version: 2
+
+* DONE TASK-PYZ9W tx appender must survive inode swap under the file path (git is a sanctioned concurrent writer) :daemon:tx:reliability:
+:PROPERTIES:
+:ID: TASK-PYZ9W
+:PRIORITY: P2
+:TEST_CMD: cargo test -p orgasmic-daemon
+:WRITE_SCOPE: crates/orgasmic-daemon/src/ crates/orgasmic-daemon/tests/
+:WORKER:      implementer-codex-acp
+:END:
+
+Incident 2026-06-13 (recovered, see tx-0323..0328 :RECOVERED: notes): a manager git stash/pop replaced .orgasmic/tx/2026-06.org with a new inode while the daemon held its C2PQ3 group-commit append handle. The daemon kept acking and fsyncing tx appends — into the orphaned inode. Six records (tx-0323..0328) were invisible on disk until manually reconstructed; dispatch-status showed a phantom open dispatch. Evidence: lsof fd 14w inode 433635903 vs path inode 434035963; file mtime frozen at the stash-pop instant; in-memory tx_count kept advancing.
+
+Root cause: the tx appender caches the open handle for group-commit batching and never detects that the directory entry now points elsewhere. Git operations and human edits are sanctioned concurrent writers (concurrent-writer convention), so silent divergence is a data-loss bug, not operator error.
+
+Fix direction: before each append batch, stat-compare the handle inode (fstat) against the path (stat); on mismatch reopen the path and invalidate the ProjectTxSeqCache entry. Alternative: reopen per batch (measure — C2PQ3 added the cache for group-commit throughput). Audit other long-lived append handles (session jsonl writers are per-run, lower risk).
+** Evidence
+implementer-codex-acp (gpt-5.5 medium), combined round with TASK-38GGG, worker commit =bde3202=, merged into main, close tx-0409. writer.rs: TxWriter handles now wrapped in CachedTxWriter capturing dev/ino (FileIdentity) at open; process_tx_batch + append_tx_inner + transaction_inner re-stat the path before each append and, on identity mismatch, drop the handle (forces reopen) and clear ProjectTxSeqCache. Regression test tx_append_reopens_after_path_inode_swap_and_rescans_sequence reproduces the exact incident: append 0013, rename a replacement file (0040) over the path, append again -> 0041 lands in the file AT THE PATH, 0013 absent. Session JSONL writers left unchanged (per-run, lower risk, scoped out). Manager gates: workspace 0 failures, clippy --all-targets -D warnings clean, fmt clean; daemon rebuilt+restarted pid 20193 parse-errors 0. Closes the data-loss bug from the 2026-06-13 stash/pop incident.
+

@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_MCM6Y
+#+orgasmic_version: 2
+
+* dec_MCM6Y Should generic conventions be scaffolded into every repo, or served by the runtime?
+:PROPERTIES:
+:ID: dec_MCM6Y
+:PARENT: dec_YTJ0G
+:RELATES_TO: dec_A10RB dec_N7BM4
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+dec_A10RB extracted prescriptive guidance from =entry.org= into scaffolded per-project =conventions/= files. Four of them (=contributing.org=, =manager-implementer.org=, =no-skill-installed.org=, =orgasmic-tooling.org=) are placeholder-free generic guidance, frozen per repo at init and never updated — the sharpest instance of the frozen-surface problem. Repo-specific accretions (edge vocabulary refs, the id-migration recipe in this repo's =contributing.org=) mixed into them prove the directory is doing two jobs. =no-skill-installed.org= exists only for the no-runtime case, which dec_YTJ0G eliminates.
+** Decision
+Stop scaffolding =conventions/=. The directory becomes pure user extension: projects add their own files; the manager consults =.orgasmic/conventions/= when present (the existing =prompt-specs/manager.org= wording already handles an absent/empty dir). Universal guidance — write rules, contributing discipline, tooling usage — folds into the =orgasmic entry= output, update-tracked. =no-skill-installed.org= is deleted. =manager-implementer.org= retires into the shipped default workflow (see workflows decision). This is distinct from =shipped/prompt-studio/conventions/= (prompt-slot bodies), which is untouched.
+** Consequences
+Generic guidance updates with every bundle update instead of rotting per repo; the per-project namespace is reserved for genuinely repo-specific agreements. Migration for existing repos: delete the four generic files, retain repo-specific content as real conventions (this repo keeps the edge-vocabulary and id-migration material). Scaffold membership shrinks by five files (four conventions + the stub change in dec_YTJ0G).
+

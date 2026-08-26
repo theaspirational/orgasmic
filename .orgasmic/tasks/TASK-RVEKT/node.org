@@ -1,0 +1,65 @@
+#+title: orgasmic task TASK-RVEKT
+#+orgasmic_version: 2
+
+* DONE TASK-RVEKT Fix daemon /tx endpoint to persist tx records to .orgasmic/tx/*.org :daemon:tx:dispatch:reliability:bug:
+:PROPERTIES:
+:ID:               TASK-RVEKT
+:PRIORITY:         P2
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/
+:READ_SCOPE:       crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs .orgasmic/tx/2026-06.org
+:TEST_CMD:         cargo test -p orgasmic-daemon
+:END:
+
+** Description
+The daemon's POST /tx endpoint accepts requests and returns success + a tx-ID
+(e.g. "closed: TASK-CJXKM reviewer.done tx=tx-20260610-orgasmic-0109") but does
+NOT write the record to =.orgasmic/tx/2026-06.org=. Observed consistently in
+multiple sessions: every =dispatch-close= and =dispatch= call that goes through
+/tx returns a tx-ID but leaves the file unchanged.
+
+This is a session-persistent workaround: all tx records must currently be
+manually constructed and appended. Without manual appends, =scan_open_dispatches=
+(which reads the tx file directly) finds stale open-dispatch records that block
+redispatch. The daemon's in-memory open-dispatch list diverges from the tx file
+until the next restart.
+
+Root cause is likely that the /tx route handler calls an in-memory append but
+skips (or never reaches) the file-flush path.
+
+** Acceptance Criteria
+- [ ] POST /tx request persists the tx record to =.orgasmic/tx/YYYY-MM.org=
+  immediately (within the same request handler, before returning 200).
+- [ ] Verified: after a dispatch-close, the corresponding tx record appears in
+  the org file without manual intervention.
+- [ ] Integration test added: POST /tx then read the file, assert the record
+  is present.
+- [ ] No regressions: =cargo test -p orgasmic-daemon= passes.
+
+** Evidence
+- [2026-06-11] Implementer run-20260611T104735 (implementer-claude-rmux,
+  claude-sonnet-4-6): PREMISE FALSE with root cause. The acceptance-criterion
+  integration test already exists and passes (=integration.rs:1277= POST /tx
+  → read file → assert, plus the project-tx variant at =:1346=). The endpoint
+  persists fine when routing succeeds.
+- ROOT CAUSE of the production symptom: =tx_destination= (=api.rs:4853=)
+  silently falls back to the HOME tx path whenever the project lookup fails
+  (board not loaded, wrong project path, =.orgasmic= dir absent) or
+  =valid_project_root= fails. CLI sees success; project file unchanged;
+  =scan_open_dispatches= reads only the project file → phantom open
+  dispatches. Manager verified the fall-through in source.
+- Manager disk sweep [2026-06-11]: no tx file exists anywhere under
+  =~/.orgasmic= — fallback-routed records do not land anywhere findable.
+  Silent success → records vanish entirely.
+- No code merged (worker correctly stopped at scope boundary: error-vs-succeed
+  on project-lookup failure is a design decision). Real fix filed as
+  TASK-E9K1B. Closed: acceptance already satisfied by existing tests; the
+  production symptom is owned by TASK-E9K1B.
+- LIVE VERIFICATION [2026-06-11 ~14:22]: both batch-1 dispatch-closes
+  (implementer.done tx-0121, dispatch_aborted tx-0122) persisted to
+  =.orgasmic/tx/2026-06.org= with zero manual appends — acceptance
+  criterion 2 observed in production on the 981e3f3 binary with the project
+  registered and board loaded. All four criteria factually green; residual
+  silent-fallback danger lives in TASK-E9K1B. Manual DONE flip by manager
+  (close-as-aborted left TODO; redispatch would re-run a false premise).
+

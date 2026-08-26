@@ -1,0 +1,13 @@
+#+title: orgasmic task TASK-870YX
+#+orgasmic_version: 2
+
+* DONE TASK-870YX TASK-35TK4 fix: tolerate transient CLI daemon-lock probes :fix:daemon:
+:PROPERTIES:
+:FIXES: TASK-35TK4
+:ID: TASK-870YX
+:END:
+
+Claude Opus review of b18808c..bd3d7bd found a narrow new boot race: starting_from_daemon_lock briefly takes the exclusive flock while the daemon makes one single-shot acquisition attempt. Add a bounded daemon-side retry window for WouldBlock, preserve fail-closed behavior for a continuously held lock, add deterministic transient-hold and stable-incumbent regressions, and run the focused lock/autostart/double-serve gates plus fmt, clippy, and diff-check. Implement only the scoped fix described in .orgasmic/tmp/dispatch/task-35tk4-lock-race-fix-brief.md.
+** Notes
+Implemented by Codex gpt-5.6-terra/high in 4c0a151 and merged to main as e4b6b7b. Manager independently reran the two daemon-lock regressions, CLI boot-owner regression, and double-serve regression; all passed. git diff --check only reported trailing blank lines in daemon-managed task files, not source changes from this fix.
+

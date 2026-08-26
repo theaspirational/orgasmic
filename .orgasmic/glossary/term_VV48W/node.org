@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_VV48W
+#+orgasmic_version: 2
+
+* term_VV48W Run sub-state
+:PROPERTIES:
+:ID:                 term_VV48W
+:CANONICAL:          run sub-state
+:AVOID:              stage, status, phase, lifecycle state
+:RELATES_TO:         term_RG690 term_DN08P term_KH8TX term_X4JGJ
+:DEFINITION:         The performer-namespaced progress value on a run record, shaped <performer>.<verb> where the performer is the worker kind doing the run (griller, planner, implementer, reviewer, babysitter, manager, ...), human, or the reserved ci. Verbs are a shared minimal base — working, done, blocked, cancelled — plus verdict deltas (reviewer/human approved, requested_changes). It carries the worker-phase detail the task lifecycle columns no longer encode: one In Progress task moves griller.working -> implementer.working without changing column (dec_WV1ZH, dec_P7EY8).
+:DECIDED_AT:         [2026-06-10 Wed]
+:END:
+

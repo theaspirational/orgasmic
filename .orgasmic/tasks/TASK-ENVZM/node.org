@@ -1,0 +1,27 @@
+#+title: orgasmic task TASK-ENVZM
+#+orgasmic_version: 2
+
+* DONE TASK-ENVZM Skill manifest / explicit body / skill-path value construction :compiler:arch_QXS5W:
+:PROPERTIES:
+:ID:               TASK-ENVZM
+:PRIORITY:         P1
+:WORKER:   implementer-codex
+:IMPLEMENTS:       arch_QXS5W
+:PRODUCES:         crates/orgasmic-daemon/src/content.rs crates/orgasmic-core/src/slots.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/content.rs crates/orgasmic-core/src/slots.rs
+:READ_SCOPE:       .orgasmic/architecture.org docs/adr/*.org crates/orgasmic-daemon/src/** crates/orgasmic-core/src/** shipped/skills/** shipped/agent-templates/**
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-M1MZ4
+:END:
+
+** Description
+arch_QXS5W interface: "Skill injection supports manifest, explicit full-body, and skill-path variants, with the manifest as the default prompt-bundle behavior." Today the slot scanner accepts the slot names but no production code actually composes manifest/body/path values from the agent template's linked skills. Compose them.
+
+** Acceptance Criteria
+- [ ] =compile_slots= input includes resolved values for =skills.all= (manifest), =skills.<id>= (full body), =skill_path.<id>= (filesystem path) for each linked skill in the active template.
+- [ ] Manifest is a concise "id — canonical short — relates-to" list (no skill body).
+- [ ] New tests cover manifest composition, full-body, and path resolution.
+- [ ] cargo test/clippy/fmt/diff clean; MSRV 1.78.
+
+** Worklog
+

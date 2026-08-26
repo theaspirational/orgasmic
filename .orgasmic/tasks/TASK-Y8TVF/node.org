@@ -1,0 +1,37 @@
+#+title: orgasmic task TASK-Y8TVF
+#+orgasmic_version: 2
+
+* CANCELLED TASK-Y8TVF Fix stale shipped-worker count assertion in parses_every_shipped_worker (16 vs 18) :core:tests:fixtures:polish:
+:PROPERTIES:
+:ID:               TASK-Y8TVF
+:PRIORITY:         P4
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      crates/orgasmic-core/tests/fixtures.rs
+:READ_SCOPE:       crates/orgasmic-core/tests/fixtures.rs shipped/workers/
+:TEST_CMD:         cargo test -p orgasmic-core --test fixtures
+:END:
+
+** Description
+=parses_every_shipped_worker= (crates/orgasmic-core/tests/fixtures.rs:495)
+asserts =count == 16=, but =e94d8fa= added two worker templates
+(implementer-claude-rmux, reviewer-claude-rmux), making 18. The test fails on
+every =cargo test --workspace= since then; worker worktrees missed it because
+their workspace runs died earlier on the missing-ui-node_modules TypeScript
+issue. Bump the count — or better, replace the hardcoded tripwire with an
+assertion that every =shipped/workers/*.org= parses plus a minimum-count floor
+(e.g. >= 16), so template additions stop breaking it. Keep the
+unsupported-pair check unchanged.
+
+** Acceptance Criteria
+- [ ] =cargo test -p orgasmic-core --test fixtures= green with 18 templates.
+- [ ] Adding a future template does not require touching this test (or the
+  test states clearly why a manual bump is intended).
+- [ ] Gates: clippy -D warnings, fmt --check, MSRV 1.78.
+
+** Evidence
+CANCELLED [2026-06-10]: resolved as housekeeping inside TASK-K5RG2 (worker
+commit =4a6a020=, merged =1ba44b8=) — count bumped 16→18 plus the
+selector-determinism template list updated. The structural improvement
+(derive count from the directory) was NOT done; reopen only if template
+churn makes the manual bump painful.
+

@@ -1,0 +1,28 @@
+#+title: orgasmic task TASK-KSFG0.1
+#+orgasmic_version: 2
+
+* DONE TASK-KSFG0.1 fix-subtask: add missing arch_C87Z9 CLI leaf + arch_BVH7M flocked direct-edit writer leaf :architecture:diagram:fix:decomposition:high:
+:PROPERTIES:
+:ID:               TASK-KSFG0.1
+:PRIORITY:         P1
+:WORKER:           implementer-cursor
+:IMPLEMENTS:       arch_MK2Q2 arch_MPAQT
+:PRODUCES:         docs/architecture/diagram.html
+:WRITE_SCOPE:      docs/architecture/**
+:READ_SCOPE:       docs/architecture/** .orgasmic/architecture.org .orgasmic/decisions.org crates/orgasmic-cli/src/** crates/orgasmic-daemon/src/writer.rs
+:TEST_CMD:         (manual: open docs/architecture/diagram.html in a browser)
+:END:
+
+** Description
+Reviewer F-1 (HIGH): =arch_C87Z9= omits the CLI command/client mechanism entirely. =.orgasmic/architecture.org:213-218= explicitly names "CLI mirrors daemon capabilities and is the complete tool surface for humans and manager agents". Add =arch_C87Z9.5 CLI command surface= leaf with =sourcePaths= centered on =crates/orgasmic-cli/src/main.rs=, =crates/orgasmic-cli/src/daemon_client.rs=, plus 2-3 narrowly-chosen command modules. Keep arch_C87Z9 at 5 leaves total.
+
+Reviewer F-2 (HIGH): =arch_BVH7M= only has append-only audit writer; the daemon's RPC-with-flock direct-edit writer is unmodeled. =crates/orgasmic-daemon/src/writer.rs= covers "tx files, session JSONLs, and direct-edit Org files" and "Direct edits take an advisory flock"; =writer.rs:445-457= shows =rewrite_file_inner= with =FileExt::try_lock_exclusive=. Add =arch_BVH7M.3 flocked direct-edit writer= leaf citing writer.rs and its rewrite/transaction functions.
+
+** Acceptance Criteria
+- [ ] =arch_C87Z9= has 5 leaves; new =arch_C87Z9.5= is verb-named ("CLI command surface" or similar), sourcePaths include =crates/orgasmic-cli/src/main.rs=, =crates/orgasmic-cli/src/daemon_client.rs=.
+- [ ] =arch_BVH7M= has 3 leaves; new =arch_BVH7M.3= models the flocked direct-edit/rewrite path with sourcePaths citing =crates/orgasmic-daemon/src/writer.rs= (specifically the rewrite/transaction functions).
+- [ ] Typed edges updated where the new leaves participate (READS / WRITES / CALLS as appropriate). At minimum: arch_C87Z9.5 → daemon REST router via CALLS or EXPOSES_REST? (it consumes, so probably CALLS); arch_BVH7M.3 → file:sprint / file:decisions / file:architecture via WRITES.
+
+** Evidence
+(populated at task close)
+

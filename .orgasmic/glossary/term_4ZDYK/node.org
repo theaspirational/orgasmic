@@ -1,0 +1,11 @@
+#+title: orgasmic glossary term term_4ZDYK
+#+orgasmic_version: 2
+
+* term_4ZDYK Graph topology
+:PROPERTIES:
+:AVOID: graph layout, graph overlay
+:CANONICAL: graph topology
+:DEFINITION: The live-derived set of graph nodes and edges (from /graph/nodes and /graph/edges). It is never hand-authored or persisted by the Graph page; the page joins it against the layout overlay at render time.
+:ID: term_4ZDYK
+:END:
+

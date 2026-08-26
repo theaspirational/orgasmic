@@ -1,0 +1,35 @@
+#+title: orgasmic task TASK-C0XMR
+#+orgasmic_version: 2
+
+* DONE TASK-C0XMR a worker that finalizes from its active turn is recorded as architect.failed :daemon:architect:defect:
+:PROPERTIES:
+:ID: TASK-C0XMR
+:PRIORITY: P1
+:END:
+
+Found by the TASK-6AYEJ.2 reviewer (run-20260728T063207-654ec2af0d5140ffbb091ed15de786d1, finding 2, HIGH). Filed separately because it is a defect in stage outcome computation, not in the dispatch-close generation work that review was scoped to.
+
+It was previously written off as a test-stub artifact. It is not: the reviewer traced the production ordering and the false failure is user-visible.
+
+** The path
+The production-path test acknowledges that real finalize records architect.failed and declines to assert completion (cli/tests/dispatch.rs:5223-5230). That test launches the real ACP stage and invokes real finalize (dispatch.rs:4911-4979, 5124-5221).
+
+1. ACP release interrupts/closes the active turn (drivers/src/adapters/codex.rs:479-496).
+2. Teardown reaps the harness process group (drivers/src/modes/acp_stdio.rs:817-833).
+3. subprocess_stream_json.rs:315-360 synthesizes a FATAL driver error for the resulting non-success exit, because no terminal event preceded it.
+4. The supervisor drains that error before appending the authoritative finalized_by_worker release (daemon/src/supervisor.rs:2181-2239).
+5. But stage_outcome_from_session returns Failed IMMEDIATELY on the earlier fatal error (daemon/src/api.rs:5889-5924) and never reaches the finalized-tombstone handling at api.rs:5937-5949.
+
+So the session contains BOTH a teardown-induced fatal driver error AND an authoritative worker-finalize release, and the outcome function honours the wrong one because it short-circuits on the first.
+
+** Why it matters
+A worker finalizing from its still-active turn is the NORMAL contract, not an edge case - that is what orgasmic dispatch finalize does. So a successful architect stage can be recorded as failed on the ordinary path.
+
+The daemon unit at api.rs:21758-21833 synthesizes only a clean release, so it never exercises the production ordering and cannot catch this.
+
+** Fix direction (reviewer)
+Parse the COMPLETE stage session and make an authoritative Lifecycle::Release { finalized_by_worker: true } DOMINATE teardown-induced driver errors. Retain genuine pre-finalize failure semantics - an error that precedes any finalize must still fail the stage. Extend the production CLI stage test to REQUIRE architect.completed and FORBID architect.failed, and add a session-order regression with a fatal driver error immediately before the finalized release.
+
+** Note
+Check whether the same short-circuit affects non-architect stage kinds and the implementer/reviewer outcome paths, or whether stage_outcome_from_session is architect-only. The reviewer did not state this either way.
+

@@ -1,0 +1,76 @@
+#+title: orgasmic task TASK-SMFHY
+#+orgasmic_version: 2
+
+* DONE TASK-SMFHY Fix dispatch prompt composition so Prompt Studio emits non-duplicated worker bundles :prompts:daemon:prompt-studio:
+:PROPERTIES:
+:ID: TASK-SMFHY
+:IMPLEMENTS: arch_QXS5W
+:PRIORITY: P1
+:PRODUCES: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/prompt_compiler.rs shipped/prompt-studio/prompt-specs/base_worker.org shipped/prompt-studio/prompt-specs/implementer.org shipped/prompt-studio/slots.org
+:READ_SCOPE: shipped/prompt-studio/ crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/prompt_compiler.rs .orgasmic/decisions.org
+:TEST_CMD: cargo test -p orgasmic-daemon prompt_compiler
+:WORKER: implementer-codex-acp
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/prompt_compiler.rs shipped/prompt-studio/prompt-specs/*.org shipped/prompt-studio/prompt-parts/*.org shipped/prompt-studio/slots.org crates/orgasmic-daemon/tests/**
+:END:
+
+** Description
+The compiled dispatch bundle for workers is malformed. A real compiled
+prompt (TASK-55DH1, run-20260612T123600) showed the manager dispatch
+brief rendered THREE times — implementer Goal, Inputs Assignment, Inputs
+Acceptance — read/write scope collapsed to the placeholder "See dispatch
+brief.", and =Recent activity:= rendered as empty org-verbatim (===).
+
+Verified root cause (2026-06-12):
+=api.rs::compile_dispatch_prompt_bundle= (crates/orgasmic-daemon/src/
+api.rs:3486-3495) fills BOTH =task.description= and =task.acceptance=
+from the brief, hardcodes both scopes to "See dispatch brief.", and
+passes the brief a third time as the compile =reason= (api.rs:3519); the
+indexed task record (description/acceptance/scopes on =TaskHeading=) is
+available via the =ProjectIndex= argument but unused, and =task.activity=
+is never inserted. Template side: =implementer.org:19= embeds
+={{task.description}}= in Goal while the inherited =base_worker.org:34-35=
+embeds it again as Assignment and Acceptance. This violates dec_MX9RM
+(one canonical home per instruction; briefs carry delta only) and the
+prompt_composer rules.
+
+Fix composition so dispatch bundles are compact, role-specific, and
+non-duplicated without losing required task context: hydrate task slots
+from the canonical indexed record; carry the manager brief as a
+dispatch-only input rendered exactly once.
+
+Read first:
+- shipped/prompt-studio/prompt-specs/prompt_composer.org
+- shipped/prompt-studio/conventions/manager-dispatch.org
+- shipped/prompt-studio/prompt-specs/base_worker.org + implementer.org
+- crates/orgasmic-daemon/src/api.rs::compile_dispatch_prompt_bundle
+- crates/orgasmic-daemon/src/prompt_compiler.rs
+** Acceptance Criteria
+- [ ] Dispatch composition hydrates =task.description=, =task.acceptance=,
+  =task.read_scope=, =task.write_scope=, and =task.title= from the canonical
+  indexed task record, not from the manager dispatch brief.
+- [ ] The manager brief rides a dedicated dispatch-only input (e.g.
+  =dispatch.brief=) and appears EXACTLY ONCE in the compiled prompt, under
+  one clearly labeled section presented as manager handoff content (so
+  brief-embedded text such as commit-message suggestions reads as handoff
+  metadata, not spec policy).
+- [ ] =base_worker.org= and role specs no longer render the same task body
+  in Goal, Assignment, and Acceptance — Goal stays short; task facts live
+  in Inputs only.
+- [ ] No placeholder or empty-verbatim values in compiled dispatch prompts:
+  scopes come from the task record when present; an absent value omits the
+  line or states it is missing — never "See dispatch brief." and never an
+  empty === pair (current =Recent activity:= rendering).
+- [ ] Contradictory guidance sharpened: task-brief claims must not conflict
+  with the base-worker rule to inspect prior agent claims before relying
+  on them.
+- [ ] Regression test: compile an implementer dispatch for a fixture task
+  whose description, acceptance, read scope, write scope, and brief are
+  all distinct strings; assert each lands in its correct section and the
+  brief appears exactly once in the rendered text.
+- [ ] Existing Prompt Studio compile/lint behavior stays green for all
+  shipped prompt specs.
+- [ ] Gates: =cargo test -p orgasmic-daemon prompt_compiler= plus touched
+  integration tests; =cargo fmt --check=.
+** Evidence
+(populated at task close)
+
