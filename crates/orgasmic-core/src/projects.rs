@@ -109,23 +109,33 @@ const SCAFFOLD_FILES: &[&str] = &[
     ".gitignore",
     "entry.org",
     "project.org",
-    "decisions.org",
-    "tasks/backlog.org",
-    "tasks/todo.org",
-    "tasks/in_progress.org",
-    "tasks/in_review.org",
-    "tasks/done.org",
-    "tasks/cancelled.org",
     "tasks/goal.org",
     "tasks/handoff.org",
+    "tasks/TASK-C9V29/node.org",
+    "tasks/TASK-C9V29.1/node.org",
+    "tasks/TASK-C9V29.2/node.org",
+    "tasks/TASK-C9V29.3/node.org",
     "gotchas.org",
 ];
 
-const SCAFFOLD_DIRS: &[&str] = &["tmp", "tmp/sessions", "tmp/dispatch"];
+const SCAFFOLD_DIRS: &[&str] = &[
+    "tasks",
+    "tasks/TASK-C9V29",
+    "tasks/TASK-C9V29.1",
+    "tasks/TASK-C9V29.2",
+    "tasks/TASK-C9V29.3",
+    "decisions",
+    "glossary",
+    "artifacts",
+    "conventions",
+    "tmp",
+    "tmp/sessions",
+    "tmp/dispatch",
+];
 const LOCAL_INSTRUCTIONS_REL: &str = "tmp/local_instructions.org";
 const LOCAL_INSTRUCTIONS_PLACEHOLDER: &str = concat!(
     "#+title: local instructions\n",
-    "#+orgasmic_version: 1\n\n",
+    "#+orgasmic_version: 2\n\n",
     "* Local instructions\n\n",
     "This file is intentionally local and ignored. Keep machine-specific setup ",
     "notes here so future agents do not rediscover them.\n",
@@ -465,7 +475,6 @@ fn render_board(entries: &[BoardEntry]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DecisionNode;
 
     fn fake_shipped(home: &Home) {
         let dst = home.source().join("shipped").join(SCAFFOLD_SHIPPED_DIR);
@@ -473,55 +482,40 @@ mod tests {
         std::fs::write(dst.join(".gitignore"), "tmp/\nviews/\n").unwrap();
         std::fs::write(
             dst.join("entry.org"),
-            "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
+            "#+title: orgasmic entry\n#+orgasmic_version: 2\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
         )
         .unwrap();
         std::fs::write(
             dst.join("project.org"),
-            "#+title: {{PROJECT_NAME}}\n#+orgasmic_version: 1\n\n* PROJECT {{PROJECT_NAME}}\n:PROPERTIES:\n:ID:                  {{PROJECT_ID}}\n:END:\n\n** Mission\n[Describe the project's goal.]\n\n** Operating Constraints\n[Project-specific constraints.]\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dst.join("decisions.org"),
-            "#+title: {{PROJECT_NAME}} decisions\n#+orgasmic_version: 1\n#+scope: project\n\n* dec_001 Bootstrap orgasmic project state :bootstrap:\n:PROPERTIES:\n:ID:            dec_001\n:GLOSSARY_REFS:\n:DECIDED_AT:\n:SOURCE:        scaffold\n:END:\n** Context\nA freshly initialized project has only scaffold files. Agents need one explicit starting decision so they do not treat empty project memory as authoritative.\n** Decision\nBootstrap `.orgasmic/` from repository evidence and operator answers before relying on project, decision, or glossary records for downstream work.\n** Consequences\nTASK-001 is the first work item. Later workers should treat scaffold prose as incomplete until TASK-001 and its subtasks replace it with repo-specific state.\n",
+            "#+title: {{PROJECT_NAME}}\n#+orgasmic_version: 2\n\n* PROJECT {{PROJECT_NAME}}\n:PROPERTIES:\n:ID:                  {{PROJECT_ID}}\n:END:\n\n** Mission\n[Describe the project's goal.]\n\n** Operating Constraints\n[Project-specific constraints.]\n",
         )
         .unwrap();
         let tasks_dst = dst.join("tasks");
         std::fs::create_dir_all(&tasks_dst).unwrap();
         std::fs::write(
-            tasks_dst.join("backlog.org"),
-            "#+title: Active sprint tasks\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Example task title :example:\n:PROPERTIES:\n:ID:               TASK-001\n:PRIORITY:         P2\n:END:\n\n** Description\n[Replace.]\n\n** Acceptance Criteria\n- [ ] Replace with concrete, checkable criteria.\n\n** Evidence\n\n** Worklog\n",
+            tasks_dst.join("goal.org"),
+            "#+title: Goal\n#+orgasmic_version: 2\n\n* GOAL Bootstrap project state\n:PROPERTIES:\n:ID: goal-bootstrap\n:STATUS: active\n:END:\n\n** Statement\nBootstrap.\n",
         )
         .unwrap();
-        for name in [
-            "todo.org",
-            "in_progress.org",
-            "in_review.org",
-            "done.org",
-            "cancelled.org",
-        ] {
+        std::fs::write(
+            tasks_dst.join("handoff.org"),
+            "#+title: Handoff\n#+orgasmic_version: 2\n\n* HANDOFF current\n:PROPERTIES:\n:ID: handoff-current\n:GOAL_ID: goal-bootstrap\n:END:\n\n** Next likely actions\n- Audit the repository.\n",
+        )
+        .unwrap();
+        for id in ["TASK-C9V29", "TASK-C9V29.1", "TASK-C9V29.2", "TASK-C9V29.3"] {
+            let node_dir = tasks_dst.join(id);
+            std::fs::create_dir_all(&node_dir).unwrap();
             std::fs::write(
-                tasks_dst.join(name),
+                node_dir.join("node.org"),
                 format!(
-                    "#+title: {}\n#+orgasmic_version: 1\n\n",
-                    name.trim_end_matches(".org")
+                    "#+title: orgasmic task {id}\n#+orgasmic_version: 2\n\n* BACKLOG {id} Bootstrap step\n:PROPERTIES:\n:ID:               {id}\n:END:\n"
                 ),
             )
             .unwrap();
         }
         std::fs::write(
-            tasks_dst.join("goal.org"),
-            "#+title: Goal\n#+orgasmic_version: 1\n\n* GOAL Bootstrap project state\n:PROPERTIES:\n:ID: goal-bootstrap\n:STATUS: active\n:END:\n\n** Statement\nBootstrap.\n",
-        )
-        .unwrap();
-        std::fs::write(
-            tasks_dst.join("handoff.org"),
-            "#+title: Handoff\n#+orgasmic_version: 1\n\n* HANDOFF current\n:PROPERTIES:\n:ID: handoff-current\n:GOAL_ID: goal-bootstrap\n:END:\n\n** Next likely actions\n- Start TASK-001.\n",
-        )
-        .unwrap();
-        std::fs::write(
             dst.join("gotchas.org"),
-            "#+title: Gotchas\n#+orgasmic_version: 1\n\n* (empty)\n",
+            "#+title: Gotchas\n#+orgasmic_version: 2\n\n* (empty)\n",
         )
         .unwrap();
     }
@@ -547,7 +541,7 @@ mod tests {
         // served by the runtime entry output instead of being scaffolded.
         let entry = std::fs::read_to_string(proj.join(".orgasmic/entry.org")).unwrap();
         assert!(entry.contains("* Entry"));
-        assert!(entry.contains("#+orgasmic_version: 1"));
+        assert!(entry.contains("#+orgasmic_version: 2"));
         assert!(entry.contains("Run `orgasmic entry` and follow its output."));
         assert!(entry.contains("keep `.orgasmic/` read-only"));
         assert!(entry.contains("source edits will drift from orgasmic state"));
@@ -573,29 +567,12 @@ mod tests {
         // Machine config moved out of project.org (dec_051).
         assert!(!project_src.contains("STAGE_WORKER"));
         assert!(!project_src.contains("DEFAULT_WORKER"));
-        let decisions_src = std::fs::read_to_string(proj.join(".orgasmic/decisions.org")).unwrap();
-        assert!(decisions_src.contains("* dec_001 Bootstrap orgasmic project state"));
-        let decisions_file =
-            OrgFile::parse(decisions_src, ".orgasmic/decisions.org").expect("decisions parses");
-        let decision = DecisionNode::from_heading(
-            &decisions_file,
-            decisions_file
-                .headings
-                .iter()
-                .find(|h| h.property("ID") == Some("dec_001"))
-                .expect("dec_001"),
-            ".orgasmic/decisions.org",
-        )
-        .expect("dec_001 schema-valid");
-        assert_eq!(decision.title, "Bootstrap orgasmic project state");
         assert!(!proj.join(".orgasmic/config.org").exists());
-        let backlog_src =
-            std::fs::read_to_string(proj.join(".orgasmic/tasks/backlog.org")).unwrap();
-        assert!(backlog_src.contains("* BACKLOG TASK-001"));
-        assert!(!backlog_src.contains(":WORKER:"));
-        assert!(!backlog_src.contains("* READY TASK-001"));
-        assert!(proj.join(".orgasmic/tasks/todo.org").exists());
-        assert!(proj.join(".orgasmic/tasks/done.org").exists());
+        for collection in ["tasks", "decisions", "glossary", "artifacts"] {
+            assert!(proj.join(".orgasmic").join(collection).is_dir());
+        }
+        assert!(!proj.join(".orgasmic/tasks/backlog.org").exists());
+        assert!(!proj.join(".orgasmic/decisions.org").exists());
         assert!(proj.join(".orgasmic/tasks/goal.org").exists());
         assert!(proj.join(".orgasmic/tasks/handoff.org").exists());
     }
@@ -727,18 +704,18 @@ mod tests {
         home.ensure().unwrap();
         fake_shipped(&home);
         let override_dir = home.user().join("project-scaffold");
-        std::fs::create_dir_all(override_dir.join("tasks")).unwrap();
+        std::fs::create_dir_all(&override_dir).unwrap();
         std::fs::write(
-            override_dir.join("tasks/backlog.org"),
-            "#+title: Backlog\n#+orgasmic_version: 1\n\n* CUSTOM\n",
+            override_dir.join("project.org"),
+            "#+title: {{PROJECT_NAME}}\n#+orgasmic_version: 2\n\n* PROJECT {{PROJECT_NAME}}\n:PROPERTIES:\n:ID: {{PROJECT_ID}}\n:END:\n\n** CUSTOM\n",
         )
         .unwrap();
         let proj = tmp.path().join("repo2");
         std::fs::create_dir_all(&proj).unwrap();
         let inputs = ScaffoldInputs::derive(&proj, None);
         init_project(&home, &proj, &inputs, false).unwrap();
-        let backlog = std::fs::read_to_string(proj.join(".orgasmic/tasks/backlog.org")).unwrap();
-        assert!(backlog.contains("* CUSTOM"));
+        let project = std::fs::read_to_string(proj.join(".orgasmic/project.org")).unwrap();
+        assert!(project.contains("** CUSTOM"));
     }
 
     #[test]

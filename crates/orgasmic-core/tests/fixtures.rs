@@ -307,12 +307,10 @@ fn parses_shipped_schema_files() {
 #[test]
 fn parses_shipped_project_scaffold() {
     for name in [
-        "shipped/project-scaffold/tasks/backlog.org",
-        "shipped/project-scaffold/tasks/todo.org",
-        "shipped/project-scaffold/tasks/in_progress.org",
-        "shipped/project-scaffold/tasks/in_review.org",
-        "shipped/project-scaffold/tasks/done.org",
-        "shipped/project-scaffold/tasks/cancelled.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.1/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.2/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.3/node.org",
     ] {
         parse_or_panic(name);
     }
@@ -320,29 +318,25 @@ fn parses_shipped_project_scaffold() {
     parse_or_panic("shipped/project-scaffold/tasks/handoff.org");
     // Project scaffold uses {{PROJECT_NAME}} placeholders; the parser must
     // still accept it because slot syntax is not Org syntax.
-    parse_or_panic("shipped/project-scaffold/decisions.org");
     parse_or_panic("shipped/project-scaffold/project.org");
     parse_or_panic("shipped/project-scaffold/entry.org");
 }
 
 #[test]
-fn shipped_scaffold_state_files_ship_without_seed_headings() {
-    // backlog.org is the exception: it ships the bootstrap task tree (see
-    // shipped_scaffold_seeds_bootstrap_task_tree). The other five state files
-    // must be empty — placeholder seeds trip the TASK-HC7PW phantom lint.
-    for name in [
-        "todo.org",
-        "in_progress.org",
-        "in_review.org",
-        "done.org",
-        "cancelled.org",
-    ] {
-        let rel = format!("shipped/project-scaffold/tasks/{name}");
-        let f = parse_or_panic(&rel);
-        assert!(
-            f.headings.is_empty(),
-            "{rel} must not ship seed headings (TASK-HC7PW phantom lint)"
-        );
+fn shipped_scaffold_ships_no_aggregate_task_state_files() {
+    // Node-dir layout (dec_E01MC): the scaffold ships the bootstrap tree as
+    // node dirs plus the goal.org/handoff.org singletons. An aggregate
+    // per-state file reappearing would resurrect the retired layout.
+    let dir = repo_root().join("shipped/project-scaffold/tasks");
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                name == "goal.org" || name == "handoff.org",
+                "unexpected aggregate task file in scaffold: {name}"
+            );
+        }
     }
 }
 
@@ -352,16 +346,24 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
     // bootstrap id) and three subtasks: infer-project, infer-decisions, then
     // migrate-instructions. Every heading must be schema-valid so the daemon
     // can index a just-bootstrapped project, and the parent/subtask structure +
-    // ordering must hold (dec_056). Under the file-per-state layout
-    // (dec_QQYXM) the tree ships in backlog.org — its stage.
+    // ordering must hold (dec_056). Under the node-dir layout (dec_E01MC)
+    // the tree ships as one node dir per task.
     // orgasmic:TASK-RQ270.5 — infer-architecture was removed with the
     // architecture layer (dec_HBK6A); migrate-instructions took the .3 slot.
-    let rel = "shipped/project-scaffold/tasks/backlog.org";
-    let f = parse_or_panic(rel);
-    let tasks: Vec<TaskHeading> = f
-        .headings
+    let rels = [
+        "shipped/project-scaffold/tasks/TASK-C9V29/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.1/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.2/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.3/node.org",
+    ];
+    let files: Vec<(&str, OrgFile)> = rels.iter().map(|rel| (*rel, parse_or_panic(rel))).collect();
+    let tasks: Vec<TaskHeading> = files
         .iter()
-        .map(|h| TaskHeading::from_heading(&f, h, rel).expect("bootstrap task is schema-valid"))
+        .flat_map(|(rel, f)| {
+            f.headings.iter().map(move |h| {
+                TaskHeading::from_heading(f, h, rel).expect("bootstrap task is schema-valid")
+            })
+        })
         .collect();
 
     let parent = tasks
@@ -402,14 +404,20 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
 
 #[test]
 fn round_trip_rewrite_is_byte_stable_outside_touched_heading() {
-    // The live task corpus is one heading per node file now; the multi-heading
-    // byte-stability property is proven on the shipped bootstrap tree instead.
-    let path = "shipped/project-scaffold/tasks/backlog.org";
-    let original = read(path);
+    // The live task corpus and the scaffold are one heading per node file
+    // now; the multi-heading byte-stability property is proven on a synthetic
+    // multi-heading source instead.
+    let path = "inline-multi.org";
+    let original = String::from(
+        "#+title: sprint\n\n\
+         * BACKLOG TASK-AAA First\n:PROPERTIES:\n:ID:               TASK-AAA\n:END:\n** Description\nAlpha.\n\n\
+         * BACKLOG TASK-BBB Second\n:PROPERTIES:\n:ID:               TASK-BBB\n:PRIORITY:         P2\n:END:\n** Description\nBeta.\n\n\
+         * BACKLOG TASK-CCC Third\n:PROPERTIES:\n:ID:               TASK-CCC\n:END:\n** Description\nGamma.\n",
+    );
     let parsed = OrgFile::parse(original.clone(), path).unwrap();
     let mut rw = OrgRewriter::new(&parsed, path);
-    // Touch only TASK-C9V29.2's PRIORITY property.
-    rw.set_property("TASK-C9V29.2", "PRIORITY", "P0").unwrap();
+    // Touch only TASK-BBB's PRIORITY property.
+    rw.set_property("TASK-BBB", "PRIORITY", "P0").unwrap();
     let rewritten = rw.finish();
     assert_ne!(rewritten, original, "rewrite must change the file");
     // Every other top-level heading should still appear at the same offset.
@@ -424,7 +432,7 @@ fn round_trip_rewrite_is_byte_stable_outside_touched_heading() {
         .iter()
         .zip(rewritten_parsed.headings.iter())
     {
-        if a.property("ID") == Some("TASK-C9V29.2") {
+        if a.property("ID") == Some("TASK-BBB") {
             continue;
         }
         assert_eq!(

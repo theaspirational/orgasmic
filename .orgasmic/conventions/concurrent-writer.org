@@ -8,7 +8,7 @@ writer. The operator commits directly to main — code, task headings, daemon
 binaries, their `shipped/` working area — while the manager is live and also
 writing state; and a second manager session may be running. Collisions are not
 prevented by locking out a human; they are detected and reconciled. This sits on
-top of the mechanical layer in [[file:../decisions.org][dec_SSJVD]] (leases before
+top of the mechanical layer in [[file:../decisions/dec_SSJVD/node.org][dec_SSJVD]] (leases before
 tokens, WRITE_SCOPE rejection, daemon-sequenced IDs).
 
 ** Stance: detect and reconcile, never prevent
@@ -32,7 +32,7 @@ Write your own lane freely; coordinate on shared surfaces.
   and may add or edit task headings via their own commits.
 - *Manager owns*: `tasks/handoff.org` (continuity), the tx log (through the
   daemon), lifecycle stage flips, and dispatch.
-- *Shared — coordinate*: `tasks/sprint.org` task content, `decisions.org`,
+- *Shared — coordinate*: `tasks/<ID>/node.org` task content, `decisions/<ID>/node.org`,
   `tasks/goal.org` (operator sets intent; manager keeps it thin).
 
 ** Manager rules

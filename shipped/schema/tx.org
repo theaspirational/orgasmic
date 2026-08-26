@@ -157,7 +157,7 @@ Required properties in addition to the base tx properties:
 
 Optional properties:
 - :SHA: the worker's own commit on its branch, when =--commit= was passed. Never =:MERGE_SHA:= — nothing has merged at this point.
-- :REPORT_PATH: repo-relative path where the worker report will live after close (=.orgasmic/dispatch-records/<started_tx>/last.txt=). Close promotes =last.txt= there (TASK-QGWK7); until then the streaming sink remains under =tmp/=.
+- :REPORT_PATH: repo-relative path where the worker report will live after close (=.orgasmic/tasks/<ID>/dispatches/<started_tx>/report.md=). Close promotes =last.txt= there (TASK-QGWK7); until then the streaming sink remains under =tmp/=.
 - :REASON: optional free text
 
 **** implementer.done
@@ -172,7 +172,7 @@ Required properties in addition to the base tx properties:
 - :CLOSED_TX: =TX_ID= of the matching =manager.dispatch_started=
 
 Optional properties:
-- :REPORT_PATH: repo-relative path of the promoted worker report (=.orgasmic/dispatch-records/<CLOSED_TX>/last.txt=). Written automatically when close promotes the tmp artifacts (TASK-QGWK7). The harness =stdout.log= sits beside it; this property always names =last.txt=.
+- :REPORT_PATH: repo-relative path of the promoted worker report (=.orgasmic/tasks/<ID>/dispatches/<CLOSED_TX>/report.md=). Written automatically when close promotes the tmp artifacts (TASK-QGWK7). The harness =stdout.log= sits beside it; this property always names =report.md=.
 - :WORKER_COMMIT: optional commit sha produced by the worker on its branch (legacy alias =:CODEX_COMMIT:= still read)
 - :WORKER_SESSION: optional worker session id (legacy alias =:CODEX_SESSION:= still read)
 - :MODEL: model id mirrored from =manager.dispatch_started= (legacy alias =:CODEX_MODEL:= still read)
@@ -195,7 +195,7 @@ Required properties in addition to the base tx properties:
 - :CLOSED_TX: =TX_ID= of the matching =manager.dispatch_started=
 - :VERDICT: =clean= | =has-issues= | =blocks-ship=
 - :REPORT_PATH: path to the review report. Prefer the auto-promoted
-  =.orgasmic/dispatch-records/<CLOSED_TX>/last.txt= (TASK-QGWK7). A manager may
+  =.orgasmic/tasks/<ID>/dispatches/<CLOSED_TX>/report.md= (TASK-QGWK7). A manager may
   still pass a curated path via =--property REPORT_PATH==; that overrides the
   auto value while the promoted =last.txt= remains on disk.
 
@@ -274,5 +274,6 @@ Properties for =artifact.regenerated= (reserved; no write path yet):
 - :TO_VERSION:    integer version after regeneration
 
 ** Property registry (per type)
-[Filled out during v0.0.1 implementation; current aggregate reads live under
+[Filled out during v0.0.1 implementation; state lives in
+`.orgasmic/<collection>/<ID>/node.org`, with derived aggregate read views under
 `.orgasmic/views/`.]

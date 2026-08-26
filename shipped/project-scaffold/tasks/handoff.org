@@ -1,5 +1,5 @@
 #+title: {{PROJECT_NAME}} manager handoff
-#+orgasmic_version: 1
+#+orgasmic_version: 2
 #+scope: project
 
 * HANDOFF current :handoff:
@@ -12,13 +12,11 @@
 :END:
 
 ** Done so far
-- Scaffold created. Bootstrap has not started yet; project-specific facts still
-  need to be inferred through TASK-C9V29.
+- Scaffold created. Bootstrap has not started yet.
 
 ** Next likely actions
-- Start TASK-C9V29.1 when the operator chooses to begin bootstrap: audit the
-  repository, grill the operator, and replace the placeholders in `project.org`
-  with confirmed project facts.
+- Audit the repository, ask the operator for missing facts, and replace the
+  placeholders in `project.org` with confirmed project facts.
 
 ** In flight
 - None.

@@ -1,0 +1,44 @@
+#+title: orgasmic task TASK-C9V29.2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-C9V29.2 infer-decisions: surface + confirm, then create decision nodes :bootstrap:
+:PROPERTIES:
+:ID:               TASK-C9V29.2
+:STATE:            backlog
+:PARENT_TASK:      TASK-C9V29
+:PRIORITY:         P1
+:WRITE_SCOPE:      .orgasmic/decisions/** .orgasmic/glossary/** .orgasmic/tx/**
+:READ_SCOPE:       .orgasmic/project.org README* docs/** src/** crates/** lib/**
+:DEPENDS_ON:       TASK-C9V29.1
+:BLOCKED_BY:
+:LAST_UPDATED:
+:END:
+
+** Description
+Recover the consequential, non-obvious decisions already embedded in this
+codebase and confirm their rationale with the operator.
+
+Audit: look for choices a newcomer would otherwise re-litigate — storage and
+file substrate, module boundaries, sync vs async seams, dependency and framework
+picks, error-handling and concurrency stance, build and release shape.
+Distinguish settled decisions from still-open questions.
+
+Grill: for each candidate, confirm Context (what forced the choice), Decision
+(what was chosen), and Consequences (what it commits the project to). Drop
+anything the operator calls incidental rather than a real decision.
+
+Write: create ADR-style records with `orgasmic decision create` — the daemon
+mints each `dec_XXXXX` id; capture the returned id before writing any prose
+that references it (create decisions first, reference them after; invented
+sequential ids like `dec_001` are rejected on create). Each record carries
+`:ID:`, `:DECIDED_AT:`, topic tags, and `** Context` / `** Decision` /
+`** Consequences`. Presence means accepted — there is no status field. Seed any
+new domain terms you rely on with `orgasmic glossary create`.
+
+** Acceptance Criteria
+- [ ] At least 3 repo-specific decision records, each
+      grounded in code or an operator answer (no speculative decisions).
+- [ ] Each record has Context / Decision / Consequences plus topic tags.
+- [ ] Domain terms referenced by the decisions exist in the `glossary/` collection.
+
+** Worklog

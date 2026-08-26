@@ -76,12 +76,13 @@ done plainly enough that the user can reverse it.
 
 ** Project map
 - `project.org`: baseline, mission, operating constraints.
-- `tasks/`: one directory per task, plus `goal.org` and `handoff.org`.
-- `views/board.org`: derived task board grouped by state.
+- `tasks/<ID>/node.org`: one directory-backed task per id.
 - `tasks/goal.org`: manager focus only.
 - `tasks/handoff.org`: manager continuity only.
-- `views/decisions.org`: derived durable-rationale view.
-- `views/glossary.org`: derived domain-language view.
+- `decisions/<ID>/node.org`: durable rationale.
+- `glossary/<ID>/node.org`: domain language.
+- `views/board.org`, `views/decisions.org`, `views/glossary.org`: derived,
+  gitignored read views over the collections.
 - `gotchas.org`: repeated traps; read before source edits.
 - `conventions/`: repo-local working agreements.
 - `tx/`: agent activity log.

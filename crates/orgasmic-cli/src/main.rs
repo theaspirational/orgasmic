@@ -601,9 +601,9 @@ enum TaskCmd {
         project: Option<String>,
         /// Move the task to another lifecycle stage (`backlog`, `todo`,
         /// `in_progress`, `in_review`, `done`, `cancelled`). Rewrites the
-        /// heading keyword, relocates the subtree to that stage's file and
-        /// records a `task.state_transitioned` tx — so it runs as its own call
-        /// and cannot be combined with `--priority`/`--property`.
+        /// heading keyword in this task's node and records a
+        /// `task.state_transitioned` tx — so it runs as its own call and cannot
+        /// be combined with `--priority`/`--property`.
         #[arg(long)]
         state: Option<String>,
         /// Rewrite the heading's title prose (TASK-XPYRR). The lifecycle
@@ -637,6 +637,35 @@ enum TaskCmd {
         /// `{id, changed, tx_id}` mutation response.
         #[arg(long)]
         json: bool,
+    },
+    /// Edit or delete authored comments in this task's journal.
+    Comment {
+        #[command(subcommand)]
+        cmd: TaskCommentCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TaskCommentCmd {
+    /// Replace one comment body using its current body as the OCC token.
+    Edit {
+        id: String,
+        entry_id: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        expected_body: String,
+        #[arg(long)]
+        body: String,
+    },
+    /// Tombstone one comment using its current body as the OCC token.
+    Delete {
+        id: String,
+        entry_id: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        expected_body: String,
     },
 }
 
@@ -3040,6 +3069,45 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
         let value: serde_json::Value = match cmd {
+            TaskCmd::Comment { cmd } => {
+                let (id, entry_id, project, body) = match cmd {
+                    TaskCommentCmd::Edit {
+                        id,
+                        entry_id,
+                        project,
+                        expected_body,
+                        body,
+                    } => (
+                        id,
+                        entry_id,
+                        project,
+                        serde_json::json!({"expected_body": expected_body, "body": body}),
+                    ),
+                    TaskCommentCmd::Delete {
+                        id,
+                        entry_id,
+                        project,
+                        expected_body,
+                    } => (
+                        id,
+                        entry_id,
+                        project,
+                        serde_json::json!({"expected_body": expected_body}),
+                    ),
+                };
+                let project = manager::resolve_project(project)?;
+                let action = if body.get("body").is_some() {
+                    "edit"
+                } else {
+                    "delete"
+                };
+                client
+                    .post_json(
+                        &format!("/tasks/{id}/comments/{entry_id}/{action}?project={project}"),
+                        &body,
+                    )
+                    .await?
+            }
             TaskCmd::Create {
                 id,
                 project,

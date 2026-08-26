@@ -1,0 +1,41 @@
+#+title: orgasmic task TASK-C9V29.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-C9V29.1 infer-project: audit + grill, then write project.org :bootstrap:
+:PROPERTIES:
+:ID:               TASK-C9V29.1
+:STATE:            backlog
+:PARENT_TASK:      TASK-C9V29
+:PRIORITY:         P1
+:WRITE_SCOPE:      .orgasmic/project.org .orgasmic/tx/**
+:READ_SCOPE:       README* readme* docs/** Cargo.toml package.json pyproject.toml go.mod .orgasmic/project.org
+:DEPENDS_ON:
+:BLOCKED_BY:
+:LAST_UPDATED:
+:END:
+
+** Description
+Establish the project baseline. Audit the repo for what it is and does, then
+grill the operator on the intent the code cannot reveal.
+
+Audit: top-level READMEs and docs, build manifests and language(s), directory
+layout, entry points, test/lint/build commands, and any existing product or
+design notes.
+
+Grill: the mission in 2–4 sentences; the operating constraints every worker must
+respect; primary users and surfaces; and — only if this repo ships a user-facing
+product — the product baseline and design register. Ask in small batches; keep
+known facts, inferred assumptions, and open questions separate.
+
+Write: fill `.orgasmic/project.org`, replacing the `** Mission` and
+`** Operating Constraints` placeholders with confirmed prose. Capture
+repo-specific verification and branch notes there or in conventions as prose.
+
+** Acceptance Criteria
+- [ ] `** Mission` states the real goal in 2–4 sentences.
+- [ ] `** Operating Constraints` lists concrete, repo-specific constraints.
+- [ ] Every claim is grounded in code evidence or an explicit operator answer;
+      no invented requirements.
+- [ ] No `[Describe ...]` / `[Project-specific ...]` placeholders remain.
+
+** Worklog
