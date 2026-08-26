@@ -49,6 +49,41 @@ pub enum NodeCmd {
         #[command(subcommand)]
         cmd: NodePropCmd,
     },
+    /// Submit a complete regenerated node.org replacement.
+    Submit {
+        /// Existing node id.
+        id: String,
+        /// Complete replacement node.org file.
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// Project id; omitted → resolved from the current project.
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Regenerate a node through its type descriptor's prompt spec.
+    Regenerate {
+        /// Existing node id.
+        id: String,
+        /// Project id; omitted → resolved from the current project.
+        #[arg(long)]
+        project: Option<String>,
+        /// Optional guidance appended to the current node and open comments.
+        #[arg(long = "extra-prompt")]
+        extra_prompt: Option<String>,
+        /// Transport mode; required when no live regenerate run exists.
+        #[arg(long)]
+        mode: Option<String>,
+        /// Harness; required when no live regenerate run exists.
+        #[arg(long)]
+        harness: Option<String>,
+        /// Additional harness argument; repeatable.
+        #[arg(long = "harness-arg")]
+        harness_args: Vec<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        effort: Option<String>,
+    },
     /// Delete one node through the daemon org-node surface (OCC + tx).
     Delete {
         /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX`.
@@ -447,6 +482,44 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&response)?);
                 }
             },
+            NodeCmd::Submit { id, file, project } => {
+                let project = resolve_project(project)?;
+                let content = std::fs::read_to_string(&file)
+                    .with_context(|| format!("read regenerated node {}", file.display()))?;
+                let response: serde_json::Value = client
+                    .post_json(
+                        &format!("/org/node/{id}/submit?project={project}"),
+                        &serde_json::json!({ "content": content }),
+                    )
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            }
+            NodeCmd::Regenerate {
+                id,
+                project,
+                extra_prompt,
+                mode,
+                harness,
+                harness_args,
+                model,
+                effort,
+            } => {
+                let project = resolve_project(project)?;
+                let response: serde_json::Value = client
+                    .post_json(
+                        &format!("/org/node/{id}/regenerate?project={project}"),
+                        &serde_json::json!({
+                            "extraPrompt": extra_prompt,
+                            "mode": mode,
+                            "harness": harness,
+                            "harness_args": harness_args,
+                            "model": model,
+                            "effort": effort,
+                        }),
+                    )
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            }
             NodeCmd::Delete {
                 id,
                 project,

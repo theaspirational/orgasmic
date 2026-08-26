@@ -61,7 +61,11 @@ pub fn default_registry() -> BTreeSet<&'static str> {
         "worklog.tail",
         "artifact.subject_nodes",
         "artifact.user_prompt",
-        "artifact.regen_context",
+        "node.id",
+        "node.type",
+        "node.content",
+        "node.comments",
+        "node.extra_prompt",
     ]
     .into_iter()
     .collect()

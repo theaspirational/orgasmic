@@ -230,9 +230,8 @@ pub struct ApiState {
     /// fast. A test that starts a release and then restarts proves the
     /// already-registered case and passes against the broken code too.
     pub release_admission_delay: Option<std::time::Duration>,
-    /// Per-artifact locks serializing reviews.org read-modify-write across the
-    /// two feedback handlers. See [`ApiState::artifact_write_lock`].
-    pub artifact_write_locks:
+    /// Per-node locks serializing node.org/journal.org read-modify-write.
+    pub node_write_locks:
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
     /// Per-origin locks serializing Failed recovery claims and POST /recover.
     pub recovery_claim_locks: RecoveryClaimLocks,
@@ -652,8 +651,7 @@ impl ReleaseTaskTracker {
 }
 
 impl ApiState {
-    /// Serialize the read-modify-write of a single artifact's on-disk state
-    /// (`reviews.org` and `artifact.org`) across every handler that mutates it.
+    /// Serialize the read-modify-write of one node directory across handlers.
     ///
     /// The atomic-transaction refactor (TASK-Y2ZQJ finding #4) replaced
     /// `writer.mutate_file` — which read the file under the writer's exclusive
@@ -669,8 +667,8 @@ impl ApiState {
     /// - `post_artifact_regenerate` (reviews.org consume + artifact.org state flip)
     /// - `post_artifact_submit` (artifact.org version read→bump; TASK-2ZQSB M1)
     /// - `revert_artifact_generation_state` (the release-watcher's state restore)
-    fn artifact_write_lock(&self, art_dir: &FsPath) -> Arc<tokio::sync::Mutex<()>> {
-        let mut map = self.artifact_write_locks.lock().unwrap();
+    fn node_write_lock(&self, art_dir: &FsPath) -> Arc<tokio::sync::Mutex<()>> {
+        let mut map = self.node_write_locks.lock().unwrap();
         map.entry(art_dir.to_path_buf())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
@@ -763,6 +761,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/org/node", get(get_org_node))
         .route("/org/node/:id/edit", post(post_org_node_edit))
         .route("/org/node/:id/delete", post(post_org_node_delete))
+        .route("/org/node/:id/regenerate", post(post_node_regenerate))
+        .route("/org/node/:id/submit", post(post_node_submit))
         .route("/ws", get(ws::handler))
         .route("/ws/tmux/:run_id", get(ws::tmux_handler))
         // Stubs — wired so callers can discover them; tracked tasks owned elsewhere.
@@ -18573,7 +18573,7 @@ async fn post_artifact_submit(
     // races; a submit could also interleave with regenerate's state read/flip.
     // Same per-artifact lock as the feedback handlers (Y2ZQJ M1); held across
     // the existence check so create/version-bump can't race either.
-    let write_lock = state.artifact_write_lock(&art_dir);
+    let write_lock = state.node_write_lock(&art_dir);
     let _write_guard = write_lock.lock().await;
 
     let is_new = !art_dir.join(NODE_FILE).exists();
@@ -18821,7 +18821,7 @@ async fn prepare_artifactor_submit_terminal(
     state: &ApiState,
     art_id: &str,
 ) -> Result<Option<(String, u64)>, ApiError> {
-    let task_id = format!("artifact.generate:{art_id}");
+    let task_id = format!("node.regenerate:{art_id}");
     match state
         .supervisor
         .begin_artifactor_submit_for_task(&task_id)
@@ -18939,7 +18939,7 @@ async fn post_artifact_add_comment(
     // Serialize the reviews.org read→transaction window against a concurrent
     // add/consume on the same artifact (finding M1). Held for the rest of the
     // handler; released on return.
-    let write_lock = state.artifact_write_lock(&art_dir);
+    let write_lock = state.node_write_lock(&art_dir);
     let _write_guard = write_lock.lock().await;
 
     // One canonical read of artifact.org for both the regenerating guard and
@@ -19104,7 +19104,7 @@ async fn post_artifact_comment_resolve(
 
     // Serialize the reviews.org read→transaction window against a concurrent
     // add/consume on the same artifact (finding M1). Held until return.
-    let write_lock = state.artifact_write_lock(&art_dir);
+    let write_lock = state.node_write_lock(&art_dir);
     let _write_guard = write_lock.lock().await;
 
     let reviews_path = art_dir.join(JOURNAL_FILE);
@@ -19310,49 +19310,6 @@ async fn assemble_artifact_context(
     out
 }
 
-/// Regenerate-only context: the prior artifact.mdx, every current-version
-/// comment (author, resolution target, anchor) that this regenerate closes
-/// out, and the optional extra prompt from the Regenerate dialog (dec_V44E4).
-fn assemble_regen_context(
-    prior_mdx: &str,
-    comments: &[artifacts::CommentRecord],
-    extra_prompt: &str,
-) -> String {
-    let mut out = String::new();
-    out.push_str("### Prior artifact.mdx\n");
-    if prior_mdx.trim().is_empty() {
-        out.push_str("(none)\n");
-    } else {
-        out.push_str(prior_mdx.trim());
-        out.push('\n');
-    }
-    out.push_str("\n### Current-version comments (closed out by this regenerate)\n");
-    if comments.is_empty() {
-        out.push_str("(none)\n");
-    } else {
-        for c in comments {
-            let resolves = if c.resolution_target.trim().is_empty() {
-                "-"
-            } else {
-                c.resolution_target.as_str()
-            };
-            let reply_to = if c.reply_to.trim().is_empty() {
-                "-"
-            } else {
-                c.reply_to.as_str()
-            };
-            out.push_str(&format!(
-                "- [{}] {} (anchor: {}; resolves: {}; reply-to: {}; resolved: {}): {}\n",
-                c.cid, c.author, c.anchor, resolves, reply_to, c.resolved, c.message
-            ));
-        }
-    }
-    out.push_str("\n### Extra prompt\n");
-    out.push_str(&prompt_value_or_not_set(extra_prompt));
-    out.push('\n');
-    out
-}
-
 /// Compile the artifact-generator prompt spec into the worker's initial
 /// prompt bundle. Standalone from `compile_dispatch_prompt_bundle`: this run
 /// has no task heading, so only the `artifact.*` slot namespace is filled.
@@ -19362,7 +19319,6 @@ fn compile_artifact_generate_prompt_bundle(
     art_id: &str,
     subject_context: &str,
     user_prompt: &str,
-    regen_context: &str,
 ) -> Result<String, ApiError> {
     let mut values = SlotValues::new();
     values.insert(
@@ -19372,10 +19328,6 @@ fn compile_artifact_generate_prompt_bundle(
     values.insert(
         "artifact.user_prompt".to_string(),
         prompt_value_or_not_set(user_prompt),
-    );
-    values.insert(
-        "artifact.regen_context".to_string(),
-        prompt_value_or_not_set(regen_context),
     );
     let req = crate::prompt_compiler::PromptCompileRequest {
         project: Some(project_id.to_string()),
@@ -19403,6 +19355,78 @@ fn compile_artifact_generate_prompt_bundle(
     }
     Ok(format!(
         "orgasmic compiled prompt\ndispatch_kind: artifactor\nartifact: {art_id}\nworker: artifactor\nprompt_spec: {}\n\n{}\n",
+        compiled.spec.id,
+        compiled.text.trim()
+    ))
+}
+
+fn open_comment_context(journal: &str) -> Result<String, ApiError> {
+    let comments = orgasmic_core::node_kernel::parse_journal(journal, JOURNAL_FILE)
+        .map_err(|error| ApiError::internal(format!("parse node journal: {error}")))?
+        .into_iter()
+        .filter(orgasmic_core::node_kernel::JournalEntry::is_open_comment)
+        .map(|comment| orgasmic_core::node_kernel::journal_entry_block(&comment))
+        .collect::<String>();
+    Ok(prompt_value_or_not_set(&comments))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compile_node_regenerate_prompt_bundle(
+    home: &Home,
+    project_id: &str,
+    node_id: &str,
+    node_type: &str,
+    prompt_spec: &str,
+    content: &str,
+    journal: &str,
+    extra_prompt: &str,
+    artifact_subject_nodes: &str,
+    artifact_user_prompt: &str,
+) -> Result<String, ApiError> {
+    let mut values = SlotValues::new();
+    values.insert("node.id".into(), node_id.to_string());
+    values.insert("node.type".into(), node_type.to_string());
+    values.insert("node.content".into(), prompt_value_or_not_set(content));
+    values.insert("node.comments".into(), open_comment_context(journal)?);
+    values.insert(
+        "node.extra_prompt".into(),
+        prompt_value_or_not_set(extra_prompt),
+    );
+    values.insert(
+        "artifact.subject_nodes".into(),
+        prompt_value_or_not_set(artifact_subject_nodes),
+    );
+    values.insert(
+        "artifact.user_prompt".into(),
+        prompt_value_or_not_set(artifact_user_prompt),
+    );
+    let compiled = crate::prompt_compiler::compile_prompt_spec(
+        home,
+        prompt_spec,
+        crate::prompt_compiler::PromptCompileRequest {
+            project: Some(project_id.to_string()),
+            mode: Some("node_regenerate".to_string()),
+            worker: Some("artifactor".to_string()),
+            reason: Some(format!("regenerate {node_type} {node_id}")),
+            values,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| content_list_error(error, "node regenerate prompt spec"))?;
+    if crate::prompt_compiler::has_error(&compiled.diagnostics) {
+        let messages = compiled
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.level == "error")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(ApiError::internal(format!(
+            "node regenerate prompt compile failed: {messages}"
+        )));
+    }
+    Ok(format!(
+        "orgasmic compiled prompt\ndispatch_kind: artifactor\nnode: {node_id}\nworker: artifactor\nprompt_spec: {}\n\n{}\n",
         compiled.spec.id,
         compiled.text.trim()
     ))
@@ -19442,7 +19466,7 @@ impl<'a> ArtifactLaunchCleanupGuard<'a> {
     }
 }
 
-/// Acquire the per-artifact lease `artifact.generate:{art_id}` and launch the
+/// Acquire the per-node lease `node.regenerate:{art_id}` and launch the
 /// artifactor worker, modeled on `post_manager_launch`'s direct
 /// `supervisor.acquire` pattern (synthetic task_id, `RunKind::Worker`, no
 /// task heading) but reusing `spawn_worker_run`'s shared plumbing so the run
@@ -19489,7 +19513,7 @@ async fn launch_artifact_generation(
         worker.context_budget_chars,
         "artifact prompt",
     )?;
-    let task_id = format!("artifact.generate:{art_id}");
+    let task_id = format!("node.regenerate:{art_id}");
     let launch_model = verbatim_optional(address.model.clone());
     let launch_effort = verbatim_optional(address.effort.clone());
     let spawn = spawn_worker_run(
@@ -19615,6 +19639,59 @@ async fn launch_artifact_generation(
     Ok(run_id)
 }
 
+async fn launch_node_regeneration(
+    state: &ApiState,
+    entry: &BoardEntry,
+    node_id: &str,
+    bundle: String,
+    address: &ArtifactLaunchAddress,
+    governance: Option<&GovernancePatch>,
+) -> Result<String, ApiError> {
+    validate_custom_harness_args(&address.harness, &address.harness_args)?;
+    let worker = resolve_addressed_stage_worker(
+        &state.home,
+        WorkerKind::Artifactor,
+        &address.mode,
+        &address.harness,
+        address.harness_args.clone(),
+        &state.dispatch_governance,
+        governance,
+    )?;
+    enforce_context_budget_chars(
+        bundle.chars().count(),
+        worker.context_budget_chars,
+        "node regenerate prompt",
+    )?;
+    let task_id = format!("node.regenerate:{node_id}");
+    let spawn = spawn_worker_run(
+        state,
+        SpawnWorkerRequest {
+            project_id: &entry.id,
+            task_id: &task_id,
+            worker,
+            run_kind: RunKind::Worker,
+            bundle: &bundle,
+            overrides: DriverOverrides {
+                provider: None,
+                model: address.model.clone(),
+                credential_mode: None,
+                effort: address.effort.clone(),
+            },
+            project_root_path: &entry.path,
+            worktree_path: &entry.path,
+            last_path: None,
+            stdout_path: None,
+            dispatch_attempt_token: None,
+            origin: "node_regenerate",
+            dispatch_kind: Some("artifactor"),
+            task_sandbox_permissions: None,
+        },
+    )
+    .await
+    .map_err(|failure| failure.error)?;
+    Ok(spawn.acquire.run_id)
+}
+
 /// Best-effort recovery: restore the artifact out of `regenerating` when a
 /// launch never happened or the run ended without ever calling `orgasmic
 /// artifact submit`. Only acts if the artifact is still `regenerating` —
@@ -19641,7 +19718,7 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
         restore_state,
         restore_version,
     } = revert;
-    let write_lock = state.artifact_write_lock(art_dir);
+    let write_lock = state.node_write_lock(art_dir);
     let _guard = write_lock.lock().await;
 
     let Ok(current_org) = std::fs::read_to_string(art_dir.join(NODE_FILE)) else {
@@ -19725,63 +19802,62 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
     );
 }
 
-struct ArtifactRegenerateCloseOut<'a> {
+struct NodeRegenerateCloseOut<'a> {
     state: &'a ApiState,
     entry: &'a BoardEntry,
-    art_dir: &'a FsPath,
-    art_id: &'a str,
+    node_dir: &'a FsPath,
+    node_id: &'a str,
     run_id: &'a str,
     version: u32,
     extra_prompt: &'a str,
+    artifact: bool,
 }
 
-/// Version-N close-out shared by cold and hot regenerate paths: consume open
-/// comments, flip artifact.org to `regenerating`, append `artifact.regenerated`.
-async fn close_out_artifact_regenerate_round(
-    close: ArtifactRegenerateCloseOut<'_>,
+/// Close-out shared by every node type and both cold and hot paths.
+async fn close_out_node_regenerate_round(
+    close: NodeRegenerateCloseOut<'_>,
 ) -> Result<(), ApiError> {
-    let ArtifactRegenerateCloseOut {
+    let NodeRegenerateCloseOut {
         state,
         entry,
-        art_dir,
-        art_id,
+        node_dir,
+        node_id,
         run_id,
         version,
         extra_prompt,
+        artifact,
     } = close;
-    let write_lock = state.artifact_write_lock(art_dir);
+    let write_lock = state.node_write_lock(node_dir);
     let _write_guard = write_lock.lock().await;
 
-    let reviews_path = art_dir.join(JOURNAL_FILE);
-    let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
-    let consumed_cids: Vec<String> = artifacts::parse_comments(&current_reviews)
-        .into_iter()
-        .filter(|c| !(c.resolved && c.consumed))
-        .map(|c| c.cid)
-        .collect();
-    let new_reviews = artifacts::consume_all_open_comments(&current_reviews)
-        .map_err(|e| ApiError::internal(format!("consume open comments: {e}")))?;
-
-    let current_org = std::fs::read_to_string(art_dir.join(NODE_FILE))
-        .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
-    let new_org = update_artifact_node(&current_org, version, "regenerating")
-        .map_err(|e| ApiError::internal(format!("update artifact.org: {e}")))?;
+    let journal_path = node_dir.join(JOURNAL_FILE);
+    let current_journal = std::fs::read_to_string(&journal_path).unwrap_or_default();
+    let (new_journal, consumed_cids) =
+        orgasmic_core::node_kernel::consume_open_comments(&current_journal)
+            .map_err(|error| ApiError::internal(format!("consume open comments: {error}")))?;
 
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
-    let tx_path = art_dir.join("journal.org");
+    let tx_path = journal_path.clone();
 
     let mut regen_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
-        "artifact.regenerated",
+        if artifact {
+            "artifact.regenerated"
+        } else {
+            "node.regenerated"
+        },
         &time_str,
         &state.actor,
         &state.machine,
     );
     regen_entry.project = Some(entry.id.clone());
     regen_entry.extra = vec![
-        ("ARTIFACT_ID".into(), art_id.to_string()),
+        (
+            if artifact { "ARTIFACT_ID" } else { "NODE_ID" }.into(),
+            node_id.to_string(),
+        ),
         ("RUN_ID".into(), run_id.to_string()),
         ("VERSION".into(), version.to_string()),
         ("CONSUMED_CIDS".into(), consumed_cids.join(" ")),
@@ -19791,19 +19867,24 @@ async fn close_out_artifact_regenerate_round(
         ),
     ];
 
+    let mut rewrites = vec![FileRewrite {
+        path: journal_path,
+        new_contents: new_journal.into_bytes(),
+    }];
+    if artifact {
+        let current_org = std::fs::read_to_string(node_dir.join(NODE_FILE))
+            .map_err(|error| ApiError::internal(format!("read artifact node: {error}")))?;
+        rewrites.push(FileRewrite {
+            path: node_dir.join(NODE_FILE),
+            new_contents: update_artifact_node(&current_org, version, "regenerating")
+                .map_err(|error| ApiError::internal(format!("update artifact node: {error}")))?,
+        });
+    }
+
     let tx_id = state
         .writer
         .transaction(
-            vec![
-                FileRewrite {
-                    path: art_dir.join(NODE_FILE),
-                    new_contents: new_org,
-                },
-                FileRewrite {
-                    path: reviews_path,
-                    new_contents: new_reviews,
-                },
-            ],
+            rewrites,
             TxAppend {
                 tx_path,
                 entry: regen_entry,
@@ -19819,20 +19900,22 @@ async fn close_out_artifact_regenerate_round(
         .map_err(|e| ApiError::internal(format!("write regenerate state: {e}")))?;
 
     refresh_after_project_mutation(state, &entry.id, true, &tx_id).await?;
-    state.events.publish(
-        Topic::Artifact,
-        EventPayload::ArtifactChanged {
-            project_id: entry.id.clone(),
-            artifact_id: art_id.to_string(),
-            state: "regenerating".into(),
-        },
-    );
+    if artifact {
+        state.events.publish(
+            Topic::Artifact,
+            EventPayload::ArtifactChanged {
+                project_id: entry.id.clone(),
+                artifact_id: node_id.to_string(),
+                state: "regenerating".into(),
+            },
+        );
+    }
     Ok(())
 }
 
 struct ArtifactReleaseWatch {
     entry: BoardEntry,
-    /// The supervisor lease key (`artifact.generate:{art_id}`); used to
+    /// The supervisor lease key (`node.regenerate:{art_id}`); used to
     /// detect whether a newer run already took over the artifact by the time
     /// this run ends.
     task_id: String,
@@ -19999,7 +20082,6 @@ async fn post_artifact_generate(
         &art_id,
         &context,
         &prompt,
-        "",
     )?;
 
     // The durable record above always exists before this call and no other
@@ -20059,78 +20141,314 @@ async fn post_artifact_regenerate(
         Action::ArtifactsGenerate,
     )
     .await?;
+    let descriptor = state
+        .node_types
+        .descriptor("artifacts")
+        .ok_or_else(|| ApiError::internal("missing shipped descriptor for artifacts"))?;
+    let run_id = regenerate_node(&state, &entry, descriptor, &art_id, body).await?;
+    Ok(Json(ArtifactGenerateResponse {
+        artifact_id: art_id,
+        run_id,
+    }))
+}
 
-    let art_dir = artifact_dir(&entry.path, &art_id);
-    if !art_dir.join(NODE_FILE).exists() {
-        return Err(ApiError::not_found("artifact not found"));
+#[derive(Debug, Serialize)]
+struct NodeRegenerateResponse {
+    node_id: String,
+    run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct NodeSubmitRequest {
+    content: String,
+}
+
+fn prepare_regenerated_node(
+    current: &str,
+    replacement: &str,
+    node_id: &str,
+    descriptor: &orgasmic_core::NodeTypeDescriptor,
+) -> Result<(Vec<u8>, u32), ApiError> {
+    let current_node = orgasmic_core::node_kernel::parse_node(current, NODE_FILE)
+        .map_err(|error| ApiError::internal(format!("parse current node.org: {error}")))?;
+    let replacement_node =
+        orgasmic_core::node_kernel::parse_node(replacement, NODE_FILE).map_err(|error| {
+            ApiError::bad_request(format!("replacement is not a valid node.org: {error}"))
+        })?;
+    if current_node.id != node_id || replacement_node.id != node_id {
+        return Err(ApiError::bad_request(format!(
+            "replacement must preserve node id {node_id}"
+        )));
     }
-
-    let detail = load_artifact_detail(&art_dir, None, false).map_err(|e| match e {
-        ArtifactLoadError::NotFound => ApiError::not_found("artifact not found"),
-        ArtifactLoadError::VersionNotFound(v) => {
-            ApiError::not_found(format!("artifact {art_id} has no version {v}"))
+    if !descriptor.states.is_empty() && replacement_node.state != current_node.state {
+        return Err(ApiError::bad_request(
+            "task regenerate must preserve the lifecycle state",
+        ));
+    }
+    for property in &descriptor.required_properties {
+        if !replacement_node
+            .properties
+            .iter()
+            .any(|(key, value)| key == property && !value.trim().is_empty())
+        {
+            return Err(ApiError::bad_request(format!(
+                "replacement node is missing required :{property}:"
+            )));
         }
+    }
+    if let Some(state) = replacement_node.state.as_deref() {
+        if !descriptor.states.is_empty()
+            && !descriptor
+                .states
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(state))
+        {
+            return Err(ApiError::bad_request(format!(
+                "replacement node has unknown state {state}"
+            )));
+        }
+    }
+    let version = current_node
+        .properties
+        .iter()
+        .find(|(key, _)| key == "VERSION")
+        .and_then(|(_, value)| value.parse::<u32>().ok())
+        .unwrap_or(0)
+        .saturating_add(1);
+    let file = OrgFile::parse(replacement.to_string(), NODE_FILE)
+        .map_err(|error| ApiError::bad_request(format!("parse replacement node.org: {error}")))?;
+    let mut rewriter = OrgRewriter::new(&file, NODE_FILE);
+    rewriter
+        .upsert_property(node_id, "VERSION", &version.to_string())
+        .map_err(|error| org_rewriter_error("set regenerated version", node_id, error))?;
+    Ok((rewriter.finish().into_bytes(), version))
+}
+
+async fn post_node_submit(
+    State(state): State<ApiState>,
+    Path(node_id): Path<String>,
+    Query(q): Query<ArtifactQuery>,
+    Json(body): Json<NodeSubmitRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let entry = resolve_artifact_project(&state, q.project.as_deref()).await?;
+    let descriptor = state
+        .node_types
+        .descriptor_for_id(&node_id)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!("node {node_id} has no shipped type descriptor"))
+        })?;
+    if descriptor.collection == "artifacts" {
+        return Err(ApiError::bad_request(
+            "artifacts must be submitted with `orgasmic artifact submit`",
+        ));
+    }
+    let node_dir =
+        orgasmic_core::node_kernel::node_dir(&entry.path, &descriptor.collection, &node_id);
+    let node_path = node_dir.join(NODE_FILE);
+    let lock = state.node_write_lock(&node_dir);
+    let _guard = lock.lock().await;
+    let current = std::fs::read_to_string(&node_path)
+        .map_err(|error| ApiError::not_found(format!("node {node_id} not found: {error}")))?;
+    let (replacement, version) =
+        prepare_regenerated_node(&current, &body.content, &node_id, descriptor)?;
+
+    let now = Utc::now();
+    let mut submitted = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "node.submitted",
+        &now.format("[%Y-%m-%d %a %H:%M:%S]").to_string(),
+        &state.actor,
+        &state.machine,
+    );
+    submitted.project = Some(entry.id.clone());
+    submitted.extra = vec![
+        ("NODE_ID".into(), node_id.clone()),
+        ("VERSION".into(), version.to_string()),
+    ];
+    let (run_id, submit_token) = prepare_artifactor_submit_terminal(&state, &node_id)
+        .await?
+        .ok_or_else(|| ApiError::conflict("no live node regenerate run"))?;
+    let tx_id = match state
+        .writer
+        .transaction(
+            vec![FileRewrite {
+                path: node_path,
+                new_contents: replacement,
+            }],
+            TxAppend {
+                tx_path: node_dir.join(JOURNAL_FILE),
+                entry: submitted,
+                project_id: Some(entry.id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: entry.id.clone(),
+                    date: now.format("%Y%m%d").to_string(),
+                },
+                request_id: None,
+            },
+        )
+        .await
+    {
+        Ok(tx_id) => tx_id,
+        Err(error) => {
+            abort_artifactor_submit_terminal(&state, &run_id, submit_token).await;
+            return Err(ApiError::internal(format!(
+                "write regenerated node: {error}"
+            )));
+        }
+    };
+    commit_artifactor_submit_terminal(&state, &run_id, submit_token).await;
+    release_artifactor_run_after_submit(&state, &run_id).await;
+    refresh_after_project_mutation(&state, &entry.id, true, &tx_id).await?;
+    match descriptor.collection.as_str() {
+        "tasks" => state.events.publish(
+            Topic::Task,
+            EventPayload::TaskUpdated {
+                project_id: entry.id.clone(),
+                task_id: node_id.clone(),
+            },
+        ),
+        "decisions" | "glossary" => state.events.publish(
+            Topic::Graph,
+            EventPayload::GraphNodeRevised {
+                project_id: entry.id.clone(),
+                layer: descriptor.collection.trim_end_matches('s').to_string(),
+                node_id: node_id.clone(),
+                action: "regenerated".into(),
+                tx_id: tx_id.clone(),
+            },
+        ),
+        _ => {}
+    }
+    Ok(Json(
+        json!({ "node_id": node_id, "version": version, "tx_id": tx_id }),
+    ))
+}
+
+async fn post_node_regenerate(
+    State(state): State<ApiState>,
+    Path(node_id): Path<String>,
+    Query(q): Query<ArtifactQuery>,
+    Json(body): Json<ArtifactRegenerateRequest>,
+) -> Result<Json<NodeRegenerateResponse>, ApiError> {
+    let entry = resolve_artifact_project(&state, q.project.as_deref()).await?;
+    let descriptor = state
+        .node_types
+        .descriptor_for_id(&node_id)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!("node {node_id} has no shipped type descriptor"))
+        })?;
+    let run_id = regenerate_node(&state, &entry, descriptor, &node_id, body).await?;
+    Ok(Json(NodeRegenerateResponse { node_id, run_id }))
+}
+
+async fn regenerate_node(
+    state: &ApiState,
+    entry: &BoardEntry,
+    descriptor: &orgasmic_core::NodeTypeDescriptor,
+    node_id: &str,
+    body: ArtifactRegenerateRequest,
+) -> Result<String, ApiError> {
+    let prompt_spec = descriptor.regenerate_prompt.as_deref().ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "{} nodes have no :REGENERATE_PROMPT:; regenerate is unavailable",
+            descriptor.label
+        ))
     })?;
-    let address = resolve_artifact_launch_address(
-        artifact_address_override_from_regenerate(&body),
-        detail.summary.launch_address.clone(),
+    let node_dir =
+        orgasmic_core::node_kernel::node_dir(&entry.path, &descriptor.collection, node_id);
+    let node_path = node_dir.join(NODE_FILE);
+    if !node_path.exists() {
+        return Err(ApiError::not_found(format!("node {node_id} not found")));
+    }
+    let journal = std::fs::read_to_string(node_dir.join(JOURNAL_FILE)).unwrap_or_default();
+    let extra_prompt = body.extra_prompt.clone().unwrap_or_default();
+    let artifact = descriptor.collection == "artifacts";
+
+    let (content, version, address, subject_context, user_prompt) = if artifact {
+        let detail = load_artifact_detail(&node_dir, None, false).map_err(|error| match error {
+            ArtifactLoadError::NotFound => ApiError::not_found("artifact not found"),
+            ArtifactLoadError::VersionNotFound(version) => {
+                ApiError::not_found(format!("artifact {node_id} has no version {version}"))
+            }
+        })?;
+        let address = resolve_artifact_launch_address(
+            artifact_address_override_from_regenerate(&body),
+            detail.summary.launch_address.clone(),
+        )?;
+        let subject_context =
+            assemble_artifact_context(state, &entry.id, &detail.summary.subject_nodes).await;
+        (
+            detail.content,
+            detail.summary.version,
+            Some(address),
+            subject_context,
+            detail.prompt,
+        )
+    } else {
+        let content = std::fs::read_to_string(&node_path)
+            .map_err(|error| ApiError::internal(format!("read node.org: {error}")))?;
+        let parsed = orgasmic_core::node_kernel::parse_node(&content, NODE_FILE)
+            .map_err(|error| ApiError::internal(format!("parse node.org: {error}")))?;
+        if parsed.id != node_id {
+            return Err(ApiError::internal(format!(
+                "node directory id {node_id} does not match node.org id {}",
+                parsed.id
+            )));
+        }
+        let version = parsed
+            .properties
+            .iter()
+            .find(|(key, _)| key == "VERSION")
+            .and_then(|(_, value)| value.parse().ok())
+            .unwrap_or(0);
+        let address = artifact_address_override_from_regenerate(&body);
+        if address.as_ref().is_some_and(|address| {
+            address.mode.trim().is_empty() || address.harness.trim().is_empty()
+        }) {
+            return Err(ApiError::bad_request(
+                "node regenerate requires non-empty mode and harness",
+            ));
+        }
+        (content, version, address, String::new(), String::new())
+    };
+
+    let bundle = compile_node_regenerate_prompt_bundle(
+        &state.home,
+        &entry.id,
+        node_id,
+        &descriptor.label,
+        prompt_spec,
+        &content,
+        &journal,
+        &extra_prompt,
+        &subject_context,
+        &user_prompt,
     )?;
-    let extra_prompt = body.extra_prompt.unwrap_or_default();
-    let version = detail.summary.version;
-    let nodes = detail.summary.subject_nodes.clone();
-
-    let artifact_task_id = format!("artifact.generate:{art_id}");
+    let task_id = format!("node.regenerate:{node_id}");
     let snapshot = state.supervisor.snapshot().await;
-    let live = snapshot.runs.iter().find(|r| r.task_id == artifact_task_id);
-
-    if let Some(live_run) = live {
-        // HOT PATH: route the followup into the live session — no new lease.
-        // orgasmic:TASK-TZJFF — invalidate any prior submit declaration and
-        // bump the artifactor round before accepting the followup so a
-        // concurrent stream-end cannot promote a stale declaration.
+    if let Some(live_run) = snapshot.runs.iter().find(|run| run.task_id == task_id) {
         let checkpoint = state
             .supervisor
             .begin_artifactor_regenerate_round(&live_run.run_id)
             .await
-            .map_err(|e| match e {
-                crate::supervisor::SupervisorError::RunNotFound(_) => {
-                    ApiError::not_found(format!("active run {}", live_run.run_id))
-                }
+            .map_err(|error| match error {
                 crate::supervisor::SupervisorError::ArtifactorLifecycleBusy(_) => {
                     ApiError::conflict("artifactor lifecycle busy")
                 }
-                other => supervisor_control_error("artifact regenerate round", other),
+                other => supervisor_control_error("node regenerate round", other),
             })?;
-        let followup_payload =
-            assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
         let ack = match state
             .supervisor
-            .send_input(&live_run.run_id, followup_payload, &live_run.identity)
+            .send_input(&live_run.run_id, bundle, &live_run.identity)
             .await
         {
             Ok(ack) => ack,
-            Err(e) => {
-                // orgasmic:TASK-ARZGD — regenerate_in_flight defers drains;
-                // rollback must restore the prior declaration atomically.
-                if let Err(rb) = state
+            Err(error) => {
+                let _ = state
                     .supervisor
                     .rollback_artifactor_regenerate_round(&live_run.run_id, checkpoint)
-                    .await
-                {
-                    if !matches!(rb, crate::supervisor::SupervisorError::RunNotFound(_)) {
-                        tracing::warn!(
-                            run_id = %live_run.run_id,
-                            error = %rb,
-                            "artifact regenerate: rollback after send_input error failed"
-                        );
-                    }
-                }
-                return Err(match e {
-                    crate::supervisor::SupervisorError::RunNotFound(_) => {
-                        ApiError::not_found(format!("active run {}", live_run.run_id))
-                    }
-                    other => supervisor_control_error("artifact regenerate followup", other),
-                });
+                    .await;
+                return Err(supervisor_control_error("node regenerate followup", error));
             }
         };
         if !ack.accepted {
@@ -20138,12 +20456,7 @@ async fn post_artifact_regenerate(
                 .supervisor
                 .rollback_artifactor_regenerate_round(&live_run.run_id, checkpoint)
                 .await
-                .map_err(|e| match e {
-                    crate::supervisor::SupervisorError::RunNotFound(_) => {
-                        ApiError::not_found(format!("active run {}", live_run.run_id))
-                    }
-                    other => supervisor_control_error("artifact regenerate rollback", other),
-                })?;
+                .map_err(|error| supervisor_control_error("node regenerate rollback", error))?;
             return Err(ApiError::conflict(
                 ack.message.unwrap_or_else(|| "harness busy".to_string()),
             ));
@@ -20152,68 +20465,61 @@ async fn post_artifact_regenerate(
             .supervisor
             .commit_artifactor_regenerate_round(&live_run.run_id, checkpoint)
             .await
-            .map_err(|e| match e {
-                crate::supervisor::SupervisorError::RunNotFound(_) => {
-                    ApiError::not_found(format!("active run {}", live_run.run_id))
-                }
-                other => supervisor_control_error("artifact regenerate commit", other),
-            })?;
-        close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
-            state: &state,
-            entry: &entry,
-            art_dir: &art_dir,
-            art_id: &art_id,
+            .map_err(|error| supervisor_control_error("node regenerate commit", error))?;
+        close_out_node_regenerate_round(NodeRegenerateCloseOut {
+            state,
+            entry,
+            node_dir: &node_dir,
+            node_id,
             run_id: &live_run.run_id,
             version,
             extra_prompt: &extra_prompt,
+            artifact,
         })
         .await?;
-        return Ok(Json(ArtifactGenerateResponse {
-            artifact_id: art_id,
-            run_id: live_run.run_id.clone(),
-        }));
+        return Ok(live_run.run_id.clone());
     }
 
-    // COLD PATH: no live holder — spawn a fresh run (also post-restart).
-    let subject_context = assemble_artifact_context(&state, &entry.id, &nodes).await;
-    let regen_context = assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
-    let bundle = compile_artifact_generate_prompt_bundle(
-        &state.home,
-        &entry.id,
-        &art_id,
-        &subject_context,
-        &detail.prompt,
-        &regen_context,
-    )?;
-
-    let run_id = launch_artifact_generation(
-        &state,
-        &entry,
-        &art_id,
-        &art_dir,
-        "submitted",
-        version,
-        bundle,
-        &address,
-        body.governance.as_ref(),
-    )
-    .await?;
-
-    close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
-        state: &state,
-        entry: &entry,
-        art_dir: &art_dir,
-        art_id: &art_id,
+    let run_id = if artifact {
+        let address = address.as_ref().expect("artifact address resolved");
+        launch_artifact_generation(
+            state,
+            entry,
+            node_id,
+            &node_dir,
+            "submitted",
+            version,
+            bundle,
+            address,
+            body.governance.as_ref(),
+        )
+        .await?
+    } else {
+        let address = address.as_ref().ok_or_else(|| {
+            ApiError::bad_request("node regenerate requires mode and harness on a cold launch")
+        })?;
+        launch_node_regeneration(
+            state,
+            entry,
+            node_id,
+            bundle,
+            address,
+            body.governance.as_ref(),
+        )
+        .await?
+    };
+    close_out_node_regenerate_round(NodeRegenerateCloseOut {
+        state,
+        entry,
+        node_dir: &node_dir,
+        node_id,
         run_id: &run_id,
         version,
         extra_prompt: &extra_prompt,
+        artifact,
     })
     .await?;
-
-    Ok(Json(ArtifactGenerateResponse {
-        artifact_id: art_id,
-        run_id,
-    }))
+    Ok(run_id)
 }
 
 // ---- errors ----------------------------------------------------------------
@@ -21588,7 +21894,7 @@ pub(crate) mod tests {
             dispatch_response_delay: None,
             release_terminal_tx_delay: None,
             release_admission_delay: None,
-            artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            node_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
             run_catalog: crate::run_catalog::RunCatalog::new(),
@@ -22333,7 +22639,7 @@ pub(crate) mod tests {
             .acquire(
                 &driver,
                 AcquireRequest {
-                    task_id: format!("artifact.generate:{art_id}"),
+                    task_id: format!("node.regenerate:{art_id}"),
                     kind: RunKind::Worker,
                     worker_id: "artifactor".into(),
                     role: "artifactor".into(),
@@ -22394,7 +22700,7 @@ pub(crate) mod tests {
             .acquire(
                 &driver,
                 AcquireRequest {
-                    task_id: format!("artifact.generate:{art_id}"),
+                    task_id: format!("node.regenerate:{art_id}"),
                     kind: RunKind::Worker,
                     worker_id: "artifactor".into(),
                     role: "artifactor".into(),
@@ -22475,7 +22781,7 @@ pub(crate) mod tests {
                         gate: std::sync::Arc::clone(&protocol_end_gate),
                     },
                     AcquireRequest {
-                        task_id: format!("artifact.generate:{art_id}"),
+                        task_id: format!("node.regenerate:{art_id}"),
                         kind: RunKind::Worker,
                         worker_id: "artifactor".into(),
                         role: "artifactor".into(),
@@ -36476,7 +36782,6 @@ pub(crate) mod tests {
             "ART-NONE",
             "",
             "Draft a grilling artifact from this prompt",
-            "",
         )
         .expect("compile should succeed");
         assert!(
@@ -36534,38 +36839,130 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn assemble_regen_context_lists_open_comments_and_extra_prompt() {
-        let comments = vec![
-            artifacts::CommentRecord {
-                cid: "CID-abc12345".into(),
-                author: "reviewer@test.com".into(),
-                version: 1,
-                anchor: "{}".into(),
-                resolution_target: String::new(),
-                reply_to: String::new(),
-                resolved: false,
-                consumed: false,
-                message: "tighten the copy".into(),
-            },
-            artifacts::CommentRecord {
-                cid: "CID-def67890".into(),
-                author: "other@test.com".into(),
-                version: 1,
-                anchor: "{}".into(),
-                resolution_target: String::new(),
-                reply_to: "CID-abc12345".into(),
-                resolved: true,
-                consumed: false,
-                message: "already addressed".into(),
-            },
-        ];
-        let out = assemble_regen_context("<RichText>v1</RichText>", &comments, "make it punchier");
-        assert!(out.contains("<RichText>v1</RichText>"));
-        assert!(out.contains("reviewer@test.com"));
-        assert!(out.contains("tighten the copy"));
-        assert!(out.contains("make it punchier"));
-        assert!(out.contains("[CID-abc12345] reviewer@test.com (anchor: {}; resolves: -; reply-to: -; resolved: false): tighten the copy"));
-        assert!(out.contains("[CID-def67890] other@test.com (anchor: {}; resolves: -; reply-to: CID-abc12345; resolved: true): already addressed"));
+    fn artifact_regenerate_context_is_compiled_through_its_descriptor_spec() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        symlink_repo_source(&home);
+        let comment = orgasmic_core::node_kernel::JournalEntry {
+            entry_id: "CID-abc12345".into(),
+            time: "[2026-08-26 Wed 12:00:00]".into(),
+            ty: "comment".into(),
+            actor: "reviewer@test.com".into(),
+            machine: "test".into(),
+            extras: vec![("CONSUMED".into(), "false".into())],
+            body: "tighten the copy".into(),
+        };
+        let journal = orgasmic_core::node_kernel::append_entry("", "ART-ABCDE", &comment);
+        let out = compile_node_regenerate_prompt_bundle(
+            &home,
+            "test-proj",
+            "ART-ABCDE",
+            "Artifact",
+            "artifact-generator",
+            "<RichText>v1</RichText>",
+            &journal,
+            "make it punchier",
+            "not set",
+            "original prompt",
+        )
+        .unwrap();
+        for expected in [
+            "<RichText>v1</RichText>",
+            "reviewer@test.com",
+            "tighten the copy",
+            "make it punchier",
+        ] {
+            assert!(out.contains(expected), "{expected}: {out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn regenerated_task_decision_and_glossary_use_one_node_path() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("project");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home).await;
+
+        for (collection, id, state_keyword) in [
+            ("tasks", "TASK-REGN1", "BACKLOG "),
+            ("decisions", "dec_REGN1", ""),
+            ("glossary", "term_REGN1", ""),
+        ] {
+            let node_dir = orgasmic_core::node_kernel::node_dir(&project_root, collection, id);
+            std::fs::create_dir_all(&node_dir).unwrap();
+            let current = format!(
+                "#+orgasmic_version: 2\n\n* {state_keyword}{id} old\n:PROPERTIES:\n:ID: {id}\n:VERSION: 4\n:END:\nold\n"
+            );
+            std::fs::write(node_dir.join(NODE_FILE), &current).unwrap();
+            std::fs::write(
+                node_dir.join(JOURNAL_FILE),
+                orgasmic_core::node_kernel::journal_header(id),
+            )
+            .unwrap();
+
+            let launched = post_node_regenerate(
+                State(state.clone()),
+                Path(id.to_string()),
+                Query(artifact_query("test-proj")),
+                Json(ArtifactRegenerateRequest {
+                    extra_prompt: Some("make it clearer".into()),
+                    mode: Some("tmux".into()),
+                    harness: Some("custom".into()),
+                    harness_args: harness_args.clone(),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+            live_guard.owns(&launched.0.run_id);
+            assert_eq!(launched.0.node_id, id);
+            let matching = state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .into_iter()
+                .filter(|run| run.task_id == format!("node.regenerate:{id}"))
+                .count();
+            assert_eq!(matching, 1, "one live regenerate per node");
+
+            let replacement = format!(
+                "#+orgasmic_version: 2\n\n* {state_keyword}{id} new\n:PROPERTIES:\n:ID: {id}\n:END:\nnew\n"
+            );
+            let submitted = post_node_submit(
+                State(state.clone()),
+                Path(id.to_string()),
+                Query(artifact_query("test-proj")),
+                Json(NodeSubmitRequest {
+                    content: replacement,
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(submitted.0["version"], 5);
+            let updated = std::fs::read_to_string(node_dir.join(NODE_FILE)).unwrap();
+            assert!(updated.contains(":VERSION: 5"), "{updated}");
+            assert!(updated.contains("new"), "{updated}");
+            let journal = std::fs::read_to_string(node_dir.join(JOURNAL_FILE)).unwrap();
+            assert!(journal.contains("node.regenerated"), "{journal}");
+            assert!(journal.contains(":CONSUMED_CIDS:"), "{journal}");
+            assert!(journal.contains("node.submitted"), "{journal}");
+
+            let _ = state
+                .supervisor
+                .release(
+                    &launched.0.run_id,
+                    "test cleanup",
+                    ReleaseOutcome::Completed,
+                )
+                .await;
+        }
     }
     #[test]
     fn resolve_artifact_launch_address_reuses_saved_when_regenerate_override_absent() {
@@ -38104,7 +38501,7 @@ pub(crate) mod tests {
         assert!(snapshot
             .runs
             .iter()
-            .any(|r| r.task_id == format!("artifact.generate:{art_id}")));
+            .any(|r| r.task_id == format!("node.regenerate:{art_id}")));
 
         // artifact.created is journal-routed (AP971.5), not a project tx.
         let journal = std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap();
@@ -39048,7 +39445,7 @@ pub(crate) mod tests {
             if !snapshot
                 .runs
                 .iter()
-                .any(|run| run.task_id == format!("artifact.generate:{art_id}"))
+                .any(|run| run.task_id == format!("node.regenerate:{art_id}"))
             {
                 break;
             }
@@ -39067,7 +39464,7 @@ pub(crate) mod tests {
                 .await
                 .runs
                 .iter()
-                .all(|run| run.task_id != format!("artifact.generate:{art_id}")),
+                .all(|run| run.task_id != format!("node.regenerate:{art_id}")),
             "fresh ApiState must not inherit live artifact runs from prior boot"
         );
 
@@ -39200,7 +39597,7 @@ pub(crate) mod tests {
             !snapshot
                 .runs
                 .iter()
-                .any(|run| run.task_id == format!("artifact.generate:{art_id}")),
+                .any(|run| run.task_id == format!("node.regenerate:{art_id}")),
             "persistence failure must release the acquired run: {snapshot:?}"
         );
 
