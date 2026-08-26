@@ -10684,11 +10684,11 @@ mod tests {
     #[test]
     fn closes_architector_lifecycle_to_done() {
         let tmp = tempfile::tempdir().unwrap();
-        let in_progress = tmp.path().join(".orgasmic/tasks/in_progress.org");
+        let in_progress = tmp.path().join(".orgasmic/tasks/TASK-086/node.org");
         std::fs::create_dir_all(in_progress.parent().unwrap()).unwrap();
         std::fs::write(
             &in_progress,
-            "#+title: in progress\n#+orgasmic_version: 1\n\n* IN_PROGRESS TASK-086 Architecture run\n:PROPERTIES:\n:ID:               TASK-086\n:END:\n",
+            "#+title: orgasmic task TASK-086\n#+orgasmic_version: 2\n\n* IN_PROGRESS TASK-086 Architecture run\n:PROPERTIES:\n:ID:               TASK-086\n:END:\n",
         )
         .unwrap();
         let open = architector_record();
