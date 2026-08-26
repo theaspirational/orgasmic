@@ -306,9 +306,7 @@ async fn node_delete_rejects_inbound_references_and_tasks() {
         .await
         .unwrap();
     assert_eq!(rejected.status(), reqwest::StatusCode::BAD_REQUEST);
-    assert!(
-        read_collection(&project_root, "glossary").contains("term_DEK01")
-    );
+    assert!(read_collection(&project_root, "glossary").contains("term_DEK01"));
 
     let task: serde_json::Value = client
         .post(format!("{base}/api/projects/orgasmic/tasks"))

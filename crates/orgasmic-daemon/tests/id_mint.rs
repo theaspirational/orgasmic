@@ -8,7 +8,6 @@ use std::time::Duration;
 use orgasmic_core::{mint_node_id_for_class, Home, NodeIdClass};
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 
-
 /// Concatenated `node.org` bodies of one collection (node-dir layout,
 /// dec_E01MC retired the aggregate `decisions.org` / `glossary.org` /
 /// `tasks/backlog.org` files).

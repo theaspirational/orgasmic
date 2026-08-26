@@ -59,7 +59,7 @@ pub(crate) fn run(home: &Home, dry_run: bool, to_branch: bool) -> Result<()> {
 }
 
 fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()> {
-    let migration = plan(&root)?;
+    let migration = plan(root)?;
     if to_branch
         && migration.old_files.is_empty()
         && is_ledger_root(home, root, &migration.project_source)?
@@ -67,14 +67,14 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
         println!("already migrated");
         return Ok(());
     }
-    refuse_dirty_tree(&root)?;
+    refuse_dirty_tree(root)?;
     if to_branch && !dry_run && !is_ledger_root(home, root, &migration.project_source)? {
         migrate_to_branch(home, root, &migration)?;
     } else if migration.old_files.is_empty() {
         println!("already migrated");
         return Ok(());
     } else if !dry_run {
-        apply(&root, &migration)?;
+        apply(root, &migration)?;
     }
     println!("{}", if dry_run { "DRY RUN" } else { "MIGRATED" });
     for (collection, count) in &migration.headings {

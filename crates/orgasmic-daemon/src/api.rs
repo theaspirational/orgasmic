@@ -12503,11 +12503,11 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                                     stage: spec.stage.to_string(),
                                     project_id,
                                     task_id: c.task_id.clone(),
-                                    target: c
-                                        .task_id
-                                        .starts_with("TASK-")
-                                        .then(|| task_node_rel(&c.task_id))
-                                        .unwrap_or_else(|| ".orgasmic/project.org".to_string()),
+                                    target: if c.task_id.starts_with("TASK-") {
+                                        task_node_rel(&c.task_id)
+                                    } else {
+                                        ".orgasmic/project.org".to_string()
+                                    },
                                     run_id: c.run_id.clone(),
                                     session_path: c.session_path.clone(),
                                 },
@@ -20441,7 +20441,7 @@ async fn post_node_submit(
     let mut submitted = orgasmic_core::tx::TxEntry::new(
         "pending",
         "node.submitted",
-        &now.format("[%Y-%m-%d %a %H:%M:%S]").to_string(),
+        now.format("[%Y-%m-%d %a %H:%M:%S]").to_string(),
         &state.actor,
         &state.machine,
     );

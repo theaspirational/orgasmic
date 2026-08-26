@@ -1007,10 +1007,9 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
         "closed dispatch should not appear in status: {status_stdout}"
     );
     assert!(
-        orgasmic_core::read_claims(&project_root)
+        !orgasmic_core::read_claims(&project_root)
             .unwrap()
-            .get("TASK-DISPATCH")
-            .is_none(),
+            .contains_key("TASK-DISPATCH"),
         "dispatch close must release the machine claim"
     );
 

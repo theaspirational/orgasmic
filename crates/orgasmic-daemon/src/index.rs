@@ -3451,7 +3451,7 @@ fn collect_tx_file(path: &Path, project_id: Option<&str>, snap: &mut IndexSnapsh
                 }
                 Err(err) => {
                     let message = err.to_string();
-                    if !parse_error_already_recorded(snap, &path, &message) {
+                    if !parse_error_already_recorded(snap, path, &message) {
                         warn!(path = %path.display(), error = %message, "tx parse failed");
                         snap.parse_errors.push(ParseError {
                             path: path.to_path_buf(),
@@ -3466,7 +3466,7 @@ fn collect_tx_file(path: &Path, project_id: Option<&str>, snap: &mut IndexSnapsh
         }
         Err(err) => {
             let message = err.to_string();
-            if !parse_error_already_recorded(snap, &path, &message) {
+            if !parse_error_already_recorded(snap, path, &message) {
                 warn!(path = %path.display(), error = %message, "tx read failed");
                 snap.parse_errors.push(ParseError {
                     path: path.to_path_buf(),

@@ -220,10 +220,12 @@ pub fn journal_size_lint(content: &str) -> bool {
     content.len() > JOURNAL_SIZE_LINT_BYTES
 }
 
-fn entry_spans(
-    content: &str,
-    entry_id: &str,
-) -> Result<(Range<usize>, Vec<(String, Range<usize>)>)> {
+/// A journal entry's body span, plus one `(key, value span)` per property in its
+/// drawer. Byte ranges into the `journal.org` they were parsed from, so an edit
+/// can splice in place without reserializing the file.
+type EntrySpans = (Range<usize>, Vec<(String, Range<usize>)>);
+
+fn entry_spans(content: &str, entry_id: &str) -> Result<EntrySpans> {
     let file = OrgFile::parse(content, JOURNAL_FILE).context("parse journal.org")?;
     let Some(h) = file
         .headings
@@ -240,10 +242,7 @@ fn entry_spans(
     ))
 }
 
-fn comment_spans(
-    content: &str,
-    entry_id: &str,
-) -> Result<(Range<usize>, Vec<(String, Range<usize>)>)> {
+fn comment_spans(content: &str, entry_id: &str) -> Result<EntrySpans> {
     let spans = entry_spans(content, entry_id)?;
     let Some((_, ty)) = spans.1.iter().find(|(key, _)| key == "TYPE") else {
         bail!("journal entry {entry_id} has no TYPE");

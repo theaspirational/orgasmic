@@ -89,21 +89,6 @@ fn write(path: &Path, contents: impl AsRef<str>) {
 /// per top-level heading. The `:ID:` property names the directory.
 /// Since TASK-MSYN4 a project's tx lands in `.orgasmic/machines/<id>/tx/`; the
 /// legacy `.orgasmic/tx/` is still accepted so this holds either way.
-/// The directory this project's tx files actually land in: TASK-MSYN4 moved
-/// them under `machines/<machine-id>/`, keeping the legacy path as a fallback.
-fn resolve_project_tx_dir(project_root: &Path) -> PathBuf {
-    let dotorg = project_root.join(".orgasmic");
-    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
-        for machine in machines.flatten() {
-            let candidate = machine.path().join("tx");
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-    }
-    dotorg.join("tx")
-}
-
 fn is_project_tx_path(project_root: &Path, tx_path: &Path) -> bool {
     let dotorg = project_root.join(".orgasmic");
     tx_path.starts_with(dotorg.join("tx")) || tx_path.starts_with(dotorg.join("machines"))
@@ -130,7 +115,10 @@ fn write_nodes(project_root: &Path, collection: &str, contents: impl AsRef<str>)
             .trim();
         write(
             &project_root.join(format!(".orgasmic/{collection}/{id}/node.org")),
-            format!("#+title: orgasmic {label} {id}\n#+orgasmic_version: 2\n\n* {}\n", chunk.trim_end()),
+            format!(
+                "#+title: orgasmic {label} {id}\n#+orgasmic_version: 2\n\n* {}\n",
+                chunk.trim_end()
+            ),
         );
     }
 }
@@ -175,7 +163,7 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
             "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:END:\n"
         ),
     );
-    write_nodes(&project_root, "tasks",
+    write_nodes(project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
     );
     write(
@@ -254,7 +242,7 @@ fn seed_unregistered_project(project_root: &Path, project_id: &str) {
             "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:DEFAULT_BRANCH:   main\n:END:\n"
         ),
     );
-    write_nodes(&project_root, "tasks",
+    write_nodes(project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NEW New task :work:\n:PROPERTIES:\n:ID:               TASK-NEW\n:END:\n",
     );
 }
@@ -2523,7 +2511,7 @@ async fn org_node_handoff_get_section_and_property_round_trip() {
     seed_project(&home, &project_root, "handoffnode");
     write(
         &project_root.join(".orgasmic/tasks/handoff.org"),
-                "#+title: Handoff\n#+orgasmic_version: 1\n\n\
+        "#+title: Handoff\n#+orgasmic_version: 1\n\n\
          * HANDOFF current :handoff:\n\
          :PROPERTIES:\n\
          :ID:               handoff-current\n\
@@ -2534,7 +2522,7 @@ async fn org_node_handoff_get_section_and_property_round_trip() {
     );
     write(
         &project_root.join(".orgasmic/tasks/goal.org"),
-                "#+title: Goal\n#+orgasmic_version: 1\n\n\
+        "#+title: Goal\n#+orgasmic_version: 1\n\n\
          * GOAL Active goal :goal:\n\
          :PROPERTIES:\n\
          :ID:               goal-active\n\
@@ -3357,7 +3345,10 @@ async fn task_state_flip_persists_through_daemon_writer() {
     // A state flip rewrites the node's own TODO keyword in place; there is no
     // per-state file to move it between any more.
     let node = std::fs::read_to_string(&sprint_path).unwrap();
-    assert!(node.contains("* IN_PROGRESS TASK-STATE State flip task"), "{node}");
+    assert!(
+        node.contains("* IN_PROGRESS TASK-STATE State flip task"),
+        "{node}"
+    );
 
     // dec_E01MC routes a task-scoped tx to that node's own journal, so the
     // record is next to the node, not in the project ledger.
