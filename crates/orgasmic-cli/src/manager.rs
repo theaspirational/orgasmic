@@ -1434,6 +1434,7 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
                 &client,
                 &project_id,
                 transition,
+                &open.tx_id,
                 &close_lifecycle_request_id(task, &open.tx_id),
             ))
             .with_context(|| format!("recover lifecycle transition for legacy close {task}"))?;
@@ -8598,6 +8599,7 @@ async fn post_task_state(
     client: &DaemonClient,
     project_id: &str,
     transition: &CloseTransition,
+    closed_tx: &str,
     request_id: &str,
 ) -> Result<TaskStateOutcome> {
     client
@@ -8608,6 +8610,7 @@ async fn post_task_state(
             ),
             &serde_json::json!({
                 "state": transition.to.as_str(),
+                "repair_closed_tx": closed_tx,
                 "request_id": request_id,
             }),
         )
@@ -8648,6 +8651,7 @@ fn reconcile_torn_closes(
             client,
             project_id,
             &transition,
+            &started_tx,
             &close_lifecycle_request_id(&transition.task, &started_tx),
         ));
         match outcome {

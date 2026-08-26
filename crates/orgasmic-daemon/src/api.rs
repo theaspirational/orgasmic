@@ -17168,6 +17168,8 @@ struct TaskUpdateRequest {
     #[serde(default)]
     request_id: Option<String>,
     #[serde(default)]
+    repair_closed_tx: Option<String>,
+    #[serde(default)]
     properties: BTreeMap<String, String>,
 }
 
@@ -17976,7 +17978,18 @@ async fn update_task_state(
         .node_types
         .descriptor("tasks")
         .ok_or_else(|| ApiError::internal("missing shipped descriptor for tasks"))?;
-    if !descriptor.allows_transition(from_state.as_str(), to_state.as_str()) {
+    let repair_allowed = match req.repair_closed_tx.as_deref() {
+        Some(closed_tx) => recorded_close_allows_repair(
+            &project.root,
+            project_id,
+            task_id,
+            closed_tx,
+            from_state,
+            to_state,
+        )?,
+        None => false,
+    };
+    if !descriptor.allows_transition(from_state.as_str(), to_state.as_str()) && !repair_allowed {
         return Err(ApiError::bad_request(format!(
             "task transition {} -> {} is not allowed by the shipped task descriptor",
             from_state.as_str(),
@@ -18041,6 +18054,42 @@ async fn update_task_state(
         status: None,
     };
     compact_or_full_response(want_full, compact, detail)
+}
+
+fn recorded_close_allows_repair(
+    project_root: &FsPath,
+    project_id: &str,
+    task_id: &str,
+    closed_tx: &str,
+    from_state: LifecycleStage,
+    to_state: LifecycleStage,
+) -> Result<bool, ApiError> {
+    let mut allowed = false;
+    for entry in project_tx_entries(project_root)? {
+        if entry.project.as_deref() != Some(project_id) || entry.task.as_deref() != Some(task_id) {
+            continue;
+        }
+        let extra = |key: &str| {
+            entry
+                .extra
+                .iter()
+                .find(|(candidate, _)| candidate == key)
+                .map(|(_, value)| value.as_str())
+        };
+        match entry.ty.as_str() {
+            "implementer.done"
+            | "reviewer.done"
+            | "architector.done"
+            | "manager.dispatch_aborted" => {
+                allowed = extra("CLOSED_TX") == Some(closed_tx)
+                    && extra("LIFECYCLE_FROM") == Some(from_state.as_str())
+                    && extra("LIFECYCLE_TO") == Some(to_state.as_str());
+            }
+            "task.state_transitioned" => allowed = false,
+            _ => {}
+        }
+    }
+    Ok(allowed)
 }
 
 struct TaskPropertyWriteRequest<'a> {
