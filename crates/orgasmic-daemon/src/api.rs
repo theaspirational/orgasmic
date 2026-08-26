@@ -2865,12 +2865,14 @@ async fn append_tx_request(
 ) -> Result<TxAppendResponse, ApiError> {
     let (tx, project_tx, destination_project_id, time) =
         prepare_tx_append_request(state, req).await?;
+    let terminal_entry = tx.entry.clone();
     let res = state
         .writer
         .append_tx(tx, None)
         .await
         .map_err(writer_append_error)?;
     refresh_after_tx(state, project_tx, destination_project_id, &res.tx_id).await?;
+    release_claim_after_terminal_tx(state, &terminal_entry, &res.tx_id).await?;
     Ok(TxAppendResponse {
         tx_id: res.tx_id,
         tx_path: res.tx_path,
@@ -6134,6 +6136,9 @@ async fn post_task_dispatch(
         .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
     let task_summary = project.tasks.iter().find(|task| task.id == task_id);
     let task_sandbox_permissions = task_summary.and_then(|task| task.sandbox_permissions.clone());
+    let claim_write_scope = task_summary
+        .map(|task| task.write_scope.join(" "))
+        .filter(|scope| !scope.is_empty());
     drop(snap);
 
     let worker_for_bundle = resolve_addressed_stage_worker(
@@ -6200,6 +6205,28 @@ async fn post_task_dispatch(
         session_path,
         pid,
     } = spawn;
+
+    if let Err(error) = append_task_claim_event(
+        &state,
+        &project_id,
+        &project.root,
+        &task_id,
+        orgasmic_core::claims::CLAIMED,
+        claim_write_scope.as_deref(),
+        format!("claim-{}", acquire.run_id),
+    )
+    .await
+    {
+        let _ = state
+            .supervisor
+            .release(
+                &acquire.run_id,
+                "task claim could not be recorded",
+                ReleaseOutcome::Failed,
+            )
+            .await;
+        return Err(error);
+    }
 
     let dispatch_tx_id = record_dispatch_started(
         &state,
@@ -7325,6 +7352,93 @@ async fn record_dispatch_started(
     .await
 }
 
+async fn append_task_claim_event(
+    state: &ApiState,
+    project_id: &str,
+    project_root: &FsPath,
+    task_id: &str,
+    ty: &str,
+    write_scope: Option<&str>,
+    request_id: String,
+) -> Result<String, ApiError> {
+    let mut extra = Vec::new();
+    if let Some(scope) = write_scope.filter(|scope| !scope.is_empty()) {
+        extra.push(("WRITE_SCOPE".to_string(), scope.to_string()));
+    }
+    let (mut tx, project_tx, destination_project_id, _) = prepare_tx_append_request(
+        state,
+        TxAppendRequest {
+            request_id: Some(request_id),
+            r#type: ty.to_string(),
+            actor: None,
+            machine: None,
+            project: Some(project_id.to_string()),
+            task: Some(task_id.to_string()),
+            target: Some(format!(".orgasmic/tasks/{task_id}")),
+            reason: None,
+            extra,
+            tx_path: Some(
+                project_root
+                    .join(".orgasmic/machines")
+                    .join(&state.machine)
+                    .join("claims.org"),
+            ),
+        },
+    )
+    .await?;
+    tx.entry.time = Utc::now().format("[%Y-%m-%d %a %H:%M:%S%.6f]").to_string();
+    let result = state
+        .writer
+        .append_tx(tx, None)
+        .await
+        .map_err(writer_append_error)?;
+    refresh_after_tx(state, project_tx, destination_project_id, &result.tx_id).await?;
+    Ok(result.tx_id)
+}
+
+fn terminal_dispatch_tx(ty: &str) -> bool {
+    matches!(
+        ty,
+        "implementer.done" | "reviewer.done" | "architector.done" | "manager.dispatch_aborted"
+    )
+}
+
+async fn release_claim_after_terminal_tx(
+    state: &ApiState,
+    entry: &TxEntry,
+    terminal_tx_id: &str,
+) -> Result<(), ApiError> {
+    if !terminal_dispatch_tx(&entry.ty) || entry.machine != state.machine {
+        return Ok(());
+    }
+    let (Some(project_id), Some(task_id)) = (entry.project.as_deref(), entry.task.as_deref())
+    else {
+        return Ok(());
+    };
+    let root = state
+        .index
+        .snapshot()
+        .await
+        .board
+        .into_iter()
+        .find(|project| project.id == project_id)
+        .map(|project| project.path)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!("project {project_id} could not be resolved"))
+        })?;
+    append_task_claim_event(
+        state,
+        project_id,
+        &root,
+        task_id,
+        orgasmic_core::claims::RELEASED,
+        None,
+        format!("claim-release-{terminal_tx_id}"),
+    )
+    .await?;
+    Ok(())
+}
+
 struct DispatchCreatedRecord<'a> {
     project_id: &'a str,
     project_root: &'a FsPath,
@@ -8277,6 +8391,7 @@ async fn record_api_tx_after_project_mutation(
     mutation_project_id: Option<&str>,
 ) -> Result<String, ApiError> {
     let prepared = prepare_api_tx(state, req).await?;
+    let terminal_entry = prepared.tx.entry.clone();
     let res = state
         .writer
         .append_tx(prepared.tx, None)
@@ -8293,6 +8408,7 @@ async fn record_api_tx_after_project_mutation(
         )
         .await?;
     }
+    release_claim_after_terminal_tx(state, &terminal_entry, &res.tx_id).await?;
     Ok(res.tx_id)
 }
 
@@ -17988,6 +18104,7 @@ async fn post_task_dispatch_close_commit(
 
     let (close_tx, close_project_tx, _close_destination, close_time) =
         prepare_tx_append_request(&state, req.close_tx).await?;
+    let terminal_entry = close_tx.entry.clone();
     let close_path = close_tx.tx_path.clone();
     let results = state
         .writer
@@ -18004,6 +18121,7 @@ async fn post_task_dispatch_close_commit(
         close_result.tx_id.as_str(),
     )
     .await?;
+    release_claim_after_terminal_tx(&state, &terminal_entry, &close_result.tx_id).await?;
     state.events.publish(
         Topic::Task,
         EventPayload::TaskUpdated {

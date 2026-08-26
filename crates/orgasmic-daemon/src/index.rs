@@ -156,6 +156,7 @@ pub enum ActivityKind {
     Comment,
     StateTransition,
     RunLifecycle,
+    Claim,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -893,7 +894,9 @@ impl Index {
         // `machines/<machine-id>` as a collection node and the write is lost.
         let tx_file = match parts.get(1).copied() {
             Some("tx") => (parts.len() == 3).then_some(()),
-            Some("machines") => (parts.len() == 5 && parts.get(3) == Some(&"tx")).then_some(()),
+            Some("machines") => ((parts.len() == 5 && parts.get(3) == Some(&"tx"))
+                || (parts.len() == 4 && parts.get(3) == Some(&"claims.org")))
+            .then_some(()),
             _ => None,
         };
         if parts.get(1) == Some(&"tx") || parts.get(1) == Some(&"machines") {
@@ -905,7 +908,12 @@ impl Index {
                 // registered root. Rebuild in that same shape so a reload
                 // replaces the collector's records instead of duplicating them.
                 let ledger_path = entry.path.join(&relative);
-                return self.reload_tx_file(Some(&entry.id), &ledger_path).await;
+                let changed = self.reload_tx_file(Some(&entry.id), &ledger_path).await?;
+                if parts.get(3) == Some(&"claims.org") {
+                    orgasmic_core::build_views(&entry.path)
+                        .map_err(|error| format!("build claim views: {error:#}"))?;
+                }
+                return Ok(changed);
             }
             self.refresh_project(&entry.id).await?;
             return Ok(true);
@@ -2923,6 +2931,7 @@ impl Index {
         for project_tx_dir in project_tx_dirs(&dotorg) {
             collect_tx_dir(&project_tx_dir, Some(board_entry.id.as_str()), snap);
         }
+        collect_claim_files(&dotorg, board_entry.id.as_str(), snap);
         collect_project_journals(&board_entry.path, &board_entry.id, snap);
         project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, snap);
         project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
@@ -3406,62 +3415,66 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
     };
+    for entry in read.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("org") {
+            collect_tx_file(&path, project_id, snap);
+        }
+    }
+}
+
+fn collect_tx_file(path: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot) {
     let mut seen: HashSet<String> = snap
         .tx
         .iter()
         .map(|record| tx_event_id(&record.entry).to_string())
         .collect();
-    for entry in read.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("org") {
-            continue;
-        }
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => {
-                snap.file_contents.insert(path.clone(), contents.clone());
-                match parse_tx_file(&contents, &path.to_string_lossy()) {
-                    Ok(entries) => {
-                        for entry in entries {
-                            // TASK-MSYN4: per-machine ledgers are read as a union,
-                            // so the same event id can appear from a retry or a
-                            // legacy tx file already folded above.
-                            if !seen.insert(tx_event_id(&entry).to_string()) {
-                                continue;
-                            }
-                            snap.tx.push(TxRecord {
-                                project_id: project_id.map(str::to_string),
-                                source_path: path.clone(),
-                                entry,
-                            });
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            snap.file_contents
+                .insert(path.to_path_buf(), contents.clone());
+            match parse_tx_file(&contents, &path.to_string_lossy()) {
+                Ok(entries) => {
+                    for entry in entries {
+                        // TASK-MSYN4: per-machine ledgers are read as a union,
+                        // so the same event id can appear from a retry or a
+                        // legacy tx file already folded above.
+                        if !seen.insert(tx_event_id(&entry).to_string()) {
+                            continue;
                         }
+                        snap.tx.push(TxRecord {
+                            project_id: project_id.map(str::to_string),
+                            source_path: path.to_path_buf(),
+                            entry,
+                        });
                     }
-                    Err(err) => {
-                        let message = err.to_string();
-                        if !parse_error_already_recorded(snap, &path, &message) {
-                            warn!(path = %path.display(), error = %message, "tx parse failed");
-                            snap.parse_errors.push(ParseError {
-                                path: path.clone(),
-                                kind: ParseErrorKind::HistoricalTx,
-                                line: tx_parse_error_line(&err, &contents),
-                                message,
-                                at: Utc::now(),
-                            });
-                        }
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    if !parse_error_already_recorded(snap, &path, &message) {
+                        warn!(path = %path.display(), error = %message, "tx parse failed");
+                        snap.parse_errors.push(ParseError {
+                            path: path.to_path_buf(),
+                            kind: ParseErrorKind::HistoricalTx,
+                            line: tx_parse_error_line(&err, &contents),
+                            message,
+                            at: Utc::now(),
+                        });
                     }
                 }
             }
-            Err(err) => {
-                let message = err.to_string();
-                if !parse_error_already_recorded(snap, &path, &message) {
-                    warn!(path = %path.display(), error = %message, "tx read failed");
-                    snap.parse_errors.push(ParseError {
-                        path: path.clone(),
-                        kind: ParseErrorKind::HistoricalTx,
-                        message,
-                        line: None,
-                        at: Utc::now(),
-                    });
-                }
+        }
+        Err(err) => {
+            let message = err.to_string();
+            if !parse_error_already_recorded(snap, &path, &message) {
+                warn!(path = %path.display(), error = %message, "tx read failed");
+                snap.parse_errors.push(ParseError {
+                    path: path.to_path_buf(),
+                    kind: ParseErrorKind::HistoricalTx,
+                    message,
+                    line: None,
+                    at: Utc::now(),
+                });
             }
         }
     }
@@ -3589,6 +3602,21 @@ fn project_tx_dirs(dotorg: &Path) -> Vec<PathBuf> {
     }
     dirs.sort();
     dirs
+}
+
+fn collect_claim_files(dotorg: &Path, project_id: &str, snap: &mut IndexSnapshot) {
+    let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) else {
+        return;
+    };
+    let mut paths = machines
+        .flatten()
+        .map(|machine| machine.path().join("claims.org"))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    paths.sort();
+    for path in paths {
+        collect_tx_file(&path, Some(project_id), snap);
+    }
 }
 
 fn tx_event_id(entry: &TxEntry) -> &str {
@@ -4100,6 +4128,8 @@ fn activity_entry_from_tx(entry: &TxEntry) -> Option<ActivityEntry> {
         ActivityKind::StateTransition
     } else if entry.ty.starts_with("run.") {
         ActivityKind::RunLifecycle
+    } else if matches!(entry.ty.as_str(), "task.claimed" | "task.claim_released") {
+        ActivityKind::Claim
     } else {
         return None;
     };
@@ -6210,13 +6240,19 @@ The following criteria must hold before close.
             &project_root.join(".orgasmic/machines/b/tx/2026-08.org"),
             &entry("tx-b-retry", "b"),
         );
+        write(
+            &project_root.join(".orgasmic/machines/c/claims.org"),
+            "#+title: claims\n#+orgasmic_version: 1\n\n* TX claim task.claimed TASK-001\n:PROPERTIES:\n:TX_ID: claim-c\n:TIME: [2026-08-26 Wed 09:59:00]\n:TYPE: task.claimed\n:ACTOR: dev@example.com\n:MACHINE: c\n:PROJECT: proj-x\n:TASK: TASK-001\n:EVENT_ID: claim-event-c\n:END:\n\n* TX release task.claim_released TASK-001\n:PROPERTIES:\n:TX_ID: release-c\n:TIME: [2026-08-26 Wed 10:01:00]\n:TYPE: task.claim_released\n:ACTOR: dev@example.com\n:MACHINE: c\n:PROJECT: proj-x\n:TASK: TASK-001\n:EVENT_ID: release-event-c\n:END:\n",
+        );
 
         let index = Index::new(home);
         index.rebuild().await;
         let snap = index.snapshot().await;
         let activity = &snap.project("proj-x").unwrap().activity_index["TASK-001"];
-        assert_eq!(activity.len(), 1);
-        assert_eq!(activity[0].body, "hello");
+        assert_eq!(activity.len(), 3);
+        assert_eq!(activity[0].kind, ActivityKind::Claim);
+        assert_eq!(activity[1].body, "hello");
+        assert_eq!(activity[2].kind, ActivityKind::Claim);
     }
 
     #[tokio::test]

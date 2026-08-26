@@ -7,6 +7,7 @@
 //! Downstream crates (daemon, drivers, cli) depend on orgasmic-core for every
 //! piece of durable state they touch.
 
+pub mod claims;
 pub mod home;
 pub mod id;
 pub mod id_repair;
@@ -28,6 +29,7 @@ pub mod session;
 pub mod slots;
 pub mod tx;
 pub mod views;
+pub use claims::{fold_claims, read_claims, TaskClaim};
 pub use home::{resolve_loader, Home, HomeError};
 pub use id::{
     is_dec_id, is_legacy_sequential_create_id, is_minted_stem, is_valid_greenfield_arch_id,

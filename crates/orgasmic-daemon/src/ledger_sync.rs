@@ -41,9 +41,7 @@ fn sync_once_inner(
     if ledger.join(&machine_rel).exists() {
         git(ledger, &["add", "--", path_arg(&machine_rel)?])?;
     }
-    // TASK-CLM6W will add claimed node paths here. Until claims exist, staging
-    // any node directory would violate the one-pen invariant.
-    for claimed in claimed_node_paths() {
+    for claimed in claimed_node_paths(ledger, machine_id)? {
         git(ledger, &["add", "--", path_arg(&claimed)?])?;
     }
     if !git_success(ledger, &["diff", "--cached", "--quiet"])? {
@@ -133,8 +131,26 @@ pub(crate) fn spawn(
     });
 }
 
-fn claimed_node_paths() -> Vec<PathBuf> {
-    Vec::new()
+fn claimed_node_paths(ledger: &Path, machine_id: &str) -> Result<Vec<PathBuf>> {
+    let claims = orgasmic_core::read_claims(ledger)?;
+    let dotorg = ledger.join(".orgasmic");
+    let mut paths = Vec::new();
+    for claim in claims.values().filter(|claim| claim.holder == machine_id) {
+        let mut matches = std::fs::read_dir(&dotorg)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|collection| collection.path().join(&claim.task))
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>();
+        matches.sort();
+        if let Some(path) = matches.into_iter().next() {
+            paths.push(path.strip_prefix(ledger).unwrap_or(&path).to_path_buf());
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
 fn path_arg(path: &Path) -> Result<&str> {
@@ -317,6 +333,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn claimed_node_staging_hook_selects_only_the_deterministic_holder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let node = tmp.path().join(".orgasmic/tasks/TASK-NODE/node.org");
+        std::fs::create_dir_all(node.parent().unwrap()).unwrap();
+        std::fs::write(node, "node").unwrap();
+        for machine in ["a", "b"] {
+            let path = tmp
+                .path()
+                .join(".orgasmic/machines")
+                .join(machine)
+                .join("claims.org");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let mut claim = orgasmic_core::tx::TxEntry::new(
+                format!("claim-{machine}"),
+                orgasmic_core::claims::CLAIMED,
+                "[2026-08-26 Wed 10:00:00]",
+                "test",
+                machine,
+            );
+            claim.task = Some("TASK-NODE".into());
+            let mut writer = orgasmic_core::tx::TxWriter::open(path).unwrap();
+            writer.append(&claim).unwrap();
+        }
+        assert_eq!(
+            claimed_node_paths(tmp.path(), "a").unwrap(),
+            vec![PathBuf::from(".orgasmic/tasks/TASK-NODE")]
+        );
+        assert!(claimed_node_paths(tmp.path(), "b").unwrap().is_empty());
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn two_daemon_loops_converge_through_the_bare_remote() {
         let tmp = tempfile::tempdir().unwrap();
@@ -357,6 +404,23 @@ mod tests {
                 ),
             )
             .unwrap();
+            let claims_path = ledger
+                .join(".orgasmic/machines")
+                .join(id)
+                .join("claims.org");
+            let mut claim = orgasmic_core::tx::TxEntry::new(
+                format!("claim-{id}"),
+                orgasmic_core::claims::CLAIMED,
+                "[2026-08-26 Wed 10:00:00]",
+                "test",
+                id,
+            );
+            claim.task = Some("TASK-RACE".into());
+            claim
+                .extra
+                .push(("EVENT_ID".into(), uuid::Uuid::new_v4().to_string()));
+            let mut writer = orgasmic_core::tx::TxWriter::open(claims_path).unwrap();
+            writer.append(&claim).unwrap();
         }
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -372,6 +436,13 @@ mod tests {
                 "daemon ledgers did not converge"
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let expected = std::cmp::min(a_id.as_str(), b_id.as_str());
+        for ledger in [&a, &b] {
+            let claim = &orgasmic_core::read_claims(ledger).unwrap()["TASK-RACE"];
+            assert_eq!(claim.holder, expected);
+            assert_eq!(claim.contenders.len(), 2);
         }
 
         let _ = a_daemon.shutdown.send(());

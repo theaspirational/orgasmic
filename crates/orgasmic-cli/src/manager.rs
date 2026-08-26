@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
-    fold_dispatches, goal_file_path, parse_tx_file, project_dispatch_dir, projects,
+    fold_dispatches, goal_file_path, parse_tx_file, project_dispatch_dir, projects, read_claims,
     read_session_file, task_node_file_path, DispatchFold, Lifecycle, LifecycleStage, OrgFile,
     ProjectFile, RuntimeIdentity, SessionEventKind, TaskHeading, TxEntry,
 };
@@ -2918,6 +2918,7 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
         Err(_) => Vec::new(),
     };
     let mut open = scan_open_dispatches(&project_root)?;
+    let claims = read_claims(&project_root).context("read task claims for dispatch-status")?;
     if let Some(task) = args.task.as_deref() {
         open.retain(|record| record.tasks.iter().any(|got| got == task));
     }
@@ -2930,8 +2931,23 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
         if args.partial_closed && partial_closed.is_none() {
             continue;
         }
+        let holders = record
+            .tasks
+            .iter()
+            .filter_map(|task| claims.get(task).map(|claim| claim.holder.clone()))
+            .collect::<BTreeSet<_>>();
+        let double_claims = record
+            .tasks
+            .iter()
+            .filter_map(|task| {
+                claims
+                    .get(task)
+                    .filter(|claim| claim.contenders.len() > 1)
+                    .map(|claim| format!("{task}:[{}]", claim.contenders.join(",")))
+            })
+            .collect::<Vec<_>>();
         println!(
-            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} {} {} {} {}{}",
+            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} {} {} {} {} CLAIM_HOLDER={} DOUBLE_CLAIM={}{}",
             record.tx_id,
             task_list_property(&record.tasks),
             record.kind,
@@ -2968,6 +2984,16 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 "[reported]"
             } else {
                 "[unreported]"
+            },
+            if holders.is_empty() {
+                "-".to_string()
+            } else {
+                holders.into_iter().collect::<Vec<_>>().join(",")
+            },
+            if double_claims.is_empty() {
+                "-".to_string()
+            } else {
+                double_claims.join(";")
             },
             partial_closed
                 .map(|annotation| format!(" {annotation}"))
