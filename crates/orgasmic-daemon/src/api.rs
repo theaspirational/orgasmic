@@ -29731,14 +29731,16 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(blocked_delete.status(), reqwest::StatusCode::BAD_REQUEST);
 
-        let mut tx_text = String::new();
-        for entry in std::fs::read_dir(project_root.join(".orgasmic/tx")).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("org") {
-                tx_text.push_str(&std::fs::read_to_string(path).unwrap());
-            }
-        }
-        assert!(tx_text.contains("graph.decision.reparent"), "{tx_text}");
+        let journal_path = decisions_path.with_file_name(JOURNAL_FILE);
+        let journal = std::fs::read_to_string(&journal_path).unwrap();
+        let entries = orgasmic_core::node_kernel::parse_journal(
+            &journal,
+            &journal_path.display().to_string(),
+        )
+        .unwrap();
+        assert_eq!(entries.len(), 1, "{journal}");
+        assert_eq!(entries[0].ty, "graph.decision.reparent");
+        assert_eq!(entries[0].entry_id, body["tx_id"]);
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
@@ -29759,7 +29761,7 @@ pub(crate) mod tests {
         write_node_collection_fixture(
             &project_root,
             "glossary",
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
         );
 
         let running = crate::Daemon::run(home.clone(), test_options())
@@ -29826,7 +29828,7 @@ pub(crate) mod tests {
         assert!(found["path"]
             .as_str()
             .unwrap_or_default()
-            .ends_with("glossary.org"));
+            .ends_with("glossary/term_A/node.org"));
 
         let status: Value = client
             .get(format!("{base}/api/daemon/status"))
@@ -29846,7 +29848,7 @@ pub(crate) mod tests {
         // project — no daemon restart — and confirm the count drops to zero.
         write(
             glossary_path,
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
         );
         let reindexed: Value = client
             .post(format!("{base}/api/reindex/orgasmic"))
@@ -31346,27 +31348,40 @@ pub(crate) mod tests {
                 .any(|task| task["id"] == "TASK-R4WSF"),
             "success returned before the project projection contained the task: {tasks}"
         );
-        let tx: Value = client
-            .get(format!("{base}/api/tx"))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
+        if commit_to_project {
+            let journal_path =
+                task_node_file_path(&project_root, "TASK-R4WSF").with_file_name(JOURNAL_FILE);
+            let journal = std::fs::read_to_string(&journal_path).unwrap();
+            let entries = orgasmic_core::node_kernel::parse_journal(
+                &journal,
+                &journal_path.display().to_string(),
+            )
             .unwrap();
-        let record = tx
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|record| record["entry"]["tx_id"] == tx_id)
-            .expect("the mutation tx must be in the immediate tx projection");
-        assert_eq!(record["entry"]["project"], "orgasmic");
-        assert_eq!(
-            record["project_id"].is_string(),
-            commit_to_project,
-            "tx storage projection does not match routing: {record}"
-        );
+            assert_eq!(entries.len(), 1, "{journal}");
+            assert_eq!(entries[0].entry_id, tx_id);
+            assert_eq!(entries[0].ty, "task.created");
+        } else {
+            let tx: Value = client
+                .get(format!("{base}/api/tx"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let record = tx
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|record| record["entry"]["tx_id"] == tx_id)
+                .expect("the mutation tx must be in the immediate home tx projection");
+            assert_eq!(record["entry"]["project"], "orgasmic");
+            assert!(
+                !record["project_id"].is_string(),
+                "home tx unexpectedly projected as project tx: {record}"
+            );
+        }
 
         let before_replay: Value = client
             .get(format!("{base}/api/daemon/status"))
@@ -31846,22 +31861,18 @@ pub(crate) mod tests {
         assert_eq!(replay_body["id"], created[&0].0);
         assert_eq!(replay_body["tx_id"], created[&0].1);
 
-        let tx: Value = client
-            .get(format!("{base}/api/tx?project=orgasmic"))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
+        for (id, tx_id) in created.values() {
+            let journal_path = task_node_file_path(&project_root, id).with_file_name(JOURNAL_FILE);
+            let journal = std::fs::read_to_string(&journal_path).unwrap();
+            let entries = orgasmic_core::node_kernel::parse_journal(
+                &journal,
+                &journal_path.display().to_string(),
+            )
             .unwrap();
-        let landed = tx
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|record| record["entry"]["ty"] == "task.created")
-            .count();
-        assert_eq!(landed, N, "every accepted task create needs one tx");
+            assert_eq!(entries.len(), 1, "{journal}");
+            assert_eq!(entries[0].ty, "task.created");
+            assert_eq!(&entries[0].entry_id, tx_id);
+        }
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
@@ -32001,22 +32012,25 @@ pub(crate) mod tests {
         );
         assert!(tx_ids.contains(replay_body["tx_id"].as_str().unwrap()));
 
-        let tx: Value = client
-            .get(format!("{base}/api/tx?project=orgasmic"))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        let landed = tx
-            .as_array()
-            .unwrap()
+        let journal_path =
+            task_node_file_path(&project_root, "TASK-PRE").with_file_name(JOURNAL_FILE);
+        let journal = std::fs::read_to_string(&journal_path).unwrap();
+        let entries = orgasmic_core::node_kernel::parse_journal(
+            &journal,
+            &journal_path.display().to_string(),
+        )
+        .unwrap();
+        assert_eq!(entries.len(), N, "{journal}");
+        assert!(entries
             .iter()
-            .filter(|record| record["entry"]["ty"] == "task.property_updated")
-            .count();
-        assert_eq!(landed, N, "every accepted property update needs one tx");
+            .all(|entry| entry.ty == "task.property_updated"));
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.entry_id.as_str())
+                .collect::<BTreeSet<_>>(),
+            tx_ids.iter().map(String::as_str).collect::<BTreeSet<_>>()
+        );
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
