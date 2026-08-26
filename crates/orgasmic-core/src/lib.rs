@@ -87,4 +87,4 @@ pub use slots::{
     compile as compile_slots, default_registry as default_slot_registry, dry_run as slot_dry_run,
     scan as scan_slots, DryRunReport, SlotError, SlotRef, SlotValues,
 };
-pub use tx::{parse_tx_file, TxEntry, TxError, TxWriter};
+pub use tx::{fold_dispatches, parse_tx_file, DispatchFold, TxEntry, TxError, TxWriter};
