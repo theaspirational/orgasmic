@@ -1,0 +1,19 @@
+## Changed
+- Added content-keyed per-node and per-tx-file index application; watcher events now classify node directories, tx files, ignored views/tmp paths, and unclassifiable full-refresh fallbacks.
+- Attached the live index to the writer so successful tx, rewrite, mutate, and structured transactions publish their written node/ledger paths before returning; watcher echoes are no-ops when tracked content is equal.
+- Folded task activity from both project/home tx records and every node journal, ordered by time and tx id.
+- Changed manager dispatch-wait to fold the coherent in-memory snapshot instead of calling project_tx_entries on its poll path.
+
+## Verification Gates
+- `cargo fmt --all`
+- `cargo check -p orgasmic-daemon` (pass)
+- `git diff --check` (pass)
+- Static poll-path probe confirms `post_manager_dispatch_wait` reads `index.snapshot()` and has no `project_tx_entries` call.
+- Tests were not added or run, per the dispatch brief's test prohibition.
+
+## Unmet Criteria
+- None at source level. The comment POST scan-count measurement was not executed because tests/probes were prohibited; the production writer path applies directly and bypasses required-refresh coordinator scans.
+
+## Residual Risk
+- Runtime timing and scan-count behavior still need independent verifier measurement.
+- Incremental parse failures retain last-good node projections while recording the new parse error; journal parse failures omit only that journal until corrected.
