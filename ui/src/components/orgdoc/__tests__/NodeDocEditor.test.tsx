@@ -31,10 +31,12 @@ function taskDoc({
   body = '',
   descriptionSection,
   parentTask,
+  canRegenerate = false,
 }: {
   body?: string;
   descriptionSection?: string;
   parentTask?: string;
+  canRegenerate?: boolean;
 } = {}): OrgNodeDoc {
   return {
     id: 'TASK-TEST',
@@ -54,6 +56,11 @@ function taskDoc({
     source: {
       file: '.orgasmic/tasks/TASK-TEST/node.org',
       base_version: 'version-1',
+    },
+    descriptor: {
+      label: 'Task',
+      label_plural: 'Tasks',
+      can_regenerate: canRegenerate,
     },
   };
 }
@@ -97,6 +104,18 @@ describe('NodeDocEditor task description shape compatibility', () => {
     renderEditor('view');
 
     expect(await screen.findByText('Section description.')).toBeInTheDocument();
+  });
+
+  it('renders descriptor-labelled regenerate only when the descriptor allows it', async () => {
+    fetchOrgNodeMock.mockResolvedValue(taskDoc({ canRegenerate: true }));
+    const { unmount } = renderEditor('view');
+    expect(await screen.findByRole('button', { name: 'Regenerate task' })).toBeInTheDocument();
+
+    unmount();
+    fetchOrgNodeMock.mockResolvedValue(taskDoc());
+    renderEditor('view');
+    await waitFor(() => expect(fetchOrgNodeMock).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /Regenerate/ })).not.toBeInTheDocument();
   });
 
   it('preserves a direct-body description shape when saving', async () => {

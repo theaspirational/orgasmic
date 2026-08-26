@@ -15407,6 +15407,13 @@ pub struct NodeSource {
     pub base_version: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct NodeDescriptorSummary {
+    pub label: String,
+    pub label_plural: String,
+    pub can_regenerate: bool,
+}
+
 /// A generic structured projection of a single org node: the read counterpart
 /// to the edit-op endpoint. Replaces client-side `.org` parsing for detail
 /// views.
@@ -15423,6 +15430,7 @@ pub struct NodeDoc {
     pub properties: Vec<NodeProperty>,
     pub sections: Vec<NodeSection>,
     pub source: NodeSource,
+    pub descriptor: Option<NodeDescriptorSummary>,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
@@ -15707,6 +15715,7 @@ fn org_node_doc(
     heading: &Heading,
     layer: NodeLayer,
     source_file: String,
+    descriptor: Option<&orgasmic_core::NodeTypeDescriptor>,
 ) -> NodeDoc {
     let properties = heading
         .property_entries()
@@ -15729,7 +15738,25 @@ fn org_node_doc(
             file: source_file,
             base_version: content_hash(file.slice(heading.span.clone()).as_bytes()),
         },
+        descriptor: descriptor.map(|descriptor| NodeDescriptorSummary {
+            label: descriptor.label.clone(),
+            label_plural: descriptor.label_plural.clone(),
+            can_regenerate: descriptor.regenerate_prompt.is_some(),
+        }),
     }
+}
+
+fn descriptor_for_layer(
+    state: &ApiState,
+    layer: NodeLayer,
+) -> Option<&orgasmic_core::NodeTypeDescriptor> {
+    let collection = match layer {
+        NodeLayer::Task => "tasks",
+        NodeLayer::Decision => "decisions",
+        NodeLayer::Glossary => "glossary",
+        _ => return None,
+    };
+    state.node_types.descriptor(collection)
 }
 
 /// Pick the layer that owns a node: an explicit `kind` selector when present,
@@ -15811,7 +15838,13 @@ async fn get_org_node(
     let heading = file
         .find_by_id(&q.id)
         .ok_or_else(|| ApiError::not_found(format!("node {}", q.id)))?;
-    Ok(Json(org_node_doc(&file, heading, layer, source_file)))
+    Ok(Json(org_node_doc(
+        &file,
+        heading,
+        layer,
+        source_file,
+        descriptor_for_layer(&state, layer),
+    )))
 }
 
 async fn post_org_node_edit(
@@ -16063,7 +16096,13 @@ async fn post_org_node_edit(
     let heading = file
         .find_by_id(&id)
         .ok_or_else(|| ApiError::not_found(format!("node {id}")))?;
-    let doc = org_node_doc(&file, heading, layer, source_file);
+    let doc = org_node_doc(
+        &file,
+        heading,
+        layer,
+        source_file,
+        descriptor_for_layer(&state, layer),
+    );
     let compact = CompactMutationResponse {
         id: id.clone(),
         changed,
@@ -19285,7 +19324,13 @@ async fn assemble_artifact_context(
                 Ok(source) => match OrgFile::parse(source, path.to_string_lossy()) {
                     Ok(file) => match file.find_by_id(id) {
                         Some(heading) => {
-                            let doc = org_node_doc(&file, heading, layer, source_file);
+                            let doc = org_node_doc(
+                                &file,
+                                heading,
+                                layer,
+                                source_file,
+                                descriptor_for_layer(state, layer),
+                            );
                             out.push_str(&format!("[{}] {}\n", doc.kind, doc.title));
                             if !doc.body.trim().is_empty() {
                                 out.push_str(doc.body.trim());

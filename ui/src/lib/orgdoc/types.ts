@@ -21,6 +21,11 @@ export type OrgNodeDoc = {
   properties: NodeProperty[];
   sections: NodeSection[];
   source: NodeSource;
+  descriptor?: {
+    label: string;
+    label_plural: string;
+    can_regenerate: boolean;
+  } | null;
 };
 
 export type NodeEditOp =

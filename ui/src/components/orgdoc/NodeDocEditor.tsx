@@ -7,6 +7,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useRefreshBump } from '@/hooks/useRefreshBus';
+import { useMe } from '@/hooks/useMe';
 import { fetchOrgNode, postOrgNodeEdit } from '@/lib/api';
 import { OrgBody } from '@/lib/orgBody';
 import type { NodeEditOp, OrgNodeDoc } from '@/lib/orgdoc/types';
@@ -15,6 +16,7 @@ import { useResource } from '@/lib/useResource';
 import { cn } from '@/lib/utils';
 
 import type { ChipSeparator, NodeDescriptor, NodeFieldDescriptor, SuggestSource } from './descriptor';
+import { NodeRegenerateControl } from './NodeRegenerateControl';
 
 /** Resolves cross-node labels and autocomplete options for link-chips. Built by
  *  the host (NodeModal) from the loaded summaries, so the editor stays generic. */
@@ -172,6 +174,7 @@ export function NodeDocEditor({
   onDocumentChange?: (document: OrgNodeDoc | null) => void;
 }) {
   const refreshBump = useRefreshBump();
+  const { isMember } = useMe();
   const resource = useResource(
     `org-node:${projectId}:${apiKind ?? 'auto'}:${nodeId}`,
     () => fetchOrgNode(nodeId, projectId, apiKind),
@@ -276,6 +279,16 @@ export function NodeDocEditor({
     <div className="flex flex-col gap-5">
       {notice ? <Banner tone="info">{notice}</Banner> : null}
       {saveError ? <Banner tone="error">{saveError}</Banner> : null}
+
+      {!editing && baseline.descriptor?.can_regenerate && !isMember ? (
+        <div className="flex justify-end">
+          <NodeRegenerateControl
+            projectId={projectId}
+            nodeId={nodeId}
+            label={baseline.descriptor.label}
+          />
+        </div>
+      ) : null}
 
       {descriptor.editableTitle && editing ? (
         <Input
