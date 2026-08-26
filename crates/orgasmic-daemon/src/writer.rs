@@ -1245,6 +1245,75 @@ impl WriterHandle {
         rx.await.map_err(|_| anyhow!("writer reply dropped"))?
     }
 
+    /// Append one structured entry without exposing journal.org to whole-file
+    /// callers.
+    pub async fn append_journal_entry(
+        &self,
+        path: PathBuf,
+        node_id: String,
+        entry: orgasmic_core::node_kernel::JournalEntry,
+    ) -> Result<()> {
+        entry.validate()?;
+        reject_journal_prose(&entry.body)?;
+        let display_path = path.clone();
+        self.mutate_file(FileMutate {
+            path,
+            transform: Box::new(move |current| {
+                let entries = orgasmic_core::node_kernel::parse_journal(current, "journal.org")?;
+                if entries.iter().any(|item| item.entry_id == entry.entry_id) {
+                    bail!("journal entry {} already exists", entry.entry_id);
+                }
+                let next = orgasmic_core::node_kernel::append_entry(current, &node_id, &entry);
+                checked_journal_bytes(&display_path, next)
+            }),
+        })
+        .await
+    }
+
+    /// Surgically edit authored prose. OCC compares only the target comment,
+    /// so an unrelated append does not make a valid edit stale.
+    pub async fn edit_journal_comment(
+        &self,
+        path: PathBuf,
+        entry_id: String,
+        expected_body: String,
+        new_body: String,
+        edited_at: String,
+    ) -> Result<()> {
+        reject_journal_prose(&new_body)?;
+        let display_path = path.clone();
+        self.mutate_file(FileMutate {
+            path,
+            transform: Box::new(move |current| {
+                require_comment_body(current, &entry_id, &expected_body)?;
+                let next = orgasmic_core::node_kernel::edit_comment_body(
+                    current, &entry_id, &new_body, &edited_at,
+                )?;
+                checked_journal_bytes(&display_path, next)
+            }),
+        })
+        .await
+    }
+
+    /// Delete authored prose while preserving its reply-chain identity.
+    pub async fn tombstone_journal_comment(
+        &self,
+        path: PathBuf,
+        entry_id: String,
+        expected_body: String,
+    ) -> Result<()> {
+        let display_path = path.clone();
+        self.mutate_file(FileMutate {
+            path,
+            transform: Box::new(move |current| {
+                require_comment_body(current, &entry_id, &expected_body)?;
+                let next = orgasmic_core::node_kernel::tombstone_comment(current, &entry_id)?;
+                checked_journal_bytes(&display_path, next)
+            }),
+        })
+        .await
+    }
+
     pub async fn rewrite_file(&self, req: FileRewrite, request_id: Option<String>) -> Result<()> {
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         {
@@ -1359,6 +1428,48 @@ impl WriterHandle {
         *self.transaction_gate.lock().await = Some(Arc::clone(&gate));
         gate
     }
+}
+
+fn reject_journal_prose(body: &str) -> Result<()> {
+    if let Some((line, _)) = body
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.starts_with("* "))
+    {
+        bail!(
+            "journal prose line {} starts with a column-0 `* ` heading; nested `**` headings are allowed",
+            line + 1
+        );
+    }
+    Ok(())
+}
+
+fn require_comment_body(current: &str, entry_id: &str, expected_body: &str) -> Result<()> {
+    let entries = orgasmic_core::node_kernel::parse_journal(current, "journal.org")?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.entry_id == entry_id)
+        .ok_or_else(|| anyhow!("journal entry {entry_id} not found"))?;
+    if entry.ty != "comment" {
+        bail!("journal entry {entry_id} is not an editable comment");
+    }
+    if entry.body != expected_body {
+        bail!("journal comment {entry_id} changed since it was read");
+    }
+    Ok(())
+}
+
+fn checked_journal_bytes(path: &Path, next: String) -> Result<Vec<u8>> {
+    orgasmic_core::node_kernel::parse_journal(&next, "journal.org")?;
+    if orgasmic_core::node_kernel::journal_size_lint(&next) {
+        warn!(
+            path = %path.display(),
+            bytes = next.len(),
+            threshold = orgasmic_core::node_kernel::JOURNAL_SIZE_LINT_BYTES,
+            "journal.org exceeds the v1 size lint threshold"
+        );
+    }
+    Ok(next.into_bytes())
 }
 
 /// Boot the writer task and return a clone-able handle.
@@ -3673,6 +3784,80 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    #[tokio::test]
+    async fn journal_ops_append_edit_with_occ_and_tombstone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("journal.org");
+        let handle = spawn(EventBus::new());
+        let entry = orgasmic_core::node_kernel::JournalEntry {
+            entry_id: "tx-1".into(),
+            time: "[2026-08-26 Wed 10:00:00]".into(),
+            ty: "comment".into(),
+            actor: "owner".into(),
+            machine: "mac".into(),
+            extras: vec![],
+            body: "first\n\n** Detail\nnested".into(),
+        };
+
+        handle
+            .append_journal_entry(path.clone(), "TASK-X".into(), entry)
+            .await
+            .unwrap();
+        let parsed = orgasmic_core::node_kernel::parse_journal(
+            &std::fs::read_to_string(&path).unwrap(),
+            "journal.org",
+        )
+        .unwrap();
+        assert_eq!(parsed[0].body, "first\n\n** Detail\nnested");
+
+        let before_refusal = std::fs::read(&path).unwrap();
+        let error = handle
+            .edit_journal_comment(
+                path.clone(),
+                "tx-1".into(),
+                parsed[0].body.clone(),
+                "replacement\n* forged entry".into(),
+                "[2026-08-26 Wed 10:01:00]".into(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("column-0 `* `"));
+        assert_eq!(std::fs::read(&path).unwrap(), before_refusal);
+
+        handle
+            .edit_journal_comment(
+                path.clone(),
+                "tx-1".into(),
+                parsed[0].body.clone(),
+                "edited".into(),
+                "[2026-08-26 Wed 10:01:00]".into(),
+            )
+            .await
+            .unwrap();
+        let edited = std::fs::read_to_string(&path).unwrap();
+        assert!(edited.contains(":EDITED_AT: [2026-08-26 Wed 10:01:00]"));
+
+        let stale = handle
+            .tombstone_journal_comment(path.clone(), "tx-1".into(), parsed[0].body.clone())
+            .await
+            .unwrap_err();
+        assert!(stale.to_string().contains("changed since it was read"));
+
+        handle
+            .tombstone_journal_comment(path.clone(), "tx-1".into(), "edited".into())
+            .await
+            .unwrap();
+        let parsed = orgasmic_core::node_kernel::parse_journal(
+            &std::fs::read_to_string(path).unwrap(),
+            "journal.org",
+        )
+        .unwrap();
+        assert_eq!(
+            (parsed[0].ty.as_str(), parsed[0].body.as_str()),
+            ("comment.deleted", "")
+        );
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub mod id;
 pub mod id_repair;
 pub mod identity_lint;
 pub mod members;
+pub mod node_kernel;
 pub mod node_kind;
 pub mod org;
 pub mod paths;
