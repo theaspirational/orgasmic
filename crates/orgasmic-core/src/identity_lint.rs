@@ -490,8 +490,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         write(
-            &root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: sprint\n\n* BACKLOG TASK-001 Legacy-only\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
+            &root.join(".orgasmic/tasks/TASK-001/node.org"),
+            "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 Legacy-only\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
         );
         let findings = lint_project_identities(root);
         assert!(
@@ -508,20 +508,26 @@ mod tests {
         let root = tmp.path();
         let dup = mint_node_id(NodeIdClass::Task);
         write(
-            &root.join(".orgasmic/tasks/done.org"),
-            &format!("#+title: done\n\n* DONE {dup} One\n:PROPERTIES:\n:ID: {dup}\n:END:\n"),
+            &root.join(".orgasmic/tasks").join(&dup).join("node.org"),
+            &format!("#+title: orgasmic task {dup}\n#+orgasmic_version: 2\n\n* DONE {dup} One\n:PROPERTIES:\n:ID: {dup}\n:END:\n"),
+        );
+        // A copy-pasted node.org: different dir, same :ID: inside.
+        let copy_dir = mint_node_id(NodeIdClass::Task);
+        write(
+            &root.join(".orgasmic/tasks").join(&copy_dir).join("node.org"),
+            &format!(
+                "#+title: orgasmic task {dup}\n#+orgasmic_version: 2\n\n* BACKLOG {dup} Two\n:PROPERTIES:\n:ID: {dup}\n:END:\n"
+            ),
         );
         write(
-            &root.join(".orgasmic/tasks/backlog.org"),
-            &format!(
-                "#+title: backlog\n\n* BACKLOG {dup} Two\n:PROPERTIES:\n:ID: {dup}\n:END:\n\n* BACKLOG TASK-001 Legacy\n:PROPERTIES:\n:ID: TASK-001\n:END:\n"
-            ),
+            &root.join(".orgasmic/tasks/TASK-001/node.org"),
+            "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 Legacy\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
         );
         let anchor = mint_node_id(NodeIdClass::Decision);
         write(
-            &root.join(".orgasmic/decisions.org"),
+            &root.join(".orgasmic/decisions").join(&anchor).join("node.org"),
             &format!(
-                "#+title: decisions\n\n* {anchor} Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"
+                "#+title: orgasmic decision {anchor}\n#+orgasmic_version: 2\n\n* {anchor} Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"
             ),
         );
         let findings = lint_project_identities(root);
@@ -546,9 +552,9 @@ mod tests {
         let root = tmp.path();
         let id = mint_node_id(NodeIdClass::Term);
         write(
-            &root.join(".orgasmic/glossary.org"),
+            &root.join(".orgasmic/glossary").join(&id).join("node.org"),
             &format!(
-                "#+title: glossary\n\n* {id} Example\n:PROPERTIES:\n:ID: {id}\n:RELATES_TO: missing-slug\n:END:\n"
+                "#+title: orgasmic glossary term {id}\n#+orgasmic_version: 2\n\n* {id} Example\n:PROPERTIES:\n:ID: {id}\n:RELATES_TO: missing-slug\n:END:\n"
             ),
         );
         let findings = lint_project_identities(root);
