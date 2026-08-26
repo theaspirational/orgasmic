@@ -159,6 +159,31 @@ export function postTaskComment(
   });
 }
 
+export function editTaskComment(
+  projectId: string,
+  taskId: string,
+  entryId: string,
+  expectedBody: string,
+  body: string,
+): Promise<{ entry_id: string; action: string }> {
+  return post(
+    `/tasks/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(entryId)}/edit${q(projectId)}`,
+    { expected_body: expectedBody, body },
+  );
+}
+
+export function deleteTaskComment(
+  projectId: string,
+  taskId: string,
+  entryId: string,
+  expectedBody: string,
+): Promise<{ entry_id: string; action: string }> {
+  return post(
+    `/tasks/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(entryId)}/delete${q(projectId)}`,
+    { expected_body: expectedBody },
+  );
+}
+
 export function postTaskSubtask(
   taskId: string,
   body: TaskSubtaskRequest,
@@ -431,6 +456,23 @@ export function postOrgNodeDelete(
     base_version: body.baseVersion,
     request_id: requestId(`org-node-delete-${id}`),
   });
+}
+
+export type NodeRegenerateRequest = {
+  extraPrompt?: string;
+  mode: string;
+  harness: string;
+  harness_args?: string[];
+  model?: string | null;
+  effort?: string | null;
+};
+
+export function postOrgNodeRegenerate(
+  id: string,
+  body: NodeRegenerateRequest,
+  project?: string | null,
+): Promise<{ node_id: string; run_id: string }> {
+  return post(`/org/node/${encodeURIComponent(id)}/regenerate${q(project)}`, body);
 }
 
 export function postOrgFile(

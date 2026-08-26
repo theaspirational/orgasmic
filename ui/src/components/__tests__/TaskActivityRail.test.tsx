@@ -6,6 +6,8 @@ import type { ReactNode } from 'react';
 
 const mocks = vi.hoisted(() => ({
   postTaskComment: vi.fn(),
+  editTaskComment: vi.fn(),
+  deleteTaskComment: vi.fn(),
   toastError: vi.fn(),
 }));
 
@@ -14,6 +16,8 @@ vi.mock('@/lib/api', () => ({
   fetchTask: vi.fn(),
   fetchTaskActivity: vi.fn(),
   postTaskComment: (...args: unknown[]) => mocks.postTaskComment(...args),
+  editTaskComment: (...args: unknown[]) => mocks.editTaskComment(...args),
+  deleteTaskComment: (...args: unknown[]) => mocks.deleteTaskComment(...args),
 }));
 
 vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }));
@@ -22,7 +26,7 @@ vi.mock('@/components/ui/scroll-area', () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-import { TaskActivityRail, taskActivityPresentation } from '../TaskDialog';
+import { TaskActivityRail, taskActivityPresentation, threadActivity } from '../TaskDialog';
 import type { ActivityEntry } from '@/lib/types';
 
 function entry(overrides: Partial<ActivityEntry> = {}): ActivityEntry {
@@ -55,6 +59,8 @@ describe('task activity presentation', () => {
 describe('TaskActivityRail comments', () => {
   beforeEach(() => {
     mocks.postTaskComment.mockReset();
+    mocks.editTaskComment.mockReset();
+    mocks.deleteTaskComment.mockReset();
     mocks.toastError.mockReset();
   });
 
@@ -133,5 +139,71 @@ describe('TaskActivityRail comments', () => {
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('Comment write failed'));
     expect(composer).toHaveValue('Do not lose this draft');
     expect(screen.getByRole('button', { name: 'Comment' })).toBeEnabled();
+  });
+
+  it('threads replies and exposes reply, edit, and delete mutations', async () => {
+    mocks.postTaskComment.mockResolvedValue({ tx_id: 'reply' });
+    mocks.editTaskComment.mockResolvedValue({ entry_id: 'tx-root', action: 'edited' });
+    mocks.deleteTaskComment.mockResolvedValue({ entry_id: 'tx-root', action: 'deleted' });
+    const root = entry({ tx_id: 'tx-root', kind: 'comment', actor: 'Nadia', body: 'Root' });
+    const child = entry({
+      tx_id: 'tx-child',
+      kind: 'comment',
+      actor: 'Bo',
+      body: 'Child',
+      in_reply_to: 'tx-root',
+    });
+    expect(threadActivity([child, root]).map(({ entry, depth }) => [entry.tx_id, depth])).toEqual([
+      ['tx-root', 0],
+      ['tx-child', 1],
+    ]);
+
+    render(
+      <TaskActivityRail
+        projectId="orgasmic"
+        taskId="TASK-1"
+        entries={[root]}
+        loading={false}
+        canComment
+        onChanged={vi.fn()}
+        embedded
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    fireEvent.change(screen.getByPlaceholderText('Write a reply…'), {
+      target: { value: '  Nested reply  ' },
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reply' }).at(-1)!);
+    await waitFor(() =>
+      expect(mocks.postTaskComment).toHaveBeenCalledWith('orgasmic', 'TASK-1', {
+        body: 'Nested reply',
+        in_reply_to: 'tx-root',
+      }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Edit comment'), { target: { value: '  Revised  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(mocks.editTaskComment).toHaveBeenCalledWith(
+        'orgasmic',
+        'TASK-1',
+        'tx-root',
+        'Root',
+        'Revised',
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    await waitFor(() =>
+      expect(mocks.deleteTaskComment).toHaveBeenCalledWith(
+        'orgasmic',
+        'TASK-1',
+        'tx-root',
+        'Root',
+      ),
+    );
   });
 });

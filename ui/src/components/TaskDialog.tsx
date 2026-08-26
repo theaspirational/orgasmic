@@ -12,12 +12,26 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Pencil,
+  Reply,
   Server,
+  Trash2,
   User,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -41,7 +55,14 @@ import { NodeDocEditor, type NodeDirectory } from '@/components/orgdoc/NodeDocEd
 import { TASK_DESCRIPTOR } from '@/components/orgdoc/descriptor';
 import { useMe } from '@/hooks/useMe';
 import { useRefreshBump, useRefreshToken } from '@/hooks/useRefreshBus';
-import { fetchProject, fetchTask, fetchTaskActivity, postTaskComment } from '@/lib/api';
+import {
+  deleteTaskComment,
+  editTaskComment,
+  fetchProject,
+  fetchTask,
+  fetchTaskActivity,
+  postTaskComment,
+} from '@/lib/api';
 import type {
   ActivityEntry,
   LifecycleStage,
@@ -694,7 +715,17 @@ export function TaskActivityRail({
             </p>
           ) : (
             <div className="flex flex-col gap-2.5">
-              {entries.map((e) => <ActivityRow key={e.tx_id} entry={e} />)}
+              {threadActivity(entries).map(({ entry, depth }) => (
+                <ActivityRow
+                  key={entry.tx_id}
+                  entry={entry}
+                  depth={depth}
+                  projectId={projectId}
+                  taskId={taskId}
+                  canComment={canComment}
+                  onChanged={onChanged}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -752,16 +783,173 @@ export function taskActivityPresentation(entry: ActivityEntry): TaskActivityPres
   };
 }
 
-function ActivityRow({ entry }: { entry: ActivityEntry }) {
+export function threadActivity(entries: ActivityEntry[]): { entry: ActivityEntry; depth: number }[] {
+  const comments = new Map(
+    entries.filter((entry) => entry.kind === 'comment').map((entry) => [entry.tx_id, entry]),
+  );
+  const children = new Map<string, ActivityEntry[]>();
+  for (const entry of comments.values()) {
+    if (
+      !entry.in_reply_to ||
+      !comments.has(entry.in_reply_to) ||
+      entry.in_reply_to === entry.tx_id
+    ) {
+      continue;
+    }
+    children.set(entry.in_reply_to, [...(children.get(entry.in_reply_to) ?? []), entry]);
+  }
+  const nested = new Set([...children.values()].flat().map((entry) => entry.tx_id));
+  const result: { entry: ActivityEntry; depth: number }[] = [];
+  const seen = new Set<string>();
+  const append = (entry: ActivityEntry, depth: number) => {
+    if (seen.has(entry.tx_id)) return;
+    seen.add(entry.tx_id);
+    result.push({ entry, depth });
+    for (const child of children.get(entry.tx_id) ?? []) append(child, depth + 1);
+  };
+  for (const entry of entries) if (!nested.has(entry.tx_id)) append(entry, 0);
+  for (const entry of entries) append(entry, 0);
+  return result;
+}
+
+function ActivityRow({
+  entry,
+  depth,
+  projectId,
+  taskId,
+  canComment,
+  onChanged,
+}: {
+  entry: ActivityEntry;
+  depth: number;
+  projectId: string;
+  taskId: string;
+  canComment: boolean;
+  onChanged: () => void;
+}) {
   const rich = useRichText();
   const presentation = taskActivityPresentation(entry);
   const automated = presentation.source !== 'human';
   const SourceIcon = presentation.source === 'agent' ? Bot : Server;
+  const [replying, setReplying] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(entry.body);
+  const [busy, setBusy] = useState(false);
+
+  async function saveEdit() {
+    const body = draft.trim();
+    if (!body || busy) return;
+    setBusy(true);
+    try {
+      await editTaskComment(projectId, taskId, entry.tx_id, entry.body, body);
+      setEditing(false);
+      onChanged();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    try {
+      await deleteTaskComment(projectId, taskId, entry.tx_id, entry.body);
+      onChanged();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const actions = entry.kind === 'comment' && canComment ? (
+    <div className="mt-2 flex items-center gap-1">
+      <Button type="button" variant="ghost" size="xs" onClick={() => setReplying((value) => !value)}>
+        <Reply /> Reply
+      </Button>
+      {!automated ? (
+        <>
+          <Button type="button" variant="ghost" size="xs" onClick={() => setEditing(true)}>
+            <Pencil /> Edit
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="ghost" size="xs" disabled={busy}>
+                <Trash2 /> Delete
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent size="sm">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this comment?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This removes it from the node journal.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() => void remove()}
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
+      ) : null}
+    </div>
+  ) : null;
+
+  const editor = editing ? (
+    <div className="mt-2 flex flex-col gap-2">
+      <Textarea
+        aria-label="Edit comment"
+        rows={3}
+        value={draft}
+        disabled={busy}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <div className="flex justify-end gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          disabled={busy}
+          onClick={() => {
+            setDraft(entry.body);
+            setEditing(false);
+          }}
+        >
+          <X /> Cancel
+        </Button>
+        <Button type="button" size="xs" disabled={!draft.trim() || busy} onClick={() => void saveEdit()}>
+          {busy ? <Loader2 className="animate-spin" /> : null} Save
+        </Button>
+      </div>
+    </div>
+  ) : null;
+
+  const reply = replying ? (
+    <TaskCommentComposer
+      projectId={projectId}
+      taskId={taskId}
+      replyTo={entry.tx_id}
+      compact
+      onChanged={() => {
+        setReplying(false);
+        onChanged();
+      }}
+    />
+  ) : null;
 
   if (!automated) {
     return (
       <article
         className="min-w-0 rounded-lg border bg-background/70 px-3 py-2.5"
+        style={{ marginLeft: `${Math.min(depth, 3) * 0.75}rem` }}
         aria-label={`Comment from ${presentation.sourceLabel}`}
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -778,16 +966,23 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
             {shortTime(entry.time)}
           </time>
         </div>
-        <p className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-relaxed">
-          {decorateText(presentation.body, rich)}
-        </p>
+        {editor ?? (
+          <p className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-relaxed">
+            {decorateText(presentation.body, rich)}
+          </p>
+        )}
         <ActivityArtifacts artifacts={entry.artifacts} />
+        {actions}
+        {reply}
       </article>
     );
   }
 
   return (
-    <article className="grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)] gap-2.5 py-1.5">
+    <article
+      className="grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)] gap-2.5 py-1.5"
+      style={{ marginLeft: `${Math.min(depth, 3) * 0.75}rem` }}
+    >
       <span
         className={cn(
           'mt-0.5 flex size-7 items-center justify-center rounded-md',
@@ -815,6 +1010,8 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
           {decorateText(presentation.body, rich)}
         </p>
         <ActivityArtifacts artifacts={entry.artifacts} />
+        {actions}
+        {reply}
       </div>
     </article>
   );
@@ -842,10 +1039,14 @@ function TaskCommentComposer({
   projectId,
   taskId,
   onChanged,
+  replyTo,
+  compact = false,
 }: {
   projectId: string;
   taskId: string;
   onChanged: () => void;
+  replyTo?: string;
+  compact?: boolean;
 }) {
   const [message, setMessage] = useState('');
   const [posting, setPosting] = useState(false);
@@ -855,7 +1056,10 @@ function TaskCommentComposer({
     if (!body || posting) return;
     setPosting(true);
     try {
-      await postTaskComment(projectId, taskId, { body });
+      await postTaskComment(projectId, taskId, {
+        body,
+        ...(replyTo ? { in_reply_to: replyTo } : {}),
+      });
       setMessage('');
       onChanged();
     } catch (error) {
@@ -867,8 +1071,12 @@ function TaskCommentComposer({
 
   return (
     <form
-      aria-label="Add task comment"
-      className="shrink-0 border-t bg-background/80 p-3"
+      aria-label={replyTo ? 'Reply to comment' : 'Add task comment'}
+      className={
+        compact
+          ? 'mt-2 rounded-md border bg-background p-2'
+          : 'shrink-0 border-t bg-background/80 p-3'
+      }
       onSubmit={(event) => {
         event.preventDefault();
         void submitComment();
@@ -876,30 +1084,33 @@ function TaskCommentComposer({
     >
       <div className="mb-2 flex items-center gap-2">
         <MessageSquarePlus className="size-3.5 text-muted-foreground" aria-hidden="true" />
-        <label htmlFor={`task-comment-${taskId}`} className="text-xs font-medium">
-          Add a comment
+        <label
+          htmlFor={`task-comment-${taskId}-${replyTo ?? 'root'}`}
+          className="text-xs font-medium"
+        >
+          {replyTo ? 'Reply' : 'Add a comment'}
         </label>
       </div>
       <Textarea
-        id={`task-comment-${taskId}`}
-        rows={3}
+        id={`task-comment-${taskId}-${replyTo ?? 'root'}`}
+        rows={compact ? 2 : 3}
         value={message}
         disabled={posting}
-        placeholder="Write a team comment…"
-        aria-describedby={`task-comment-hint-${taskId}`}
+        placeholder={replyTo ? 'Write a reply…' : 'Write a team comment…'}
+        aria-describedby={`task-comment-hint-${taskId}-${replyTo ?? 'root'}`}
         className="min-h-20 resize-y bg-background text-sm"
         onChange={(event) => setMessage(event.target.value)}
       />
       <div className="mt-2 flex items-center justify-between gap-3">
         <span
-          id={`task-comment-hint-${taskId}`}
+          id={`task-comment-hint-${taskId}-${replyTo ?? 'root'}`}
           className="text-[10px] leading-snug text-muted-foreground"
         >
-          Shared with the team and the next agent pickup.
+          {replyTo ? 'Added to this thread.' : 'Shared with the team and the next agent pickup.'}
         </span>
         <Button type="submit" size="sm" disabled={!message.trim() || posting}>
           {posting ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-          {posting ? 'Posting…' : 'Comment'}
+          {posting ? 'Posting…' : replyTo ? 'Reply' : 'Comment'}
         </Button>
       </div>
     </form>
