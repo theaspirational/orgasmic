@@ -26,6 +26,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use chrono::Utc;
 use include_dir::{include_dir, Dir};
+use orgasmic_core::node_kernel::{JOURNAL_FILE, NODE_FILE};
 use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
 use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
@@ -53,10 +54,10 @@ use crate::addressing::{
     validate_supported_pair,
 };
 use crate::artifacts::{
-    self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
-    new_cid, persist_artifact_launch_address, reviews_org_header, update_artifact_org,
-    validate_art_id, validate_art_id_readable, validate_mdx, versions_dir, ArtifactDetail,
-    ArtifactLaunchAddress, ArtifactLoadError, ArtifactSummary, NewComment,
+    self, append_comment, artifact_dir, artifact_journal_header, artifact_node_content,
+    load_artifact, load_artifact_detail, new_cid, persist_artifact_launch_address,
+    update_artifact_node, validate_art_id, validate_art_id_readable, validate_mdx, versions_dir,
+    ArtifactDetail, ArtifactLaunchAddress, ArtifactLoadError, ArtifactSummary, NewComment,
 };
 use crate::auth::AuthState;
 use crate::authz::{self, Action, Identity};
@@ -18279,9 +18280,13 @@ async fn post_artifact_submit(
     let write_lock = state.artifact_write_lock(&art_dir);
     let _write_guard = write_lock.lock().await;
 
-    let is_new = !art_dir.join("artifact.org").exists();
+    let is_new = !art_dir.join(NODE_FILE).exists();
 
     if is_new {
+        if !art_dir.exists() {
+            orgasmic_core::node_kernel::create_node_dir(&art_dir)
+                .map_err(|error| ApiError::internal(format!("create artifact node: {error}")))?;
+        }
         let title = body
             .title
             .as_deref()
@@ -18293,10 +18298,10 @@ async fn post_artifact_submit(
 
         // Write initial artifact.org.
         let org_content =
-            artifact_org_content(&art_id, &title, &subject_nodes, &prompt, 1, "submitted");
+            artifact_node_content(&art_id, &title, &subject_nodes, &prompt, 1, "submitted");
 
         // Write reviews.org header.
-        let reviews_header = reviews_org_header(&art_id);
+        let reviews_header = artifact_journal_header(&art_id);
 
         let now = Utc::now();
         let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
@@ -18364,7 +18369,7 @@ async fn post_artifact_submit(
             .transaction(
                 vec![
                     FileRewrite {
-                        path: art_dir.join("artifact.org"),
+                        path: art_dir.join(NODE_FILE),
                         new_contents: org_content.into_bytes(),
                     },
                     FileRewrite {
@@ -18372,7 +18377,7 @@ async fn post_artifact_submit(
                         new_contents: body.content.clone().into_bytes(),
                     },
                     FileRewrite {
-                        path: art_dir.join("reviews.org"),
+                        path: art_dir.join(JOURNAL_FILE),
                         new_contents: reviews_header.into_bytes(),
                     },
                 ],
@@ -18420,7 +18425,7 @@ async fn post_artifact_submit(
     // outgoing mdx as part of the same writer transaction as the new
     // artifact.org/artifact.mdx (no bypass fs writes, no partial state if
     // the transaction fails partway).
-    let current_org = std::fs::read_to_string(art_dir.join("artifact.org"))
+    let current_org = std::fs::read_to_string(art_dir.join(NODE_FILE))
         .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
     let current_version = load_artifact(&art_dir).map(|s| s.version).unwrap_or(1);
     let new_version = current_version + 1;
@@ -18431,7 +18436,7 @@ async fn post_artifact_submit(
     let project_date = now.format("%Y%m%d").to_string();
     let tx_path = art_dir.join("journal.org");
 
-    let new_org = update_artifact_org(&current_org, new_version, new_state)
+    let new_org = update_artifact_node(&current_org, new_version, new_state)
         .map_err(|e| ApiError::internal(format!("update artifact.org: {e}")))?;
 
     let mut submitted_entry = orgasmic_core::tx::TxEntry::new(
@@ -18449,7 +18454,7 @@ async fn post_artifact_submit(
 
     let mut rewrites = vec![
         FileRewrite {
-            path: art_dir.join("artifact.org"),
+            path: art_dir.join(NODE_FILE),
             new_contents: new_org,
         },
         FileRewrite {
@@ -18631,7 +18636,7 @@ async fn post_artifact_add_comment(
     let project_root = entry.path.clone();
 
     let art_dir = artifact_dir(&project_root, &art_id);
-    if !art_dir.join("artifact.org").exists() {
+    if !art_dir.join(NODE_FILE).exists() {
         return Err(ApiError::not_found("artifact not found"));
     }
 
@@ -18669,7 +18674,7 @@ async fn post_artifact_add_comment(
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
 
-    let reviews_path = art_dir.join("reviews.org");
+    let reviews_path = art_dir.join(JOURNAL_FILE);
     let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
 
     // Validate the reply parent inside the same locked read→write window as the
@@ -18686,6 +18691,8 @@ async fn post_artifact_add_comment(
         )));
     }
 
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let new_reviews = append_comment(
         &current_reviews,
         &art_id,
@@ -18698,10 +18705,11 @@ async fn post_artifact_add_comment(
             reply_to: &reply_to,
             message: &body.message,
         },
-    );
+        &time_str,
+        &state.machine,
+    )
+    .map_err(|error| ApiError::bad_request(format!("invalid artifact comment: {error}")))?;
 
-    let now = Utc::now();
-    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
     let tx_path = art_dir.join("journal.org");
 
@@ -18794,7 +18802,7 @@ async fn post_artifact_comment_resolve(
     let project_root = entry.path.clone();
 
     let art_dir = artifact_dir(&project_root, &art_id);
-    if !art_dir.join("artifact.org").exists() {
+    if !art_dir.join(NODE_FILE).exists() {
         return Err(ApiError::not_found("artifact not found"));
     }
 
@@ -18803,7 +18811,7 @@ async fn post_artifact_comment_resolve(
     let write_lock = state.artifact_write_lock(&art_dir);
     let _write_guard = write_lock.lock().await;
 
-    let reviews_path = art_dir.join("reviews.org");
+    let reviews_path = art_dir.join(JOURNAL_FILE);
     let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
     let new_reviews = artifacts::set_comment_resolved(&current_reviews, &cid, body.resolved)
         .map_err(|e| {
@@ -19231,7 +19239,7 @@ async fn launch_artifact_generation(
         },
     );
 
-    let org_path = art_dir.join("artifact.org");
+    let org_path = art_dir.join(NODE_FILE);
     let current_org = match std::fs::read_to_string(&org_path) {
         Ok(content) => content,
         Err(e) => {
@@ -19340,7 +19348,7 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
     let write_lock = state.artifact_write_lock(art_dir);
     let _guard = write_lock.lock().await;
 
-    let Ok(current_org) = std::fs::read_to_string(art_dir.join("artifact.org")) else {
+    let Ok(current_org) = std::fs::read_to_string(art_dir.join(NODE_FILE)) else {
         return;
     };
     let Some(summary) = load_artifact(art_dir) else {
@@ -19356,7 +19364,7 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
     } else {
         (restore_state, restore_version)
     };
-    let Ok(new_org) = update_artifact_org(&current_org, target_version, target_state) else {
+    let Ok(new_org) = update_artifact_node(&current_org, target_version, target_state) else {
         return;
     };
 
@@ -19384,7 +19392,7 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
         .writer
         .transaction(
             vec![FileRewrite {
-                path: art_dir.join("artifact.org"),
+                path: art_dir.join(NODE_FILE),
                 new_contents: new_org,
             }],
             TxAppend {
@@ -19448,7 +19456,7 @@ async fn close_out_artifact_regenerate_round(
     let write_lock = state.artifact_write_lock(art_dir);
     let _write_guard = write_lock.lock().await;
 
-    let reviews_path = art_dir.join("reviews.org");
+    let reviews_path = art_dir.join(JOURNAL_FILE);
     let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
     let consumed_cids: Vec<String> = artifacts::parse_comments(&current_reviews)
         .into_iter()
@@ -19458,9 +19466,9 @@ async fn close_out_artifact_regenerate_round(
     let new_reviews = artifacts::consume_all_open_comments(&current_reviews)
         .map_err(|e| ApiError::internal(format!("consume open comments: {e}")))?;
 
-    let current_org = std::fs::read_to_string(art_dir.join("artifact.org"))
+    let current_org = std::fs::read_to_string(art_dir.join(NODE_FILE))
         .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
-    let new_org = update_artifact_org(&current_org, version, "regenerating")
+    let new_org = update_artifact_node(&current_org, version, "regenerating")
         .map_err(|e| ApiError::internal(format!("update artifact.org: {e}")))?;
 
     let now = Utc::now();
@@ -19492,7 +19500,7 @@ async fn close_out_artifact_regenerate_round(
         .transaction(
             vec![
                 FileRewrite {
-                    path: art_dir.join("artifact.org"),
+                    path: art_dir.join(NODE_FILE),
                     new_contents: new_org,
                 },
                 FileRewrite {
@@ -19611,14 +19619,25 @@ async fn post_artifact_generate(
         .node_types
         .descriptor("artifacts")
         .ok_or_else(|| ApiError::internal("missing shipped descriptor for artifacts"))?;
-    let art_id = artifacts::new_artifact_id(artifact_descriptor);
-    let art_dir = artifact_dir(&entry.path, &art_id);
+    let (art_id, art_dir) = loop {
+        let id = artifacts::new_artifact_id(artifact_descriptor);
+        let dir = artifact_dir(&entry.path, &id);
+        match orgasmic_core::node_kernel::create_node_dir(&dir) {
+            Ok(()) => break (id, dir),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(ApiError::internal(format!(
+                    "create artifact node directory: {error}"
+                )))
+            }
+        }
+    };
     let title = artifacts::escape_single_line(&derive_artifact_title(&prompt));
     let prompt_escaped = artifacts::escape_single_line(&prompt);
 
     let org_content =
-        artifact_org_content(&art_id, &title, &nodes, &prompt_escaped, 0, "regenerating");
-    let reviews_header = reviews_org_header(&art_id);
+        artifact_node_content(&art_id, &title, &nodes, &prompt_escaped, 0, "regenerating");
+    let reviews_header = artifact_journal_header(&art_id);
 
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
@@ -19645,11 +19664,11 @@ async fn post_artifact_generate(
         .transaction(
             vec![
                 FileRewrite {
-                    path: art_dir.join("artifact.org"),
+                    path: art_dir.join(NODE_FILE),
                     new_contents: org_content.into_bytes(),
                 },
                 FileRewrite {
-                    path: art_dir.join("reviews.org"),
+                    path: art_dir.join(JOURNAL_FILE),
                     new_contents: reviews_header.into_bytes(),
                 },
             ],
@@ -19746,7 +19765,7 @@ async fn post_artifact_regenerate(
     .await?;
 
     let art_dir = artifact_dir(&entry.path, &art_id);
-    if !art_dir.join("artifact.org").exists() {
+    if !art_dir.join(NODE_FILE).exists() {
         return Err(ApiError::not_found("artifact not found"));
     }
 
@@ -34921,7 +34940,7 @@ pub(crate) mod tests {
         // production way. The test already operates at the file layer below, so
         // apply `consume_all_open_comments` to reviews.org directly and refresh
         // the index projection.
-        let reviews_path = artifact_dir(&project_root, art_id).join("reviews.org");
+        let reviews_path = artifact_dir(&project_root, art_id).join(JOURNAL_FILE);
         let consumed_reviews =
             artifacts::consume_all_open_comments(&std::fs::read_to_string(&reviews_path).unwrap())
                 .expect("consume open comments should succeed");
@@ -34943,7 +34962,8 @@ pub(crate) mod tests {
             "consumed comments must be excluded by default"
         );
 
-        // include_consumed=true surfaces it, resolved + consumed.
+        // include_consumed=true surfaces it; consuming does not change the
+        // artifact-owned people-facing resolution axis.
         let detail2_all = get_artifact(
             State(state.clone()),
             Extension(Identity::Admin),
@@ -34958,7 +34978,7 @@ pub(crate) mod tests {
         let comments = &detail2_all.0.comments;
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].cid, cid);
-        assert!(comments[0].resolved);
+        assert!(!comments[0].resolved);
         assert!(comments[0].consumed);
 
         // Open comment count should be 0 after consume
@@ -34991,9 +35011,9 @@ pub(crate) mod tests {
         // --- refuse feedback on regenerating artifact ---
         // Force state to regenerating
         let art_dir = artifact_dir(&project_root, art_id);
-        let org_content = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
-        let updated_org = update_artifact_org(&org_content, 1, "regenerating").unwrap();
-        std::fs::write(art_dir.join("artifact.org"), &updated_org).unwrap();
+        let org_content = std::fs::read_to_string(art_dir.join(NODE_FILE)).unwrap();
+        let updated_org = update_artifact_node(&org_content, 1, "regenerating").unwrap();
+        std::fs::write(art_dir.join(NODE_FILE), &updated_org).unwrap();
         let fb2 = post_artifact_add_comment(
             State(state.clone()),
             Extension(Identity::Admin),
@@ -35013,9 +35033,9 @@ pub(crate) mod tests {
 
         // --- re-submit (version bump) ---
         // Restore state to submitted first
-        let org_content2 = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
-        let restored = update_artifact_org(&org_content2, 1, "submitted").unwrap();
-        std::fs::write(art_dir.join("artifact.org"), &restored).unwrap();
+        let org_content2 = std::fs::read_to_string(art_dir.join(NODE_FILE)).unwrap();
+        let restored = update_artifact_node(&org_content2, 1, "submitted").unwrap();
+        std::fs::write(art_dir.join(NODE_FILE), &restored).unwrap();
 
         let resubmit = post_artifact_submit(
             State(state.clone()),
@@ -35186,7 +35206,7 @@ pub(crate) mod tests {
         // through `close_out_artifact_regenerate_round`, which is off-limits
         // for this task. ---
         let art_dir = artifact_dir(&project_root, art_id);
-        let reviews_path = art_dir.join("reviews.org");
+        let reviews_path = art_dir.join(JOURNAL_FILE);
         let consumed =
             artifacts::consume_all_open_comments(&std::fs::read_to_string(&reviews_path).unwrap())
                 .expect("consume should succeed");
@@ -35326,7 +35346,7 @@ pub(crate) mod tests {
         // verified for this task, and driving a real regenerate here would
         // need a live worker/LLM credential this environment doesn't have. ---
         let art_dir = artifact_dir(&project_root, art_id);
-        let reviews_path = art_dir.join("reviews.org");
+        let reviews_path = art_dir.join(JOURNAL_FILE);
         let consumed =
             artifacts::consume_all_open_comments(&std::fs::read_to_string(&reviews_path).unwrap())
                 .expect("consume should succeed");
@@ -35769,8 +35789,8 @@ pub(crate) mod tests {
         // Sabotage: reviews.org is a directory, so the writer transaction's
         // rewrite-path validation fails deterministically before any
         // tmp/rename/tx-append work happens.
-        std::fs::remove_file(art_dir.join("reviews.org")).unwrap();
-        std::fs::create_dir(art_dir.join("reviews.org")).unwrap();
+        std::fs::remove_file(art_dir.join(JOURNAL_FILE)).unwrap();
+        std::fs::create_dir(art_dir.join(JOURNAL_FILE)).unwrap();
 
         let result = post_artifact_add_comment(
             State(state.clone()),
@@ -35790,7 +35810,7 @@ pub(crate) mod tests {
 
         // reviews.org is untouched (still the sabotage directory — no
         // partial rewrite escaped the failed transaction).
-        assert!(art_dir.join("reviews.org").is_dir());
+        assert!(art_dir.join(JOURNAL_FILE).is_dir());
         // The tx log must not have gained a phantom artifact.comment.added
         // entry for a comment that never landed.
         let tx_after = std::fs::read_to_string(&tx_path).unwrap_or_default();
@@ -35849,8 +35869,8 @@ pub(crate) mod tests {
         let tx_before = std::fs::read_to_string(&tx_path).unwrap_or_default();
 
         // Sabotage the write target the same way as the add-path test.
-        std::fs::remove_file(art_dir.join("reviews.org")).unwrap();
-        std::fs::create_dir(art_dir.join("reviews.org")).unwrap();
+        std::fs::remove_file(art_dir.join(JOURNAL_FILE)).unwrap();
+        std::fs::create_dir(art_dir.join(JOURNAL_FILE)).unwrap();
 
         let result = post_artifact_comment_resolve(
             State(state.clone()),
@@ -35862,7 +35882,7 @@ pub(crate) mod tests {
         .await;
         assert!(result.is_err());
 
-        assert!(art_dir.join("reviews.org").is_dir());
+        assert!(art_dir.join(JOURNAL_FILE).is_dir());
         let tx_after = std::fs::read_to_string(&tx_path).unwrap_or_default();
         assert_eq!(
             tx_before, tx_after,
@@ -36031,8 +36051,8 @@ pub(crate) mod tests {
         assert!(title.ends_with('…'), "{title}");
     }
     #[test]
-    fn artifact_org_content_renders_empty_subject_nodes_property() {
-        let org = artifact_org_content("ART-ABC", "Title", &[], "prompt", 0, "regenerating");
+    fn artifact_node_content_renders_empty_subject_nodes_property() {
+        let org = artifact_node_content("ART-ABC", "Title", &[], "prompt", 0, "regenerating");
         let file = OrgFile::parse(org, "artifact.org").unwrap();
         let heading = file.headings.first().unwrap();
         assert_eq!(heading.property("SUBJECT_NODES"), Some(""));
@@ -36098,10 +36118,27 @@ pub(crate) mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        write(
-            task_file_path(&project_root, "backlog.org"),
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n\n* BACKLOG TASK-DEP2 Dependent task :work:\n:PROPERTIES:\n:ID:               TASK-DEP2\n:DEPENDS_ON:       TASK-PRE\n:END:\n",
-        );
+        for (id, title, depends_on) in [
+            ("TASK-PRE", "Pre-boot task", None),
+            ("TASK-DEP2", "Dependent task", Some("TASK-PRE")),
+        ] {
+            let dir = orgasmic_core::node_kernel::node_dir(&project_root, "tasks", id);
+            std::fs::create_dir_all(&dir).unwrap();
+            let dependency = depends_on
+                .map(|value| format!(":DEPENDS_ON:       {value}\n"))
+                .unwrap_or_default();
+            write(
+                dir.join(NODE_FILE),
+                &format!(
+                    "{}* BACKLOG {id} {title} :work:\n:PROPERTIES:\n:ID:               {id}\n{dependency}:END:\n",
+                    orgasmic_core::node_kernel::node_org_header("task", id),
+                ),
+            );
+            write(
+                dir.join(JOURNAL_FILE),
+                &orgasmic_core::node_kernel::journal_header(id),
+            );
+        }
         let state = direct_stage_test_state(home.clone()).await;
         let _ = state.index.refresh_project("test-proj").await;
 
@@ -37580,7 +37617,7 @@ pub(crate) mod tests {
     }
 
     fn launch_address_from_artifact_org(art_dir: &FsPath) -> ArtifactLaunchAddress {
-        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let org = std::fs::read_to_string(art_dir.join(NODE_FILE)).unwrap();
         let file = OrgFile::parse(org, "artifact.org").unwrap();
         artifacts::parse_artifact_launch_address(file.headings.first().unwrap())
             .expect("artifact.org must carry a launch address")
@@ -37628,7 +37665,7 @@ pub(crate) mod tests {
         assert_eq!(summary.state, "regenerating");
         assert_eq!(summary.version, 0);
         assert_eq!(summary.subject_nodes, vec!["TASK-PRE".to_string()]);
-        assert!(art_dir.join("reviews.org").exists());
+        assert!(art_dir.join(JOURNAL_FILE).exists());
 
         let snapshot = state.supervisor.snapshot().await;
         assert!(snapshot.runs.iter().any(|r| r.run_id == resp.0.run_id));
@@ -37685,7 +37722,7 @@ pub(crate) mod tests {
         assert!(!resp.0.run_id.is_empty());
 
         let art_dir = artifact_dir(&project_root, &art_id);
-        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let org = std::fs::read_to_string(art_dir.join(NODE_FILE)).unwrap();
         let file = OrgFile::parse(org, "artifact.org").unwrap();
         assert_eq!(
             file.headings
@@ -37989,7 +38026,7 @@ pub(crate) mod tests {
         .expect("round 2 feedback should succeed");
         let cid2 = fb2.0["cid"].as_str().unwrap().to_string();
 
-        let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
+        let reviews_before = std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap();
 
         // Wait for the harness to finish the first dispatch and show its
         // composer prompt before routing round 2 via send_input.
@@ -38055,7 +38092,7 @@ pub(crate) mod tests {
         assert!(tx_after.contains("artifact.regenerated"));
         assert_ne!(
             reviews_before,
-            std::fs::read_to_string(art_dir.join("reviews.org")).unwrap()
+            std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap()
         );
 
         let session_path = state
@@ -38173,8 +38210,8 @@ pub(crate) mod tests {
         .expect("live-run submit should install prior declaration");
 
         let art_dir = artifact_dir(&project_root, art_id);
-        let org_before = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
-        let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
+        let org_before = std::fs::read_to_string(art_dir.join(NODE_FILE)).unwrap();
+        let reviews_before = std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap();
         let tx_path = project_root
             .join(".orgasmic/tx")
             .join(format!("{}.org", Utc::now().format("%Y-%m")));
@@ -38211,11 +38248,11 @@ pub(crate) mod tests {
         assert_eq!(err.status, StatusCode::CONFLICT);
 
         assert_eq!(
-            std::fs::read_to_string(art_dir.join("artifact.org")).unwrap(),
+            std::fs::read_to_string(art_dir.join(NODE_FILE)).unwrap(),
             org_before
         );
         assert_eq!(
-            std::fs::read_to_string(art_dir.join("reviews.org")).unwrap(),
+            std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap(),
             reviews_before
         );
         assert_eq!(
@@ -38641,10 +38678,10 @@ pub(crate) mod tests {
         );
         let persisted = launch_address_from_artifact_org(&art_dir);
         assert_eq!(persisted, replacement);
-        assert!(!std::fs::read_to_string(art_dir.join("artifact.org"))
+        assert!(!std::fs::read_to_string(art_dir.join(NODE_FILE))
             .unwrap()
             .contains("old-model"));
-        assert!(!std::fs::read_to_string(art_dir.join("artifact.org"))
+        assert!(!std::fs::read_to_string(art_dir.join(NODE_FILE))
             .unwrap()
             .contains(":LAUNCH_EFFORT:"));
 
