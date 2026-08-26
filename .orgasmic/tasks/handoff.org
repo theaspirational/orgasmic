@@ -8,7 +8,7 @@
 :LIVENESS:         5033cce
 :LIVENESS_AT:      [2026-08-23 Sun]
 :UPDATED_AT:       [2026-08-22 Sat]
-:GOAL_ID:          goal-20260728-drive-the-whole
+:GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
 :END:
 
 Session 2026-08-18 (reconciliation; previous manager session 2026-08-08 — its narrative and

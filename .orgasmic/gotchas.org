@@ -888,3 +888,25 @@ macOS =$TMPDIR= is a ~50-character =/var/folders/…/T/= path, and
 =i/o error: File name too long (os error 63)=, from every rmux call, with
 nothing naming the length as the cause. Private rmux roots for tests go under
 =/tmp= (also rmux's own fallback socket root).
+
+** Never run =cargo test --workspace= on the dev laptop
+Operator directive 2026-08-26 (after a 2-hour stall). The full run builds and
+links ~40 separate test binaries and flock-serializes every daemon-booting
+test, so it exceeds 10 minutes; an agent harness that caps foreground commands
+then backgrounds/detaches it, and a DETACHED cargo run on this Mac loses
+Warp's Developer Tools exemption — syspolicyd rescans every binary, tccd and
+WindowServer hang, and the machine can reboot (thrice-measured chain, see
+TASK-R7AGF). Run =cargo test -p <crate>= one crate at a time in the
+foreground (core, cli, daemon --lib, daemon --tests, drivers); for one
+failure, run the named test targeted. Full-workspace certification belongs
+off-laptop (TASK-R7AGF). Exit condition: certification runs on other machines and this
+gotcha is folded into its recipe.
+
+Per-crate is not small enough for =orgasmic-cli=: measured 2026-08-27, its
+=tests/dispatch.rs= binary alone takes ~325s (90 tests, each booting a daemon),
+so the whole crate overruns the 600s foreground cap and gets backgrounded —
+the same hazard the rule exists to prevent. Run =--test dispatch= as its own
+command, then the rest of the crate. Its =reviewer_close_verdict_has_issues_
+stays_in_progress= also fails only when the whole crate runs concurrently and
+passes both alone and with its own binary; treat a lone failure there as load
+flakiness, not a defect, and confirm by re-running that binary by itself.

@@ -4591,6 +4591,11 @@ Filed 2026-08-22, dependency-ordered (DEPENDS_ON edges on the tasks; deepest pat
 9. TASK-8DMQS regenerate generalization (.10) ← 8
 10. TASK-AN992 CLI verbs over node dirs + shipped content for the layout ← 4
 11. TASK-KA934 UI comments/regenerate, OrgView over views ← 6 9
+Extended 2026-08-26 by the TASK-TWCP9 decision (distributed ledger branch):
+12. TASK-LBRX7 ledger branch extraction: orphan branch, hidden worktree, .orgasmic leaves main ← 4
+13. TASK-MSYN4 machine identity + ledger sync loop over the git remote ← 12 5
+14. TASK-CLM6W cross-machine claims + multi-machine fold ← 13 6
+15. TASK-D2DM3 daemon-to-daemon live messaging (P2, deferred) ← 14
 The map's destination is reached: this chain is implementation-ready. The map stays backlog as the index (wayfinder convention).
 
 * BACKLOG TASK-CM5KV Evaluate real ACP as an orgasmic transport :drivers:research:
@@ -4653,166 +4658,6 @@ Carries the two LOW, non-blocking notes from the final approving review of TASK-
 ** Acceptance
 - Renderer invariant enforced structurally (newtype or debug_assert) with a test that fails loudly on bypass.
 - A multi-project test covers the delayed branch of unscoped /tx aggregation.
-
-* BACKLOG TASK-GCXB7 Shared dispatch fold in orgasmic-core with a type-set guard    :e01mc:node_kernel:
-:PROPERTIES:
-:ID: TASK-GCXB7
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P2
-:DEPENDS_ON: 
-:END:
-
-** Description
-AP971.11: one dispatch fold in orgasmic-core, called by both manager.rs scan_dispatches (8 call sites) and api.rs dispatch_generation_ledgers (they diverge today: the daemon ignores *.done/aborted). Add one test pinning the dispatch type set (manager.dispatch_started, run.created, implementer/reviewer/architector.reported, implementer/reviewer/architector.done, manager.dispatch_aborted, manager.dispatch_orphaned) to tx_destination → project tx, and list the set in shipped/schema/tx.org.
-** Acceptance
-- [ ] CLI and daemon call the same core fold; the daemon's open/closed answer matches the CLI's on this repo's tx/
-- [ ] the type-set guard test exists and fails if any listed type routes anywhere but project tx/
-- [ ] no behaviour change for dispatch-status / dispatch-wait / worktree-prune
-
-* BACKLOG TASK-TP593 Node kernel in orgasmic-core plus the writer ops that go with it    :e01mc:node_kernel:
-:PROPERTIES:
-:ID: TASK-TP593
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P1
-:DEPENDS_ON: 
-:END:
-
-** Description
-AP971.1/.6: land crates/orgasmic-core/src/node_kernel.rs from the ap971-prototype branch (41a1faf): node_dir, create_node_dir (mkdir = collision check), parse_node, parse_journal/append_entry, edit_comment_body, tombstone_comment, consume_open_comments. Add the daemon writer ops over it: append journal entry, OCC-guarded in-place comment edit stamping :EDITED_AT:, tombstone; journal.org joins the ledger-rewrite denylist; the writer refuses column-0 '* ' in journal prose; size lint past ~500KB. shipped/schema/journal.org v1 documents the grammar (AP971.1 items 1–12).
-** Acceptance
-- [ ] kernel unit tests + the real_data parse test pass
-- [ ] writer ops exist with OCC and denylist enforcement, covered by tests
-- [ ] schema doc shipped
-
-* BACKLOG TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint    :e01mc:node_kernel:
-:PROPERTIES:
-:ID: TASK-7A0H4
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P1
-:DEPENDS_ON: 
-:END:
-
-** Description
-AP971.2/.3: shipped/schema/node-types/{task,decision,glossary,artifact}.org — one heading per type with :COLLECTION:, :ID_PREFIX:, :LABEL:/:LABEL_PLURAL:, :REQUIRED_PROPERTIES:, :STATES: + transitions (task only), :REGENERATE_PROMPT:, optional reserved files. Daemon loader; a collection dir with no descriptor gets generic indexing/comments/journals and a low-severity lint. mint_node_id(descriptor) keeps the 5-char Crockford stem; prefixes stay TASK-/dec_/term_/ART-; dir name = id verbatim, dotted subtasks flat. Shipped-only in v1.
-** Acceptance
-- [ ] four descriptors ship and load; unknown collection path tested
-- [ ] mint is descriptor-driven and create_node_dir retries on AlreadyExists
-- [ ] task states/transitions come from the descriptor (state-machine.org folded in or pointed at)
-
-* BACKLOG TASK-SRBGS Migrator orgasmic project migrate; indexer reads node dirs; old state-file readers deleted    :e01mc:node_kernel:
-:PROPERTIES:
-:DEPENDS_ON:  TASK-TP593 TASK-7A0H4
-:ID: TASK-SRBGS
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P1
-:END:
-
-** Description
-AP971.9: port scripts/ap971-migrate-proto.py (branch ap971-prototype) to orgasmic project migrate — one-shot, idempotent, refuses on a dirty git tree, --dry-run, writes <collection>/<ID>/{node.org,journal.org} for tasks (all six state files incl. done/cancelled), decisions, glossary; deletes the old files; bumps #+orgasmic_version to 2 on project.org (label only — no v1 compat layer, no v1 read path). The indexer reads collection dirs; iter_task_file_paths and every by-id full scan (index.rs, api.rs inbound-reference check, manager.rs read_task_lifecycle, identity_lint entry points, run-tests.sh globs) are rewritten or deleted. Singletons (handoff.org, goal.org, project.org) stay files. dispatch-records/ and tx/ untouched.
-** Acceptance
-- [ ] migrate runs on this repo: 873 nodes, 0 anomalies, byte-for-byte heading round trip
-- [ ] parse_errors 0 and dangling-edge lint green after migration (old ids resolve)
-- [ ] no reader of tasks/<state>.org, decisions.org, glossary.org remains in crates/ scripts/ verify/
-
-* BACKLOG TASK-EPG6H tx split: route node-scoped events to journals per the AP971.5 table    :e01mc:node_kernel:
-:PROPERTIES:
-:DEPENDS_ON: TASK-SRBGS
-:ID: TASK-EPG6H
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P1
-:END:
-
-** Description
-AP971.5: writer routing — journal iff the event is about exactly one dir-backed node, else project tx/ (comment, worker.comment, non-dispatch task.state_transitioned, task.property_updated, task.edited, graph.*.edited, graph.decision.reparent, reviewer.finding, review.verdict → journal; the .11 dispatch set + commit_pending, all manager.*, goal events, graph.handoff.edited, project.*, release.*, daemon.*, benchmark.*, question.*, legacy untyped, node deletions → tx/). Creation = journal entry #1 created; deletion = tx/ tombstone + dir removal. The dispatch close stays ONE tx append + N node.org rewrites with no journal flip (derived); torn-close repair becomes legacy-only. Journal ids share the project sequence; scan_project_tx_max_seq covers journals.
-** Acceptance
-- [ ] routing table pinned by a test over every known type
-- [ ] dispatch close still atomic via transaction_multi with no multi-ledger append
-- [ ] id sequence cold-start scan covers journals (test)
-
-* BACKLOG TASK-8AV8B Incremental refresh: per-node reload and writer apply-own-write    :e01mc:node_kernel:
-:PROPERTIES:
-:DEPENDS_ON: TASK-EPG6H
-:ID: TASK-8AV8B
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P1
-:END:
-
-** Description
-AP971.7: watcher path → (project, collection, node id) → reload only that node dir; a tx/ file change re-collects that file; views/ and tmp/ ignored. After a successful structured write the writer applies the one node dir it wrote to the snapshot and publishes before the HTTP response returns; the required-refresh wait is removed; the watcher's echo is a no-op on content equality. Activity feed = projection over tx/ + journals (both sources, forever). dispatch-wait folds the coherent snapshot (CLI keeps the disk fold). Full rescan only on boot, project add, orgasmic reindex, unclassifiable events.
-** Acceptance
-- [ ] a comment POST returns without a project-wide reparse (measured)
-- [ ] activity feed shows journal comments and tx run events interleaved
-- [ ] dispatch-wait no longer calls project_tx_entries on the poll path
-
-* BACKLOG TASK-JWHXH Derived read views: views/{board,glossary,decisions}.org    :e01mc:node_kernel:
-:PROPERTIES:
-:DEPENDS_ON: TASK-SRBGS
-:ID: TASK-JWHXH
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P2
-:END:
-
-** Description
-AP971.8: daemon writes .orgasmic/views/board.org (tasks by state), glossary.org, decisions.org after each affected refresh (debounced) in today's file shapes; orgasmic views build for cold clones; .orgasmic/.gitignore gains views/. Repoint the four prompt-studio context-packs, shipped/entry/router.org, the two skill refs and the UI OrgView to views/.
-** Acceptance
-- [ ] views regenerate on node change; byte-stable when nothing changed
-- [ ] no shipped or UI path still names glossary.org/decisions.org/tasks/<state>.org at the old location
-
-* BACKLOG TASK-ARRV8 Artifacts onto the node kernel    :e01mc:node_kernel:
-:PROPERTIES:
-:DEPENDS_ON:  TASK-TP593 TASK-7A0H4
-:ID: TASK-ARRV8
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P2
-:END:
-
-** Description
-AP971.6 mapping table: artifacts.rs and its six routes move onto node_kernel — reviews.org becomes journal.org (CID→TX_ID, ANCHOR/RESOLUTION_TARGET/REPLY_TO→extras, CONSUMED kernel-owned, RESOLVED stays artifact's axis); artifact.org becomes node.org; artifact descriptor ships. Keeps artifact-only: BLOCK_TYPES, validate_mdx, launch address, versions_dir, artifact.mdx. Migrate existing ART-* dirs in place.
-** Acceptance
-- [ ] all artifact API tests pass on the kernel
-- [ ] existing artifacts under .orgasmic/artifacts/ migrated and readable
-
-* BACKLOG TASK-8DMQS Regenerate generalization: node.regenerate:<id> over descriptors    :e01mc:node_kernel:
-:PROPERTIES:
-:DEPENDS_ON: TASK-ARRV8
-:ID: TASK-8DMQS
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P2
-:END:
-
-** Description
-AP971.10: one regenerate path — recompile node content + open comments + extra prompt through the descriptor's :REGENERATE_PROMPT: prompt-studio spec (the hardcoded assemble_regen_context becomes the artifact spec), run task id node.regenerate:<id> on the artifactor supervisor path, one live regenerate per node; close-out consumes open comments and writes a regenerated journal entry with CONSUMED_CIDS; version bumps; old content in git. Task regenerate rewrites the task, never re-dispatches. No spec → no regenerate.
-** Acceptance
-- [ ] regenerate works for artifact (unchanged behaviour), task, decision, glossary
-- [ ] the consume rule is tested once, type-agnostically
-
-* BACKLOG TASK-AN992 CLI verbs over node dirs and shipped content for the new layout    :e01mc:node_kernel:
-:PROPERTIES:
-:DEPENDS_ON: TASK-SRBGS
-:ID: TASK-AN992
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P2
-:END:
-
-** Description
-task/decision/glossary verbs and orgasmic node body operate on node dirs; comment edit/delete verbs over the journal; conventions, prompt-studio, project-scaffold and hub content updated for the new layout (scaffold ships empty collection dirs; gotchas.org and conventions/ stay prose files). Evidence for new dispatches lands in tasks/<ID>/dispatches/<started-tx>/ (brief, compiled prompt, report, stdout) instead of dispatch-records/.
-** Acceptance
-- [ ] every verb in orgasmic --help that read a state file works on dirs
-- [ ] a fresh orgasmic project init scaffolds the v2 layout
-
-* BACKLOG TASK-KA934 UI: per-node comments and regenerate; OrgView over views    :e01mc:node_kernel:
-:PROPERTIES:
-:DEPENDS_ON:  TASK-8AV8B TASK-8DMQS
-:ID: TASK-KA934
-:IMPLEMENTS: dec_E01MC
-:PRIORITY: P2
-:END:
-
-** Description
-Per-node comment threads (reply, edit, delete) and a regenerate button wherever the descriptor declares a prompt; OrgView reads views/; task dialog activity rail reads the node journal. Labels come from descriptors.
-** Acceptance
-- [ ] comment on a task from the UI, edit it, delete it, regenerate the task
-- [ ] no UI code path reads tasks/<state>.org / decisions.org / glossary.org
 
 * BACKLOG TASK-XQCNA Terminal run states carry a classified reason and the evidence path in dispatch-status; API 500s carry the inner cause    :vscode-orsl-letter:
 :PROPERTIES:
@@ -4896,6 +4741,54 @@ Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches
 - Worker worktrees do not contain the ledger (sparse checkout or .git/info/exclude).
 ** Note
 This is a decision task (grill first). Overlaps the dec_E01MC node-kernel redesign (TASK-AP971 chain) — the per-node dir layout should be decided with ledger placement in mind.
+** Decision (owner, 2026-08-26 — FINAL)
+Orphan `orgasmic` ledger branch in the same repo (not a sibling dir, not a separate repo, not a central coordinator), shipped together with the dec_E01MC chain (TASK-AP971 implementation chain), not before it.
+- Branch shares no history with main; daemon keeps it checked out in a hidden worktree (e.g. ~/.orgasmic/<project>/ledger/); `.orgasmic/` leaves the main tree entirely; worker worktrees never contain the ledger. One combined cutover: the AP971.9 migrator gains a target-branch mode — never migrate twice.
+- One pen PER MACHINE, not one pen total. Composition with the AP971 per-node schema (naming: "node" stays the AP971 entity; machines are "machines"):
+  - Branch root keeps the AP971 layout unchanged (node dirs, journals, views).
+  - Node dirs are claim-gated: only the machine holding a node's claim writes that node's dir → node dirs stay single-writer, zero schema change.
+  - Project tx/ files become per-machine (`machines/<machine-id>/tx/YYYY-MM.org`); the activity projection is already file-order independent and folds the union.
+  - Claims live in per-machine append-only logs (`machines/<machine-id>/claims.org`).
+  - All paths a machine writes are disjoint from every other machine's → merges cannot conflict; push race = pull --rebase + retry.
+- Mutable shared files are the thing being removed; views (backlog/board) are daemon-written projections, gitignored, never merged (AP971.8). No interim single-machine version with mutable shared files.
+- Sync = the existing git remote (pull cadence ~30-60s, coalesced commits). Live cross-machine agent messaging is daemon-to-daemon (existing LAN/tunnel), advisory only, with every message also appended to the ledger as the durable record.
+- Task claims across machines: claim event (with advisory :WRITE_SCOPE: glob so overlap is visible; enforcement stays at review/merge) + first push wins; loser backs off on next pull; tie-break when both events are visible: earliest claim timestamp, then machine id. Double-claims surfaced in views, not prevented.
+- Event hygiene (from coordinator-proposal review, 2026-08-26): every event carries a globally unique id + actor + machine-id + timestamp; ingest deduplicates retries; rejected/undeliverable events are preserved for inspection, never silently dropped.
+- Rejected alternative: central coordinator with leases (server = SPOF, standing ops cost, breaks local-first; its offline mode reintroduces lease expiry/clock skew/generations). Revisit only if double-claim waste ever becomes real; a coordinator can layer on top of this ledger without changing the format.
+- Upgrade path if push contention on the single branch ever hurts: per-machine refs (refs/orgasmic/<machine-id>, git-bug style) kill push races entirely; v1 stays one branch + one hidden worktree.
+- Prior art: git-bug / git-appraise (per-writer append-only records in git, merged as a union).
+- Watch-outs: exclude the `orgasmic` branch from CI triggers; periodic checkpoint/squash so tiny commits don't bloat the repo.
+** Implementation chain (filed 2026-08-26)
+Extends the AP971 chain as items 12-15: TASK-LBRX7 (branch extraction ← SRBGS) → TASK-MSYN4 (machine identity + sync ← LBRX7, EPG6H) → TASK-CLM6W (claims + multi-machine fold ← MSYN4, 8AV8B) → TASK-D2DM3 (daemon-to-daemon live messaging ← CLM6W, P2/deferred).
+
+* BACKLOG TASK-FNZN8 Nudge instead of stall: on agent_turn_complete without worker finalize, inject one reminder turn before the watchdog window    :drivers:dispatch:
+:PROPERTIES:
+:ID: TASK-FNZN8
+:PRIORITY: P2
+:END:
+
+** Description
+Observed 2026-08-26 (codex-chat stdio, gpt-5.6-sol, runs run-01M0YPJZ9ME6S9Z4S193H0AT35 / run-01M0YPK385CAN7M934Q18AVZYV vs the healthy run-01M0YPK1JD9CKDSBAGVJ5VKX3N): the model finishes the work, ends its turn with a prose summary, and never executes the worker finalize/report step. The daemon keeps waiting, codex idles at 0% CPU, and stall_timeout_exceeded (600s) SIGTERMs the run as failed with `finalized_by_worker: false` — even though the work is complete and committed. 2 of 3 runs in one wave hit this.
+** Expected
+When the driver sees `agent_turn_complete` (state completed) on a dispatch run whose worker has NOT finalized, inject ONE nudge turn ("you have not reported; your last action must be the finalize/report command") instead of idling into the watchdog. One nudge only; if the model still does not finalize, let the existing stall watchdog fire as today. This closes the failure class for every chatty model without loosening the watchdog.
+** Acceptance
+- [ ] test: turn-complete-without-finalize triggers exactly one nudge; finalize after nudge → clean worker finalize release
+- [ ] test: turn-complete-without-finalize, nudge ignored → stall watchdog still fires
+- [ ] nudge recorded as a driver/lifecycle event so run history shows it
+
+* BACKLOG TASK-D2DM3 Daemon-to-daemon live messaging over LAN/tunnel with ledger-durable record    :twcp9:distributed:
+:PROPERTIES:
+:ID: TASK-D2DM3
+:PRIORITY: P2
+:DEPENDS_ON: TASK-CLM6W
+:END:
+
+** Description
+TWCP9 decision, step 4 (deferred until multi-machine is actually deployed). Low-latency agent/daemon messaging over the existing LAN listener + cloudflared tunnel, advisory only: a delivered message never changes authoritative state by itself; every message is also appended to the sender's ledger log as the durable record. Peers discovered via `machines/<machine-id>/` metadata on the ledger branch. If the peer is unreachable, the ledger path is the fallback — no queue infrastructure.
+** Acceptance
+- [ ] message delivered daemon-to-daemon appears in both the receiver and the sender's ledger log
+- [ ] peer unreachable → no error surfaced to the worker; ledger append still happens
+- [ ] no authoritative state transition depends on live delivery (audit)
 
 * BACKLOG TASK-SJD10 Per-run evidence directory outside the worktree (ORGASMIC_EVIDENCE_DIR), retained past close, referenced from dispatch-status and handed to --for reviewers    :vscode-orsl-letter:
 :PROPERTIES:
@@ -4988,3 +4881,20 @@ A GitHub workflow runs the same suite on macOS runners and posts the =local/rele
 ** Acceptance
 - integrate-main lands a PR with certification produced by CI; laptop runs zero test binaries.
 - The no-bypass property holds: status only from the workflow, on the exact head sha.
+
+* BACKLOG TASK-R8M0V Pin AP971.7 incremental-refresh acceptance: measure no project-wide reparse on comment POST
+:PROPERTIES:
+:ID: TASK-R8M0V
+:PRIORITY: P2
+:DEPENDS_ON: TASK-8AV8B
+:IMPLEMENTS: dec_E01MC
+:END:
+** Description
+TASK-8AV8B shipped its implementation without running or adding any tests (its worker read the brief's "no heavy suites" rule as "no tests"). Merging it surfaced four real defects, all fixed in 6c97e599 and now pinned by the existing daemon suite. What is still unverified is its measurement acceptance.
+
+Pin the two criteria no existing test asserts. `api::tests::sixteen_concurrent_api_writes_finish_within_budget_without_refresh_amplification` is the closest existing harness — reuse it rather than building a new one; `status.index_refresh.scans_total` is the counter that makes "no project-wide reparse" observable.
+
+The third original box (dispatch-wait no longer calls project_tx_entries on the poll path) is already satisfied structurally: `post_manager_dispatch_wait` reads `state.index.snapshot()`.
+** Acceptance
+- [ ] a comment POST is measured to add zero project-wide refresh scans
+- [ ] one test shows journal comments and tx run events interleaved in the activity feed

@@ -2,12 +2,25 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL drive the whole board to done, including what the work uncovers :goal:
+* GOAL Finalise the E01MC/TWCP9 chain, then review and fix all :goal:
+:PROPERTIES:
+:ID:               goal-20260826-finalise-the-e01mc-twcp9
+:SET_AT:           [2026-08-26 Wed]
+:SET_BY:           aspirational
+:REPLACES:         goal-20260728-drive-the-whole
+:END:
+
+** Statement
+Finalise the dec_E01MC + TASK-TWCP9 chain (last merges, all crates green), then run one review over the whole chain and fix everything it finds.
+
+* SUPERSEDED drive the whole board to done, including what the work uncovers :goal:
 :PROPERTIES:
 :ID:               goal-20260728-drive-the-whole
 :SET_AT:           [2026-07-28 Tue]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         goal-20260725-land-the-committed
+:STATUS:           superseded
+:SUPERSEDED_AT:    [2026-08-26 Wed]
 :END:
 
 ** Statement
