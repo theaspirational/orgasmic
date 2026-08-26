@@ -3703,6 +3703,21 @@ mod tests {
         std::fs::write(path, contents).unwrap();
     }
 
+    fn write_node(project: &Path, collection: &str, id: &str, label: &str, body: &str) {
+        write(
+            &project
+                .join(".orgasmic")
+                .join(collection)
+                .join(id)
+                .join("node.org"),
+            &format!("#+title: orgasmic {label} {id}\n#+orgasmic_version: 2\n\n{body}"),
+        );
+    }
+
+    fn remove_seed_task(project: &Path) {
+        std::fs::remove_dir_all(project.join(".orgasmic/tasks/TASK-001")).unwrap();
+    }
+
     fn make_home() -> (tempfile::TempDir, Home) {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
@@ -3971,10 +3986,39 @@ mod tests {
         let (tmp, home) = make_home();
         let project = tmp.path().join("project");
         seed_project(&project);
-        write(
-            &project.join(".orgasmic/tasks/backlog.org"),
-            "#+title: dependency states\n#+orgasmic_version: 1\n\n* BACKLOG TASK-ACTIVE Active dependency\n:PROPERTIES:\n:ID: TASK-ACTIVE\n:END:\n\n* DONE TASK-DONE Satisfied dependency\n:PROPERTIES:\n:ID: TASK-DONE\n:END:\n\n* CANCELLED TASK-CANCEL Cancelled dependency\n:PROPERTIES:\n:ID: TASK-CANCEL\n:END:\n\n* BACKLOG TASK-BLOCKED Active dependency blocks\n:PROPERTIES:\n:ID: TASK-BLOCKED\n:DEPENDS_ON: TASK-ACTIVE\n:END:\n\n* BACKLOG TASK-SATISFIED Done dependency does not block\n:PROPERTIES:\n:ID: TASK-SATISFIED\n:DEPENDS_ON: TASK-DONE\n:END:\n\n* BACKLOG TASK-CANCELLED Cancelled dependency does not block\n:PROPERTIES:\n:ID: TASK-CANCELLED\n:DEPENDS_ON: TASK-CANCEL\n:END:\n\n* BACKLOG TASK-MISSING Missing dependency blocks\n:PROPERTIES:\n:ID: TASK-MISSING\n:DEPENDS_ON: TASK-NOT-HERE\n:END:\n",
-        );
+        remove_seed_task(&project);
+        for (id, body) in [
+            (
+                "TASK-ACTIVE",
+                "* BACKLOG TASK-ACTIVE Active dependency\n:PROPERTIES:\n:ID: TASK-ACTIVE\n:END:\n",
+            ),
+            (
+                "TASK-DONE",
+                "* DONE TASK-DONE Satisfied dependency\n:PROPERTIES:\n:ID: TASK-DONE\n:END:\n",
+            ),
+            (
+                "TASK-CANCEL",
+                "* CANCELLED TASK-CANCEL Cancelled dependency\n:PROPERTIES:\n:ID: TASK-CANCEL\n:END:\n",
+            ),
+            (
+                "TASK-BLOCKED",
+                "* BACKLOG TASK-BLOCKED Active dependency blocks\n:PROPERTIES:\n:ID: TASK-BLOCKED\n:DEPENDS_ON: TASK-ACTIVE\n:END:\n",
+            ),
+            (
+                "TASK-SATISFIED",
+                "* BACKLOG TASK-SATISFIED Done dependency does not block\n:PROPERTIES:\n:ID: TASK-SATISFIED\n:DEPENDS_ON: TASK-DONE\n:END:\n",
+            ),
+            (
+                "TASK-CANCELLED",
+                "* BACKLOG TASK-CANCELLED Cancelled dependency does not block\n:PROPERTIES:\n:ID: TASK-CANCELLED\n:DEPENDS_ON: TASK-CANCEL\n:END:\n",
+            ),
+            (
+                "TASK-MISSING",
+                "* BACKLOG TASK-MISSING Missing dependency blocks\n:PROPERTIES:\n:ID: TASK-MISSING\n:DEPENDS_ON: TASK-NOT-HERE\n:END:\n",
+            ),
+        ] {
+            write_node(&project, "tasks", id, "task", body);
+        }
         seed_board(&home, &project, "project");
         let index = Index::new(home);
         index.bootstrap_catalog().await;
@@ -4390,9 +4434,13 @@ mod tests {
         let new_root = tmp.path().join("new");
         seed_project(&old_root);
         seed_project(&new_root);
-        write(
-            &new_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: tasks\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NEW New root task\n:PROPERTIES:\n:ID: TASK-NEW\n:END:\n",
+        remove_seed_task(&new_root);
+        write_node(
+            &new_root,
+            "tasks",
+            "TASK-NEW",
+            "task",
+            "* BACKLOG TASK-NEW New root task\n:PROPERTIES:\n:ID: TASK-NEW\n:END:\n",
         );
         seed_board(&home, &old_root, "project");
         let index = Index::new(home.clone());
@@ -4807,7 +4855,7 @@ mod tests {
         let project = tmp.path().join("blocked-project");
         seed_project(&project);
         seed_board(&home, &project, "blocked-project");
-        let task_file = project.join(".orgasmic/tasks/backlog.org");
+        let task_file = project.join(".orgasmic/tasks/TASK-001/node.org");
         std::fs::remove_file(&task_file).unwrap();
         let task_file_c = std::ffi::CString::new(task_file.as_os_str().as_bytes()).unwrap();
         let rc = unsafe { libc::mkfifo(task_file_c.as_ptr(), 0o600) };
@@ -4962,10 +5010,26 @@ mod tests {
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-A TASK-B\n:END:\n\n* BACKLOG TASK-A First dependency :work:\n:PROPERTIES:\n:ID:               TASK-A\n:END:\n\n* BACKLOG TASK-B Second dependency :work:\n:PROPERTIES:\n:ID:               TASK-B\n:END:\n\n* BACKLOG TASK-002 Unblocked task :work:\n:PROPERTIES:\n:ID:               TASK-002\n:END:\n",
-        );
+        for (id, body) in [
+            (
+                "TASK-001",
+                "* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-A TASK-B\n:END:\n",
+            ),
+            (
+                "TASK-A",
+                "* BACKLOG TASK-A First dependency :work:\n:PROPERTIES:\n:ID:               TASK-A\n:END:\n",
+            ),
+            (
+                "TASK-B",
+                "* BACKLOG TASK-B Second dependency :work:\n:PROPERTIES:\n:ID:               TASK-B\n:END:\n",
+            ),
+            (
+                "TASK-002",
+                "* BACKLOG TASK-002 Unblocked task :work:\n:PROPERTIES:\n:ID:               TASK-002\n:END:\n",
+            ),
+        ] {
+            write_node(&project_root, "tasks", id, "task", body);
+        }
 
         let index = Index::new(home);
         index.rebuild().await;
@@ -4979,9 +5043,22 @@ mod tests {
         let stats = index.catalog().await.remove(0).task_stats.unwrap();
         assert_eq!(stats.blocked, 1);
 
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-C\n:END:\n\n* BACKLOG TASK-C Refreshed dependency :work:\n:PROPERTIES:\n:ID:               TASK-C\n:END:\n",
+        for id in ["TASK-A", "TASK-B", "TASK-002"] {
+            std::fs::remove_dir_all(project_root.join(".orgasmic/tasks").join(id)).unwrap();
+        }
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-001",
+            "task",
+            "* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-C\n:END:\n",
+        );
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-C",
+            "task",
+            "* BACKLOG TASK-C Refreshed dependency :work:\n:PROPERTIES:\n:ID:               TASK-C\n:END:\n",
         );
         index.refresh_project("proj-x").await.unwrap();
         let snap = index.snapshot().await;
@@ -4998,10 +5075,21 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-RDY12\n:IMPLEMENTS:       arch_APP12\n:PRODUCES:         crates/example.rs\n:END:\n\n* BACKLOG TASK-RDY12 Ready dependency :work:\n:PROPERTIES:\n:ID:               TASK-RDY12\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-RDY12\n:IMPLEMENTS:       arch_APP12\n:PRODUCES:         crates/example.rs\n:END:\n",
+        );
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-RDY12",
+            "task",
+            "* BACKLOG TASK-RDY12 Ready dependency :work:\n:PROPERTIES:\n:ID:               TASK-RDY12\n:END:\n",
         );
         let index = Index::new(home);
         index.rebuild().await;
@@ -5037,10 +5125,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5063,10 +5155,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/done.org"),
-            "#+title: x done\n#+orgasmic_version: 1\n\n* DONE TASK-BKC12 Historical implementation edge :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       arch_GONE99\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* DONE TASK-BKC12 Historical implementation edge :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       arch_GONE99\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5092,10 +5188,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:PRODUCES:         arch_GONE99\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:PRODUCES:         arch_GONE99\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5122,10 +5222,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       dec_GONE99\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       dec_GONE99\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5149,10 +5253,10 @@ mod tests {
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        let glossary = project_root.join(".orgasmic/glossary.org");
+        let glossary = project_root.join(".orgasmic/glossary/term_A/node.org");
         write(
             &glossary,
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5181,10 +5285,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12 TASK-MSS12\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12 TASK-MSS12\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5220,10 +5328,10 @@ mod tests {
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        let glossary = project_root.join(".orgasmic/glossary.org");
+        let glossary = project_root.join(".orgasmic/glossary/term_A/node.org");
         write(
             &glossary,
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5238,7 +5346,7 @@ mod tests {
         // no daemon restart — and confirm the count drops to zero.
         write(
             &glossary,
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
         );
         index.refresh_project("proj-x").await.unwrap();
         let snap = index.snapshot().await;
@@ -5467,9 +5575,12 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/glossary.org"),
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       arch_GONE99\n:END:\n",
+        write_node(
+            &project_root,
+            "glossary",
+            "term_A",
+            "glossary term",
+            "* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       arch_GONE99\n:END:\n",
         );
         assert!(
             !project_root.join(".orgasmic/architecture.org").exists(),
@@ -5537,11 +5648,11 @@ The following criteria must hold before close.
         let before = index.snapshot().await.project("proj-x").unwrap().clone();
         assert_eq!(before.tasks.len(), 1);
 
-        // Now corrupt the sprint file with a broken property drawer.
-        let sprint = project_root.join(".orgasmic/tasks/backlog.org");
+        // Now corrupt the task node with a broken property drawer.
+        let sprint = project_root.join(".orgasmic/tasks/TASK-001/node.org");
         std::fs::write(
             &sprint,
-            "#+title: x\n\n* BACKLOG TASK-001 oops\n:PROPERTIES:\nno-end-marker",
+            "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 oops\n:PROPERTIES:\nno-end-marker",
         )
         .unwrap();
 
@@ -5613,10 +5724,14 @@ The following criteria must hold before close.
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-999.1 Orphan\n:PROPERTIES:\n:ID:               TASK-999.1\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-999.1",
+            "task",
+            "* BACKLOG TASK-999.1 Orphan\n:PROPERTIES:\n:ID:               TASK-999.1\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5634,37 +5749,30 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n\
-* dec_AAAAA First root\n\
-:PROPERTIES:\n\
-:ID:                 dec_AAAAA\n\
-:END:\n\
-\n\
-* dec_BBBBB Second root\n\
-:PROPERTIES:\n\
-:ID:                 dec_BBBBB\n\
-:END:\n\
-\n\
-* dec_CCCCC Child one\n\
-:PROPERTIES:\n\
-:ID:                 dec_CCCCC\n\
-:PARENT:             dec_BBBBB\n\
-:END:\n\
-\n\
-* dec_DDDDD Child two\n\
-:PROPERTIES:\n\
-:ID:                 dec_DDDDD\n\
-:PARENT:             dec_BBBBB\n\
-:END:\n\
-\n\
-* dec_EEEEE Grandchild\n\
-:PROPERTIES:\n\
-:ID:                 dec_EEEEE\n\
-:PARENT:             dec_DDDDD\n\
-:END:\n",
-        );
+        for (id, body) in [
+            (
+                "dec_AAAAA",
+                "* dec_AAAAA First root\n:PROPERTIES:\n:ID:                 dec_AAAAA\n:END:\n",
+            ),
+            (
+                "dec_BBBBB",
+                "* dec_BBBBB Second root\n:PROPERTIES:\n:ID:                 dec_BBBBB\n:END:\n",
+            ),
+            (
+                "dec_CCCCC",
+                "* dec_CCCCC Child one\n:PROPERTIES:\n:ID:                 dec_CCCCC\n:PARENT:             dec_BBBBB\n:END:\n",
+            ),
+            (
+                "dec_DDDDD",
+                "* dec_DDDDD Child two\n:PROPERTIES:\n:ID:                 dec_DDDDD\n:PARENT:             dec_BBBBB\n:END:\n",
+            ),
+            (
+                "dec_EEEEE",
+                "* dec_EEEEE Grandchild\n:PROPERTIES:\n:ID:                 dec_EEEEE\n:PARENT:             dec_DDDDD\n:END:\n",
+            ),
+        ] {
+            write_node(&project_root, "decisions", id, "decision", body);
+        }
 
         let index = Index::new(home);
         index.rebuild().await;
@@ -5693,14 +5801,12 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n\
-* dec_RPHN1 Orphan child\n\
-:PROPERTIES:\n\
-:ID:                 dec_RPHN1\n\
-:PARENT:             dec_GHST1\n\
-:END:\n",
+        write_node(
+            &project_root,
+            "decisions",
+            "dec_RPHN1",
+            "decision",
+            "* dec_RPHN1 Orphan child\n:PROPERTIES:\n:ID:                 dec_RPHN1\n:PARENT:             dec_GHST1\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5719,26 +5825,22 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n\
-* dec_AAAAA Parent now superseded\n\
-:PROPERTIES:\n\
-:ID:                 dec_AAAAA\n\
-:END:\n\
-\n\
-* dec_BBBBB Replacement\n\
-:PROPERTIES:\n\
-:ID:                 dec_BBBBB\n\
-:SUPERSEDES:         dec_AAAAA\n\
-:END:\n\
-\n\
-* dec_CCCCC Live child\n\
-:PROPERTIES:\n\
-:ID:                 dec_CCCCC\n\
-:PARENT:             dec_AAAAA\n\
-:END:\n",
-        );
+        for (id, body) in [
+            (
+                "dec_AAAAA",
+                "* dec_AAAAA Parent now superseded\n:PROPERTIES:\n:ID:                 dec_AAAAA\n:END:\n",
+            ),
+            (
+                "dec_BBBBB",
+                "* dec_BBBBB Replacement\n:PROPERTIES:\n:ID:                 dec_BBBBB\n:SUPERSEDES:         dec_AAAAA\n:END:\n",
+            ),
+            (
+                "dec_CCCCC",
+                "* dec_CCCCC Live child\n:PROPERTIES:\n:ID:                 dec_CCCCC\n:PARENT:             dec_AAAAA\n:END:\n",
+            ),
+        ] {
+            write_node(&project_root, "decisions", id, "decision", body);
+        }
 
         let index = Index::new(home);
         index.rebuild().await;
@@ -5761,20 +5863,19 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n\
-* dec_X Old decision :history:\n\
-:PROPERTIES:\n\
-:ID:                 dec_X\n\
-:END:\n\
-** Decision\nThe old way.\n\n\
-* dec_Y Replacement decision :current:\n\
-:PROPERTIES:\n\
-:ID:                 dec_Y\n\
-:SUPERSEDES:         dec_X\n\
-:END:\n\
-** Decision\nThe new way.\n",
+        write_node(
+            &project_root,
+            "decisions",
+            "dec_X",
+            "decision",
+            "* dec_X Old decision :history:\n:PROPERTIES:\n:ID:                 dec_X\n:END:\n** Decision\nThe old way.\n",
+        );
+        write_node(
+            &project_root,
+            "decisions",
+            "dec_Y",
+            "decision",
+            "* dec_Y Replacement decision :current:\n:PROPERTIES:\n:ID:                 dec_Y\n:SUPERSEDES:         dec_X\n:END:\n** Decision\nThe new way.\n",
         );
 
         let index = Index::new(home);
@@ -5977,11 +6078,13 @@ The following criteria must hold before close.
             tokio::spawn(async move { first_index.refresh_after_tx("project", "tx-first").await });
         gate.entered.notified().await;
 
-        let backlog = project.join(".orgasmic/tasks/backlog.org");
-        let mut contents = std::fs::read_to_string(&backlog).unwrap();
-        contents
-            .push_str("\n* BACKLOG TASK-002 Later mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n");
-        write(&backlog, &contents);
+        write_node(
+            &project,
+            "tasks",
+            "TASK-002",
+            "task",
+            "* BACKLOG TASK-002 Later mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n",
+        );
         let second_index = index.clone();
         let second =
             tokio::spawn(
@@ -6013,11 +6116,13 @@ The following criteria must hold before close.
         let index = Index::new(home);
         index.rebuild().await;
 
-        let backlog = project.join(".orgasmic/tasks/backlog.org");
-        let mut contents = std::fs::read_to_string(&backlog).unwrap();
-        contents
-            .push_str("\n* BACKLOG TASK-002 Older mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n");
-        write(&backlog, &contents);
+        write_node(
+            &project,
+            "tasks",
+            "TASK-002",
+            "task",
+            "* BACKLOG TASK-002 Older mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n",
+        );
 
         let first_gate = index.gate_next_refresh();
         let second_gate = index.gate_next_refresh();
@@ -6034,9 +6139,13 @@ The following criteria must hold before close.
             let index = index.clone();
             tokio::spawn(async move { index.refresh_after_tx("project", "tx-older").await })
         };
-        contents
-            .push_str("\n* BACKLOG TASK-003 Later mutation\n:PROPERTIES:\n:ID: TASK-003\n:END:\n");
-        write(&backlog, &contents);
+        write_node(
+            &project,
+            "tasks",
+            "TASK-003",
+            "task",
+            "* BACKLOG TASK-003 Later mutation\n:PROPERTIES:\n:ID: TASK-003\n:END:\n",
+        );
         let newer = {
             let index = index.clone();
             tokio::spawn(async move { index.refresh_after_tx("project", "tx-newer").await })
