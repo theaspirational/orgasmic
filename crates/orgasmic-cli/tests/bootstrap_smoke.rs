@@ -166,8 +166,12 @@ async fn greenfield_bootstrap_e2e_through_first_artifact() {
         ],
     );
     assert!(
-        project_root.join(".orgasmic/decisions.org").is_file(),
-        "project init should scaffold decisions.org directly"
+        project_root.join(".orgasmic/decisions").is_dir(),
+        "project init should scaffold the decisions/ collection directory"
+    );
+    assert!(
+        !project_root.join(".orgasmic/decisions.org").exists(),
+        "project init must not scaffold the retired aggregate decisions.org"
     );
     assert!(
         !project_root.join(".orgasmic/config.org").exists(),

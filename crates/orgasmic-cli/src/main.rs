@@ -649,21 +649,30 @@ enum TaskCmd {
 enum TaskCommentCmd {
     /// Replace one comment body using its current body as the OCC token.
     Edit {
+        /// Task node id, e.g. `TASK-XXXXX`
         id: String,
+        /// Journal entry id of the comment to edit
         entry_id: String,
+        /// Registered project id; omitted → resolved from the cwd
         #[arg(long)]
         project: Option<String>,
+        /// Current comment body (the OCC token); the edit is refused if it no longer matches
         #[arg(long)]
         expected_body: String,
+        /// New comment body
         #[arg(long)]
         body: String,
     },
     /// Tombstone one comment using its current body as the OCC token.
     Delete {
+        /// Task node id, e.g. `TASK-XXXXX`
         id: String,
+        /// Journal entry id of the comment to delete
         entry_id: String,
+        /// Registered project id; omitted → resolved from the cwd
         #[arg(long)]
         project: Option<String>,
+        /// Current comment body (the OCC token); the delete is refused if it no longer matches
         #[arg(long)]
         expected_body: String,
     },
