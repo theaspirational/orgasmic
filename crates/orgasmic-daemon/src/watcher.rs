@@ -348,6 +348,11 @@ async fn flush(
                     classified = "dropped_tmp".to_string();
                     break;
                 }
+                let views_dir = canonical(&entry_root.join(".orgasmic/views"));
+                if canon.starts_with(&views_dir) {
+                    classified = "dropped_views".to_string();
+                    break;
+                }
                 touched_projects.insert(entry.id.clone());
                 classified = format!("project={}", entry.id);
                 break;

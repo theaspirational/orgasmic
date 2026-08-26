@@ -186,6 +186,11 @@ Examples:
         #[command(subcommand)]
         cmd: ProjectCmd,
     },
+    /// Build derived aggregate read views for the current project.
+    Views {
+        #[command(subcommand)]
+        cmd: ViewsCmd,
+    },
     /// Show the global board.
     Board,
     /// Start the daemon (HTTP + WS), foreground.
@@ -480,6 +485,12 @@ enum ProjectCmd {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum ViewsCmd {
+    /// Build .orgasmic/views/{board,glossary,decisions}.org from node directories.
+    Build,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1463,6 +1474,9 @@ fn main() -> Result<()> {
             ProjectCmd::List { ids } => cmd_project_list(&home, ids),
             ProjectCmd::Migrate { dry_run } => project_migrate::run(dry_run),
         },
+        Cmd::Views {
+            cmd: ViewsCmd::Build,
+        } => cmd_views_build(),
         Cmd::Board => cmd_project_list(&home, false),
         Cmd::Serve {
             bind,
@@ -1926,6 +1940,13 @@ fn find_project_root_optional() -> Result<Option<PathBuf>> {
             return Ok(None);
         }
     }
+}
+
+fn cmd_views_build() -> Result<()> {
+    let root = find_project_root_optional()?.context("no .orgasmic/project.org found")?;
+    let changed = orgasmic_core::build_views(&root)?;
+    println!("built .orgasmic/views ({changed} changed)");
+    Ok(())
 }
 
 fn entry_version_notice(project_root: &Path) -> Option<String> {

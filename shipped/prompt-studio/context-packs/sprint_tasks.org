@@ -2,7 +2,7 @@
 :PROPERTIES:
 :ID:                 sprint_tasks
 :SOURCE_KIND:        project-file
-:FILE:               .orgasmic/tasks/backlog.org
+:FILE:               .orgasmic/views/board.org
 :RENDER_POLICY:      reference
 :VERSION:            1
 :END:

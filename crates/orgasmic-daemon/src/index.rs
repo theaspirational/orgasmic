@@ -2632,6 +2632,13 @@ impl Index {
                 snap.projects.insert(board_entry.id.clone(), prior);
             }
         }
+        if let Err(error) = orgasmic_core::build_views(&board_entry.path) {
+            push_parse_error(
+                snap,
+                board_entry.path.join(".orgasmic/views"),
+                format!("build derived views: {error:#}"),
+            );
+        }
     }
 
     fn load_graph(
@@ -4893,6 +4900,45 @@ mod tests {
                 text: "Body fields load.".to_string(),
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_rebuilds_byte_stable_derived_views() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join(".orgasmic/decisions/dec_A/node.org"),
+            "#+title: orgasmic decision dec_A\n#+orgasmic_version: 2\n\n* dec_A Choose A\n:PROPERTIES:\n:ID: dec_A\n:END:\n",
+        );
+        write(
+            &project_root.join(".orgasmic/glossary/term_A/node.org"),
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A\n:PROPERTIES:\n:ID: term_A\n:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let views = project_root.join(".orgasmic/views");
+        let first = std::fs::read(views.join("board.org")).unwrap();
+        assert!(std::fs::read_to_string(views.join("decisions.org"))
+            .unwrap()
+            .contains("* dec_A Choose A"));
+        assert!(std::fs::read_to_string(views.join("glossary.org"))
+            .unwrap()
+            .contains("* term_A A"));
+
+        index.refresh_project("proj-x").await.unwrap();
+        assert_eq!(std::fs::read(views.join("board.org")).unwrap(), first);
+
+        write(
+            &project_root.join(".orgasmic/tasks/TASK-001/node.org"),
+            "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* IN_PROGRESS TASK-001 Changed\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
+        );
+        index.refresh_project("proj-x").await.unwrap();
+        let changed = std::fs::read_to_string(views.join("board.org")).unwrap();
+        assert_ne!(changed.as_bytes(), first);
+        assert!(changed.contains("* IN_PROGRESS TASK-001 Changed"));
     }
 
     #[tokio::test]

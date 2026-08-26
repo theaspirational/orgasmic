@@ -27,6 +27,7 @@ pub mod schema_examples;
 pub mod session;
 pub mod slots;
 pub mod tx;
+pub mod views;
 pub use home::{resolve_loader, Home, HomeError};
 pub use id::{
     is_dec_id, is_legacy_sequential_create_id, is_minted_stem, is_valid_greenfield_arch_id,
@@ -88,3 +89,4 @@ pub use slots::{
     scan as scan_slots, DryRunReport, SlotError, SlotRef, SlotValues,
 };
 pub use tx::{fold_dispatches, parse_tx_file, DispatchFold, TxEntry, TxError, TxWriter};
+pub use views::build_views;

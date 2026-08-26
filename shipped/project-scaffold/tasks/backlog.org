@@ -87,7 +87,7 @@ repo-specific verification and branch notes there or in conventions as prose.
 :STATE:            backlog
 :PARENT_TASK:      TASK-C9V29
 :PRIORITY:         P1
-:WRITE_SCOPE:      .orgasmic/decisions.org .orgasmic/glossary.org .orgasmic/tx/**
+:WRITE_SCOPE:      .orgasmic/decisions/** .orgasmic/glossary/** .orgasmic/tx/**
 :READ_SCOPE:       .orgasmic/project.org README* docs/** src/** crates/** lib/**
 :DEPENDS_ON:       TASK-C9V29.1
 :BLOCKED_BY:
@@ -113,7 +113,7 @@ that references it (create decisions first, reference them after; invented
 sequential ids like `dec_001` are rejected on create). Each record carries
 `:ID:`, `:DECIDED_AT:`, topic tags, and `** Context` / `** Decision` /
 `** Consequences`. Presence means accepted — there is no status field. Seed any
-new domain terms you rely on into `.orgasmic/glossary.org`.
+new domain terms you rely on with `orgasmic glossary create`.
 
 ** Acceptance Criteria
 - [ ] At least 3 repo-specific decision records beyond `dec_K1DR7`, each
@@ -129,7 +129,7 @@ new domain terms you rely on into `.orgasmic/glossary.org`.
 :STATE:            backlog
 :PARENT_TASK:      TASK-C9V29
 :PRIORITY:         P1
-:WRITE_SCOPE:      .orgasmic/project.org .orgasmic/decisions.org .orgasmic/gotchas.org .orgasmic/conventions/** .orgasmic/tmp/local_instructions.org CLAUDE.md AGENTS.md .orgasmic/tx/**
+:WRITE_SCOPE:      .orgasmic/project.org .orgasmic/decisions/** .orgasmic/gotchas.org .orgasmic/conventions/** .orgasmic/tmp/local_instructions.org CLAUDE.md AGENTS.md .orgasmic/tx/**
 :READ_SCOPE:       CLAUDE.md AGENTS.md .cursorrules .cursor/** .github/copilot-instructions.md CONTRIBUTING.md docs/** .orgasmic/**
 :DEPENDS_ON:       TASK-C9V29.2
 :BLOCKED_BY:

@@ -6,9 +6,8 @@
 :END:
 
 Grilling policy:
-- Challenge fuzzy terms against `.orgasmic/glossary.org`.
-- Challenge durable tradeoffs against `.orgasmic/decisions.org`.
+- Challenge fuzzy terms against `.orgasmic/views/glossary.org`.
+- Challenge durable tradeoffs against `.orgasmic/views/decisions.org`.
 - Ask only questions that can change the plan, unlock a decision, or correct
   terminology.
-- Record accepted answers in the appropriate graph surface
-  (`.orgasmic/decisions.org` or `.orgasmic/glossary.org`).
+- Record accepted answers through `orgasmic decision` or `orgasmic glossary`.

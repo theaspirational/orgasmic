@@ -23,15 +23,10 @@ import { useResource } from '@/lib/useResource';
 import { ErrorPanel } from './Primitives';
 
 const ORG_FILES = [
-  '.orgasmic/tasks/backlog.org',
-  '.orgasmic/tasks/todo.org',
-  '.orgasmic/tasks/in_progress.org',
-  '.orgasmic/tasks/in_review.org',
-  '.orgasmic/tasks/done.org',
-  '.orgasmic/tasks/cancelled.org',
+  '.orgasmic/views/board.org',
   '.orgasmic/tasks/goal.org',
-  '.orgasmic/decisions.org',
-  '.orgasmic/glossary.org',
+  '.orgasmic/views/decisions.org',
+  '.orgasmic/views/glossary.org',
   '.orgasmic/project.org',
 ];
 
