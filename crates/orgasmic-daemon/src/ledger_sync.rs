@@ -37,12 +37,36 @@ fn sync_once_inner(
         return Ok(SyncOutcome::Idle);
     }
 
+    // Stage everything this machine changed inside the ledger, minus other
+    // machines' pens.
+    //
+    // Staging only the node dirs it holds a claim on *right now* dropped every
+    // edit whose claim had already been released: a dispatch releases its claim
+    // milliseconds after writing the node, and the next tick is seconds later,
+    // so the node write was never committed and never reached another machine.
+    // It also never staged the files that are not claim-gated at all — the
+    // singleton `project.org`, `tasks/goal.org`, `tasks/handoff.org`,
+    // `gotchas.org`, and the generated `views/` — which were left as permanent
+    // uncommitted changes for `--autostash` to churn on every tick.
+    //
+    // A foreign node dir can only appear modified here if something wrote
+    // outside its pen, which the claim gate refuses. Staging it makes the next
+    // rebase conflict loudly instead of losing the edit silently.
+    if ledger.join(".orgasmic").exists() {
+        git(
+            ledger,
+            &[
+                "add",
+                "--all",
+                "--",
+                ".orgasmic",
+                ":(exclude).orgasmic/machines",
+            ],
+        )?;
+    }
     let machine_rel = PathBuf::from(".orgasmic/machines").join(machine_id);
     if ledger.join(&machine_rel).exists() {
-        git(ledger, &["add", "--", path_arg(&machine_rel)?])?;
-    }
-    for claimed in claimed_node_paths(ledger, machine_id)? {
-        git(ledger, &["add", "--", path_arg(&claimed)?])?;
+        git(ledger, &["add", "--all", "--", path_arg(&machine_rel)?])?;
     }
     if !git_success(ledger, &["diff", "--cached", "--quiet"])? {
         git(
@@ -129,28 +153,6 @@ pub(crate) fn spawn(
             }
         }
     });
-}
-
-fn claimed_node_paths(ledger: &Path, machine_id: &str) -> Result<Vec<PathBuf>> {
-    let claims = orgasmic_core::read_claims(ledger)?;
-    let dotorg = ledger.join(".orgasmic");
-    let mut paths = Vec::new();
-    for claim in claims.values().filter(|claim| claim.holder == machine_id) {
-        let mut matches = std::fs::read_dir(&dotorg)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|collection| collection.path().join(&claim.task))
-            .filter(|path| path.is_dir())
-            .collect::<Vec<_>>();
-        matches.sort();
-        if let Some(path) = matches.into_iter().next() {
-            paths.push(path.strip_prefix(ledger).unwrap_or(&path).to_path_buf());
-        }
-    }
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
 }
 
 fn path_arg(path: &Path) -> Result<&str> {
@@ -333,35 +335,65 @@ mod tests {
         );
     }
 
+    /// A node this machine wrote must reach the remote even though the claim
+    /// that authorised the write is already released. A dispatch releases its
+    /// claim milliseconds after writing the node and the sync tick is seconds
+    /// later, so "stage what is claimed right now" saw nothing to stage and the
+    /// edit was silently dropped from the ledger.
     #[test]
-    fn claimed_node_staging_hook_selects_only_the_deterministic_holder() {
+    fn a_node_written_under_a_released_claim_still_reaches_the_remote() {
         let tmp = tempfile::tempdir().unwrap();
-        let node = tmp.path().join(".orgasmic/tasks/TASK-NODE/node.org");
+        let (_remote, a, b) = seed_remote(&tmp);
+        let a_id = uuid::Uuid::new_v4().to_string();
+        let b_id = uuid::Uuid::new_v4().to_string();
+
+        let node = a.join(".orgasmic/tasks/TASK-DONE/node.org");
         std::fs::create_dir_all(node.parent().unwrap()).unwrap();
-        std::fs::write(node, "node").unwrap();
-        for machine in ["a", "b"] {
-            let path = tmp
-                .path()
-                .join(".orgasmic/machines")
-                .join(machine)
-                .join("claims.org");
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            let mut claim = orgasmic_core::tx::TxEntry::new(
-                format!("claim-{machine}"),
+        std::fs::write(
+            &node,
+            "#+title: orgasmic task TASK-DONE\n#+orgasmic_version: 2\n\n\
+             * DONE TASK-DONE Written under a claim :work:\n\
+             :PROPERTIES:\n:ID:               TASK-DONE\n:END:\n",
+        )
+        .unwrap();
+
+        // Claimed, then released — the state a closed dispatch leaves behind.
+        let claims = a.join(".orgasmic/machines").join(&a_id).join("claims.org");
+        std::fs::create_dir_all(claims.parent().unwrap()).unwrap();
+        let mut writer = orgasmic_core::tx::TxWriter::open(claims).unwrap();
+        for (tx_id, ty, time) in [
+            (
+                "claim-a",
                 orgasmic_core::claims::CLAIMED,
                 "[2026-08-26 Wed 10:00:00]",
-                "test",
-                machine,
-            );
-            claim.task = Some("TASK-NODE".into());
-            let mut writer = orgasmic_core::tx::TxWriter::open(path).unwrap();
-            writer.append(&claim).unwrap();
+            ),
+            (
+                "release-a",
+                orgasmic_core::claims::RELEASED,
+                "[2026-08-26 Wed 10:00:01]",
+            ),
+        ] {
+            let mut event = orgasmic_core::tx::TxEntry::new(tx_id, ty, time, "test", &a_id);
+            event.task = Some("TASK-DONE".into());
+            writer.append(&event).unwrap();
         }
-        assert_eq!(
-            claimed_node_paths(tmp.path(), "a").unwrap(),
-            vec![PathBuf::from(".orgasmic/tasks/TASK-NODE")]
+        drop(writer);
+
+        assert!(matches!(
+            sync_once(&a, &a_id).unwrap(),
+            SyncOutcome::Synced { .. }
+        ));
+        sync_once(&b, &b_id).unwrap();
+
+        let landed = b.join(".orgasmic/tasks/TASK-DONE/node.org");
+        assert!(
+            landed.is_file(),
+            "the node written under the released claim never reached the other machine"
         );
-        assert!(claimed_node_paths(tmp.path(), "b").unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(landed).unwrap(),
+            std::fs::read_to_string(&node).unwrap()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
