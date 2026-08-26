@@ -299,24 +299,43 @@ fn seed_project(home: &Home, project_root: &Path) {
         &project_root.join(".orgasmic/project.org"),
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
     );
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: backlog\n#+orgasmic_version: 1\n\n* BACKLOG TASK-DISPATCH Dispatch CLI smoke :cli:\n:PROPERTIES:\n:ID:               TASK-DISPATCH\n:END:\n\n* BACKLOG TASK-ABORT Dispatch abort smoke :cli:\n:PROPERTIES:\n:ID:               TASK-ABORT\n:END:\n\n* BACKLOG TASK-FIX Fix subtask smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX\n:END:\n\n* BACKLOG TASK-FIX-DECL Declarative fix subtask smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX-DECL\n:FIX_SUBTASK:      t\n:END:\n\n* BACKLOG TASK-FIX-FINAL Final fix round smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX-FINAL\n:FIX_SUBTASK:      t\n:END:\n\n* BACKLOG TASK-NO-MERGE Missing merge smoke :cli:\n:PROPERTIES:\n:ID:               TASK-NO-MERGE\n:END:\n\n* BACKLOG TASK-BUNDLE-A Bundle smoke A :cli:\n:PROPERTIES:\n:ID:               TASK-BUNDLE-A\n:END:\n\n* BACKLOG TASK-BUNDLE-B Bundle smoke B :cli:\n:PROPERTIES:\n:ID:               TASK-BUNDLE-B\n:END:\n\n* BACKLOG TASK-CLEANUP Cleanup smoke :cli:\n:PROPERTIES:\n:ID:               TASK-CLEANUP\n:END:\n",
-    );
-    write(
-        &project_root.join(".orgasmic/tasks/in_review.org"),
-        "#+title: in review\n#+orgasmic_version: 1\n\n* IN_REVIEW TASK-REVIEW Reviewer dispatch smoke :cli:\n:PROPERTIES:\n:ID:               TASK-REVIEW\n:END:\n\n* IN_REVIEW TASK-REVIEW-ISSUES Reviewer issue smoke :cli:\n:PROPERTIES:\n:ID:               TASK-REVIEW-ISSUES\n:END:\n\n* IN_REVIEW TASK-SHIP-CLEAN Ship verdict smoke :cli:\n:PROPERTIES:\n:ID:               TASK-SHIP-CLEAN\n:END:\n\n* IN_REVIEW TASK-HAS-ISSUES Has-issues verdict smoke :cli:\n:PROPERTIES:\n:ID:               TASK-HAS-ISSUES\n:END:\n",
-    );
-    for (name, title) in [
-        ("todo.org", "todo"),
-        ("in_progress.org", "in progress"),
-        ("done.org", "done"),
-        ("cancelled.org", "cancelled"),
-    ] {
-        write(
-            &project_root.join(".orgasmic/tasks").join(name),
-            format!("#+title: {title}\n#+orgasmic_version: 1\n\n"),
-        );
+    let backlog = [
+        ("TASK-DISPATCH", "Dispatch CLI smoke", ""),
+        ("TASK-ABORT", "Dispatch abort smoke", ""),
+        ("TASK-FIX", "Fix subtask smoke", ""),
+        (
+            "TASK-FIX-DECL",
+            "Declarative fix subtask smoke",
+            ":FIX_SUBTASK:      t\n",
+        ),
+        (
+            "TASK-FIX-FINAL",
+            "Final fix round smoke",
+            ":FIX_SUBTASK:      t\n",
+        ),
+        ("TASK-NO-MERGE", "Missing merge smoke", ""),
+        ("TASK-BUNDLE-A", "Bundle smoke A", ""),
+        ("TASK-BUNDLE-B", "Bundle smoke B", ""),
+        ("TASK-CLEANUP", "Cleanup smoke", ""),
+    ];
+    let in_review = [
+        ("TASK-REVIEW", "Reviewer dispatch smoke", ""),
+        ("TASK-REVIEW-ISSUES", "Reviewer issue smoke", ""),
+        ("TASK-SHIP-CLEAN", "Ship verdict smoke", ""),
+        ("TASK-HAS-ISSUES", "Has-issues verdict smoke", ""),
+    ];
+    for (keyword, tasks) in [("BACKLOG", &backlog[..]), ("IN_REVIEW", &in_review[..])] {
+        for (id, title, extra) in tasks {
+            write(
+                &project_root
+                    .join(".orgasmic/tasks")
+                    .join(id)
+                    .join("node.org"),
+                format!(
+                    "#+title: orgasmic task {id}\n#+orgasmic_version: 2\n\n* {keyword} {id} {title} :cli:\n:PROPERTIES:\n:ID:               {id}\n{extra}:END:\n"
+                ),
+            );
+        }
     }
     write(
         &project_root.join(".orgasmic/tasks/goal.org"),
@@ -647,20 +666,22 @@ fn wait_for_file(path: &Path) {
 }
 
 fn sprint_source(project_root: &Path) -> String {
-    [
-        "backlog.org",
-        "todo.org",
-        "in_progress.org",
-        "in_review.org",
-        "done.org",
-        "cancelled.org",
-    ]
-    .into_iter()
-    .map(|name| project_root.join(".orgasmic/tasks").join(name))
-    .filter(|path| path.is_file())
-    .map(|path| std::fs::read_to_string(path).unwrap())
-    .collect::<Vec<_>>()
-    .join("\n")
+    let dir = project_root.join(".orgasmic/tasks");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|e| e.path().join("node.org"))
+                .filter(|p| p.is_file())
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn assert_task_stage(project_root: &Path, task: &str, keyword: &str, state: &str) {
