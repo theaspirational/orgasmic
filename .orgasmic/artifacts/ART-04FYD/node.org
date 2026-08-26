@@ -1,5 +1,5 @@
 #+title: orgasmic artifact ART-04FYD
-#+orgasmic_version: 1
+#+orgasmic_version: 2
 
 * ART-04FYD Lifecycle cockpit — team discussion brief
 :PROPERTIES:

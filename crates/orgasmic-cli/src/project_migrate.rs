@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
-use orgasmic_core::node_kernel::{journal_header, node_org_header};
+use orgasmic_core::node_kernel::{append_entry, journal_header, node_org_header, JournalEntry};
 use orgasmic_core::OrgFile;
 
 const TASK_STATES: [&str; 6] = [
@@ -25,8 +25,10 @@ struct Collection {
 #[derive(Default)]
 struct Migration {
     nodes: BTreeMap<PathBuf, (String, String)>,
+    rewrites: BTreeMap<PathBuf, String>,
     old_files: Vec<PathBuf>,
     headings: BTreeMap<&'static str, usize>,
+    in_place_nodes: usize,
     bytes: usize,
     project_source: String,
 }
@@ -46,7 +48,10 @@ pub(crate) fn run(dry_run: bool) -> Result<()> {
     for (collection, count) in &migration.headings {
         println!("  {collection}.nodes {count}");
     }
-    println!("  nodes {}", migration.nodes.len());
+    println!(
+        "  nodes {}",
+        migration.nodes.len() + migration.in_place_nodes
+    );
     println!("  bytes {}", migration.bytes);
     println!("  anomalies 0");
     println!("  heading_round_trip byte-for-byte");
@@ -107,7 +112,13 @@ fn plan(root: &Path) -> Result<Migration> {
         .flat_map(|collection| &collection.sources)
         .filter(|path| path.exists())
         .count();
-    if present == 0 && already_v2 {
+    let artifacts_dir = dotorg.join("artifacts");
+    let has_legacy_artifacts = std::fs::read_dir(&artifacts_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.path().join("artifact.org").is_file());
+    if present == 0 && already_v2 && !has_legacy_artifacts {
         return Ok(Migration::default());
     }
 
@@ -172,7 +183,91 @@ fn plan(root: &Path) -> Result<Migration> {
             migration.old_files.push(source_path);
         }
     }
+    plan_artifacts(&artifacts_dir, &mut migration)?;
     Ok(migration)
+}
+
+fn plan_artifacts(artifacts_dir: &Path, migration: &mut Migration) -> Result<()> {
+    let Ok(entries) = std::fs::read_dir(artifacts_dir) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let dir = entry?.path();
+        let id = dir.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        if !dir.is_dir() || !id.starts_with("ART-") {
+            continue;
+        }
+        let old_node = dir.join("artifact.org");
+        if !old_node.is_file() {
+            continue;
+        }
+        let old_journal = dir.join("reviews.org");
+        if !old_journal.is_file() {
+            bail!("migration source is missing: {}", old_journal.display());
+        }
+
+        let node_source = std::fs::read_to_string(&old_node)
+            .with_context(|| format!("read {}", old_node.display()))?;
+        let node_file = OrgFile::parse(&node_source, old_node.to_string_lossy())?;
+        let [heading] = node_file.headings.as_slice() else {
+            bail!("{} must hold exactly one heading", old_node.display());
+        };
+        if heading.property("ID") != Some(id) {
+            bail!(
+                "{} heading id does not match directory {id}",
+                old_node.display()
+            );
+        }
+        let node = node_org_header("artifact", id) + node_file.slice(heading.span.clone());
+
+        let reviews_source = std::fs::read_to_string(&old_journal)
+            .with_context(|| format!("read {}", old_journal.display()))?;
+        let reviews = OrgFile::parse(&reviews_source, old_journal.to_string_lossy())?;
+        let mut journal = journal_header(id);
+        for heading in &reviews.headings {
+            let cid = heading
+                .property("CID")
+                .with_context(|| format!("{} comment has no :CID:", old_journal.display()))?;
+            let mut extras = Vec::new();
+            for key in [
+                "VERSION",
+                "ANCHOR",
+                "RESOLUTION_TARGET",
+                "REPLY_TO",
+                "CONSUMED",
+                "RESOLVED",
+            ] {
+                if let Some(value) = heading.property(key) {
+                    extras.push((key.to_string(), value.to_string()));
+                }
+            }
+            let comment = JournalEntry {
+                entry_id: cid.to_string(),
+                // ponytail: legacy reviews have no timestamp; use file metadata if ordering matters.
+                time: heading
+                    .property("TIME")
+                    .unwrap_or("[1970-01-01 Thu 00:00:00]")
+                    .to_string(),
+                ty: "comment".into(),
+                actor: heading.property("AUTHOR").unwrap_or("legacy").to_string(),
+                machine: heading.property("MACHINE").unwrap_or("legacy").to_string(),
+                extras,
+                body: reviews_source[heading.body.start..heading.span.end]
+                    .trim()
+                    .to_string(),
+            };
+            comment.validate()?;
+            journal = append_entry(&journal, id, &comment);
+        }
+
+        migration.rewrites.insert(dir.join("node.org"), node);
+        migration.rewrites.insert(dir.join("journal.org"), journal);
+        migration.old_files.extend([old_node, old_journal]);
+        *migration.headings.entry("artifacts").or_default() += 1;
+        migration.in_place_nodes += 1;
+        migration.bytes += node_source.len() + reviews_source.len();
+    }
+    Ok(())
 }
 
 fn bump_project_version(source: &str) -> Result<String> {
@@ -207,6 +302,9 @@ fn apply(root: &Path, migration: &Migration) -> Result<()> {
             .with_context(|| format!("write {}/node.org", dir.display()))?;
         std::fs::write(dir.join("journal.org"), journal)
             .with_context(|| format!("write {}/journal.org", dir.display()))?;
+    }
+    for (path, contents) in &migration.rewrites {
+        std::fs::write(path, contents).with_context(|| format!("write {}", path.display()))?;
     }
     for path in &migration.old_files {
         std::fs::remove_file(path).with_context(|| format!("delete {}", path.display()))?;
@@ -247,6 +345,18 @@ mod tests {
             "* term_A Word\n:PROPERTIES:\n:ID: term_A\n:END:\n",
         )
         .unwrap();
+        let artifact = dotorg.join("artifacts/ART-ABCDE");
+        std::fs::create_dir_all(&artifact).unwrap();
+        std::fs::write(
+            artifact.join("artifact.org"),
+            "#+orgasmic_version: 1\n\n* ART-ABCDE title\n:PROPERTIES:\n:ID: ART-ABCDE\n:TITLE: title\n:VERSION: 1\n:STATE: submitted\n:END:\n",
+        )
+        .unwrap();
+        std::fs::write(
+            artifact.join("reviews.org"),
+            "* CID-old\n:PROPERTIES:\n:CID: CID-old\n:AUTHOR: owner\n:VERSION: 1\n:ANCHOR: {}\n:RESOLUTION_TARGET:\n:REPLY_TO:\n:RESOLVED: false\n:CONSUMED: false\n:END:\n\nkeep me\n",
+        )
+        .unwrap();
 
         let dry = plan(tmp.path()).unwrap();
         assert_eq!(dry.nodes.len(), 3);
@@ -256,6 +366,16 @@ mod tests {
             std::fs::read_to_string(dotorg.join("tasks/TASK-A/node.org"))
                 .unwrap()
                 .ends_with("** Description\nexact\n")
+        );
+        assert!(!artifact.join("artifact.org").exists());
+        assert_eq!(
+            orgasmic_core::node_kernel::parse_journal(
+                &std::fs::read_to_string(artifact.join("journal.org")).unwrap(),
+                "journal.org",
+            )
+            .unwrap()[0]
+                .body,
+            "keep me"
         );
         assert!(plan(tmp.path()).unwrap().old_files.is_empty());
     }
