@@ -4,7 +4,7 @@
 //! Drives a freshly scaffolded project (via `project init`) against a real
 //! daemon: `glossary` starts with no `.org` file at all (a
 //! genuinely empty list), while `decision`/`tasks` start pre-seeded by the
-//! shipped scaffold (`dec_K1DR7`, `TASK-C9V29`) — covering both the empty
+//! shipped scaffold (`TASK-C9V29`) plus a seeded decision — covering both the empty
 //! and non-empty paths for each list verb.
 
 use std::path::{Path, PathBuf};
@@ -158,8 +158,34 @@ async fn list_verbs_never_empty_and_silent_and_ids_mode_is_porcelain() {
     );
     assert_eq!(empty_glossary_ids.trim(), "");
 
-    // --- F13: non-empty lists (scaffold-seeded decisions/tasks) still show
-    // every record — the battle-test's "9+ tasks, zero stdout" class. ---
+    // --- F13: non-empty lists still show every record — the battle-test's
+    // "9+ tasks, zero stdout" class. The scaffold ships empty collections
+    // (dec_E01MC), so this seeds its own decision first.
+    let seeded_decision_stdout = run_cli(
+        &home,
+        &running,
+        &project_root,
+        &[
+            "decision",
+            "create",
+            "--project",
+            project_id,
+            "--title",
+            "porcelain decision",
+            "--body",
+            "** Decision\nA decision used to prove list output is never silent.\n",
+        ],
+    );
+    let seeded_decision: serde_json::Value = serde_json::from_str(&seeded_decision_stdout)
+        .unwrap_or_else(|e| {
+            panic!("decision create stdout not JSON: {e}\n{seeded_decision_stdout}")
+        });
+    let seeded_decision_id = seeded_decision
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .expect("decision create response has an id")
+        .to_string();
+
     let decision_list = run_cli(
         &home,
         &running,
@@ -167,8 +193,8 @@ async fn list_verbs_never_empty_and_silent_and_ids_mode_is_porcelain() {
         &["decision", "list", "--project", project_id],
     );
     assert!(
-        decision_list.contains("dec_K1DR7"),
-        "decision list dropped the scaffold-seeded decision: {decision_list}"
+        decision_list.contains(&seeded_decision_id),
+        "decision list dropped the seeded decision: {decision_list}"
     );
 
     let task_list = run_cli(
@@ -192,7 +218,7 @@ async fn list_verbs_never_empty_and_silent_and_ids_mode_is_porcelain() {
     let decision_id_lines: Vec<&str> = decision_ids.lines().collect();
     assert_eq!(
         decision_id_lines,
-        vec!["dec_K1DR7"],
+        vec![seeded_decision_id.as_str()],
         "decision --ids should emit exactly the node ids, one per line: {decision_ids:?}"
     );
 
@@ -227,7 +253,7 @@ async fn list_verbs_never_empty_and_silent_and_ids_mode_is_porcelain() {
             "--definition",
             "A term used to prove --ids porcelain output.",
             "--relates-to",
-            "dec_K1DR7",
+            &seeded_decision_id,
         ],
     );
     let glossary_value: serde_json::Value = serde_json::from_str(&glossary_stdout)
