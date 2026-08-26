@@ -20,18 +20,19 @@ fn repair_re_mints_decision_duplicate_and_rerun_is_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let dup = mint_node_id_for_class(NodeIdClass::Decision);
-    let keep_path = root.join(".orgasmic/decisions.org");
-    let incoming_path = root.join(".orgasmic/tasks/backlog.org");
+    let keep_path = root.join(".orgasmic/decisions").join(&dup).join("node.org");
+    // A copy-pasted node: its own dir, but the same :ID: inside.
+    let incoming_path = root.join(".orgasmic/tasks/TASK-INCOMING/node.org");
     write(
         &keep_path,
         &format!(
-            "#+title: decisions\n\n* {dup} Keep\n:PROPERTIES:\n:ID: {dup}\n:END:\n** Decision\nKeep side.\n"
+            "#+title: orgasmic decision {dup}\n#+orgasmic_version: 2\n\n* {dup} Keep\n:PROPERTIES:\n:ID: {dup}\n:END:\n** Decision\nKeep side.\n"
         ),
     );
     write(
         &incoming_path,
         &format!(
-            "#+title: backlog\n\n* BACKLOG {dup} Incoming\n:PROPERTIES:\n:ID: {dup}\n:DEPENDS_ON: {dup}\n:END:\n"
+            "#+title: orgasmic task {dup}\n#+orgasmic_version: 2\n\n* BACKLOG {dup} Incoming\n:PROPERTIES:\n:ID: {dup}\n:DEPENDS_ON: {dup}\n:END:\n"
         ),
     );
     let mut incoming = HashMap::new();
@@ -53,12 +54,14 @@ fn ambiguous_attribution_refuses_without_incoming_path() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let dup = mint_node_id_for_class(NodeIdClass::Task);
-    write(
-        &root.join(".orgasmic/tasks/backlog.org"),
-        &format!(
-            "#+title: backlog\n\n* BACKLOG {dup} A\n:PROPERTIES:\n:ID: {dup}\n:END:\n\n* BACKLOG {dup} B\n:PROPERTIES:\n:ID: {dup}\n:END:\n"
-        ),
-    );
+    for (dir, title) in [("TASK-AAAAA", "A"), ("TASK-BBBBB", "B")] {
+        write(
+            &root.join(".orgasmic/tasks").join(dir).join("node.org"),
+            &format!(
+                "#+title: orgasmic task {dup}\n#+orgasmic_version: 2\n\n* BACKLOG {dup} {title}\n:PROPERTIES:\n:ID: {dup}\n:END:\n"
+            ),
+        );
+    }
     let err = repair_id_collisions_with_incoming(root, &HashMap::new()).unwrap_err();
     assert!(err.to_string().contains("ambiguous") || err.to_string().contains("incoming"));
 }
