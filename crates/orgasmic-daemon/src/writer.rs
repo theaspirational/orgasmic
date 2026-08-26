@@ -2303,6 +2303,7 @@ fn process_tx_batch(
 struct CachedTxWriter {
     writer: LedgerWriter,
     identity: FileIdentity,
+    event_ids: HashMap<String, String>,
 }
 
 enum LedgerWriter {
@@ -2371,27 +2372,39 @@ impl CachedTxWriter {
             )
         };
         let identity = FileIdentity::from_path(path)?;
-        Ok(Self { writer, identity })
+        let event_ids = read_event_ids(path)?;
+        Ok(Self {
+            writer,
+            identity,
+            event_ids,
+        })
     }
 
-    fn append(&mut self, entry: &TxEntry) -> Result<()> {
+    fn append(&mut self, entry: &TxEntry) -> Result<String> {
+        let event_id = event_id(entry);
+        if let Some(existing) = self.event_ids.get(event_id) {
+            return Ok(existing.clone());
+        }
         match &mut self.writer {
-            LedgerWriter::Tx(writer) => writer.append(entry).map_err(Into::into),
+            LedgerWriter::Tx(writer) => writer.append(entry)?,
             LedgerWriter::Journal(file) => {
                 let entry = journal_entry(entry);
                 entry.validate()?;
                 reject_journal_prose(&entry.body)?;
                 file.write_all(orgasmic_core::node_kernel::journal_entry_block(&entry).as_bytes())?;
-                Ok(())
             }
         }
+        self.event_ids
+            .insert(event_id.to_string(), entry.tx_id.clone());
+        Ok(entry.tx_id.clone())
     }
 
-    fn append_many(&mut self, entries: &[TxEntry]) -> Result<()> {
+    fn append_many(&mut self, entries: &[TxEntry]) -> Result<Vec<String>> {
+        let mut ids = Vec::with_capacity(entries.len());
         for entry in entries {
-            self.append(entry)?;
+            ids.push(self.append(entry)?);
         }
-        Ok(())
+        Ok(ids)
     }
 
     fn sync_data(&self) -> Result<()> {
@@ -2406,6 +2419,41 @@ impl CachedTxWriter {
             .map(|current| current == self.identity)
             .unwrap_or(false)
     }
+}
+
+fn event_id(entry: &TxEntry) -> &str {
+    entry
+        .extra
+        .iter()
+        .find(|(key, _)| key == "EVENT_ID")
+        .map(|(_, value)| value.as_str())
+        .unwrap_or(&entry.tx_id)
+}
+
+fn read_event_ids(path: &Path) -> Result<HashMap<String, String>> {
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let pairs: Vec<(String, String)> =
+        if path.file_name().and_then(|name| name.to_str()) == Some("journal.org") {
+            orgasmic_core::node_kernel::parse_journal(&source, &path.to_string_lossy())?
+                .into_iter()
+                .map(|entry| {
+                    (
+                        entry
+                            .extra("EVENT_ID")
+                            .unwrap_or(&entry.entry_id)
+                            .to_string(),
+                        entry.entry_id,
+                    )
+                })
+                .collect()
+        } else {
+            parse_tx_file(&source, &path.to_string_lossy())?
+                .into_iter()
+                .map(|entry| (event_id(&entry).to_string(), entry.tx_id))
+                .collect()
+        };
+    Ok(pairs.into_iter().collect())
 }
 
 fn journal_entry(entry: &TxEntry) -> orgasmic_core::node_kernel::JournalEntry {
@@ -2490,13 +2538,52 @@ fn tx_handles_detached_from_paths(
 fn prepare_tx_entry(seq_cache: &mut ProjectTxSeqCache, req: &TxAppend) -> Result<TxEntry> {
     let mut entry = req.entry.clone();
     if let TxIdPolicy::ProjectSequence { project_id, date } = &req.tx_id_policy {
-        entry.tx_id =
-            next_project_tx_id(seq_cache, project_id, &project_tx_dir(&req.tx_path)?, date)?;
+        entry.tx_id = if is_machine_tx_path(&req.tx_path) {
+            format!(
+                "tx-{date}-{}-{}",
+                project_tx_slug(project_id),
+                Uuid::new_v4()
+            )
+        } else {
+            next_project_tx_id(seq_cache, project_id, &project_tx_dir(&req.tx_path)?, date)?
+        };
+    }
+    let supplied: Vec<_> = entry
+        .extra
+        .iter()
+        .filter(|(key, _)| key == "EVENT_ID")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    match supplied.as_slice() {
+        [] => entry
+            .extra
+            .push(("EVENT_ID".to_string(), Uuid::new_v4().to_string())),
+        [id] => {
+            Uuid::parse_str(id).context("EVENT_ID is not a UUID")?;
+        }
+        _ => bail!("event has duplicate EVENT_ID properties"),
     }
     Ok(entry)
 }
 
+fn is_machine_tx_path(path: &Path) -> bool {
+    let parts: Vec<_> = path
+        .components()
+        .filter_map(|part| part.as_os_str().to_str())
+        .collect();
+    parts
+        .windows(4)
+        .any(|parts| parts[0] == "machines" && parts[2] == "tx")
+}
+
 fn project_tx_dir(ledger_path: &Path) -> Result<PathBuf> {
+    if is_machine_tx_path(ledger_path) {
+        return ledger_path
+            .ancestors()
+            .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+            .map(|dotorg| dotorg.join("tx"))
+            .ok_or_else(|| anyhow!("machine tx path is not under .orgasmic"));
+    }
     if ledger_path
         .parent()
         .and_then(Path::file_name)
@@ -2533,11 +2620,11 @@ fn write_tx_append(
             handles.get_mut(tx_path).expect("just inserted")
         }
     };
-    writer
+    let tx_id = writer
         .append(entry)
         .with_context(|| format!("append to {}", tx_path.display()))?;
     Ok(TxAppendResult {
-        tx_id: entry.tx_id.clone(),
+        tx_id,
         tx_path: tx_path.to_path_buf(),
     })
 }
@@ -2585,14 +2672,14 @@ fn append_txs_inner(
             handles.get_mut(&first.tx_path).expect("just inserted")
         }
     };
-    writer
+    let tx_ids = writer
         .append_many(&entries)
         .with_context(|| format!("append to {}", first.tx_path.display()))?;
     *seq_cache = staged_seq_cache;
-    Ok(entries
+    Ok(tx_ids
         .into_iter()
-        .map(|entry| TxAppendResult {
-            tx_id: entry.tx_id,
+        .map(|tx_id| TxAppendResult {
+            tx_id,
             tx_path: first.tx_path.clone(),
         })
         .collect())
@@ -2625,9 +2712,23 @@ fn scan_project_tx_max_seq(project_id: &str, tx_dir: &Path) -> Result<u32> {
     let slug = project_tx_slug(project_id);
     let mut max_seen = 0_u32;
     let mut entries_scanned = 0_usize;
-    if tx_dir.is_dir() {
+    let mut tx_dirs = vec![tx_dir.to_path_buf()];
+    if let Some(dotorg) = tx_dir
+        .parent()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+    {
+        if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+            tx_dirs.extend(
+                machines
+                    .flatten()
+                    .map(|machine| machine.path().join("tx"))
+                    .filter(|path| path.is_dir()),
+            );
+        }
+    }
+    for tx_dir in tx_dirs.into_iter().filter(|path| path.is_dir()) {
         let dir_entries =
-            std::fs::read_dir(tx_dir).with_context(|| format!("read {}", tx_dir.display()))?;
+            std::fs::read_dir(&tx_dir).with_context(|| format!("read {}", tx_dir.display()))?;
         for entry in dir_entries {
             let entry = match entry {
                 Ok(e) => e,
@@ -2681,7 +2782,11 @@ fn scan_project_tx_max_seq(project_id: &str, tx_dir: &Path) -> Result<u32> {
         for collection in std::fs::read_dir(dotorg)
             .with_context(|| format!("read {}", dotorg.display()))?
             .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().is_dir() && entry.file_name() != "tx")
+            .filter(|entry| {
+                entry.path().is_dir()
+                    && entry.file_name() != "tx"
+                    && entry.file_name() != "machines"
+            })
         {
             let nodes = match std::fs::read_dir(collection.path()) {
                 Ok(nodes) => nodes,
@@ -3319,6 +3424,35 @@ mod tests {
         assert_eq!(res.tx_id, "tx-test-1");
         let source = std::fs::read_to_string(&tx_path).unwrap();
         assert!(source.contains("tx-test-1"));
+    }
+
+    #[tokio::test]
+    async fn duplicate_event_id_is_a_persistent_no_op() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tx_path = tmp.path().join("tx/2026-08.org");
+        let handle = spawn(EventBus::new());
+        let submitted_event_id = Uuid::new_v4().to_string();
+        let append = |tx_id: &str| {
+            let mut entry = sample_entry(tx_id);
+            entry
+                .extra
+                .push(("EVENT_ID".to_string(), submitted_event_id.clone()));
+            TxAppend {
+                tx_path: tx_path.clone(),
+                entry,
+                project_id: Some("orgasmic".into()),
+                tx_id_policy: TxIdPolicy::Preserve,
+                request_id: None,
+            }
+        };
+        let first = handle.append_tx(append("tx-first"), None).await.unwrap();
+        let duplicate = handle.append_tx(append("tx-retry"), None).await.unwrap();
+
+        assert_eq!(duplicate.tx_id, first.tx_id);
+        let entries =
+            parse_tx_file(&std::fs::read_to_string(tx_path).unwrap(), "2026-08.org").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(event_id(&entries[0]), submitted_event_id);
     }
 
     /// orgasmic:TASK-Q07Y5 — the defect TASK-WGXKD.2's reviewer named: shutdown

@@ -1323,7 +1323,7 @@ async fn end_to_end_tx_record_appends_to_disk() {
 }
 
 #[tokio::test]
-async fn project_tx_record_routes_to_project_and_uses_project_sequence() {
+async fn project_tx_record_routes_to_its_machine_ledger_with_global_ids() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1358,13 +1358,22 @@ async fn project_tx_record_routes_to_project_and_uses_project_sequence() {
     let json: serde_json::Value = resp.json().await.unwrap();
     let tx_id = json["tx_id"].as_str().unwrap();
     let tx_path = std::path::PathBuf::from(json["tx_path"].as_str().unwrap());
-    assert!(tx_path.starts_with(project_root.join(".orgasmic/tx")));
+    let machine_id = std::fs::read_to_string(home.machine_id()).unwrap();
+    assert!(tx_path.starts_with(
+        project_root
+            .join(".orgasmic/machines")
+            .join(machine_id.trim())
+            .join("tx")
+    ));
     assert!(
-        tx_id.ends_with("-orgasmic-0037"),
-        "project tx id should continue existing sequence, got {tx_id}"
+        tx_id.contains("-orgasmic-")
+            && uuid::Uuid::parse_str(tx_id.splitn(4, '-').nth(3).unwrap_or_default()).is_ok(),
+        "project tx id should carry a UUID, got {tx_id}"
     );
     let raw = std::fs::read_to_string(&tx_path).unwrap();
     assert!(raw.contains(":ACTOR:        manager@example.com"));
+    assert!(raw.contains(&format!(":MACHINE:      {}", machine_id.trim())));
+    assert!(raw.contains(":EVENT_ID:"));
     assert!(raw.contains(":TX_ID:        tx-"));
 
     let resp = client

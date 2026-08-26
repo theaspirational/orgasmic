@@ -2595,8 +2595,8 @@ impl Index {
         self.load_graph(board_entry, &mut project, snap);
         load_task_graph(&mut project);
         lint_dangling_graph_edges(&project, snap);
-        let project_tx_dir = board_entry.path.join(".orgasmic").join("tx");
-        if project_tx_dir.is_dir() {
+        let dotorg = board_entry.path.join(".orgasmic");
+        for project_tx_dir in project_tx_dirs(&dotorg) {
             collect_tx_dir(&project_tx_dir, Some(board_entry.id.as_str()), snap);
         }
         project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, snap);
@@ -3055,6 +3055,11 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
     };
+    let mut seen: HashSet<String> = snap
+        .tx
+        .iter()
+        .map(|record| tx_event_id(&record.entry).to_string())
+        .collect();
     for entry in read.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("org") {
@@ -3064,6 +3069,10 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
             Ok(contents) => match parse_tx_file(&contents, &path.to_string_lossy()) {
                 Ok(entries) => {
                     for entry in entries {
+                        let event_id = tx_event_id(&entry);
+                        if !seen.insert(event_id.to_string()) {
+                            continue;
+                        }
                         snap.tx.push(TxRecord {
                             project_id: project_id.map(str::to_string),
                             source_path: path.clone(),
@@ -3100,6 +3109,33 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
             }
         }
     }
+}
+
+fn project_tx_dirs(dotorg: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let legacy = dotorg.join("tx");
+    if legacy.is_dir() {
+        dirs.push(legacy);
+    }
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        dirs.extend(
+            machines
+                .flatten()
+                .map(|machine| machine.path().join("tx"))
+                .filter(|tx| tx.is_dir()),
+        );
+    }
+    dirs.sort();
+    dirs
+}
+
+fn tx_event_id(entry: &TxEntry) -> &str {
+    entry
+        .extra
+        .iter()
+        .find(|(key, _)| key == "EVENT_ID")
+        .map(|(_, value)| value.as_str())
+        .unwrap_or(&entry.tx_id)
 }
 
 fn lint_project_identity_state(project_root: &Path, snap: &mut IndexSnapshot) {
@@ -5689,6 +5725,35 @@ The following criteria must hold before close.
         assert_eq!(activity[0].tx_id, "tx-activity-1");
         assert_eq!(activity[0].kind, ActivityKind::StateTransition);
         assert_eq!(activity[0].body, "backlog -> in_progress");
+    }
+
+    #[tokio::test]
+    async fn activity_is_the_deduplicated_union_of_machine_ledgers() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        let event_id = uuid::Uuid::new_v4();
+        let entry = |tx_id: &str, machine: &str| {
+            format!(
+                "#+title: machine tx\n#+orgasmic_version: 1\n\n* TX 2026-08-26 10:00:00 comment TASK-001\n:PROPERTIES:\n:TX_ID: {tx_id}\n:TIME: [2026-08-26 Wed 10:00:00]\n:TYPE: comment\n:ACTOR: dev@example.com\n:MACHINE: {machine}\n:PROJECT: proj-x\n:TASK: TASK-001\n:EVENT_ID: {event_id}\n:BODY: hello\n:END:\n"
+            )
+        };
+        write(
+            &project_root.join(".orgasmic/machines/a/tx/2026-08.org"),
+            &entry("tx-a", "a"),
+        );
+        write(
+            &project_root.join(".orgasmic/machines/b/tx/2026-08.org"),
+            &entry("tx-b-retry", "b"),
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let activity = &snap.project("proj-x").unwrap().activity_index["TASK-001"];
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].body, "hello");
     }
 
     #[tokio::test]
