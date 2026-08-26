@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-KPMFK
-#+orgasmic_version: 2

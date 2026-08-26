@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-MYVJA
-#+orgasmic_version: 2

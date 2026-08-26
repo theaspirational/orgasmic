@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-4CSMY.1
-#+orgasmic_version: 2

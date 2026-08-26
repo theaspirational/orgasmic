@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-X9E92
-#+orgasmic_version: 2

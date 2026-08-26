@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_E394G
-#+orgasmic_version: 2

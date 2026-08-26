@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-DHYXQ
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ZHRRH
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-CJWT3.1
-#+orgasmic_version: 2

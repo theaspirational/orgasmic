@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_N5SJT
-#+orgasmic_version: 2

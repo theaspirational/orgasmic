@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_KCGEH
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-70VV1
-#+orgasmic_version: 2

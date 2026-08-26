@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-Q68WE
-#+orgasmic_version: 2

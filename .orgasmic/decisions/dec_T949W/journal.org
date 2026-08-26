@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_T949W
-#+orgasmic_version: 2

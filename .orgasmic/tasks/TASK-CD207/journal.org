@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-CD207
-#+orgasmic_version: 2

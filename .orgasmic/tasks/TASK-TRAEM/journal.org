@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-TRAEM
-#+orgasmic_version: 2

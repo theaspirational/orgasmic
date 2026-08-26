@@ -20,8 +20,8 @@ use chrono::{DateTime, Utc};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
 use orgasmic_core::{
     collection_node_file_paths, lint_decision_heading_id_token, lint_project_identities,
-    lint_task_heading_id_token, validate_parent_tree, DecisionNode, GlossaryTerm, Heading, Home,
-    LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError, ParentTreeNode,
+    lint_task_heading_id_token, projects, validate_parent_tree, DecisionNode, GlossaryTerm,
+    Heading, Home, LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError, ParentTreeNode,
     SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
@@ -2482,30 +2482,17 @@ impl Index {
         if !path.exists() {
             return;
         }
-        match read_org(&path) {
-            Ok(file) => {
-                for h in &file.headings {
-                    let id = h.property("ID").unwrap_or("").to_string();
-                    if id.is_empty() {
-                        continue;
-                    }
-                    snap.board.push(BoardEntry {
-                        id,
-                        path: PathBuf::from(
-                            h.property("PATH")
-                                .or_else(|| h.property("LOCAL_PATH"))
-                                .unwrap_or(""),
-                        ),
-                        branch: h
-                            .property("BRANCH")
-                            .or_else(|| h.property("DEFAULT_BRANCH"))
-                            .unwrap_or("")
-                            .to_string(),
-                        status: h.property("STATUS").unwrap_or("active").to_string(),
-                    });
-                }
-            }
+        match projects::read_board(&self.home) {
+            Ok(entries) => snap
+                .board
+                .extend(entries.into_iter().map(|entry| BoardEntry {
+                    id: entry.id,
+                    path: entry.path,
+                    branch: entry.branch,
+                    status: entry.status,
+                })),
             Err(err) => {
+                let err = err.to_string();
                 if !parse_error_already_recorded(snap, &path, &err) {
                     warn!(path = %path.display(), error = %err, "board parse failed");
                     snap.parse_errors.push(ParseError {
@@ -4335,6 +4322,21 @@ mod tests {
         );
         assert!(!snapshot.projects.contains_key("project"));
         assert_eq!(index.refresh_status().await.scans_total, 0);
+    }
+
+    #[tokio::test]
+    async fn board_catalog_routes_the_daemon_to_the_hidden_ledger() {
+        let (tmp, home) = make_home();
+        let main = tmp.path().join("main");
+        std::fs::create_dir(&main).unwrap();
+        seed_board(&home, &main, "project");
+        let ledger = home.project_ledger("project");
+        seed_project(&ledger);
+
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+
+        assert_eq!(index.snapshot().await.board[0].path, ledger);
     }
 
     #[tokio::test]

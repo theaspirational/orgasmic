@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-4DTBZ
-#+orgasmic_version: 2

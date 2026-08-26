@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_SCVKG
-#+orgasmic_version: 2

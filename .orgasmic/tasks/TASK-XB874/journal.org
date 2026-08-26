@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-XB874
-#+orgasmic_version: 2

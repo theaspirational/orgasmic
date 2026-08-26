@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-CQM2X
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ZD72S
-#+orgasmic_version: 2

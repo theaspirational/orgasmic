@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-FDFVP
-#+orgasmic_version: 2

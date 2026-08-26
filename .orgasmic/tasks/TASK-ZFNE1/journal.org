@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ZFNE1
-#+orgasmic_version: 2

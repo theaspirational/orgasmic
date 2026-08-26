@@ -479,6 +479,9 @@ enum ProjectCmd {
         /// Report the migration without changing files.
         #[arg(long)]
         dry_run: bool,
+        /// Move the migrated ledger to the orphan `orgasmic` branch.
+        #[arg(long)]
+        to_branch: bool,
     },
 }
 
@@ -1461,7 +1464,9 @@ fn main() -> Result<()> {
             } => cmd_project_init(&home, path, name, default_branch, force, no_register),
             ProjectCmd::Add { path } => cmd_project_add(&home, path),
             ProjectCmd::List { ids } => cmd_project_list(&home, ids),
-            ProjectCmd::Migrate { dry_run } => project_migrate::run(dry_run),
+            ProjectCmd::Migrate { dry_run, to_branch } => {
+                project_migrate::run(&home, dry_run, to_branch)
+            }
         },
         Cmd::Board => cmd_project_list(&home, false),
         Cmd::Serve {
@@ -1767,7 +1772,7 @@ fn cmd_exec_pinned(
 fn cmd_entry(home: &Home, args: EntryArgs) -> Result<()> {
     use sha2::{Digest, Sha256};
 
-    let project_root = find_project_root_optional()?;
+    let project_root = find_project_root_optional(home)?;
     let router = render_runtime_entry_router(home, project_root.as_deref())?;
     let fingerprint = format!("{:x}", Sha256::digest(router.as_bytes()));
     if let Some(project_root) = project_root.as_deref() {
@@ -1916,16 +1921,8 @@ fn inject_default_workflow(router: &str, workflow: &str) -> Result<String> {
     Ok(rendered)
 }
 
-fn find_project_root_optional() -> Result<Option<PathBuf>> {
-    let mut dir = std::env::current_dir().context("cwd")?;
-    loop {
-        if dir.join(".orgasmic/project.org").is_file() {
-            return Ok(Some(dir));
-        }
-        if !dir.pop() {
-            return Ok(None);
-        }
-    }
+fn find_project_root_optional(home: &Home) -> Result<Option<PathBuf>> {
+    manager::find_project_root_optional_from(home, &std::env::current_dir().context("cwd")?)
 }
 
 fn entry_version_notice(project_root: &Path) -> Option<String> {

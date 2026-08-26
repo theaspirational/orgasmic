@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-CNZGR
-#+orgasmic_version: 2

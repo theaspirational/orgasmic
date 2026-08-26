@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_WWAHT
-#+orgasmic_version: 2

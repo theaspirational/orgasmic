@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-AP971.9
-#+orgasmic_version: 2

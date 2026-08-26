@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-GMR53
-#+orgasmic_version: 2

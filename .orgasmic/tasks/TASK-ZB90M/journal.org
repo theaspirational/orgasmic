@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ZB90M
-#+orgasmic_version: 2

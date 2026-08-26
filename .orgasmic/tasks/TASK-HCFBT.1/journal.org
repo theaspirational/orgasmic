@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-HCFBT.1
-#+orgasmic_version: 2

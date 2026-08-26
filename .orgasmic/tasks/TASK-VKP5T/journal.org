@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-VKP5T
-#+orgasmic_version: 2

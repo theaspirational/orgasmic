@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-RQ270.2
-#+orgasmic_version: 2

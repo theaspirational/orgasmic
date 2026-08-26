@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-FWBYB
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-VEZYR.1
-#+orgasmic_version: 2

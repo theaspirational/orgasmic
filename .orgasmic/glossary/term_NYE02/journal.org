@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_NYE02
-#+orgasmic_version: 2

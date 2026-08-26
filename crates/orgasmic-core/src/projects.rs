@@ -318,7 +318,14 @@ pub fn read_board(home: &Home) -> Result<Vec<BoardEntry>> {
     }
     let source =
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    parse_board_entries(&source, &path)
+    let mut entries = parse_board_entries(&source, &path)?;
+    for entry in &mut entries {
+        let ledger = home.project_ledger(&entry.id);
+        if ledger.join(".orgasmic/project.org").is_file() {
+            entry.path = ledger;
+        }
+    }
+    Ok(entries)
 }
 
 fn parse_board_entries(source: &str, path: &Path) -> Result<Vec<BoardEntry>> {

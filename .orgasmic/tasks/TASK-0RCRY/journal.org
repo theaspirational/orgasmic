@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-0RCRY
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-8H8A2
-#+orgasmic_version: 2

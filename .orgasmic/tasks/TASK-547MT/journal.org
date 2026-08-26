@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-547MT
-#+orgasmic_version: 2

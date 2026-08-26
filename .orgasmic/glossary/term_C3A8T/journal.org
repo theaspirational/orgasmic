@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_C3A8T
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ZYPJC.5.1
-#+orgasmic_version: 2

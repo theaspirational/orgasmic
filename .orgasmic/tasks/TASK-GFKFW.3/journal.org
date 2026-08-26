@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-GFKFW.3
-#+orgasmic_version: 2

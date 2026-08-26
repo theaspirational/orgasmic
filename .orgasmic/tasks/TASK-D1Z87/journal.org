@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-D1Z87
-#+orgasmic_version: 2

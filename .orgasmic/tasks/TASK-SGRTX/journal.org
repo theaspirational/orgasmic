@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-SGRTX
-#+orgasmic_version: 2

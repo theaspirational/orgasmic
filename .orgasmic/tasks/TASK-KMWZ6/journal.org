@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-KMWZ6
-#+orgasmic_version: 2

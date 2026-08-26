@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-EBWZ9.4
-#+orgasmic_version: 2

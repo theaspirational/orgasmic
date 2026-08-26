@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-P19ZM
-#+orgasmic_version: 2

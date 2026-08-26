@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-VT9FG
-#+orgasmic_version: 2

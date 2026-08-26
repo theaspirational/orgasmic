@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-VJ633
-#+orgasmic_version: 2
