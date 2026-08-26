@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_ASB1A
-#+orgasmic_version: 2

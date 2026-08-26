@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_CJ2R4
-#+orgasmic_version: 2

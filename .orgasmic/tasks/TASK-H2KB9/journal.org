@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-H2KB9
-#+orgasmic_version: 2

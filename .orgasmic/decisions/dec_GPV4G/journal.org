@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_GPV4G
-#+orgasmic_version: 2

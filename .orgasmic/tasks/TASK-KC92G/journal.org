@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-KC92G
-#+orgasmic_version: 2

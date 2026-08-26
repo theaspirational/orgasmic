@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_FJ883
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-CZTWD
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-MGFZ7
-#+orgasmic_version: 2

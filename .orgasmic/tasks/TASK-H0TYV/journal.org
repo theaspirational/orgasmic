@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-H0TYV
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ST4D3
-#+orgasmic_version: 2

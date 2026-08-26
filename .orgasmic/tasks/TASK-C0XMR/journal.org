@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-C0XMR
-#+orgasmic_version: 2

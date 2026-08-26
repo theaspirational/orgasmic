@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-MB7G9
-#+orgasmic_version: 2

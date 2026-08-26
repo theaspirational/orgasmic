@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ARNA1
-#+orgasmic_version: 2

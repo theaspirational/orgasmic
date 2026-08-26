@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-SV032
-#+orgasmic_version: 2

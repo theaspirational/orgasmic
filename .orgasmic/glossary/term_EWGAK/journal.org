@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_EWGAK
-#+orgasmic_version: 2

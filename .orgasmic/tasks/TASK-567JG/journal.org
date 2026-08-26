@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-567JG
-#+orgasmic_version: 2

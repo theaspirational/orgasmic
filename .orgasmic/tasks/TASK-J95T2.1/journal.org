@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-J95T2.1
-#+orgasmic_version: 2

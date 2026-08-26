@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-XBT65
-#+orgasmic_version: 2

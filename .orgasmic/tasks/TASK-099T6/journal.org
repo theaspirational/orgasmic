@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-099T6
-#+orgasmic_version: 2

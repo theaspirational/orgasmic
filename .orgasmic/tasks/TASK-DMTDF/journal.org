@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-DMTDF
-#+orgasmic_version: 2

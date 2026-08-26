@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-WFW1N
-#+orgasmic_version: 2

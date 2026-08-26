@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-G9KCN
-#+orgasmic_version: 2

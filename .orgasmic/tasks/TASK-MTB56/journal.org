@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-MTB56
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ATAXN
-#+orgasmic_version: 2

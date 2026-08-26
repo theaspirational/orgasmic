@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-QTR08
-#+orgasmic_version: 2

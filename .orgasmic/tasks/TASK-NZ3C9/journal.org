@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-NZ3C9
-#+orgasmic_version: 2

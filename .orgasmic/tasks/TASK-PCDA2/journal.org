@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-PCDA2
-#+orgasmic_version: 2

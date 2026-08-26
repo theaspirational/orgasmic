@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_HJENQ
-#+orgasmic_version: 2

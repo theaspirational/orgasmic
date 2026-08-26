@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-79VKP.3
-#+orgasmic_version: 2

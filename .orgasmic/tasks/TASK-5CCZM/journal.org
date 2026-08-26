@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-5CCZM
-#+orgasmic_version: 2

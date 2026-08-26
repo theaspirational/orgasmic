@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-TP593
-#+orgasmic_version: 2

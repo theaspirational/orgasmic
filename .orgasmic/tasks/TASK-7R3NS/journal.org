@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-7R3NS
-#+orgasmic_version: 2

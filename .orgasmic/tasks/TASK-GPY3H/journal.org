@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-GPY3H
-#+orgasmic_version: 2

@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-RVEKT
-#+orgasmic_version: 2

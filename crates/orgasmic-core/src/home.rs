@@ -107,6 +107,9 @@ impl Home {
     pub fn board(&self) -> PathBuf {
         self.user().join("board.org")
     }
+    pub fn project_ledger(&self, project_id: &str) -> PathBuf {
+        self.root.join(project_id).join("ledger")
+    }
 
     pub fn required_dirs(&self) -> Vec<PathBuf> {
         vec![

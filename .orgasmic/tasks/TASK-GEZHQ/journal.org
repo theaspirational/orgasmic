@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-GEZHQ
-#+orgasmic_version: 2

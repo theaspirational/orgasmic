@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-CGJM7
-#+orgasmic_version: 2

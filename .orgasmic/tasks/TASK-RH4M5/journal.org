@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-RH4M5
-#+orgasmic_version: 2

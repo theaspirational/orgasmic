@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_TDNG3
-#+orgasmic_version: 2

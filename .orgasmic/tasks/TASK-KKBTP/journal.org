@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-KKBTP
-#+orgasmic_version: 2

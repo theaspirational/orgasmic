@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_32ZHT
-#+orgasmic_version: 2

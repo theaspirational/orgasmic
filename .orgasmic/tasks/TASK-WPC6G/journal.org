@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-WPC6G
-#+orgasmic_version: 2

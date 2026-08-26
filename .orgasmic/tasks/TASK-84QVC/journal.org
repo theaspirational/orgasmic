@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-84QVC
-#+orgasmic_version: 2

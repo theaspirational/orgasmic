@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-KBHAN
-#+orgasmic_version: 2

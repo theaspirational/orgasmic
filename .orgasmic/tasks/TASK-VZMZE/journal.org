@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-VZMZE
-#+orgasmic_version: 2

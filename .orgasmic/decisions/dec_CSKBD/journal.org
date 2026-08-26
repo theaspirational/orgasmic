@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_CSKBD
-#+orgasmic_version: 2

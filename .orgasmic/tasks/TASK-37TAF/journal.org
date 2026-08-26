@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-37TAF
-#+orgasmic_version: 2

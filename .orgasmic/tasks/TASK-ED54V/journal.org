@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ED54V
-#+orgasmic_version: 2

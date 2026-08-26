@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-T25XQ
-#+orgasmic_version: 2

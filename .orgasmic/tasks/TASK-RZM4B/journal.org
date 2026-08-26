@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-RZM4B
-#+orgasmic_version: 2

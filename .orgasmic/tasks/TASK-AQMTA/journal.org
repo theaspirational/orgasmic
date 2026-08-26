@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-AQMTA
-#+orgasmic_version: 2

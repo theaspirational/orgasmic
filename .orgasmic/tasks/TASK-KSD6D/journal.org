@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-KSD6D
-#+orgasmic_version: 2

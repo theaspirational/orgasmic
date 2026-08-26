@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-ZFCQN
-#+orgasmic_version: 2

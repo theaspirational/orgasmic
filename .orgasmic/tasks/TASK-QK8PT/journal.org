@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-QK8PT
-#+orgasmic_version: 2

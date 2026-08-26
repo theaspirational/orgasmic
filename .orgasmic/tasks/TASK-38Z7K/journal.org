@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-38Z7K
-#+orgasmic_version: 2

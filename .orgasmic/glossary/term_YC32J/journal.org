@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_YC32J
-#+orgasmic_version: 2

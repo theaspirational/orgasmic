@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-STWVB
-#+orgasmic_version: 2

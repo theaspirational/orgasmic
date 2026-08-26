@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-8BRYP
-#+orgasmic_version: 2

@@ -8081,15 +8081,56 @@ pub(crate) fn resolve_project(project: Option<String>) -> Result<String> {
 }
 
 pub(crate) fn find_project_root() -> Result<PathBuf> {
-    let mut dir = std::env::current_dir().context("cwd")?;
+    let home = Home::from_env().context("resolve orgasmic home")?;
+    find_project_root_optional_from(&home, &std::env::current_dir().context("cwd")?)?
+        .ok_or_else(|| anyhow::anyhow!("could not resolve a registered orgasmic project from cwd"))
+}
+
+pub(crate) fn find_project_root_optional_from(home: &Home, cwd: &Path) -> Result<Option<PathBuf>> {
+    let mut dir = cwd.to_path_buf();
     loop {
         if dir.join(".orgasmic/project.org").is_file() {
-            return Ok(dir);
+            return Ok(Some(dir));
         }
         if !dir.pop() {
-            bail!("could not find .orgasmic/project.org in cwd or ancestors");
+            break;
         }
     }
+
+    let Some(common_dir) = git_common_dir(cwd) else {
+        return Ok(None);
+    };
+    let matches = projects::read_board(home)?
+        .into_iter()
+        .filter(|entry| git_common_dir(&entry.path).as_ref() == Some(&common_dir))
+        .map(|entry| entry.path)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [root] => Ok(Some(root.clone())),
+        _ => bail!(
+            "multiple registered projects share git common dir {}",
+            common_dir.display()
+        ),
+    }
+}
+
+fn git_common_dir(path: &Path) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--git-common-dir"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    std::fs::canonicalize(if value.is_absolute() {
+        value
+    } else {
+        path.join(value)
+    })
+    .ok()
 }
 
 /// Project root for verbs that read or write `.orgasmic/` state as FILES —

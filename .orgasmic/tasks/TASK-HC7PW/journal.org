@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-HC7PW
-#+orgasmic_version: 2

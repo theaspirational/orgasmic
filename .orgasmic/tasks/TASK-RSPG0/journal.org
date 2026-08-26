@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-RSPG0
-#+orgasmic_version: 2

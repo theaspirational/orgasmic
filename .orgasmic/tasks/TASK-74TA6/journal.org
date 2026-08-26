@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-74TA6
-#+orgasmic_version: 2

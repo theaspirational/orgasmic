@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-CPA74.1
-#+orgasmic_version: 2

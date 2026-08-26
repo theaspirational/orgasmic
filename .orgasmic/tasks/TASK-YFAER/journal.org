@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-YFAER
-#+orgasmic_version: 2

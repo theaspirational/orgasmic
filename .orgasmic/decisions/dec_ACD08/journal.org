@@ -1,2 +1,0 @@
-#+title: orgasmic journal dec_ACD08
-#+orgasmic_version: 2

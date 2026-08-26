@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-CS2TM
-#+orgasmic_version: 2

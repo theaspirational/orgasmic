@@ -1,2 +1,0 @@
-#+title: orgasmic journal term_H29TQ
-#+orgasmic_version: 2

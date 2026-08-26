@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-DFEDX.1
-#+orgasmic_version: 2

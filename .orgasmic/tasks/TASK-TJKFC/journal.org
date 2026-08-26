@@ -1,2 +1,0 @@
-#+title: orgasmic journal TASK-TJKFC
-#+orgasmic_version: 2
