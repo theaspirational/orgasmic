@@ -16,8 +16,8 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
         ),
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: backlog\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
+        &project_root.join(".orgasmic/tasks/TASK-PRE/node.org"),
+        "#+title: orgasmic task TASK-PRE\n#+orgasmic_version: 2\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
     );
     write(
         &home.board(),
@@ -48,10 +48,10 @@ async fn status_errors_attributes_dangling_ref_and_reindex_clears_it_after_fix()
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    let glossary_path = project_root.join(".orgasmic/glossary.org");
+    let glossary_path = project_root.join(".orgasmic/glossary/term_A/node.org");
     write(
         &glossary_path,
-        "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+        "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
     );
 
     let running = Daemon::run(home.clone(), test_options())
@@ -68,7 +68,7 @@ async fn status_errors_attributes_dangling_ref_and_reindex_clears_it_after_fix()
     );
     assert!(stdout.contains("orgasmic"), "project id missing: {stdout}");
     assert!(
-        stdout.contains("glossary.org"),
+        stdout.contains("glossary/term_A/node.org"),
         "file attribution missing: {stdout}"
     );
     assert!(
@@ -85,7 +85,7 @@ async fn status_errors_attributes_dangling_ref_and_reindex_clears_it_after_fix()
     // no daemon restart — and confirm the count drops to zero.
     write(
         &glossary_path,
-        "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
+        "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
     );
     let output = run_orgasmic(&home, &daemon_url, &["reindex", "--project", "orgasmic"]);
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -118,8 +118,8 @@ async fn partial_full_board_commands_keep_json_and_errors_but_exit_honestly() {
     let healthy_root = tmp.path().join("healthy");
     seed_project(&home, &healthy_root, "healthy");
     write(
-        &healthy_root.join(".orgasmic/glossary.org"),
-        "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID: term_A\n:RELATES_TO: missing-slug\n:END:\n",
+        &healthy_root.join(".orgasmic/glossary/term_A/node.org"),
+        "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID: term_A\n:RELATES_TO: missing-slug\n:END:\n",
     );
     write(
         &home.board(),
