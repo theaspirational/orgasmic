@@ -182,6 +182,7 @@ pub mod test_hooks {
 #[derive(Clone)]
 pub struct ApiState {
     pub home: Home,
+    pub node_types: Arc<crate::node_types::NodeTypeRegistry>,
     pub index: Index,
     pub writer: WriterHandle,
     pub supervisor: Supervisor,
@@ -14672,7 +14673,7 @@ async fn create_graph_heading(
     for (key, value) in &req.properties {
         validate_drawer_property_key_case(key, layer_label, layer_keys, Some(value))?;
     }
-    let node_id = resolve_graph_create_id(layer, &req)?;
+    let node_id = resolve_graph_create_id(state, layer, &req)?;
     let mut source = read_or_seed_graph_file(&path, layer)?;
     let file = OrgFile::parse(source.clone(), path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
@@ -14807,12 +14808,22 @@ fn graph_layer_class(layer: GraphLayer) -> orgasmic_core::NodeIdClass {
 }
 
 fn resolve_graph_create_id(
+    state: &ApiState,
     layer: GraphLayer,
     req: &GraphCreateRequest,
 ) -> Result<String, ApiError> {
     let class = graph_layer_class(layer);
     match req.id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
-        None => Ok(orgasmic_core::mint_node_id(class)),
+        None => {
+            let collection = match layer {
+                GraphLayer::Decision => "decisions",
+                GraphLayer::Glossary => "glossary",
+            };
+            let descriptor = state.node_types.descriptor(collection).ok_or_else(|| {
+                ApiError::internal(format!("missing shipped descriptor for {collection}"))
+            })?;
+            Ok(orgasmic_core::mint_node_id(descriptor))
+        }
         Some(id) => {
             if orgasmic_core::is_legacy_sequential_create_id(class, id) {
                 return Err(ApiError::bad_request(format!(
@@ -16748,11 +16759,13 @@ fn task_create_mutation_identity(
     )
 }
 
-fn resolve_task_create_id(req: &TaskCreateRequest) -> Result<String, ApiError> {
+fn resolve_task_create_id(state: &ApiState, req: &TaskCreateRequest) -> Result<String, ApiError> {
     match req.id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
-        None => Ok(orgasmic_core::mint_node_id(
-            orgasmic_core::NodeIdClass::Task,
-        )),
+        None => state
+            .node_types
+            .descriptor("tasks")
+            .map(orgasmic_core::mint_node_id)
+            .ok_or_else(|| ApiError::internal("missing shipped descriptor for tasks")),
         Some(id) => {
             if orgasmic_core::is_legacy_sequential_create_id(orgasmic_core::NodeIdClass::Task, id) {
                 return Err(ApiError::bad_request(format!(
@@ -16769,8 +16782,14 @@ fn resolve_task_create_id(req: &TaskCreateRequest) -> Result<String, ApiError> {
 
 // orgasmic:task_ZKZBF.3 — no STATE branch here: `validate_task_property_keys`
 // refuses STATE case-insensitively via the refusal table, before this runs.
-fn task_create_lifecycle_stage(_req: &TaskCreateRequest) -> Result<LifecycleStage, ApiError> {
-    Ok(LifecycleStage::Backlog)
+fn task_create_lifecycle_stage(state: &ApiState) -> Result<LifecycleStage, ApiError> {
+    let initial = state
+        .node_types
+        .descriptor("tasks")
+        .and_then(|descriptor| descriptor.states.first())
+        .ok_or_else(|| ApiError::internal("task descriptor has no states"))?;
+    LifecycleStage::from_str(initial)
+        .map_err(|_| ApiError::internal(format!("task descriptor has unknown state {initial:?}")))
 }
 
 fn render_new_task_heading(
@@ -16888,8 +16907,8 @@ async fn post_task_create(
             reject_unresolved_reference_token(&known_ids, key, value)?;
         }
     }
-    let task_id = resolve_task_create_id(&req)?;
-    let stage = task_create_lifecycle_stage(&req)?;
+    let task_id = resolve_task_create_id(&state, &req)?;
+    let stage = task_create_lifecycle_stage(&state)?;
     let path = task_create_target_path(&project.root);
     let project_defaults = project_prompt_defaults(project);
     let properties = filter_default_dispatch_properties(
@@ -17899,6 +17918,17 @@ async fn update_task_state(
             status: Some(status),
         };
         return compact_or_full_response(want_full, compact, detail);
+    }
+    let descriptor = state
+        .node_types
+        .descriptor("tasks")
+        .ok_or_else(|| ApiError::internal("missing shipped descriptor for tasks"))?;
+    if !descriptor.allows_transition(from_state.as_str(), to_state.as_str()) {
+        return Err(ApiError::bad_request(format!(
+            "task transition {} -> {} is not allowed by the shipped task descriptor",
+            from_state.as_str(),
+            to_state.as_str()
+        )));
     }
     let from_path = task.source_file.clone();
     let to_file_name = lifecycle_stage_file_name(to_state);
@@ -19702,7 +19732,11 @@ async fn post_artifact_generate(
     )
     .await?;
 
-    let art_id = artifacts::new_artifact_id();
+    let artifact_descriptor = state
+        .node_types
+        .descriptor("artifacts")
+        .ok_or_else(|| ApiError::internal("missing shipped descriptor for artifacts"))?;
+    let art_id = artifacts::new_artifact_id(artifact_descriptor);
     let art_dir = artifact_dir(&entry.path, &art_id);
     let title = artifacts::escape_single_line(&derive_artifact_title(&prompt));
     let prompt_escaped = artifacts::escape_single_line(&prompt);
@@ -21301,6 +21335,7 @@ pub(crate) mod tests {
         );
         ApiState {
             home: home.clone(),
+            node_types: Arc::new(crate::node_types::NodeTypeRegistry::embedded().unwrap()),
             index,
             writer,
             supervisor,
@@ -30038,6 +30073,20 @@ pub(crate) mod tests {
         let token = read_token(&home);
         let client = reqwest::Client::new();
         let base = format!("http://{}", running.addr);
+
+        let rejected = client
+            .post(format!("{base}/api/projects/orgasmic/tasks/TASK-PRE"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "state": "done" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        assert!(rejected
+            .text()
+            .await
+            .unwrap()
+            .contains("not allowed by the shipped task descriptor"));
 
         let resp = client
             .post(format!("{base}/api/reindex/does-not-exist"))

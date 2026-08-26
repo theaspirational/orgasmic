@@ -641,13 +641,13 @@ enum MintClassArg {
     Artifact,
 }
 
-impl From<MintClassArg> for orgasmic_core::NodeIdClass {
-    fn from(value: MintClassArg) -> Self {
-        match value {
-            MintClassArg::Task => Self::Task,
-            MintClassArg::Decision => Self::Decision,
-            MintClassArg::Term => Self::Term,
-            MintClassArg::Artifact => Self::Artifact,
+impl MintClassArg {
+    fn collection(&self) -> &'static str {
+        match self {
+            Self::Task => "tasks",
+            Self::Decision => "decisions",
+            Self::Term => "glossary",
+            Self::Artifact => "artifacts",
         }
     }
 }
@@ -1490,7 +1490,7 @@ fn main() -> Result<()> {
             AuthCmd::Show => cmd_auth_show(&home),
         },
         Cmd::Question { cmd } => cmd_question(&home, cmd),
-        Cmd::Id { cmd } => cmd_id(cmd),
+        Cmd::Id { cmd } => cmd_id(&home, cmd),
         Cmd::Glossary { cmd } => cmd_glossary(&home, cmd),
         Cmd::Decision { cmd } => cmd_decision(&home, cmd),
         Cmd::Graph { cmd } => cmd_graph(&home, cmd),
@@ -3155,10 +3155,19 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
     })
 }
 
-fn cmd_id(cmd: IdCmd) -> Result<()> {
+fn cmd_id(home: &Home, cmd: IdCmd) -> Result<()> {
     match cmd {
         IdCmd::Mint { class } => {
-            println!("{}", orgasmic_core::mint_node_id(class.into()));
+            let descriptor_dir = home.source().join("shipped/schema/node-types");
+            let registry = if descriptor_dir.is_dir() {
+                orgasmic_daemon::node_types::NodeTypeRegistry::load(&descriptor_dir)?
+            } else {
+                orgasmic_daemon::node_types::NodeTypeRegistry::embedded()?
+            };
+            let descriptor = registry.descriptor(class.collection()).with_context(|| {
+                format!("missing shipped descriptor for {}", class.collection())
+            })?;
+            println!("{}", orgasmic_core::mint_node_id(descriptor));
             Ok(())
         }
     }

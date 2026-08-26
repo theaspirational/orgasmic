@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use orgasmic_core::{
-    collect_identity_occurrences, duplicate_id_groups, mint_node_id,
+    collect_identity_occurrences, duplicate_id_groups, mint_node_id_for_class,
     repair_id_collisions_with_incoming, NodeIdClass,
 };
 
@@ -19,7 +19,7 @@ fn write(path: &Path, contents: &str) {
 fn repair_re_mints_decision_duplicate_and_rerun_is_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    let dup = mint_node_id(NodeIdClass::Decision);
+    let dup = mint_node_id_for_class(NodeIdClass::Decision);
     let keep_path = root.join(".orgasmic/decisions.org");
     let incoming_path = root.join(".orgasmic/tasks/backlog.org");
     write(
@@ -52,7 +52,7 @@ fn repair_re_mints_decision_duplicate_and_rerun_is_noop() {
 fn ambiguous_attribution_refuses_without_incoming_path() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    let dup = mint_node_id(NodeIdClass::Task);
+    let dup = mint_node_id_for_class(NodeIdClass::Task);
     write(
         &root.join(".orgasmic/tasks/backlog.org"),
         &format!(

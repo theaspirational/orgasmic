@@ -1,6 +1,6 @@
 //! Identity lint via `/graph/parse-errors` (TASK-QRD3Y).
 
-use orgasmic_core::{mint_node_id, Home, NodeIdClass};
+use orgasmic_core::{mint_node_id_for_class, Home, NodeIdClass};
 use orgasmic_daemon::{Daemon, DaemonOptions};
 
 fn write(path: &std::path::Path, contents: &str) {
@@ -59,7 +59,7 @@ async fn duplicate_identity_surfaces_via_parse_errors() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let dup = mint_node_id(NodeIdClass::Task);
+    let dup = mint_node_id_for_class(NodeIdClass::Task);
     seed_board(&home, &project_root, "proj-lint");
     write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
@@ -104,7 +104,7 @@ async fn malformed_identity_surfaces_via_parse_errors() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_board(&home, &project_root, "proj-malformed");
-    let anchor = mint_node_id(NodeIdClass::Decision);
+    let anchor = mint_node_id_for_class(NodeIdClass::Decision);
     seed_project(
         &project_root,
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Legacy\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
@@ -155,7 +155,7 @@ async fn heading_id_token_mismatch_surfaces_via_parse_errors() {
          * BACKLOG TASK-WRONG Drifted title\n\
          :PROPERTIES:\n:ID: TASK-RIGHT\n:END:\n",
     );
-    let anchor = mint_node_id(NodeIdClass::Decision);
+    let anchor = mint_node_id_for_class(NodeIdClass::Decision);
     write(
         &project_root.join(".orgasmic/decisions.org"),
         &format!("#+title: decisions\n\n* dec_WRONG Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"),

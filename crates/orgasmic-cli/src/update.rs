@@ -24,6 +24,10 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "runtime-manifest.json",
     "docs/README.md",
     "shipped/schema/tx.org",
+    "shipped/schema/node-types/task.org",
+    "shipped/schema/node-types/decision.org",
+    "shipped/schema/node-types/glossary.org",
+    "shipped/schema/node-types/artifact.org",
     "shipped/prompt-studio/slots.org",
     "shipped/entry/router.org",
     "shipped/skills/orgasmic/SKILL.md",
@@ -1168,6 +1172,26 @@ mod tests {
         );
         write(&root.join("docs/README.md"), "# runtime docs\n");
         write(&root.join("shipped/schema/tx.org"), "* Tx\n");
+        for (name, source) in [
+            (
+                "task.org",
+                include_str!("../../../shipped/schema/node-types/task.org"),
+            ),
+            (
+                "decision.org",
+                include_str!("../../../shipped/schema/node-types/decision.org"),
+            ),
+            (
+                "glossary.org",
+                include_str!("../../../shipped/schema/node-types/glossary.org"),
+            ),
+            (
+                "artifact.org",
+                include_str!("../../../shipped/schema/node-types/artifact.org"),
+            ),
+        ] {
+            write(&root.join("shipped/schema/node-types").join(name), source);
+        }
         write(&root.join("shipped/prompt-studio/slots.org"), "* Slots\n");
         write(&root.join("shipped/entry/router.org"), "* Entry\n");
         write(

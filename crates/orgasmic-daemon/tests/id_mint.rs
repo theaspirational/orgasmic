@@ -5,7 +5,7 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use orgasmic_core::{mint_node_id, Home, NodeIdClass};
+use orgasmic_core::{mint_node_id_for_class, Home, NodeIdClass};
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 
 fn test_options() -> DaemonOptions {
@@ -442,7 +442,7 @@ async fn daemon_create_verbs_emit_heading_tokens_without_identity_lint() {
 
 #[tokio::test]
 async fn minted_task_round_trips_board_get_and_subtask_derivation() {
-    let task_id = mint_node_id(NodeIdClass::Task);
+    let task_id = mint_node_id_for_class(NodeIdClass::Task);
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -509,7 +509,7 @@ async fn minted_task_round_trips_board_get_and_subtask_derivation() {
 
 #[tokio::test]
 async fn minted_task_dispatch_and_close_round_trip() {
-    let task_id = mint_node_id(NodeIdClass::Task);
+    let task_id = mint_node_id_for_class(NodeIdClass::Task);
     let worker_id = "implementer-codex-appserver";
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
