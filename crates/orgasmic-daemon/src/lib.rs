@@ -1080,7 +1080,11 @@ impl Daemon {
         // orgasmic:TASK-FZB6T — one catalog instance, shared by the writer
         // boundary that maintains it and the API state that serves from it.
         let run_catalog = crate::run_catalog::RunCatalog::new();
-        let writer = crate::writer::spawn_with_catalog(events.clone(), Some(run_catalog.clone()));
+        let writer = crate::writer::spawn_with_catalog_and_index(
+            events.clone(),
+            Some(run_catalog.clone()),
+            Some(index.clone()),
+        );
         // orgasmic:TASK-AK6EM — externally-held `dispatch-close` guards are
         // persisted here, so a replacement daemon inherits a fence whose holder
         // (the CLI) is still deleting files. Declared before the listener binds,

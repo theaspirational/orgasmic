@@ -313,8 +313,8 @@ async fn flush(
     let board = canonical(&home.board());
     let home_tx_dir = canonical(&home.tx());
 
-    let mut touched_projects: HashSet<String> = HashSet::new();
-    let mut touched_home_tx = false;
+    let mut project_paths: Vec<(String, PathBuf)> = Vec::new();
+    let mut home_tx_paths = Vec::new();
     let mut touched_board = false;
 
     for path in pending.drain() {
@@ -330,7 +330,7 @@ async fn flush(
             continue;
         }
         if canon.starts_with(&home_tx_dir) {
-            touched_home_tx = true;
+            home_tx_paths.push(canon.clone());
             debug!(
                 path = %path.display(),
                 canon = %canon.display(),
@@ -353,7 +353,7 @@ async fn flush(
                     classified = "dropped_views".to_string();
                     break;
                 }
-                touched_projects.insert(entry.id.clone());
+                project_paths.push((entry.id.clone(), canon.clone()));
                 classified = format!("project={}", entry.id);
                 break;
             }
@@ -410,15 +410,27 @@ async fn flush(
             }
         }
     }
-    if touched_home_tx {
-        match index.schedule_home_tx_refresh().await {
+    for path in home_tx_paths {
+        let result = if path.extension().and_then(|ext| ext.to_str()) == Some("org") {
+            index.apply_written_path(&path).await.map(|_| ())
+        } else {
+            index.schedule_home_tx_refresh().await
+        };
+        match result {
             Ok(()) => events.publish(Topic::Daemon, EventPayload::DaemonHeartbeat),
-            Err(err) => warn!(error = %err, "home tx refresh failed"),
+            Err(err) => warn!(path = %path.display(), error = %err, "home tx refresh failed"),
         }
     }
-    for project_id in touched_projects {
-        if let Err(err) = index.schedule_watcher_refresh(&project_id).await {
-            warn!(project = %project_id, error = %err, "project refresh failed");
+    let mut published = HashSet::new();
+    for (project_id, path) in project_paths {
+        let changed = match index.apply_written_path(&path).await {
+            Ok(changed) => changed,
+            Err(err) => {
+                warn!(project = %project_id, path = %path.display(), error = %err, "project refresh failed");
+                continue;
+            }
+        };
+        if !changed || !published.insert(project_id.clone()) {
             continue;
         }
         events.publish(
