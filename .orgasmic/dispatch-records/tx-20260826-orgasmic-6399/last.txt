@@ -1,0 +1,19 @@
+## Changed
+- Added `orgasmic project migrate --to-branch`: stages the AP971 migration once, creates an orphan `orgasmic` commit, checks it out at `~/.orgasmic/<project>/ledger/`, preserves ignored `tmp/`, validates the branch/worktree/repository, and removes `.orgasmic/` from the worked tree.
+- Routed shared board reads, daemon indexing/watch roots, and CLI project discovery to the hidden ledger; marker-free linked worktrees resolve through the git common dir.
+- Removed all 2,009 tracked `.orgasmic/` files from the main tree and root-ignored `/.orgasmic/`. The orphan commit contains only `.orgasmic/**`, so no CI workflow exists on that branch.
+
+## Verification Gates
+- PASS `cargo test -p orgasmic-cli --bin orgasmic branch_cutover_is_orphan_dry_run_idempotent_and_worker_discoverable -- --nocapture`
+  - proves dry-run has no side effects; one-shot migration; parentless branch; hidden worktree; v2 node; ignored tmp preservation; main and fresh worker have no `.orgasmic`; worker common-dir discovery; repeated invocation no-ops; orphan tree has no CI config.
+- PASS `cargo test -p orgasmic-daemon --lib board_catalog_routes_the_daemon_to_the_hidden_ledger -- --nocapture`
+- PASS `cargo test -p orgasmic-cli --bin orgasmic migration_is_verbatim_dry_run_and_idempotent -- --nocapture`
+- PASS `cargo test -p orgasmic-core register_and_list_roundtrip -- --nocapture`
+- PASS `cargo fmt --all -- --check`, `git diff --check`, CLI help probe, and index/worktree absence probes.
+- An initial daemon filter without `--lib` passed the target library leg but continued enumerating unrelated integration binaries; it was intentionally terminated and replaced once by the canonical focused `--lib` command above, which passed.
+
+## Unmet Criteria
+- None.
+
+## Residual Risk
+- The live shared repository cutover was not executed from this worker branch because parallel dispatches still depend on its current ledger. The integrated tree must run `orgasmic project migrate --to-branch` at the coordinated cutover; the isolated real-git regression proves that production path.
