@@ -537,11 +537,19 @@ pub struct WriterHandle {
     /// transaction" for a transaction that committed is a lie the caller acts
     /// on. `refresh_after_tx` takes it and answers the committed-503 contract.
     apply_failure: Arc<std::sync::Mutex<Option<String>>>,
-    /// Set alongside `apply_failure` and cleared only by a successful repair
-    /// refresh. It outlives the error itself because the retry that repairs the
-    /// projection usually hits the API idempotency cache and never re-publishes:
-    /// without this flag that retry would return 200 over a still-stale view.
-    projection_dirty: Arc<std::sync::atomic::AtomicBool>,
+    /// Paths this writer committed but could not apply to the projection, in
+    /// write order. The writes they belong to are already durable,
+    /// so they are queued rather than lost. The queue outlives the error
+    /// itself because the retry that repairs the projection usually hits the
+    /// API idempotency cache and never re-publishes: without it that retry
+    /// would answer 200 over a still-stale view.
+    ///
+    /// It holds paths rather than a dirty bit, and one queue serves the whole
+    /// daemon, so whoever runs the repair repairs every project that is behind.
+    /// As a bare flag it was global but the repair was project-scoped, so a
+    /// write to one project could clear the staleness recorded for another and
+    /// then answer 200 over a view that was still stale.
+    unapplied: Arc<std::sync::Mutex<Vec<PathBuf>>>,
     #[cfg(test)]
     transaction_gate: Arc<Mutex<Option<Arc<TestTransactionGate>>>>,
     /// Test-only, handle-local lifecycle fault. This state is intentionally
@@ -852,18 +860,51 @@ impl WriterHandle {
         let Some(index) = self.index.as_ref() else {
             return Ok(());
         };
-        for path in paths {
-            if let Err(error) = index.apply_written_path(&path).await {
+        let pending: Vec<PathBuf> = paths.into_iter().collect();
+        for (i, path) in pending.iter().enumerate() {
+            if let Err(error) = index.apply_written_path(path).await {
                 tracing::error!(path = %path.display(), error = %error, "write committed but index apply failed");
                 *self.apply_failure.lock().unwrap() = Some(error);
-                self.projection_dirty
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 // Stop at the first failure. Applying the remaining paths would
                 // leave the projection torn — half this write visible — which is
-                // harder to reason about than uniformly stale. The caller's
-                // committed-503 tells it to retry, and the retry reapplies all
-                // of them.
-                break;
+                // harder to reason about than uniformly stale. This path and
+                // the ones after it go on the repair queue instead.
+                self.unapplied
+                    .lock()
+                    .unwrap()
+                    .extend(pending[i..].iter().cloned());
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Take the last projection failure, if any. Clears the error but leaves
+    /// the repair queue — the view is still stale until a repair runs.
+    pub(crate) fn take_apply_failure(&self) -> Option<String> {
+        self.apply_failure.lock().unwrap().take()
+    }
+
+    /// Re-apply everything committed but not yet projected, and report whether
+    /// the projection is now whole.
+    ///
+    /// Any caller may run this and every caller should: the queue is
+    /// daemon-wide, so whoever gets here repairs every project rather than only
+    /// its own. On failure the offending path and those behind it go back on
+    /// the front of the queue, keeping write order, and the error becomes the
+    /// caller's committed-503.
+    pub(crate) async fn repair_projection(&self) -> std::result::Result<(), String> {
+        let Some(index) = self.index.as_ref() else {
+            return Ok(());
+        };
+        let pending = std::mem::take(&mut *self.unapplied.lock().unwrap());
+        for (i, path) in pending.iter().enumerate() {
+            if let Err(error) = index.apply_written_path(path).await {
+                self.unapplied
+                    .lock()
+                    .unwrap()
+                    .splice(0..0, pending[i..].iter().cloned());
+                return Err(error);
             }
         }
         Ok(())
@@ -877,22 +918,6 @@ impl WriterHandle {
             guard_node_write(path, machine_id)?;
         }
         Ok(())
-    }
-
-    /// Take the last projection failure, if any. Clears the error but leaves
-    /// `projection_dirty` set — the view is still stale until a repair runs.
-    pub(crate) fn take_apply_failure(&self) -> Option<String> {
-        self.apply_failure.lock().unwrap().take()
-    }
-
-    pub(crate) fn projection_dirty(&self) -> bool {
-        self.projection_dirty
-            .load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    pub(crate) fn clear_projection_dirty(&self) {
-        self.projection_dirty
-            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Append a tx entry through the daemon writer. Re-using `request_id`
@@ -1677,7 +1702,7 @@ pub(crate) fn spawn_with_catalog_index_and_machine(
         machine_id,
         deferred_appends,
         apply_failure: Arc::new(std::sync::Mutex::new(None)),
-        projection_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        unapplied: Arc::new(std::sync::Mutex::new(Vec::new())),
         #[cfg(test)]
         transaction_gate: Arc::new(Mutex::new(None)),
         #[cfg(test)]

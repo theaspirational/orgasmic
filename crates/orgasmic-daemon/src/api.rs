@@ -8520,13 +8520,17 @@ async fn refresh_after_tx(
         if let Some(error) = state.writer.take_apply_failure() {
             return Err(committed_refresh_error(tx_id, error));
         }
-        // A prior write left the projection stale. The retry that gets here has
+        // A prior write left paths unprojected. The retry that gets here has
         // usually been served from the idempotency cache without re-publishing,
-        // so fall through to one real refresh to repair it before answering.
-        if !state.writer.projection_dirty() {
-            return Ok(());
-        }
-        state.writer.clear_projection_dirty();
+        // so re-apply them before answering. Repairing by path covers every
+        // project that is behind rather than only this request's: the record is
+        // daemon-wide, and as a bare flag it let a write to one project clear
+        // the staleness recorded for another and then answer 200 over a view
+        // that was still stale.
+        return match state.writer.repair_projection().await {
+            Ok(()) => Ok(()),
+            Err(error) => Err(committed_refresh_error(tx_id, error)),
+        };
     }
     if project_tx {
         if let Some(project_id) = destination_project_id {
@@ -8561,13 +8565,17 @@ async fn refresh_after_project_mutation(
         if let Some(error) = state.writer.take_apply_failure() {
             return Err(committed_refresh_error(tx_id, error));
         }
-        // A prior write left the projection stale. The retry that gets here has
+        // A prior write left paths unprojected. The retry that gets here has
         // usually been served from the idempotency cache without re-publishing,
-        // so fall through to one real refresh to repair it before answering.
-        if !state.writer.projection_dirty() {
-            return Ok(());
-        }
-        state.writer.clear_projection_dirty();
+        // so re-apply them before answering. Repairing by path covers every
+        // project that is behind rather than only this request's: the record is
+        // daemon-wide, and as a bare flag it let a write to one project clear
+        // the staleness recorded for another and then answer 200 over a view
+        // that was still stale.
+        return match state.writer.repair_projection().await {
+            Ok(()) => Ok(()),
+            Err(error) => Err(committed_refresh_error(tx_id, error)),
+        };
     }
     if project_tx {
         return state
@@ -32207,9 +32215,90 @@ pub(crate) mod tests {
             .await
             .task("orgasmic", "TASK-R3P41")
             .is_some());
+        // Repaired without a project-wide rescan: the retry re-applies the
+        // paths the failed publication left queued. Costing a scan here would
+        // put back exactly the rescan TASK-8AV8B removed.
         assert_eq!(
             state.index.refresh_status().await.scans_total,
-            scans_after_failure + 1
+            scans_after_failure,
+            "the repair must be incremental, not a project rescan"
+        );
+    }
+
+    /// A projection failure recorded for one project must not be cleared by a
+    /// write to a different one. The record is daemon-wide; while it was a bare
+    /// flag the repair it triggered was project-scoped, so a write to `second`
+    /// consumed the flag `first` had set, refreshed `second`, and left `first`
+    /// stale with nothing left to say so — `first`'s cached retry then answered
+    /// 200 over that stale view.
+    #[tokio::test]
+    async fn a_write_to_one_project_does_not_clear_another_projects_staleness() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let first_root = tmp.path().join("first");
+        let second_root = tmp.path().join("second");
+        seed_project(&home, &first_root, "first");
+        seed_project(&home, &second_root, "second");
+        write(
+            home.board(),
+            &format!(
+                "#+title: orgasmic board\n#+orgasmic_version: 1\n\n\
+                 * PROJECT first\n:PROPERTIES:\n:ID:               first\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n\n\
+                 * PROJECT second\n:PROPERTIES:\n:ID:               second\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+                first_root.display(),
+                second_root.display()
+            ),
+        );
+        let mut state = direct_stage_test_state(home).await;
+        state.tx_commit_to_project = true;
+
+        state.index.fail_next_refresh();
+        let error = post_task_create(
+            State(state.clone()),
+            Path("first".to_string()),
+            Json(task_create_request("TASK-FRST1", "first-repair")),
+        )
+        .await
+        .expect_err("committed mutation with failed publication must return 503");
+        assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            state
+                .index
+                .snapshot()
+                .await
+                .task("first", "TASK-FRST1")
+                .is_none(),
+            "failed publication seam must leave the first project stale"
+        );
+
+        // An unrelated, successful write to the other project.
+        let _ = post_task_create(
+            State(state.clone()),
+            Path("second".to_string()),
+            Json(task_create_request("TASK-SCND1", "second-write")),
+        )
+        .await
+        .expect("a write to the second project must succeed");
+
+        assert!(
+            state
+                .index
+                .snapshot()
+                .await
+                .task("second", "TASK-SCND1")
+                .is_some(),
+            "the second project's own write must be visible"
+        );
+        assert!(
+            state
+                .index
+                .snapshot()
+                .await
+                .task("first", "TASK-FRST1")
+                .is_some(),
+            "the second project's write must repair the first project's queued \
+             path, not discard the record of it"
         );
     }
 
