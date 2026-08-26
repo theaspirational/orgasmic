@@ -92,9 +92,9 @@ fn seed_project(
 ) {
     symlink_repo_source(home);
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Dispatch endpoint task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Dispatch endpoint task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
         ),
     );
     write(
@@ -116,9 +116,9 @@ fn seed_project_with_task_worker(
 ) {
     symlink_repo_source(home);
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Task with pinned worker\n:PROPERTIES:\n:ID:               {task_id}\n:WORKER:           {task_worker_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Task with pinned worker\n:PROPERTIES:\n:ID:               {task_id}\n:WORKER:           {task_worker_id}\n:END:\n"
         ),
     );
     write(
@@ -553,9 +553,9 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
         ),
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Sandbox override task\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=false,allow_patch=true,allow_network=true,allow_writes_outside_cwd=false\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Sandbox override task\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=false,allow_patch=true,allow_network=true,allow_writes_outside_cwd=false\n:END:\n"
         ),
     );
     write(
@@ -621,9 +621,9 @@ dispatch:
     let project_root = tmp.path().join("proj");
     let task_id = "TASK-SANDBOX-MATRIX";
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Sandbox matrix\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Sandbox matrix\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:END:\n"
         ),
     );
     write(
@@ -1583,9 +1583,9 @@ fn seed_dual_kind_project(
 ) {
     symlink_repo_source(home);
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Dispatch endpoint task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Dispatch endpoint task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
         ),
     );
     write(
@@ -2527,9 +2527,9 @@ async fn get_project_invalid_task_returns_404_quickly_without_paths() {
         "TASK-VALID",
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(".orgasmic/tasks/TASK-VALID/node.org"),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-VALID Valid task\n:PROPERTIES:\n:ID:               TASK-VALID\n:END:\n\n** Description\n{}\n",
+            "#+title: orgasmic task TASK-VALID\n#+orgasmic_version: 2\n\n* BACKLOG TASK-VALID Valid task\n:PROPERTIES:\n:ID:               TASK-VALID\n:END:\n\n** Description\n{}\n",
             "x".repeat(64 * 1024)
         ),
     );
