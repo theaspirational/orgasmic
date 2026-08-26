@@ -14443,10 +14443,17 @@ enum GraphLayer {
 }
 
 impl GraphLayer {
-    fn file_name(self) -> &'static str {
+    fn collection(self) -> &'static str {
         match self {
-            Self::Decision => "decisions.org",
-            Self::Glossary => "glossary.org",
+            Self::Decision => "decisions",
+            Self::Glossary => "glossary",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Decision => "decision",
+            Self::Glossary => "glossary term",
         }
     }
 
@@ -14612,7 +14619,7 @@ async fn create_graph_heading(
     req: GraphCreateRequest,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
     // orgasmic:TASK-N4TGD
-    let (project_id, path) = graph_path(state, req.project.as_deref(), layer).await?;
+    let (project_id, project_root) = graph_project(state, req.project.as_deref()).await?;
     let mutation = graph_create_mutation_identity(layer, &project_id, &req)?;
     if let Some(request_id) = transaction_request_key(req.request_id.as_deref()) {
         if let Some(cached) = state
@@ -14664,9 +14671,14 @@ async fn create_graph_heading(
         validate_drawer_property_key_case(key, layer_label, layer_keys, Some(value))?;
     }
     let node_id = resolve_graph_create_id(state, layer, &req)?;
-    let mut source = read_or_seed_graph_file(&path, layer)?;
-    let file = OrgFile::parse(source.clone(), path.to_string_lossy())
-        .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
+    let path = orgasmic_core::node_kernel::node_dir(&project_root, layer.collection(), &node_id)
+        .join(orgasmic_core::node_kernel::NODE_FILE);
+    if path.exists() {
+        return Err(ApiError::bad_request(format!(
+            "node {node_id} already exists"
+        )));
+    }
+    let file = read_graph_collection(&project_root, layer)?;
     if layer == GraphLayer::Decision {
         validate_decision_create_parent(&path, &file, &node_id, req.properties.get("PARENT"))?;
     }
@@ -14674,11 +14686,7 @@ async fn create_graph_heading(
         reject_glossary_duplicate_identity(&file, &req, &node_id)?;
     }
     let heading = render_graph_heading(layer, &req, &node_id)?;
-    if !source.ends_with('\n') {
-        source.push('\n');
-    }
-    source.push('\n');
-    source.push_str(&heading);
+    let source = orgasmic_core::node_kernel::node_org_header(layer.label(), &node_id) + &heading;
     OrgFile::parse(source.clone(), path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
     write_graph_and_record(GraphWriteRequest {
@@ -14831,7 +14839,9 @@ async fn mutate_graph_heading(
     id: String,
     req: GraphActionRequest,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
-    let (project_id, path) = graph_path(state, req.project.as_deref(), layer).await?;
+    let (project_id, project_root) = graph_project(state, req.project.as_deref()).await?;
+    let path = orgasmic_core::node_kernel::node_dir(&project_root, layer.collection(), &id)
+        .join(orgasmic_core::node_kernel::NODE_FILE);
     if !req.force {
         let known_ids = known_reference_ids(state, &project_id).await?;
         for (key, value) in &req.properties {
@@ -14861,13 +14871,32 @@ async fn mutate_graph_heading(
     let source = read_artifact(&path, layer.artifact_name())?;
     let file = OrgFile::parse(source, path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
+    let collection = if layer == GraphLayer::Decision {
+        Some(read_graph_collection(&project_root, layer)?)
+    } else {
+        None
+    };
     let mut rw = OrgRewriter::new(&file, path.to_string_lossy());
     let mut action = req.action.unwrap_or_else(|| "revise".to_string());
     if layer == GraphLayer::Decision && action == "delete" {
-        return delete_decision_heading(state, project_id, path, file, id, req.request_id).await;
+        return delete_decision_heading(
+            state,
+            project_id,
+            path,
+            file,
+            collection.as_ref().expect("decision collection"),
+            id,
+            req.request_id,
+        )
+        .await;
     }
     let parent_changed = if layer == GraphLayer::Decision {
-        validate_decision_parent_property_update(&path, &file, &id, &req.properties)?
+        validate_decision_parent_property_update(
+            &path,
+            collection.as_ref().expect("decision collection"),
+            &id,
+            &req.properties,
+        )?
     } else {
         false
     };
@@ -15022,12 +15051,13 @@ async fn delete_decision_heading(
     project_id: String,
     path: PathBuf,
     file: OrgFile,
+    decisions: &OrgFile,
     id: String,
     request_id: Option<String>,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
     file.find_by_id(&id)
         .ok_or_else(|| ApiError::not_found(format!("decision {id}")))?;
-    if decision_has_children(&file, &id)? {
+    if decision_has_children(decisions, &id)? {
         return Err(ApiError::bad_request(format!(
             "decision {id} still has child decisions; re-parent or delete children first"
         )));
@@ -16039,17 +16069,32 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
     Ok(tx_id)
 }
 
-async fn graph_path(
+async fn graph_project(
     state: &ApiState,
     project: Option<&str>,
-    layer: GraphLayer,
 ) -> Result<(String, PathBuf), ApiError> {
     let (project_id, snap) = ensure_loaded_snapshot(state, project).await?;
     let project = select_loaded_project(&snap, &project_id)?;
-    Ok((
-        project.project_id.clone(),
-        project.root.join(".orgasmic").join(layer.file_name()),
-    ))
+    Ok((project.project_id.clone(), project.root.clone()))
+}
+
+fn read_graph_collection(project_root: &FsPath, layer: GraphLayer) -> Result<OrgFile, ApiError> {
+    let mut source = String::from("#+title: node collection\n#+orgasmic_version: 2\n\n");
+    for path in collection_node_file_paths(project_root, layer.collection()).map_err(|error| {
+        ApiError::internal(format!("read {} collection: {error}", layer.collection()))
+    })? {
+        let node = read_artifact(&path, layer.artifact_name())?;
+        let file = OrgFile::parse(node, path.to_string_lossy())
+            .map_err(|error| org_parse_bad_request(&path, layer.artifact_name(), error))?;
+        for heading in &file.headings {
+            source.push_str(file.slice(heading.span.clone()));
+            if !source.ends_with('\n') {
+                source.push('\n');
+            }
+        }
+    }
+    OrgFile::parse(source, layer.collection())
+        .map_err(|error| ApiError::internal(format!("parse node collection: {error}")))
 }
 
 struct GraphWriteRequest<'a> {
@@ -16136,16 +16181,6 @@ async fn write_graph_and_record(
         action: req.action.to_string(),
         tx_id,
     }))
-}
-
-fn read_or_seed_graph_file(path: &FsPath, layer: GraphLayer) -> Result<String, ApiError> {
-    if path.exists() {
-        return read_artifact(path, layer.artifact_name());
-    }
-    Ok(format!(
-        "#+title: orgasmic {}\n#+orgasmic_version: 1\n",
-        layer.file_name()
-    ))
 }
 
 fn render_graph_heading(
@@ -20375,6 +20410,24 @@ pub(crate) mod tests {
     type TestWs = tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >;
+
+    #[test]
+    fn graph_collection_reads_node_directories() {
+        let root = tempfile::tempdir().unwrap();
+        for id in ["dec_A", "dec_B"] {
+            let dir = root.path().join(".orgasmic/decisions").join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("node.org"),
+                format!("#+orgasmic_version: 2\n\n* {id}\n:PROPERTIES:\n:ID: {id}\n:END:\n"),
+            )
+            .unwrap();
+        }
+        let file = read_graph_collection(root.path(), GraphLayer::Decision).unwrap();
+        assert_eq!(file.headings.len(), 2);
+        assert!(file.find_by_id("dec_A").is_some());
+        assert!(file.find_by_id("dec_B").is_some());
+    }
 
     #[test]
     fn chat_catalog_version_comparison_handles_patch_thresholds() {
