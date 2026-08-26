@@ -50,8 +50,8 @@ fn seed_project_with_sections(home: &Home, project_root: &Path, project_id: &str
         ),
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n\
+        &project_root.join(".orgasmic/tasks/TASK-G01/node.org"),
+        "#+title: orgasmic task TASK-G01\n#+orgasmic_version: 2\n\n\
          * BACKLOG TASK-G01 Raw body test task :work:\n\
          :PROPERTIES:\n\
          :ID:               TASK-G01\n\
@@ -151,7 +151,7 @@ async fn raw_body_format_wraps_escapes_and_roundtrips() {
         "raw body_format must be accepted: {status} {body_text}"
     );
 
-    let sprint_path = project_root.join(".orgasmic/tasks/backlog.org");
+    let sprint_path = project_root.join(".orgasmic/tasks/TASK-G01/node.org");
     let before_text = "* BACKLOG TASK-G01 Raw body test task :work:\n\
          :PROPERTIES:\n\
          :ID:               TASK-G01\n\
@@ -160,7 +160,7 @@ async fn raw_body_format_wraps_escapes_and_roundtrips() {
          :END:\n\n\
          ** Description\nOriginal description.\n\n\
          ** Acceptance Criteria\n- [ ] Item.\n";
-    let before = OrgFile::parse(before_text, "backlog.org").unwrap();
+    let before = OrgFile::parse(before_text, "node.org").unwrap();
 
     let on_disk = std::fs::read_to_string(&sprint_path).unwrap();
     assert!(
@@ -229,7 +229,7 @@ async fn raw_body_format_adversarial_end_example_cannot_escape_wrapper() {
     );
 
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-G01/node.org")).unwrap();
     assert!(
         on_disk.contains(&expected_wrapped),
         "payload must be comma-escaped inside example block: {on_disk}"
@@ -243,7 +243,7 @@ async fn raw_body_format_adversarial_end_example_cannot_escape_wrapper() {
         "phantom heading must not escape wrapper: {on_disk}"
     );
 
-    let file = OrgFile::parse(&on_disk, "backlog.org").unwrap();
+    let file = OrgFile::parse(&on_disk, "node.org").unwrap();
     assert_eq!(
         heading_ids(&file),
         vec!["TASK-G01".to_string()],
