@@ -29,7 +29,7 @@ use include_dir::{include_dir, Dir};
 use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
 use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
-    goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
+    fold_dispatches, goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
     lifecycle_stage_file_name, parse_tx_file, project_sessions_dir, read_session_file,
     resolve_loader, scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading,
     HeadingLineEdit, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile,
@@ -3579,17 +3579,9 @@ pub struct ManagerDispatchWaitResponse {
 #[derive(Debug, Serialize)]
 pub struct ManagerDispatchGenerationState {
     pub started_tx: String,
-    /// waiting | reported | died | unknown
+    /// waiting | reported | closed | died | unknown
     pub status: String,
     pub run_id: Option<String>,
-}
-
-fn tx_extra<'a>(entry: &'a TxEntry, key: &str) -> Option<&'a str> {
-    entry
-        .extra
-        .iter()
-        .find(|(candidate, _)| candidate == key)
-        .map(|(_, value)| value.as_str())
 }
 
 fn project_tx_entries(project_root: &FsPath) -> Result<Vec<TxEntry>, ApiError> {
@@ -3638,78 +3630,28 @@ struct DispatchGenerationLedger {
     run_ids: BTreeSet<String>,
     addressed_run_id: Option<String>,
     reported: bool,
+    closed: bool,
 }
 
 fn dispatch_generation_ledgers(
     entries: &[TxEntry],
     project_id: &str,
 ) -> BTreeMap<String, DispatchGenerationLedger> {
-    let mut generations: BTreeMap<String, DispatchGenerationLedger> = BTreeMap::new();
-    for entry in entries {
-        if entry.ty == "manager.dispatch_started" && entry.project.as_deref() == Some(project_id) {
-            generations.entry(entry.tx_id.clone()).or_default();
-        }
-    }
-
-    for entry in entries {
-        if entry.ty != "run.created" || tx_extra(entry, "ORIGIN") != Some("cli_dispatch") {
-            continue;
-        }
-        let (Some(started_tx), Some(run_id)) =
-            (tx_extra(entry, "DISPATCH_TX"), tx_extra(entry, "RUN_ID"))
-        else {
-            continue;
-        };
-        if let Some(generation) = generations.get_mut(started_tx) {
-            generation.run_ids.insert(run_id.to_string());
-            generation.addressed_run_id = Some(run_id.to_string());
-        }
-    }
-
-    // Recovery edges can arrive in either lineage order in a globbed tx
-    // directory. Fixed-point folding handles A->B->C even if B->C sorts
-    // before A->B, and is robust across daemon restart/reattach records.
-    loop {
-        let mut changed = false;
-        for entry in entries {
-            if entry.ty != "run.created" || tx_extra(entry, "ORIGIN") != Some("recovery") {
-                continue;
-            }
-            let (Some(origin_run_id), Some(replacement_run_id)) =
-                (tx_extra(entry, "ORIGIN_RUN_ID"), tx_extra(entry, "RUN_ID"))
-            else {
-                continue;
-            };
-            for generation in generations.values_mut() {
-                if generation.run_ids.contains(origin_run_id)
-                    && generation.run_ids.insert(replacement_run_id.to_string())
-                {
-                    generation.addressed_run_id = Some(replacement_run_id.to_string());
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
-    for entry in entries {
-        if !entry.ty.ends_with(".reported") {
-            continue;
-        }
-        // A present-but-unmatched RUN_ID is intentionally ignored. Falling
-        // back to task names here could report a later dispatch generation.
-        let Some(run_id) = tx_extra(entry, "RUN_ID") else {
-            continue;
-        };
-        for generation in generations.values_mut() {
-            if generation.run_ids.contains(run_id) {
-                generation.reported = true;
-            }
-        }
-    }
-    generations
+    fold_dispatches(entries)
+        .into_iter()
+        .filter(|dispatch| dispatch.started.project.as_deref() == Some(project_id))
+        .map(|dispatch| {
+            (
+                dispatch.started.tx_id,
+                DispatchGenerationLedger {
+                    run_ids: dispatch.run_ids,
+                    addressed_run_id: dispatch.addressed_run_id,
+                    reported: dispatch.reported,
+                    closed: dispatch.closed,
+                },
+            )
+        })
+        .collect()
 }
 
 /// Recover the one crash-durable wait authority that the tx ledger cannot yet
@@ -3815,6 +3757,15 @@ async fn post_manager_dispatch_wait(
                 started_tx,
                 status: "unknown".into(),
                 run_id: None,
+            },
+            Some(DispatchGenerationLedger {
+                closed: true,
+                addressed_run_id,
+                ..
+            }) => ManagerDispatchGenerationState {
+                started_tx,
+                status: "closed".into(),
+                run_id: addressed_run_id.clone(),
             },
             Some(DispatchGenerationLedger {
                 reported: true,
@@ -22870,18 +22821,73 @@ pub(crate) mod tests {
     fn generation_tx(tx_id: &str, ty: &str, extra: &[(&str, &str)]) -> TxEntry {
         let mut entry = TxEntry::new(tx_id, ty, "[2026-08-09 Sun 00:00:00]", "test", "test");
         entry.project = Some("proj".into());
+        entry.task = Some("TASK-TEST".into());
         entry.extra = extra
             .iter()
             .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
             .collect();
+        if ty == "manager.dispatch_started" {
+            entry.extra.push(("KIND".into(), "implementer".into()));
+        }
         entry
+    }
+
+    #[tokio::test]
+    async fn every_dispatch_type_routes_to_project_tx() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let mut state = direct_stage_test_state(home).await;
+        state.tx_commit_to_project = true;
+        let project = BoardEntry {
+            id: "proj".into(),
+            path: project_root.clone(),
+            branch: "main".into(),
+            status: "active".into(),
+        };
+        for ty in [
+            "manager.dispatch_started",
+            "run.created",
+            "implementer.reported",
+            "reviewer.reported",
+            "architector.reported",
+            "implementer.done",
+            "reviewer.done",
+            "architector.done",
+            "manager.dispatch_aborted",
+            "manager.dispatch_orphaned",
+        ] {
+            let req = TxAppendRequest {
+                request_id: None,
+                r#type: ty.into(),
+                actor: None,
+                machine: None,
+                project: Some("proj".into()),
+                task: Some("TASK-TEST".into()),
+                target: None,
+                reason: None,
+                extra: Vec::new(),
+                tx_path: None,
+            };
+            let destination = tx_destination(&state, &req, Some(&project), &Utc::now()).unwrap();
+            assert!(destination.project_tx, "{ty} escaped project tx");
+            assert!(
+                destination
+                    .tx_path
+                    .starts_with(project_root.join(".orgasmic/tx")),
+                "{ty} routed to {}",
+                destination.tx_path.display()
+            );
+        }
     }
 
     #[test]
     fn dispatch_wait_folds_the_complete_recovery_lineage_before_reports() {
         // Deliberately list C->D before B->C. The fold must reach a fixed
         // point rather than depending on tx-file lexical order.
-        let entries = vec![
+        let mut entries = vec![
             generation_tx("started", "manager.dispatch_started", &[]),
             generation_tx(
                 "recovery-2",
@@ -22924,6 +22930,12 @@ pub(crate) mod tests {
         );
         assert_eq!(generation.addressed_run_id.as_deref(), Some("run-d"));
         assert!(generation.reported);
+        entries.push(generation_tx(
+            "done",
+            "implementer.done",
+            &[("CLOSED_TX", "started")],
+        ));
+        assert!(dispatch_generation_ledgers(&entries, "proj")["started"].closed);
     }
 
     #[test]

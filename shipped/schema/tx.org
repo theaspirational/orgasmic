@@ -98,6 +98,19 @@ Not emitted for =reattach_tmux=, which preserves the run id and so needs no link
 
 Dispatch-cycle records:
 
+The authoritative dispatch lifecycle stays in project =tx/YYYY-MM.org=. The
+complete routed type set is:
+- =manager.dispatch_started=
+- =run.created=
+- =implementer.reported=
+- =reviewer.reported=
+- =architector.reported=
+- =implementer.done=
+- =reviewer.done=
+- =architector.done=
+- =manager.dispatch_aborted=
+- =manager.dispatch_orphaned=
+
 **** manager.dispatch_started
 Properties in addition to the required base properties:
 - :PROJECT: project id

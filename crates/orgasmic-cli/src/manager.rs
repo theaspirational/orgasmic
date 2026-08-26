@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
-    dotorg_tasks_dir, goal_file_path, iter_task_file_paths, parse_tx_file, project_dispatch_dir,
-    projects, read_session_file, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
-    SessionEventKind, TaskHeading, TxEntry,
+    dotorg_tasks_dir, fold_dispatches, goal_file_path, iter_task_file_paths, parse_tx_file,
+    project_dispatch_dir, projects, read_session_file, DispatchFold, Lifecycle, LifecycleStage,
+    OrgFile, ProjectFile, RuntimeIdentity, SessionEventKind, TaskHeading, TxEntry,
 };
 // orgasmic:task_ZKZBF.2 — the ONE key-shape rule (this used to be a verbatim
 // copy of core's; a copy drifting is how the drawer check and the ledger
@@ -3023,7 +3023,7 @@ fn classify_dispatch_wait_round(
     }
     if generations
         .iter()
-        .all(|generation| generation.status == "reported")
+        .all(|generation| matches!(generation.status.as_str(), "reported" | "closed"))
     {
         DispatchWaitRound::Reported
     } else {
@@ -7697,8 +7697,8 @@ fn sequencer_operation_in_progress(git_dir: &Path) -> Option<&'static str> {
 /// convention, and the print below names the ref it landed on.
 // orgasmic:TASK-QGWK7.1.1.1,TASK-QGWK7.1.1.1.1
 fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchRecord) {
-    // Reachability is load-bearing on `close_tx_ran_cleanup` (see its
-    // definition) setting `cleanup_already_run` for `ok`/`worktree_missing`
+    // Reachability is load-bearing on the core dispatch fold setting
+    // `cleanup_already_run` for `ok`/`worktree_missing`
     // ONLY: that is what stops a staggered multi-task close stamping
     // `cleanup_already_run` over the `partial` this repair keys on.
     let Some(status) = closed_dispatch_cleanup_status(project_root, &closed.tx_id) else {
@@ -9498,46 +9498,60 @@ fn overlapping_tasks(open_tasks: &[String], requested_tasks: &[String]) -> Vec<S
 /// ones; `dispatch-close` also needs the closed ones so a re-run is a no-op
 /// instead of "no open dispatch" (TASK-6AYEJ).
 fn scan_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
-    let mut open = Vec::<DispatchRecord>::new();
-    for entry in read_tx_entries(project_root)? {
-        match entry.ty.as_str() {
-            "manager.dispatch_started" => {
-                if let Some(mut record) = dispatch_record_from_entry(&entry) {
-                    // Tx records store project-relative paths (no user-specific
-                    // prefixes in committed files); resolve them back against
-                    // the project root for local use (ps matching, cleanup).
-                    for path in [&mut record.worktree, &mut record.brief_path] {
-                        if let Some(p) = path.as_mut() {
-                            if p.is_relative() {
-                                *p = project_root.join(&p);
-                            }
-                        }
-                    }
-                    open.push(record);
+    Ok(fold_dispatches(&read_tx_entries(project_root)?)
+        .into_iter()
+        .map(|dispatch| {
+            let mut record = dispatch_record_from_fold(dispatch);
+            // Tx records store project-relative paths (no user-specific
+            // prefixes in committed files); resolve them back against the
+            // project root for local use (ps matching, cleanup).
+            for path in [&mut record.worktree, &mut record.brief_path] {
+                if let Some(path) = path.as_mut().filter(|path| path.is_relative()) {
+                    *path = project_root.join(&path);
                 }
             }
-            "run.created" => {
-                attach_run_created_to_dispatch(&mut open, &entry);
-            }
-            // A worker's own finalize (TASK-6AYEJ): the worker is done, the
-            // dispatch is not. Record it so `dispatch-status` can tell
-            // "awaiting the manager's close" apart from "the worker died",
-            // but leave the dispatch open for `dispatch-close`.
-            "implementer.reported" | "reviewer.reported" | "architector.reported" => {
-                mark_matching_dispatch_reported(&mut open, &entry)
-            }
-            // Historical note: until TASK-6AYEJ these same `*.done` types were
-            // ALSO emitted by `dispatch finalize`, so ~10 dispatches on this
-            // repo are closed by a worker-authored tx. They stay closed — the
-            // terminal set is unchanged, so no backfill or migration is needed.
-            "implementer.done"
-            | "reviewer.done"
-            | "architector.done"
-            | "manager.dispatch_aborted" => close_matching_dispatch(&mut open, &entry),
-            _ => {}
-        }
+            record
+        })
+        .collect())
+}
+
+fn dispatch_record_from_fold(dispatch: DispatchFold) -> DispatchRecord {
+    let started = &dispatch.started;
+    let run = dispatch.run.as_ref();
+    let run_extra = |key| run.and_then(|entry| extra(entry, key));
+    DispatchRecord {
+        tx_id: started.tx_id.clone(),
+        tasks: started
+            .task
+            .as_deref()
+            .map(split_task_list)
+            .unwrap_or_default(),
+        kind: extra(started, "KIND").unwrap_or_default().to_string(),
+        worktree: extra(started, "WORKTREE").map(PathBuf::from),
+        branch: extra(started, "BRANCH").map(str::to_string),
+        model: extra_compat(started, "MODEL", "CODEX_MODEL").map(str::to_string),
+        effort: extra_compat(started, "EFFORT", "CODEX_EFFORT").map(str::to_string),
+        brief_path: extra_compat(started, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
+        last_path: run_extra("LAST_PATH").map(PathBuf::from),
+        stdout_path: run_extra("STDOUT_PATH").map(PathBuf::from),
+        dispatch_attempt_token: run_extra("DISPATCH_ATTEMPT").map(str::to_string),
+        run_id: dispatch.addressed_run_id,
+        run_ids: dispatch.run_ids,
+        worker_id: run_extra("WORKER").map(str::to_string),
+        driver: run_extra("DRIVER").map(str::to_string),
+        harness: run_extra("HARNESS").map(str::to_string),
+        pid: run_extra("PID").and_then(|pid| pid.parse().ok()),
+        started_at: extra(started, "STARTED_AT")
+            .map(str::to_string)
+            .or_else(|| Some(started.time.clone())),
+        worker_pid: extra_compat(started, "WORKER_PID", "CODEX_PID")
+            .and_then(|pid| pid.parse().ok()),
+        goal_id: extra(started, "GOAL_ID").map(str::to_string),
+        closed_tasks: dispatch.closed_tasks,
+        cleanup_already_run: dispatch.cleanup_already_run,
+        reported: dispatch.reported,
+        closed: dispatch.closed,
     }
-    Ok(open)
 }
 
 fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
@@ -9570,215 +9584,6 @@ fn read_tx_entries(project_root: &Path) -> Result<Vec<TxEntry>> {
         entries.append(&mut parsed);
     }
     Ok(entries)
-}
-
-fn dispatch_record_from_entry(entry: &TxEntry) -> Option<DispatchRecord> {
-    let task = entry.task.clone()?;
-    let tasks = split_task_list(&task);
-    if tasks.is_empty() {
-        return None;
-    }
-    let kind = extra(entry, "KIND")?.to_string();
-    Some(DispatchRecord {
-        tx_id: entry.tx_id.clone(),
-        tasks,
-        kind,
-        worktree: extra(entry, "WORKTREE").map(PathBuf::from),
-        branch: extra(entry, "BRANCH").map(str::to_string),
-        // Read the harness-neutral keys first, falling back to the legacy
-        // `CODEX_*` spellings so historical tx records still parse.
-        model: extra_compat(entry, "MODEL", "CODEX_MODEL").map(str::to_string),
-        effort: extra_compat(entry, "EFFORT", "CODEX_EFFORT").map(str::to_string),
-        brief_path: extra_compat(entry, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
-        last_path: None,
-        stdout_path: None,
-        dispatch_attempt_token: None,
-        run_id: None,
-        run_ids: BTreeSet::new(),
-        worker_id: None,
-        driver: None,
-        harness: None,
-        pid: None,
-        started_at: extra(entry, "STARTED_AT")
-            .map(str::to_string)
-            .or_else(|| Some(entry.time.clone())),
-        worker_pid: extra_compat(entry, "WORKER_PID", "CODEX_PID")
-            .and_then(|pid| pid.parse::<u32>().ok()),
-        goal_id: extra(entry, "GOAL_ID").map(str::to_string),
-        closed_tasks: BTreeSet::new(),
-        cleanup_already_run: false,
-        reported: false,
-        closed: false,
-    })
-}
-
-/// A fresh recovery/resume acquires a REPLACEMENT run for the same dispatch
-/// generation (TASK-6AYEJ.2). The daemon records the origin→replacement link as
-/// `run.created ORIGIN=recovery`; carry it onto the generation so a finalize
-/// from the replacement still resolves to this dispatch. Both ids stay valid —
-/// they are the same generation, so a report from either is honestly this
-/// dispatch's report.
-fn attach_recovery_run_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) {
-    let (Some(origin_run_id), Some(run_id)) =
-        (extra(entry, "ORIGIN_RUN_ID"), extra(entry, "RUN_ID"))
-    else {
-        return;
-    };
-    for record in open.iter_mut().rev() {
-        if !record.closed && record.run_ids.iter().any(|got| got == origin_run_id) {
-            record.run_ids.insert(run_id.to_string());
-            record.run_id = Some(run_id.to_string());
-            return;
-        }
-    }
-}
-
-fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) {
-    if extra(entry, "ORIGIN") == Some("recovery") {
-        attach_recovery_run_to_dispatch(open, entry);
-        return;
-    }
-    if extra(entry, "ORIGIN") != Some("cli_dispatch") {
-        return;
-    }
-    let dispatch_tx = extra(entry, "DISPATCH_TX");
-    let run_id = extra(entry, "RUN_ID").map(str::to_string);
-    let worker_id = extra(entry, "WORKER").map(str::to_string);
-    let driver = extra(entry, "DRIVER").map(str::to_string);
-    let harness = extra(entry, "HARNESS").map(str::to_string);
-    let pid = extra(entry, "PID").and_then(|pid| pid.parse::<u32>().ok());
-    let last_path = extra(entry, "LAST_PATH").map(PathBuf::from);
-    let stdout_path = extra(entry, "STDOUT_PATH").map(PathBuf::from);
-    let dispatch_attempt_token = extra(entry, "DISPATCH_ATTEMPT").map(str::to_string);
-    let kind = extra(entry, "KIND");
-    let tasks = entry
-        .task
-        .as_deref()
-        .map(split_task_list)
-        .unwrap_or_default();
-    for record in open.iter_mut().rev() {
-        let tx_matches = dispatch_tx.map(|tx| tx == record.tx_id).unwrap_or(false);
-        let task_matches = !tasks.is_empty()
-            && tasks
-                .iter()
-                .any(|task| record.tasks.iter().any(|got| got == task));
-        let kind_matches = kind.map(|got| got == record.kind).unwrap_or(true);
-        if tx_matches || (task_matches && kind_matches && record.run_id.is_none()) {
-            if let Some(run_id) = run_id.as_deref() {
-                record.run_ids.insert(run_id.to_string());
-            }
-            record.run_id = run_id;
-            record.worker_id = worker_id;
-            record.driver = driver;
-            record.harness = harness;
-            record.pid = pid;
-            if last_path.is_some() {
-                record.last_path = last_path;
-            }
-            if stdout_path.is_some() {
-                record.stdout_path = stdout_path;
-            }
-            if dispatch_attempt_token.is_some() {
-                record.dispatch_attempt_token = dispatch_attempt_token;
-            }
-            return;
-        }
-    }
-}
-
-/// Attach a worker's `*.reported` finalize tx to its still-open dispatch
-/// (TASK-6AYEJ). Matches on the run id when the report carries one — against
-/// every run id the generation has owned, so a finalize from a recovery
-/// replacement still lands (TASK-6AYEJ.2) — and falls back to the
-/// newest-unclosed-overlapping-task rule [`close_matching_dispatch`] uses ONLY
-/// for a report that genuinely lacks a RUN_ID.
-///
-/// A present-but-unmatched RUN_ID fails closed (TASK-6AYEJ.1): a late report
-/// for run A, dispatched and then aborted before run B took the same task,
-/// cannot match A (A is closed, and closed records are excluded), and falling
-/// through to task overlap would flag B — telling the manager the wrong worker
-/// finished. Unattached is the honest answer.
-fn mark_matching_dispatch_reported(open: &mut [DispatchRecord], reported: &TxEntry) {
-    if let Some(run_id) = extra(reported, "RUN_ID") {
-        for record in open.iter_mut().rev() {
-            if !record.closed && record.run_ids.iter().any(|got| got == run_id) {
-                record.reported = true;
-                return;
-            }
-        }
-        return;
-    }
-    let reported_tasks = reported
-        .task
-        .as_deref()
-        .map(split_task_list)
-        .unwrap_or_default();
-    for record in open.iter_mut().rev() {
-        if !record.closed
-            && reported_tasks
-                .iter()
-                .any(|task| record.tasks.iter().any(|got| got == task))
-        {
-            record.reported = true;
-            return;
-        }
-    }
-}
-
-fn close_matching_dispatch(open: &mut [DispatchRecord], close: &TxEntry) {
-    let close_tasks = close
-        .task
-        .as_deref()
-        .map(split_task_list)
-        .unwrap_or_default();
-    if let Some(closed_tx) = extra(close, "CLOSED_TX") {
-        for record in open.iter_mut().rev() {
-            if record.tx_id == closed_tx {
-                if close_tx_ran_cleanup(close) {
-                    record.cleanup_already_run = true;
-                }
-                mark_dispatch_closed(record, &close_tasks);
-                return;
-            }
-        }
-    }
-    for record in open.iter_mut().rev() {
-        if !record.closed
-            && close_tasks
-                .iter()
-                .any(|task| record.tasks.iter().any(|got| got == task))
-        {
-            if close_tx_ran_cleanup(close) {
-                record.cleanup_already_run = true;
-            }
-            mark_dispatch_closed(record, &close_tasks);
-            return;
-        }
-    }
-}
-
-fn close_tx_ran_cleanup(close: &TxEntry) -> bool {
-    matches!(
-        extra(close, "CLEANUP_STATUS"),
-        Some(status)
-            if status == CleanupStatus::Ok.as_str()
-                || status == CleanupStatus::WorktreeMissing.as_str()
-    )
-}
-
-fn mark_dispatch_closed(record: &mut DispatchRecord, close_tasks: &[String]) {
-    if close_tasks.is_empty() {
-        for task in &record.tasks {
-            record.closed_tasks.insert(task.clone());
-        }
-    } else {
-        for task in close_tasks {
-            if record.tasks.iter().any(|got| got == task) {
-                record.closed_tasks.insert(task.clone());
-            }
-        }
-    }
-    record.closed = record.closed_tasks.len() >= record.tasks.len();
 }
 
 fn partial_closed_annotation(record: &DispatchRecord) -> Option<String> {
@@ -13524,6 +13329,10 @@ mod tests {
         };
         assert!(matches!(
             classify_dispatch_wait_round(&[generation("reported")]),
+            DispatchWaitRound::Reported
+        ));
+        assert!(matches!(
+            classify_dispatch_wait_round(&[generation("closed")]),
             DispatchWaitRound::Reported
         ));
         assert!(matches!(
