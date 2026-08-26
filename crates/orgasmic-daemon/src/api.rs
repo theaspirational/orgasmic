@@ -1744,8 +1744,8 @@ fn dispatch_close_writer_error(error: anyhow::Error) -> ApiError {
 
 // orgasmic:task_HQ970
 /// Validate a composed tx entry the way the writer will, and turn a refusal
-/// into a 400 the caller can act on. A rejected entry never reaches the writer
-/// queue, so nothing is written and the ledger is untouched.
+/// into a 400 the caller can act on. A rejected entry never reaches the live
+/// ledger; the API boundary preserves its rejection envelope separately.
 fn tx_entry_write_error(entry: &TxEntry) -> Result<(), ApiError> {
     entry
         .validate()
@@ -2922,20 +2922,37 @@ async fn prepare_tx_append_request(
         &req.r#type,
         &time_str,
         choose_actor(&req, project_entry.as_ref(), state),
-        req.machine.clone().unwrap_or_else(|| state.machine.clone()),
+        state.machine.clone(),
     );
     entry.project = req.project.clone();
     entry.task = req.task;
     entry.target = req.target;
     entry.reason = req.reason;
     entry.extra = req.extra;
+    let event_id = match ensure_event_id(&mut entry) {
+        Ok(id) => id,
+        Err(reason) => {
+            let rejection_id = uuid::Uuid::new_v4().to_string();
+            preserve_rejected_event(state, &destination.tx_path, &rejection_id, &entry, &reason)?;
+            return Err(ApiError::bad_request(reason));
+        }
+    };
     // orgasmic:task_HQ970
     // Refuse at the boundary, before anything is queued to the writer: a value
     // the drawer cannot carry (a multi-line `reason`, most of all) used to be
     // accepted, appended verbatim, and reported back with a tx_id, leaving the
     // append-only ledger unreadable for every subsequent verb. The writer
     // repeats this check as its own last line of defence.
-    tx_entry_write_error(&entry)?;
+    if let Err(error) = tx_entry_write_error(&entry) {
+        preserve_rejected_event(
+            state,
+            &destination.tx_path,
+            &event_id,
+            &entry,
+            &error.message,
+        )?;
+        return Err(error);
+    }
 
     Ok((
         TxAppend {
@@ -3687,24 +3704,31 @@ pub struct ManagerDispatchGenerationState {
 }
 
 fn project_tx_entries(project_root: &FsPath) -> Result<Vec<TxEntry>, ApiError> {
-    let tx_dir = project_root.join(".orgasmic/tx");
-    let entries = std::fs::read_dir(&tx_dir).map_err(|error| {
-        ApiError::internal(format!(
-            "read dispatch tx directory {}: {error}",
-            tx_dir.display()
-        ))
-    })?;
     let mut paths = Vec::new();
-    for entry in entries {
-        let path = entry
-            .map_err(|error| ApiError::internal(format!("read dispatch tx entry: {error}")))?
-            .path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("org") {
-            paths.push(path);
+    let dotorg = project_root.join(".orgasmic");
+    let mut dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        dirs.extend(machines.flatten().map(|machine| machine.path().join("tx")));
+    }
+    for tx_dir in dirs.into_iter().filter(|dir| dir.is_dir()) {
+        let entries = std::fs::read_dir(&tx_dir).map_err(|error| {
+            ApiError::internal(format!(
+                "read dispatch tx directory {}: {error}",
+                tx_dir.display()
+            ))
+        })?;
+        for entry in entries {
+            let path = entry
+                .map_err(|error| ApiError::internal(format!("read dispatch tx entry: {error}")))?
+                .path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("org") {
+                paths.push(path);
+            }
         }
     }
     paths.sort();
     let mut parsed = Vec::new();
+    let mut seen = BTreeSet::new();
     for path in paths {
         let source = std::fs::read_to_string(&path).map_err(|error| {
             ApiError::internal(format!("read dispatch tx file {}: {error}", path.display()))
@@ -3715,7 +3739,17 @@ fn project_tx_entries(project_root: &FsPath) -> Result<Vec<TxEntry>, ApiError> {
                 path.display()
             ))
         })?;
-        parsed.append(&mut file);
+        for entry in file.drain(..) {
+            let id = entry
+                .extra
+                .iter()
+                .find(|(key, _)| key == "EVENT_ID")
+                .map(|(_, value)| value.as_str())
+                .unwrap_or(&entry.tx_id);
+            if seen.insert(id.to_string()) {
+                parsed.push(entry);
+            }
+        }
     }
     Ok(parsed)
 }
@@ -8328,6 +8362,7 @@ async fn prepare_api_tx(state: &ApiState, req: ApiTxRequest) -> Result<PreparedA
     entry.target = pseudo_req.target;
     entry.reason = pseudo_req.reason;
     entry.extra = pseudo_req.extra;
+    ensure_event_id(&mut entry).map_err(ApiError::bad_request)?;
     Ok(PreparedApiTx {
         tx: TxAppend {
             tx_path: destination.tx_path,
@@ -8405,6 +8440,73 @@ fn committed_refresh_error(tx_id: &str, error: impl std::fmt::Display) -> ApiErr
         "tx_id": tx_id,
         "index_status": "refresh_failed",
     }))
+}
+
+fn ensure_event_id(entry: &mut TxEntry) -> Result<String, String> {
+    let ids: Vec<_> = entry
+        .extra
+        .iter()
+        .filter(|(key, _)| key == "EVENT_ID")
+        .map(|(_, value)| value.clone())
+        .collect();
+    match ids.as_slice() {
+        [] => {
+            let id = uuid::Uuid::new_v4().to_string();
+            entry.extra.push(("EVENT_ID".to_string(), id.clone()));
+            Ok(id)
+        }
+        [id] if uuid::Uuid::parse_str(id).is_ok() => Ok(id.clone()),
+        [_] => Err("EVENT_ID is not a UUID".to_string()),
+        _ => Err("event has duplicate EVENT_ID properties".to_string()),
+    }
+}
+
+fn preserve_rejected_event(
+    state: &ApiState,
+    tx_path: &FsPath,
+    event_id: &str,
+    entry: &TxEntry,
+    reason: &str,
+) -> Result<(), ApiError> {
+    let dotorg = tx_path
+        .ancestors()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"));
+    let dir = dotorg
+        .map(|path| path.join("machines").join(&state.machine).join("rejected"))
+        .unwrap_or_else(|| state.home.state().join("rejected"));
+    std::fs::create_dir_all(&dir).map_err(|error| {
+        tracing::error!(path = %dir.display(), %error, "create rejected event directory failed");
+        ApiError::internal("failed to preserve rejected event")
+    })?;
+    let path = dir.join(format!("{event_id}.json"));
+    let payload = serde_json::to_vec_pretty(&json!({
+        "event_id": event_id,
+        "reason": reason,
+        "rejected_at": Utc::now(),
+        "event": entry,
+    }))
+    .map_err(|error| {
+        tracing::error!(%error, "serialize rejected event failed");
+        ApiError::internal("failed to preserve rejected event")
+    })?;
+    match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            use std::io::Write as _;
+            file.write_all(&payload)
+                .and_then(|()| file.write_all(b"\n"))
+                .and_then(|()| file.sync_all())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
+    .map_err(|error| {
+        tracing::error!(path = %path.display(), %error, "preserve rejected event failed");
+        ApiError::internal("failed to preserve rejected event")
+    })
 }
 
 fn safe_session_fragment(value: &str) -> String {
@@ -8535,11 +8637,14 @@ fn tx_destination(
                 return Err(ApiError::bad_request("project could not be resolved"));
             }
             let tx_path = node_journal_path(&entry.path, req).unwrap_or_else(|| {
-                entry
-                    .path
-                    .join(".orgasmic")
-                    .join("tx")
-                    .join(format!("{}.org", tx_file_month_utc(now)))
+                let dotorg = entry.path.join(".orgasmic");
+                let tx_dir = if uuid::Uuid::parse_str(&state.machine).is_ok() {
+                    dotorg.join("machines").join(&state.machine).join("tx")
+                } else {
+                    // Direct test/embedded states predating machine identity.
+                    dotorg.join("tx")
+                };
+                tx_dir.join(format!("{}.org", tx_file_month_utc(now)))
             });
             return Ok(TxDestination {
                 tx_path,
@@ -21500,6 +21605,47 @@ pub(crate) mod tests {
 
     async fn direct_catalog_test_state(home: Home) -> ApiState {
         direct_test_state(home, false).await
+    }
+
+    #[tokio::test]
+    async fn rejected_event_is_preserved_with_its_reason() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let mut state = direct_stage_test_state(home).await;
+        state.tx_commit_to_project = true;
+        state.machine = uuid::Uuid::new_v4().to_string();
+        let event_id = uuid::Uuid::new_v4().to_string();
+        let error = prepare_tx_append_request(
+            &state,
+            TxAppendRequest {
+                request_id: None,
+                r#type: "manager.action".into(),
+                actor: Some("tester".into()),
+                machine: None,
+                project: Some("orgasmic".into()),
+                task: None,
+                target: None,
+                reason: Some("invalid\nreason".into()),
+                extra: vec![("EVENT_ID".into(), event_id.clone())],
+                tx_path: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+
+        let rejection = project_root
+            .join(".orgasmic/machines")
+            .join(&state.machine)
+            .join("rejected")
+            .join(format!("{event_id}.json"));
+        let preserved: Value =
+            serde_json::from_str(&std::fs::read_to_string(rejection).unwrap()).unwrap();
+        assert_eq!(preserved["event_id"], event_id);
+        assert!(preserved["reason"].as_str().unwrap().contains("newline"));
     }
 
     #[test]

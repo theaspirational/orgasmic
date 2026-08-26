@@ -88,6 +88,9 @@ impl Home {
     pub fn config(&self) -> PathBuf {
         self.root.join("config.yaml")
     }
+    pub fn machine_id(&self) -> PathBuf {
+        self.root.join("machine-id")
+    }
     pub fn bin_orgasmic(&self) -> PathBuf {
         self.bin().join("orgasmic")
     }
@@ -141,6 +144,32 @@ impl Home {
             write_file(auth_gitignore, b"token\nmembers.org\n")?;
         }
         Ok(())
+    }
+
+    /// Stable identity for the daemon home. Two clones on one host use
+    /// different homes, so a hostname cannot provide this invariant.
+    pub fn load_or_mint_machine_id(&self) -> Result<String, HomeError> {
+        let path = self.machine_id();
+        if path.exists() {
+            let value = std::fs::read_to_string(&path).map_err(|source| HomeError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            let value = value.trim();
+            if uuid::Uuid::parse_str(value).is_err() {
+                return Err(HomeError::Io {
+                    path,
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "machine-id is not a UUID",
+                    ),
+                });
+            }
+            return Ok(value.to_string());
+        }
+        let value = uuid::Uuid::new_v4().to_string();
+        write_file(path, format!("{value}\n").as_bytes())?;
+        Ok(value)
     }
 }
 
@@ -227,5 +256,19 @@ mod tests {
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         assert!(resolve_loader(&home, Path::new("missing.org")).is_none());
+    }
+
+    #[test]
+    fn machine_id_is_stable_for_one_home_and_distinct_between_homes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = Home::at(tmp.path().join("first"));
+        let second = Home::at(tmp.path().join("second"));
+        first.ensure().unwrap();
+        second.ensure().unwrap();
+
+        let id = first.load_or_mint_machine_id().unwrap();
+        assert_eq!(first.load_or_mint_machine_id().unwrap(), id);
+        assert_ne!(second.load_or_mint_machine_id().unwrap(), id);
+        assert!(uuid::Uuid::parse_str(&id).is_ok());
     }
 }

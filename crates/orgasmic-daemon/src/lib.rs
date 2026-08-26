@@ -21,6 +21,7 @@ pub(crate) mod driver_resolution;
 pub mod events;
 pub mod governance;
 pub mod index;
+pub(crate) mod ledger_sync;
 pub mod logging;
 pub mod manager_registration;
 pub mod node_types;
@@ -215,7 +216,6 @@ pub struct DaemonOptions {
     pub bind_override: Option<std::net::IpAddr>,
     pub port_override: Option<u16>,
     pub actor: String,
-    pub machine: String,
     /// How long the dispatch completion watcher lets a released run's session
     /// file settle before flushing artifacts without a terminal marker. Tests
     /// shrink this so grace-path coverage doesn't wait out the real window.
@@ -266,14 +266,10 @@ pub struct DaemonOptions {
 impl Default for DaemonOptions {
     fn default() -> Self {
         let actor = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
-        // `DaemonOptions::default()` is built before `Daemon::run` can take the
-        // single-instance lock, so machine discovery must never spawn.
-        let machine = resolve_machine_name(std::env::var("HOSTNAME").ok(), os_machine_name);
         Self {
             bind_override: None,
             port_override: None,
             actor,
-            machine,
             dispatch_watcher_grace: std::time::Duration::from_secs(30),
             fs_watcher_enabled: true,
             tmux_input_ready_timeout_secs: None,
@@ -285,37 +281,6 @@ impl Default for DaemonOptions {
             no_log_mirror: false,
         }
     }
-}
-
-fn resolve_machine_name(
-    hostname_env: Option<String>,
-    os_source: impl FnOnce() -> Option<String>,
-) -> String {
-    hostname_env
-        .filter(|name| !name.trim().is_empty())
-        .or_else(os_source)
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-#[cfg(unix)]
-fn os_machine_name() -> Option<String> {
-    let mut buffer = [0_u8; 256];
-    // SAFETY: `buffer` is valid for its full length and `gethostname` writes
-    // at most that many bytes.
-    if unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 {
-        return None;
-    }
-    let end = buffer
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(buffer.len());
-    Some(String::from_utf8_lossy(&buffer[..end]).trim().to_string())
-}
-
-#[cfg(not(unix))]
-fn os_machine_name() -> Option<String> {
-    std::env::var("COMPUTERNAME").ok()
 }
 
 const INCUMBENT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -963,6 +928,9 @@ impl Daemon {
         // pre-bind phase so the CLI can distinguish progress from death.
         let mut boot_progress = boot_state::BootProgress::start(&home, "loading config")?;
         home.ensure().context("ensure orgasmic home")?;
+        let machine_id = home
+            .load_or_mint_machine_id()
+            .context("load daemon machine-id")?;
         let fd_limit = raise_fd_limit();
         let mut cfg = DaemonConfig::load(&home)?;
         if let Some(bind) = opts.bind_override {
@@ -1128,11 +1096,15 @@ impl Daemon {
                 tracing::warn!(project = %entry.id, error = %e, "watch project failed");
             }
         }
-
         let default_tx_path = home.tx().join("YYYY-MM.org");
         // Graceful-shutdown fanout: ws/PTY connection tasks watch this so the
         // axum drain phase can't deadlock behind a still-connected client.
         let (shutdown_signal_tx, shutdown_signal_rx) = tokio::sync::watch::channel(false);
+        ledger_sync::spawn(
+            index.clone(),
+            machine_id.clone(),
+            shutdown_signal_rx.clone(),
+        );
         let api_state = ApiState {
             home: home.clone(),
             node_types: Arc::new(node_types),
@@ -1152,7 +1124,7 @@ impl Daemon {
             driver_defaults: cfg.driver_defaults.clone(),
             dispatch_governance: cfg.dispatch_governance.clone(),
             actor: opts.actor.clone(),
-            machine: opts.machine.clone(),
+            machine: machine_id,
             bind_host: cfg.bind.to_string(),
             bind_port: cfg.port,
             ui_asset_hash: api::embedded_ui_asset_hash(),
@@ -1540,23 +1512,6 @@ pub fn default_home_tx_path(home: &Home) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn machine_name_uses_non_spawning_os_source_when_hostname_is_absent() {
-        let machine = resolve_machine_name(None, || Some("stable-os-machine".to_string()));
-
-        assert_eq!(machine, "stable-os-machine");
-        assert_ne!(machine, "unknown");
-    }
-
-    #[test]
-    fn machine_name_prefers_explicit_environment_value() {
-        let machine = resolve_machine_name(Some("explicit-machine".to_string()), || {
-            panic!("OS source must not replace an explicit machine name")
-        });
-
-        assert_eq!(machine, "explicit-machine");
-    }
 
     /// orgasmic:TASK-R74E8 — the regression that no gate could see.
     ///
