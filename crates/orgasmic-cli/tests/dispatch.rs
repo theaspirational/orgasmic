@@ -705,12 +705,56 @@ fn tx_file_name() -> String {
     format!("{}.org", chrono::Utc::now().format("%Y-%m"))
 }
 
+/// Project tx lives in the legacy `.orgasmic/tx/` and, since TASK-MSYN4, in
+/// per-machine `.orgasmic/machines/<machine-id>/tx/`. Resolve whichever holds
+/// this month's file, preferring an existing one; fall back to the legacy path
+/// so callers that assert on absence keep a stable path to name.
 fn tx_file_path(project_root: &Path) -> PathBuf {
-    project_root.join(".orgasmic/tx").join(tx_file_name())
+    let dotorg = project_root.join(".orgasmic");
+    let name = tx_file_name();
+    let legacy = dotorg.join("tx").join(&name);
+    if legacy.is_file() {
+        return legacy;
+    }
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        for machine in machines.flatten() {
+            let candidate = machine.path().join("tx").join(&name);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    legacy
 }
 
+/// The whole project ledger, across the legacy `.orgasmic/tx/` and every
+/// per-machine `.orgasmic/machines/<machine-id>/tx/` (TASK-MSYN4). Assertions
+/// search for entries, and which file a given entry landed in is not part of
+/// what they pin — reading one file makes them fail by layout, not by behavior.
 fn tx_log(project_root: &Path) -> String {
-    std::fs::read_to_string(tx_file_path(project_root)).unwrap()
+    let dotorg = project_root.join(".orgasmic");
+    let mut tx_dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        tx_dirs.extend(machines.flatten().map(|machine| machine.path().join("tx")));
+    }
+    let mut paths = Vec::new();
+    for tx_dir in tx_dirs {
+        if let Ok(entries) = std::fs::read_dir(&tx_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("org") {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+    paths.sort();
+    let mut raw = String::new();
+    for path in paths {
+        raw.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+        raw.push('\n');
+    }
+    raw
 }
 
 fn tx_id_for(raw: &str, ty: &str, task: &str) -> String {
@@ -861,8 +905,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert_task_stage(&project_root, "TASK-DISPATCH", "IN_PROGRESS", "in_progress");
     let _ = last;
 
-    let tx_path = project_root.join(".orgasmic/tx");
-    let tx_raw = std::fs::read_to_string(tx_path.join(tx_file_name())).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         manager.dispatch_started"));
     assert!(tx_raw.contains(":TASK:         TASK-DISPATCH"));
     assert!(
@@ -910,7 +953,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert!(close_stdout.contains("closed: TASK-DISPATCH implementer.done tx="));
     assert!(!worktree.exists(), "worktree should be removed on close");
     assert_task_stage(&project_root, "TASK-DISPATCH", "IN_REVIEW", "in_review");
-    let tx_raw = std::fs::read_to_string(tx_path.join(tx_file_name())).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         implementer.done"));
     assert!(tx_raw.contains(":MERGE_SHA:    "));
     assert!(tx_raw.contains(":CLOSED_TX:    "));
@@ -1063,7 +1106,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     );
     assert!(review_close_stdout.contains("closed: TASK-REVIEW reviewer.done tx="));
     assert_task_stage(&project_root, "TASK-REVIEW", "DONE", "done");
-    let tx_raw = std::fs::read_to_string(tx_path.join(tx_file_name())).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         reviewer.done"));
     assert!(tx_raw.contains(":VERDICT:      clean"));
     assert!(tx_raw.contains(":FINDINGS_TOTAL: 0"));
@@ -1711,7 +1754,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
         ],
     );
     assert_task_stage(&project_root, "TASK-ABORT", "TODO", "todo");
-    let tx_raw = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         manager.dispatch_aborted"));
     assert!(tx_raw.contains(":CLEANUP_STATUS: ok"));
 
@@ -3427,7 +3470,7 @@ async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
     assert!(stderr.contains("warning: dispatch cleanup status=worktree_failed"));
     assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
 
-    let tx_raw = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":CLEANUP_STATUS: worktree_failed"));
     assert!(tx_raw.contains(":CLEANUP_ERROR:"));
     let cleanup_status = run_orgasmic(
@@ -8499,7 +8542,7 @@ async fn dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request() {
         "the close must have no client-visible boundary between ledger legs: {close_stderr}"
     );
     assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
-    let ledger = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
+    let ledger = tx_log(&project_root);
     let close = ledger
         .find("implementer.done TASK-CLEANUP")
         .expect("terminal close tx must be present");

@@ -8383,7 +8383,18 @@ async fn refresh_after_tx(
     tx_id: &str,
 ) -> Result<(), ApiError> {
     if state.writer.applies_own_writes() {
-        return Ok(());
+        // The writer already applied this write inline. If that apply failed,
+        // the bytes are still durable — answer the committed-503 contract.
+        if let Some(error) = state.writer.take_apply_failure() {
+            return Err(committed_refresh_error(tx_id, error));
+        }
+        // A prior write left the projection stale. The retry that gets here has
+        // usually been served from the idempotency cache without re-publishing,
+        // so fall through to one real refresh to repair it before answering.
+        if !state.writer.projection_dirty() {
+            return Ok(());
+        }
+        state.writer.clear_projection_dirty();
     }
     if project_tx {
         if let Some(project_id) = destination_project_id {
@@ -8413,7 +8424,18 @@ async fn refresh_after_project_mutation(
     tx_id: &str,
 ) -> Result<(), ApiError> {
     if state.writer.applies_own_writes() {
-        return Ok(());
+        // The writer already applied this write inline. If that apply failed,
+        // the bytes are still durable — answer the committed-503 contract.
+        if let Some(error) = state.writer.take_apply_failure() {
+            return Err(committed_refresh_error(tx_id, error));
+        }
+        // A prior write left the projection stale. The retry that gets here has
+        // usually been served from the idempotency cache without re-publishing,
+        // so fall through to one real refresh to repair it before answering.
+        if !state.writer.projection_dirty() {
+            return Ok(());
+        }
+        state.writer.clear_projection_dirty();
     }
     if project_tx {
         return state
@@ -22153,8 +22175,12 @@ pub(crate) mod tests {
         let status = get_status(State(state.clone())).await.0;
         assert!(status.writer.liveness);
         assert!(status.writer.completed_total >= 1, "{:?}", status.writer);
-        assert_eq!(status.index_refresh.requests_total, 1);
-        assert_eq!(status.index_refresh.scans_total, 1);
+        // TASK-8AV8B: the writer applies its own write inline, so a committed
+        // mutation no longer schedules a project-wide refresh scan. The 503
+        // contract above is what this test protects; the scan counters used to
+        // be the mechanism behind it and are now expected to stay at zero.
+        assert_eq!(status.index_refresh.requests_total, 0);
+        assert_eq!(status.index_refresh.scans_total, 0);
     }
 
     #[tokio::test]

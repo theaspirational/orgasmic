@@ -79,8 +79,10 @@ pub enum NodeCmd {
         /// Additional harness argument; repeatable.
         #[arg(long = "harness-arg")]
         harness_args: Vec<String>,
+        /// Model id passed to the harness; accepted values are the harness's own.
         #[arg(long)]
         model: Option<String>,
+        /// Reasoning effort passed to the harness, e.g. `low` / `medium` / `high`.
         #[arg(long)]
         effort: Option<String>,
     },

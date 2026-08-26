@@ -829,21 +829,48 @@ impl Index {
     /// tx paths never enter the project refresh coordinator; only paths whose
     /// ownership cannot be determined fall back to an authoritative rescan.
     pub async fn apply_written_path(&self, path: &Path) -> Result<bool, String> {
+        // Apply-own-write (TASK-8AV8B) replaced the post-commit refresh scan as
+        // the way a committed write reaches the projection, so the injected
+        // failure that pins the committed-but-unprojected 503 contract has to
+        // reach here too — otherwise that contract is only tested on a path
+        // production no longer takes.
+        #[cfg(test)]
+        if self
+            .refresh_test_hooks
+            .fail_next
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |remaining| remaining.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err("injected index refresh failure".to_string());
+        }
         if path.starts_with(self.home.tx()) {
             return self.reload_tx_file(None, path).await;
         }
+        // Two callers reach here with differently-shaped paths: the watcher
+        // canonicalizes its fs events, the writer passes the raw path it just
+        // wrote. Board entry paths are a third shape (as-registered). On macOS
+        // `/tmp` is a symlink to `/private/tmp`, so comparing any two of those
+        // raw makes `strip_prefix` fail and the write silently classify as
+        // "nothing changed". Canonicalize every side before matching.
+        let canon_path = crate::watcher::canonical(path);
         let board_entry = {
             let snap = self.inner.read().await;
             snap.board
                 .iter()
-                .filter(|entry| path.starts_with(&entry.path))
-                .max_by_key(|entry| entry.path.components().count())
-                .cloned()
+                .filter_map(|entry| {
+                    let root = crate::watcher::canonical(&entry.path);
+                    canon_path
+                        .strip_prefix(&root)
+                        .ok()
+                        .map(|relative| (entry.clone(), relative.to_path_buf(), root))
+                })
+                .max_by_key(|(_, _, root)| root.components().count())
         };
-        let Some(entry) = board_entry else {
-            return Ok(false);
-        };
-        let Ok(relative) = path.strip_prefix(&entry.path) else {
+        let Some((entry, relative, _)) = board_entry else {
             return Ok(false);
         };
         let parts = relative
@@ -859,9 +886,26 @@ impl Index {
         if matches!(parts.get(1).copied(), Some("tmp" | "views")) {
             return Ok(false);
         }
-        if parts.get(1) == Some(&"tx") {
-            if parts.len() == 3 && path.extension().and_then(|ext| ext.to_str()) == Some("org") {
-                return self.reload_tx_file(Some(&entry.id), path).await;
+        // Project tx lives in two shapes: the legacy `.orgasmic/tx/YYYY-MM.org`
+        // and TASK-MSYN4's per-machine `.orgasmic/machines/<machine-id>/tx/YYYY-MM.org`
+        // (both collected by `project_tx_dirs`). Route each to the tx reloader;
+        // without the `machines/` arm the node-dir branch below claims
+        // `machines/<machine-id>` as a collection node and the write is lost.
+        let tx_file = match parts.get(1).copied() {
+            Some("tx") => (parts.len() == 3).then_some(()),
+            Some("machines") => (parts.len() == 5 && parts.get(3) == Some(&"tx")).then_some(()),
+            _ => None,
+        };
+        if parts.get(1) == Some(&"tx") || parts.get(1) == Some(&"machines") {
+            if tx_file.is_some()
+                && canon_path.extension().and_then(|ext| ext.to_str()) == Some("org")
+            {
+                // `reload_tx_file` keys `file_contents`/`source_path` by this
+                // path, and the bulk `collect_tx_dir` builds its keys from the
+                // registered root. Rebuild in that same shape so a reload
+                // replaces the collector's records instead of duplicating them.
+                let ledger_path = entry.path.join(&relative);
+                return self.reload_tx_file(Some(&entry.id), &ledger_path).await;
             }
             self.refresh_project(&entry.id).await?;
             return Ok(true);

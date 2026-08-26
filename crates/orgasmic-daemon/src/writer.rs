@@ -530,6 +530,17 @@ pub struct WriterHandle {
     /// unconditionally so the two builds cannot diverge.
     #[cfg_attr(not(test), allow(dead_code))]
     deferred_appends: Arc<std::sync::atomic::AtomicUsize>,
+    /// Last apply-own-write projection failure (TASK-8AV8B). The write it
+    /// belongs to is already durable, so `publish_paths` records the failure
+    /// here rather than failing the call: reporting "failed to record
+    /// transaction" for a transaction that committed is a lie the caller acts
+    /// on. `refresh_after_tx` takes it and answers the committed-503 contract.
+    apply_failure: Arc<std::sync::Mutex<Option<String>>>,
+    /// Set alongside `apply_failure` and cleared only by a successful repair
+    /// refresh. It outlives the error itself because the retry that repairs the
+    /// projection usually hits the API idempotency cache and never re-publishes:
+    /// without this flag that retry would return 200 over a still-stale view.
+    projection_dirty: Arc<std::sync::atomic::AtomicBool>,
     #[cfg(test)]
     transaction_gate: Arc<Mutex<Option<Arc<TestTransactionGate>>>>,
     /// Test-only, handle-local lifecycle fault. This state is intentionally
@@ -738,6 +749,11 @@ fn multi_transaction_identity(txs: &[TxAppend], rewrites: &[FileRewrite]) -> Mut
         // Prepared tx ids and timestamps are server-generated, so they change
         // when an HTTP retry rebuilds the same semantic request. Everything
         // caller-controlled remains part of the collision identity.
+        //
+        // EVENT_ID (TASK-MSYN4) joins that server-generated class: it is minted
+        // per attempt, so leaving it in makes every lost-response retry look
+        // like a different mutation and fail closed. Duplicate delivery is
+        // still caught downstream by event-id dedup at ingest.
         "txs": txs
             .iter()
             .map(|tx| serde_json::json!({
@@ -752,7 +768,10 @@ fn multi_transaction_identity(txs: &[TxAppend], rewrites: &[FileRewrite]) -> Mut
                 "task": tx.entry.task,
                 "target": tx.entry.target,
                 "reason": tx.entry.reason,
-                "extra": tx.entry.extra,
+                "extra": tx.entry.extra
+                    .iter()
+                    .filter(|(key, _)| key != "EVENT_ID")
+                    .collect::<Vec<_>>(),
             }))
             .collect::<Vec<_>>(),
     })
@@ -823,17 +842,46 @@ impl WriterHandle {
         self.index.is_some()
     }
 
+    /// Apply the paths this write just produced to the live projection.
+    ///
+    /// A failure here is NOT a failed write — the bytes are already durable.
+    /// Record it and return Ok so the caller reports the committed-but-
+    /// unprojected 503 (with its tx id) instead of a generic "write failed".
     async fn publish_paths(&self, paths: impl IntoIterator<Item = PathBuf>) -> Result<()> {
         let Some(index) = self.index.as_ref() else {
             return Ok(());
         };
         for path in paths {
-            index
-                .apply_written_path(&path)
-                .await
-                .map_err(|error| anyhow!("write committed but index apply failed: {error}"))?;
+            if let Err(error) = index.apply_written_path(&path).await {
+                tracing::error!(path = %path.display(), error = %error, "write committed but index apply failed");
+                *self.apply_failure.lock().unwrap() = Some(error);
+                self.projection_dirty
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                // Stop at the first failure. Applying the remaining paths would
+                // leave the projection torn — half this write visible — which is
+                // harder to reason about than uniformly stale. The caller's
+                // committed-503 tells it to retry, and the retry reapplies all
+                // of them.
+                break;
+            }
         }
         Ok(())
+    }
+
+    /// Take the last projection failure, if any. Clears the error but leaves
+    /// `projection_dirty` set — the view is still stale until a repair runs.
+    pub(crate) fn take_apply_failure(&self) -> Option<String> {
+        self.apply_failure.lock().unwrap().take()
+    }
+
+    pub(crate) fn projection_dirty(&self) -> bool {
+        self.projection_dirty
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn clear_projection_dirty(&self) {
+        self.projection_dirty
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Append a tx entry through the daemon writer. Re-using `request_id`
@@ -1584,6 +1632,8 @@ pub fn spawn_with_catalog_and_index(
         metrics,
         index,
         deferred_appends,
+        apply_failure: Arc::new(std::sync::Mutex::new(None)),
+        projection_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         #[cfg(test)]
         transaction_gate: Arc::new(Mutex::new(None)),
         #[cfg(test)]

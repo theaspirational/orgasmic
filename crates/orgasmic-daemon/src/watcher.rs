@@ -253,7 +253,7 @@ async fn debounce_loop(
     }
 }
 
-fn canonical(p: &std::path::Path) -> PathBuf {
+pub(crate) fn canonical(p: &std::path::Path) -> PathBuf {
     if let Ok(canon) = std::fs::canonicalize(p) {
         return canon;
     }

@@ -9622,19 +9622,42 @@ fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
 }
 
 fn read_tx_entries(project_root: &Path) -> Result<Vec<TxEntry>> {
-    let tx_dir = project_root.join(".orgasmic/tx");
-    if !tx_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut paths = Vec::new();
-    for entry in std::fs::read_dir(&tx_dir).with_context(|| format!("read {}", tx_dir.display()))? {
-        let entry = entry.with_context(|| format!("read entry in {}", tx_dir.display()))?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("org") {
-            paths.push(path);
+    // Project tx lives in the legacy `.orgasmic/tx/` and, since TASK-MSYN4, in
+    // per-machine `.orgasmic/machines/<machine-id>/tx/`. This fold backs
+    // dispatch-status/wait/close, so reading only the legacy directory makes
+    // every dispatch invisible on a machine writing the new layout.
+    let dotorg = project_root.join(".orgasmic");
+    let mut tx_dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        for machine in machines.flatten() {
+            tx_dirs.push(machine.path().join("tx"));
         }
     }
-    paths.sort();
+    let mut paths = Vec::new();
+    for tx_dir in tx_dirs {
+        if !tx_dir.is_dir() {
+            continue;
+        }
+        for entry in
+            std::fs::read_dir(&tx_dir).with_context(|| format!("read {}", tx_dir.display()))?
+        {
+            let entry = entry.with_context(|| format!("read entry in {}", tx_dir.display()))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("org") {
+                paths.push(path);
+            }
+        }
+    }
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Sort by file name, not full path: the month file is the ordering key, and
+    // the same month from two machines must interleave by name, not by root.
+    paths.sort_by(|a, b| {
+        a.file_name()
+            .cmp(&b.file_name())
+            .then_with(|| a.as_path().cmp(b.as_path()))
+    });
     let mut entries = Vec::new();
     for path in paths {
         let source =
