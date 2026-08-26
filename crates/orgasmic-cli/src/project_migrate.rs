@@ -89,6 +89,25 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
     println!("  heading_round_trip byte-for-byte");
     if to_branch {
         println!("  target orphan branch orgasmic");
+        if !dry_run {
+            // The cutover removes `.orgasmic/` from the worked tree but leaves
+            // those files tracked on the current branch, so the removal sits
+            // there as an uncommitted deletion. Committing it is the operator's
+            // call — it is a commit on their branch — but leaving it unsaid
+            // strands them: any later checkout or stash restores `.orgasmic/`
+            // beside the real ledger, and this command then refuses to run
+            // again because the tree is dirty.
+            println!(
+                "  ledger {}",
+                home.project_ledger(&project_id(&migration.project_source)?)
+                    .display()
+            );
+            println!();
+            println!("Next: the ledger now lives on the orphan `orgasmic` branch, but its");
+            println!("removal from this branch is still uncommitted. Commit it:");
+            println!();
+            println!("  git add -A .orgasmic && git commit -m \"chore: move the orgasmic ledger to its own branch\"");
+        }
     }
     Ok(())
 }
