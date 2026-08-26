@@ -1753,12 +1753,28 @@ fn tx_entry_write_error(entry: &TxEntry) -> Result<(), ApiError> {
         .map_err(|error| ApiError::bad_request(error.to_string()))
 }
 
-fn writer_append_error(error: impl std::fmt::Display) -> ApiError {
+/// A claim refusal is the operator's answer, not an internal failure: it says
+/// which machine holds the node, and no retry against this daemon will change
+/// that. Every other writer error stays a generic 500 on purpose — its text can
+/// carry filesystem paths, which must not reach a response body.
+fn claim_conflict(error: &anyhow::Error) -> Option<ApiError> {
+    error
+        .downcast_ref::<crate::writer::ClaimConflict>()
+        .map(|conflict| ApiError::conflict(conflict.to_string()))
+}
+
+fn writer_append_error(error: anyhow::Error) -> ApiError {
+    if let Some(conflict) = claim_conflict(&error) {
+        return conflict;
+    }
     tracing::error!(error = %error, "writer append failed");
     ApiError::internal("failed to record transaction")
 }
 
-fn writer_rewrite_error(path: &FsPath, error: impl std::fmt::Display) -> ApiError {
+fn writer_rewrite_error(path: &FsPath, error: anyhow::Error) -> ApiError {
+    if let Some(conflict) = claim_conflict(&error) {
+        return conflict;
+    }
     tracing::error!(path = %path.display(), error = %error, "writer rewrite failed");
     ApiError::internal("failed to rewrite org file")
 }

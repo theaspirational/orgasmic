@@ -2158,8 +2158,12 @@ async fn board_refresh_live_loads_freshly_registered_project() {
     );
 
     // No restart: poll a `task update` (property write) against the freshly
-    // registered project until the watcher-driven live-load lands.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    // registered project until the watcher-driven live-load lands. The budget
+    // is generous because what is asserted is "loads with no restart", not
+    // "loads fast": this is the one test on the real FSEvents backend, and
+    // every daemon-booting test in the binary serializes on the same flock, so
+    // a tight deadline turns any newly added daemon test into a failure here.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let mut last_status = None;
     let mut updated_priority = None;
     while tokio::time::Instant::now() < deadline {
@@ -3498,6 +3502,77 @@ async fn run_recover_abandon_is_reachable_over_the_wire() {
         !error.contains("recoverable run"),
         "abandon must not fall through to the crash-recovery inventory lookup, \
          whose buckets never contain a live run: {body}"
+    );
+
+    ctx.shutdown().await;
+}
+
+/// TASK-CLM6W acceptance: a write to a node dir another machine holds is
+/// refused with a clear error naming the holder. The writer-level unit test
+/// pins the message; this pins that the message survives the trip to HTTP.
+/// Every other writer error deliberately collapses to a generic 500 because its
+/// text can carry filesystem paths — this one used to collapse with them, so
+/// the operator saw "failed to rewrite org file" and no mention of the claim.
+#[tokio::test]
+async fn node_write_claimed_by_another_machine_is_a_409_naming_the_holder() {
+    let ctx = SparseProject::boot("proj-claim-gate").await;
+    let holder = "11111111-2222-3333-4444-555555555555";
+    write(
+        &ctx.project_root
+            .join(format!(".orgasmic/machines/{holder}/claims.org")),
+        format!(
+            "#+title: claims\n#+orgasmic_version: 1\n\n\
+             * TX claim task.claimed TASK-PRE\n\
+             :PROPERTIES:\n\
+             :TX_ID: claim-holder\n\
+             :TIME: [2026-08-26 Wed 10:00:00]\n\
+             :TYPE: task.claimed\n\
+             :ACTOR: dev@example.com\n\
+             :MACHINE: {holder}\n\
+             :PROJECT: proj-claim-gate\n\
+             :TASK: TASK-PRE\n\
+             :EVENT_ID: claim-event-holder\n\
+             :END:\n"
+        ),
+    );
+
+    let node = ".orgasmic/tasks/TASK-PRE/node.org";
+    let node_path = ctx.project_root.join(node);
+    let before = std::fs::read_to_string(&node_path).unwrap();
+
+    let resp = ctx
+        .client
+        .post(format!("http://{}/api/org/file", ctx.running.addr))
+        .bearer_auth(&ctx.token)
+        .json(&serde_json::json!({
+            "project": ctx.project_id,
+            "path": node,
+            "contents": "#+title: orgasmic task TASK-PRE\n#+orgasmic_version: 2\n\n* BACKLOG TASK-PRE Edited from the wrong machine :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let reject = [
+        ctx.project_root.as_path(),
+        ctx.home_root.as_path(),
+        node_path.as_path(),
+    ];
+    let error = assert_path_free_error_response(
+        resp,
+        reqwest::StatusCode::CONFLICT,
+        "claimed by machine",
+        &reject,
+    )
+    .await;
+    assert!(
+        error.contains(holder),
+        "refusal must name the holding machine: {error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&node_path).unwrap(),
+        before,
+        "a refused write must not touch the node"
     );
 
     ctx.shutdown().await;

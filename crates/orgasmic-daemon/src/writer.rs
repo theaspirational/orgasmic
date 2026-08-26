@@ -1685,6 +1685,30 @@ pub(crate) fn spawn_with_catalog_index_and_machine(
     }
 }
 
+/// A node write refused because another machine holds the claim (TASK-CLM6W).
+/// Typed rather than a bare message so the API can answer 409 naming the holder
+/// instead of the generic 500 every other writer error collapses to — the
+/// refusal is the operator's answer, not an internal failure. It carries no
+/// filesystem path: this text reaches HTTP responses, which must stay path-free.
+#[derive(Debug)]
+pub(crate) struct ClaimConflict {
+    pub node_id: String,
+    pub holder: String,
+    pub machine: String,
+}
+
+impl std::fmt::Display for ClaimConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "node {} is claimed by machine {}; machine {} cannot write it",
+            self.node_id, self.holder, self.machine
+        )
+    }
+}
+
+impl std::error::Error for ClaimConflict {}
+
 fn guard_node_write(path: &Path, machine_id: &str) -> Result<()> {
     let Some(dotorg) = path
         .ancestors()
@@ -1714,11 +1738,12 @@ fn guard_node_write(path: &Path, machine_id: &str) -> Result<()> {
         .get(node_id)
         .filter(|claim| claim.holder != machine_id)
     {
-        bail!(
-            "node {node_id} is claimed by machine {}; machine {machine_id} cannot write {}",
-            claim.holder,
-            path.display()
-        );
+        return Err(ClaimConflict {
+            node_id: node_id.to_string(),
+            holder: claim.holder.clone(),
+            machine: machine_id.to_string(),
+        }
+        .into());
     }
     Ok(())
 }
