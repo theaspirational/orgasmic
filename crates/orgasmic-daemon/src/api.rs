@@ -37884,13 +37884,10 @@ pub(crate) mod tests {
             .iter()
             .any(|r| r.task_id == format!("artifact.generate:{art_id}")));
 
-        let tx_path = project_root
-            .join(".orgasmic")
-            .join("tx")
-            .join(format!("{}.org", Utc::now().format("%Y-%m")));
-        let tx = std::fs::read_to_string(&tx_path).unwrap();
-        assert!(tx.contains("artifact.created"));
-        assert!(tx.contains(&art_id));
+        // artifact.created is journal-routed (AP971.5), not a project tx.
+        let journal = std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap();
+        assert!(journal.contains("artifact.created"));
+        assert!(journal.contains(&art_id));
 
         let _ = state
             .supervisor
@@ -38293,13 +38290,9 @@ pub(crate) mod tests {
             assert!(comment.consumed, "{comment:?}");
         }
 
-        let tx_after = std::fs::read_to_string(
-            project_root
-                .join(".orgasmic/tx")
-                .join(format!("{}.org", Utc::now().format("%Y-%m"))),
-        )
-        .unwrap_or_default();
-        assert!(tx_after.contains("artifact.regenerated"));
+        // artifact.regenerated is journal-routed (AP971.5), not a project tx.
+        let journal_after = std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap();
+        assert!(journal_after.contains("artifact.regenerated"));
         assert_ne!(
             reviews_before,
             std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap()
@@ -38950,12 +38943,12 @@ pub(crate) mod tests {
         .await
         .expect("feedback should succeed");
 
-        let tx_path = project_root
-            .join(".orgasmic")
-            .join("tx")
-            .join(format!("{}.org", Utc::now().format("%Y-%m")));
-        std::fs::remove_file(&tx_path).ok();
-        std::fs::create_dir(&tx_path).unwrap();
+        // artifact.launch_address is journal-routed (AP971.5): sabotage the
+        // artifact's journal file (replace it with a directory) so persisting
+        // the launch event fails.
+        let journal_path = artifact_dir(&project_root, art_id).join(JOURNAL_FILE);
+        std::fs::remove_file(&journal_path).ok();
+        std::fs::create_dir_all(&journal_path).unwrap();
 
         // TASK-Z3093: this is the one artifactor test whose run id never
         // reaches the test body — the launch fails before `post_artifact_...`
@@ -39160,12 +39153,9 @@ pub(crate) mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
-        let tx_path = project_root
-            .join(".orgasmic")
-            .join("tx")
-            .join(format!("{}.org", Utc::now().format("%Y-%m")));
-        let tx = std::fs::read_to_string(&tx_path).unwrap();
-        assert!(tx.contains("artifact.generation.failed"));
+        // artifact.generation.failed is journal-routed (AP971.5).
+        let journal = std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap();
+        assert!(journal.contains("artifact.generation.failed"));
     }
 
     async fn wait_for_run_not_live(
