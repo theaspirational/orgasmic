@@ -1,0 +1,61 @@
+#+title: orgasmic node journal schema
+#+version: 1
+
+* SCHEMA journal
+:PROPERTIES:
+:VERSION: 1
+:END:
+
+** Entry grammar
+Each entry is one top-level Org heading. Its property drawer requires:
+- :TX_ID: globally unique daemon-minted tx-style entry id
+- :TIME: Org timestamp =[YYYY-MM-DD Day HH:MM:SS]=
+- :TYPE: open event vocabulary
+- :ACTOR: operator or agent identity
+- :MACHINE: hostname
+
+Text after the drawer is the real multi-line Org body. Journals never use the
+legacy =:BODY:= property. Column-0 =* = is forbidden in prose because it would
+create another entry; nested =**= and deeper headings are allowed.
+
+** Event vocabulary v1
+- =comment=: authored prose; optional =:IN_REPLY_TO:=, =:ATTACHMENTS:=, and type-specific extras
+- =comment.deleted=: body-free tombstone preserving the original =:TX_ID:=
+- =state_transitioned=
+- =property_updated=
+- =regenerated=
+- =dispatch.linked=: thin pointer; authoritative dispatch lifecycle remains in project tx
+
+Descriptors may add event types. Entry ids are globally minted, so reply and
+attachment references remain unambiguous across journals.
+
+** Mutability
+Facts (=state_transitioned=, =property_updated=, =regenerated=, and
+=dispatch.linked=) are append-only. Comments are appended, then may only be
+edited in place by the structured daemon operation with optimistic concurrency;
+an edit stamps =:EDITED_AT:=. Git retains the previous prose. Delete removes the
+body and changes the entry to =comment.deleted=; the tombstone keeps reply chains
+valid. Regeneration stamps open comments =:CONSUMED: true= and lists their ids on
+the =regenerated= entry.
+
+=journal.org= is a ledger: the generic Org-file surface may read it but must not
+rewrite it. All mutations use the structured append, comment-edit, tombstone, or
+consume operations. Watcher-observed hand edits produce a lint and are never
+automatically reconciled.
+
+** Node directory contract
+Reserved names are:
+- =node.org=
+- =journal.org=
+- =attachments/<entry-id>/=
+- =dispatches/<started-tx>/=
+
+Descriptors may reserve more names. Unknown files and directories are ignored
+and reported by a low-severity lint. Attachments live at
+=attachments/<entry-id>/<filename>= and the owning entry declares their
+space-separated filenames in =:ATTACHMENTS:=; readers do not discover them by
+scanning the filesystem.
+
+** Size policy v1
+There is no rotation. A low-severity lint starts when =journal.org= exceeds
+500 KiB, providing real usage evidence before rotation machinery is designed.

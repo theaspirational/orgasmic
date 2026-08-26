@@ -14107,6 +14107,13 @@ fn reject_ledger_rewrite(rel: &FsPath) -> Result<(), ApiError> {
             "org file path is an append-only tx ledger; append entries through the tx surface instead of rewriting the file",
         ));
     }
+    if rel.starts_with(".orgasmic")
+        && rel.file_name().and_then(|name| name.to_str()) == Some("journal.org")
+    {
+        return Err(ApiError::bad_request(
+            "org file path is a structured node journal; use journal entry/comment operations instead of rewriting the file",
+        ));
+    }
     Ok(())
 }
 
@@ -20357,9 +20364,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn org_file_rewrite_refuses_tx_ledger_paths() {
+    fn org_file_rewrite_refuses_ledger_paths() {
         reject_ledger_rewrite(FsPath::new(".orgasmic/tx/2026-08.org"))
             .expect_err("tx ledger rewrite must be refused");
+        reject_ledger_rewrite(FsPath::new(".orgasmic/tasks/TASK-X/journal.org"))
+            .expect_err("node journal rewrite must be refused");
         reject_ledger_rewrite(FsPath::new(".orgasmic/decisions.org"))
             .expect("non-ledger org file must stay writable");
         reject_ledger_rewrite(FsPath::new("docs/adr/adr-0001.org"))
