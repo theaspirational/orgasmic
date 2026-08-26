@@ -29,6 +29,21 @@ use std::path::Path;
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions};
 
+/// Where this project's tx files land: the legacy `.orgasmic/tx/` unless a
+/// per-machine `.orgasmic/machines/<id>/tx/` exists (TASK-MSYN4).
+fn resolve_tx_dir(project_root: &std::path::Path) -> std::path::PathBuf {
+    let dotorg = project_root.join(".orgasmic");
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        for machine in machines.flatten() {
+            let candidate = machine.path().join("tx");
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+    }
+    dotorg.join("tx")
+}
+
 fn test_options() -> DaemonOptions {
     DaemonOptions {
         bind_override: Some("127.0.0.1".parse().unwrap()),
@@ -71,8 +86,8 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
         ),
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n\
+        &project_root.join(".orgasmic/tasks/TASK-T01/node.org"),
+        "#+title: orgasmic task TASK-T01\n#+orgasmic_version: 2\n\n\
          * BACKLOG TASK-T01 Ledger guard task :work:\n\
          :PROPERTIES:\n\
          :ID:               TASK-T01\n\
@@ -129,6 +144,34 @@ fn assert_ledger_parses(dir: &Path, what: &str) {
     }
 }
 
+/// Every `.org` file directly under `dir`, sorted. Missing dir is empty, not a
+/// panic: a ledger shape only exists once something has been written into it.
+/// Node journals get the node-kernel parser, not `parse_tx_file`: an entry
+/// there may legitimately carry a body after the drawer (that is where a
+/// comment's prose lives), which the strict project-ledger parser refuses.
+fn assert_journal_parses(path: &Path, what: &str) -> Vec<orgasmic_core::node_kernel::JournalEntry> {
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match orgasmic_core::node_kernel::parse_journal(&source, &path.to_string_lossy()) {
+        Ok(entries) => entries,
+        Err(e) => panic!("{what} no longer parses after the write: {e}\n---\n{source}"),
+    }
+}
+
+fn org_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<_> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("org"))
+        .collect();
+    out.sort();
+    out
+}
+
 fn snapshot(dir: &Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -181,7 +224,7 @@ async fn multi_line_reason_is_refused_and_project_ledger_still_parses() {
     let token = read_token(&home);
     let client = reqwest::Client::new();
     let base = format!("http://{}", running.addr);
-    let project_tx_dir = project_root.join(".orgasmic/tx");
+    let project_tx_dir = || resolve_tx_dir(&project_root);
 
     // A supported single-line write first, so the ledger is non-empty and the
     // refusal below has something it could corrupt.
@@ -203,8 +246,8 @@ async fn multi_line_reason_is_refused_and_project_ledger_still_parses() {
         "single-line reason must still be accepted: {}",
         ok.text().await.unwrap()
     );
-    assert_ledger_parses(&project_tx_dir, "project");
-    let before = snapshot(&project_tx_dir);
+    assert_ledger_parses(&project_tx_dir(), "project");
+    let before = snapshot(&project_tx_dir());
     assert!(!before.is_empty(), "the project ledger should exist by now");
 
     let resp = post_tx(
@@ -232,11 +275,11 @@ async fn multi_line_reason_is_refused_and_project_ledger_still_parses() {
     common::assert_body_rejects_paths(&text, &[&project_root]);
 
     assert_eq!(
-        snapshot(&project_tx_dir),
+        snapshot(&project_tx_dir()),
         before,
         "a refused tx write must leave the ledger byte-identical"
     );
-    assert_ledger_parses(&project_tx_dir, "project");
+    assert_ledger_parses(&project_tx_dir(), "project");
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -333,7 +376,8 @@ async fn ledger_still_parses_after_every_supported_write() {
     let token = read_token(&home);
     let client = reqwest::Client::new();
     let base = format!("http://{}", running.addr);
-    let project_tx_dir = project_root.join(".orgasmic/tx");
+    let project_tx_dir = || resolve_tx_dir(&project_root);
+    let node_journal = project_root.join(".orgasmic/tasks/TASK-T01/journal.org");
 
     // The value shapes a tx entry is expected to carry, one write each. The
     // ledger is re-parsed after every one of them, not just at the end.
@@ -389,26 +433,27 @@ async fn ledger_still_parses_after_every_supported_write() {
             reqwest::StatusCode::OK,
             "supported write #{i} must be accepted: {text}"
         );
-        assert_ledger_parses(&project_tx_dir, "project");
+        assert_ledger_parses(&project_tx_dir(), "project");
+        assert_journal_parses(&node_journal, "node journal");
     }
 
-    // And the whole ledger reads back as the number of entries written.
-    let source = std::fs::read_to_string(
-        project_tx_dir.join(
-            std::fs::read_dir(&project_tx_dir)
-                .unwrap()
-                .flatten()
-                .map(|e| e.file_name())
-                .next()
-                .unwrap(),
-        ),
-    )
-    .unwrap();
-    let entries = orgasmic_core::parse_tx_file(&source, "ledger").unwrap();
+    // And the whole ledger reads back as the number of entries written. It is
+    // spread over two shapes now: dec_E01MC routes a task-scoped write to that
+    // node's `journal.org`, and TASK-MSYN4 splits the rest into per-machine
+    // month files. The read-back is the union of both, not one file.
+    let mut count = assert_journal_parses(&node_journal, "node journal").len();
+    let mut read_back = Vec::new();
+    for file in org_files(&project_tx_dir()) {
+        let source = std::fs::read_to_string(&file).unwrap();
+        let entries = orgasmic_core::parse_tx_file(&source, "ledger").unwrap();
+        count += entries.len();
+        read_back.push(source);
+    }
     assert_eq!(
-        entries.len(),
+        count,
         writes.len(),
-        "every supported write must be readable back: {source}"
+        "every supported write must be readable back: {}",
+        read_back.concat()
     );
 
     let _ = running.shutdown.send(());
@@ -433,7 +478,7 @@ async fn multi_line_extra_value_is_refused_and_nothing_is_written() {
     let token = read_token(&home);
     let client = reqwest::Client::new();
     let base = format!("http://{}", running.addr);
-    let project_tx_dir = project_root.join(".orgasmic/tx");
+    let project_tx_dir = || resolve_tx_dir(&project_root);
 
     let ok = post_tx(
         &client,
@@ -447,7 +492,7 @@ async fn multi_line_extra_value_is_refused_and_nothing_is_written() {
     )
     .await;
     assert_eq!(ok.status(), reqwest::StatusCode::OK);
-    let before = snapshot(&project_tx_dir);
+    let before = snapshot(&project_tx_dir());
 
     let resp = post_tx(
         &client,
@@ -473,11 +518,11 @@ async fn multi_line_extra_value_is_refused_and_nothing_is_written() {
     common::assert_body_rejects_paths(&text, &[&project_root]);
 
     assert_eq!(
-        snapshot(&project_tx_dir),
+        snapshot(&project_tx_dir()),
         before,
         "a refused tx write must leave the ledger byte-identical"
     );
-    assert_ledger_parses(&project_tx_dir, "project");
+    assert_ledger_parses(&project_tx_dir(), "project");
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;

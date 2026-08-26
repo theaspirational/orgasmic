@@ -62,8 +62,8 @@ fn seed_home_and_project(root: &Path) -> (Home, PathBuf) {
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:               orgasmic\n:END:\n",
     );
     write(
-        project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-FAULT Recovery fault matrix :work:\n:PROPERTIES:\n:ID:               TASK-FAULT\n:END:\n",
+        project_root.join(".orgasmic/tasks/TASK-FAULT/node.org"),
+        "#+title: orgasmic task TASK-FAULT\n#+orgasmic_version: 2\n\n* BACKLOG TASK-FAULT Recovery fault matrix :work:\n:PROPERTIES:\n:ID:               TASK-FAULT\n:END:\n",
     );
     write(
         home.board(),
@@ -138,9 +138,18 @@ fn seed_home_and_project(root: &Path) -> (Home, PathBuf) {
 /// of this file asserts runtime identity and pane preservation, which stay green
 /// whether or not the link is ever written.
 fn recovery_association_count(project_root: &Path, replacement_run_id: &str) -> usize {
-    let dir = project_root.join(".orgasmic/tx");
+    // Legacy `.orgasmic/tx/` plus per-machine `.orgasmic/machines/<id>/tx/`
+    // (TASK-MSYN4).
+    let dotorg = project_root.join(".orgasmic");
+    let mut dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        dirs.extend(machines.flatten().map(|machine| machine.path().join("tx")));
+    }
     let mut ledger = String::new();
-    if let Ok(read) = std::fs::read_dir(&dir) {
+    for dir in dirs {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in read.flatten() {
             if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
                 ledger.push_str(&std::fs::read_to_string(entry.path()).unwrap());

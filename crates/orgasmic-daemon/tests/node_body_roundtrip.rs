@@ -148,8 +148,8 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
         ),
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n\
+        &project_root.join(".orgasmic/tasks/TASK-R01/node.org"),
+        "#+title: orgasmic task TASK-R01\n#+orgasmic_version: 2\n\n\
          * BACKLOG TASK-R01 Round-trip test task :work:\n\
          :PROPERTIES:\n\
          :ID:               TASK-R01\n\
@@ -278,7 +278,7 @@ async fn section_write_to_an_unknown_title_is_refused_and_names_what_exists() {
     );
 
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-R01/node.org")).unwrap();
     assert!(
         !on_disk.contains("Descrption"),
         "a refused section write must not have appended the heading: {on_disk}"
@@ -294,7 +294,7 @@ async fn create_then_unset_a_section_round_trips_byte_exactly() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "proj-cb6gq");
-    let backlog = project_root.join(".orgasmic/tasks/backlog.org");
+    let backlog = project_root.join(".orgasmic/tasks/TASK-R01/node.org");
     let before = std::fs::read_to_string(&backlog).unwrap();
 
     let running = Daemon::run(home.clone(), test_options()).await.unwrap();
@@ -416,7 +416,7 @@ async fn node_body_set_refuses_nested_headings_naming_the_first_one() {
     common::assert_body_rejects_paths(&text, &[&project_root]);
 
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-R01/node.org")).unwrap();
     assert!(
         on_disk.contains("** Description\nOriginal description.\n"),
         "refused write must leave the file untouched: {on_disk}"
@@ -515,7 +515,7 @@ async fn ataxn_shape_round_trips_through_set_and_get_with_zero_loss() {
 
     // 1. Raw org node keeps every byte.
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-R01/node.org")).unwrap();
     assert!(
         on_disk.contains(body.trim_end()),
         "raw org node lost content: {on_disk}"
@@ -593,9 +593,9 @@ async fn task_get_exposes_nested_sections_in_description() {
     // Rewrite the task with the split-on-disk shape.
     let body = ataxn_shaped_body("**");
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(".orgasmic/tasks/TASK-R01/node.org"),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n\
+            "#+title: orgasmic task TASK-R01\n#+orgasmic_version: 2\n\n\
              * BACKLOG TASK-R01 Round-trip test task :work:\n\
              :PROPERTIES:\n:ID:               TASK-R01\n:END:\n\n\
              {body}\n\

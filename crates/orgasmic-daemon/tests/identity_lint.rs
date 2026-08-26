@@ -35,8 +35,15 @@ fn seed_board(home: &Home, project_root: &std::path::Path, project_id: &str) {
     );
 }
 
-fn seed_project(project_root: &std::path::Path, task_org: &str) {
-    write(&project_root.join(".orgasmic/tasks/backlog.org"), task_org);
+/// Seed one task node. Node-dir layout (dec_E01MC): the blob is the body of
+/// `tasks/<node_id>/node.org`. `node_id` is the directory these lint fixtures
+/// live under — several of them deliberately carry a heading token or drawer
+/// ID that disagrees with it, which is the drift being linted.
+fn seed_project(project_root: &std::path::Path, node_id: &str, task_org: &str) {
+    write(
+        &project_root.join(format!(".orgasmic/tasks/{node_id}/node.org")),
+        task_org,
+    );
 }
 
 async fn load_identity_projection(
@@ -62,9 +69,9 @@ async fn duplicate_identity_surfaces_via_parse_errors() {
     let dup = mint_node_id_for_class(NodeIdClass::Task);
     seed_board(&home, &project_root, "proj-lint");
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{dup}/node.org")),
         &format!(
-            "#+title: backlog\n#+orgasmic_version: 1\n\n* BACKLOG {dup} One\n:PROPERTIES:\n:ID: {dup}\n:END:\n\n* BACKLOG {dup} Two\n:PROPERTIES:\n:ID: {dup}\n:END:\n"
+            "#+title: orgasmic task {dup}\n#+orgasmic_version: 2\n\n* BACKLOG {dup} One\n:PROPERTIES:\n:ID: {dup}\n:END:\n\n* BACKLOG {dup} Two\n:PROPERTIES:\n:ID: {dup}\n:END:\n"
         ),
     );
 
@@ -107,11 +114,12 @@ async fn malformed_identity_surfaces_via_parse_errors() {
     let anchor = mint_node_id_for_class(NodeIdClass::Decision);
     seed_project(
         &project_root,
-        "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Legacy\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
+        "TASK-001",
+        "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 Legacy\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
     );
     write(
-        &project_root.join(".orgasmic/decisions.org"),
-        &format!("#+title: decisions\n\n* {anchor} Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"),
+        &project_root.join(format!(".orgasmic/decisions/{anchor}/node.org")),
+        &format!("#+title: orgasmic decision {anchor}\n#+orgasmic_version: 2\n\n* {anchor} Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"),
     );
 
     let home_for_token = home.clone();
@@ -151,18 +159,19 @@ async fn heading_id_token_mismatch_surfaces_via_parse_errors() {
     seed_board(&home, &project_root, "proj-heading-lint");
     seed_project(
         &project_root,
-        "#+title: sprint\n#+orgasmic_version: 1\n\n\
+        "TASK-RIGHT",
+        "#+title: orgasmic task TASK-RIGHT\n#+orgasmic_version: 2\n\n\
          * BACKLOG TASK-WRONG Drifted title\n\
          :PROPERTIES:\n:ID: TASK-RIGHT\n:END:\n",
     );
     let anchor = mint_node_id_for_class(NodeIdClass::Decision);
     write(
-        &project_root.join(".orgasmic/decisions.org"),
-        &format!("#+title: decisions\n\n* dec_WRONG Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"),
+        &project_root.join(format!(".orgasmic/decisions/{anchor}/node.org")),
+        &format!("#+title: orgasmic decision {anchor}\n#+orgasmic_version: 2\n\n* dec_WRONG Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"),
     );
     write(
-        &project_root.join(".orgasmic/glossary.org"),
-        "#+title: glossary\n\n* human slug title\n:PROPERTIES:\n:ID: term_ABCDE\n:END:\n",
+        &project_root.join(".orgasmic/glossary/term_ABCDE/node.org"),
+        "#+title: orgasmic glossary term_ABCDE\n#+orgasmic_version: 2\n\n* human slug title\n:PROPERTIES:\n:ID: term_ABCDE\n:END:\n",
     );
 
     let home_for_token = home.clone();
@@ -215,7 +224,8 @@ async fn mismatched_task_heading_still_indexes_under_drawer_id() {
     seed_board(&home, &project_root, "proj-index-mismatch");
     seed_project(
         &project_root,
-        "#+title: sprint\n#+orgasmic_version: 1\n\n\
+        "TASK-RIGHT",
+        "#+title: orgasmic task TASK-RIGHT\n#+orgasmic_version: 2\n\n\
          * BACKLOG TASK-WRONG Drifted title\n\
          :PROPERTIES:\n:ID: TASK-RIGHT\n:END:\n",
     );
