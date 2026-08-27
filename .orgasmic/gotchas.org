@@ -910,3 +910,17 @@ command, then the rest of the crate. Its =reviewer_close_verdict_has_issues_
 stays_in_progress= also fails only when the whole crate runs concurrently and
 passes both alone and with its own binary; treat a lone failure there as load
 flakiness, not a defect, and confirm by re-running that binary by itself.
+
+* The home root is a reserved namespace — never place per-project state at ~/.orgasmic/<id>
+:PROPERTIES:
+:ADDED: [2026-08-27 Wed]
+:END:
+=install.sh= keeps =~/.orgasmic/orgasmic= and =~/.orgasmic/current= as symlinks
+into =runtimes/=, and rewrites them on every runtime install. The first live
+=project migrate --to-branch= (2026-08-27) put the ledger at
+=~/.orgasmic/orgasmic/ledger=, which resolved through that symlink into the
+old runtime version dir; the very next runtime install repointed the symlink
+and the ledger checkout vanished from its path. Fixed the same day
+(main =31344134=): ledgers live at =~/.orgasmic/ledgers/<id>=, following the
+=worktrees/<id>= convention. Any future per-project home state must go under a
+function dir (=ledgers/=, =worktrees/=), never =<id>/= at the root.
