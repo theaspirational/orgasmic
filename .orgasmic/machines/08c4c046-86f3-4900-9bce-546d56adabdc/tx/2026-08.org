@@ -103,3 +103,58 @@
 :TRIGGERS:     none
 :EVENT_ID:     16c6eee5-c23e-44a2-8677-5a7da2a0acef
 :END:
+
+* TX 2026-08-27 Thu 22:35:04 manager.dispatch_started TASK-JHWNP
+:PROPERTIES:
+:TX_ID:        tx-20260827-orgasmic-641e58ea-dc8f-4ac4-9cbf-170ae7a53975
+:TIME:         [2026-08-27 Thu 22:35:04]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JHWNP
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jhwnp
+:BRANCH:       task-jhwnp-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-jhwnp/task-jhwnp-brief.md
+:STARTED_AT:   [2026-08-27 Thu 22:35:04]
+:LIVENESS:     9de4aa0f0a5d23134ea92d7eb2ad72d236103c6b
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: operator-selected: codex/stdio gpt-5.6-sol high implements; claude opus 5 high reviews later (cross-family)
+:EVENT_ID:     5706ee14-032e-412a-ad2a-2d2be142baea
+:END:
+
+* TX 2026-08-27 Thu 22:35:04 run.created TASK-JHWNP
+:PROPERTIES:
+:TX_ID:        tx-20260827-orgasmic-a927781b-de39-405f-970f-fd30badff0cf
+:TIME:         [2026-08-27 Thu 22:35:04]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JHWNP
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-JHWNP-implementer-20260827T223502.jsonl
+:REASON:       operator-selected: codex/stdio gpt-5.6-sol high implements; claude opus 5 high reviews later (cross-family)
+:RUN_ID:       run-01M12NSH8PAJQ28XG755XQCD38
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jhwnp
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-jhwnp/task-jhwnp-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-jhwnp/task-jhwnp-e08591decb8f47b9925a326445f2ee3f-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-jhwnp/task-jhwnp-e08591decb8f47b9925a326445f2ee3f-stdout.log
+:DISPATCH_ATTEMPT: e08591decb8f47b9925a326445f2ee3f
+:PID:          87709
+:DISPATCH_TX:  tx-20260827-orgasmic-641e58ea-dc8f-4ac4-9cbf-170ae7a53975
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     7e2f96aa-67cc-400e-a0d8-a1a8092bf367
+:END:

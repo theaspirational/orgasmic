@@ -14,3 +14,19 @@
 :REASON: cut per-round worktree setup cost (npm ci/venv/submodule clone) measured across multi-round chains like TASK-BF1DP (6 worktrees for one task)
 :EVENT_ID: 5a95ab1c-7502-4d3e-9024-ea9d1b568ab0
 :END:
+
+* tx-20260827-orgasmic-6477 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6477
+:TIME:    [2026-08-27 Thu 22:35:02]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JHWNP
+:TARGET: .orgasmic/tasks/TASK-JHWNP/node.org
+:REASON: transition TASK-JHWNP to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 0697a168-5053-49f7-beaa-355e66f655c1
+:END:

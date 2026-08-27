@@ -4926,6 +4926,33 @@ Work:
 
 Either way the outcome is a recorded answer. The defect being fixed here is that a persistence-shaped flag sits in the launch path with no stated reason.
 
+* IN_PROGRESS TASK-JHWNP worktree-per-task-chain: implementer and fix rounds share one worktree; only review gets a fresh checkout :dispatch:worktree:
+:PROPERTIES:
+:ID: TASK-JHWNP
+:PRIORITY: P2
+:TEST_CMD: scripts/run-tests.sh -p orgasmic-cli --test dispatch
+:WRITE_SCOPE: crates/**
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:CLAIM_WRITE_SCOPE: crates/**
+:END:
+
+** Description
+Today every dispatch creates a fresh worktree (~create_worktree~, manager.rs), so a task chain of implement -> review -> fix -> review pays full ecosystem setup per round. Rounds are serial in practice. Design goal: one worktree per task CHAIN for same-kind implementer rounds — round 2+ reuses round 1's worktree (warm caches, populated submodules) — while every reviewer dispatch keeps getting a fresh checkout, because a fresh checkout at the worker commit is the only thing that proves the COMMIT rather than the implementer's directory (missing ~git add~, ignored-local-state bugs).
+
+** Mechanics to build
+- ~manager dispatch~ same-task same-kind implementer reuse: when the task's previous implementer worktree still exists and its dispatch is closed, reuse it instead of ~create_worktree~. The reused tree must be CLEAN (previous round committed); a dirty or wedged tree refuses with an actionable message, never silently falls back. Explicit ~--fresh-worktree~ opts out.
+- Round branches: the new round's branch is created inside the reused worktree from ~--from~; derived-branch collision handling (dispatch.md already requires explicit ~--branch~ on round 2) stays coherent.
+- Close keeps a chain worktree: closing a non-final implementer round must be able to leave the worktree for the next round without the operator remembering ~--no-worktree-remove~. Final close (implementer.done with merge evidence) removes it as today.
+- Between-rounds protection: a kept chain worktree is not held by any open dispatch, so ~worktree-prune~ would salvage and reclaim it mid-chain. Design a hold the prune classifier respects (and releases at final close). Do NOT weaken any RMA18 refusal to do it.
+- Cross-kind reuse stays refused (TASK-096.1). Reviewer worktrees unchanged. Submodule settle/cleanup at chain end unchanged.
+
+** Acceptance
+- Test: round-2 implementer dispatch reuses round-1's worktree path and an untracked warm-cache marker file survives.
+- Test: dirty leftover tree -> reuse refused, message names the tree state and the escape.
+- Test: worktree-prune keeps a mid-chain worktree, reclaims it after final close.
+- Test: reviewer dispatch for the same task still creates a fresh worktree.
+- Existing dispatch/cleanup suites stay green; no RMA18 refusal weakened.
+
 * IN_PROGRESS TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-TFXR2
@@ -5028,30 +5055,6 @@ TWCP9 decision, step 3. Claims live in per-machine append-only logs (`machines/<
 - [ ] write to a node dir claimed by another machine is refused with a clear error (test)
 - [ ] double-claim interval is visible in dispatch-status/views
 - [ ] projections fold multi-machine logs identically regardless of ingest order (test)
-
-* IN_REVIEW TASK-EHE15 artifact comments: CLI verb to list an artifact's comment answers :work:
-:PROPERTIES:
-:ID: TASK-EHE15
-:PRIORITY: P2
-:READ_SCOPE: crates/orgasmic-cli/** crates/orgasmic-daemon/src/artifacts.rs crates/orgasmic-daemon/src/api.rs
-:TEST_CMD: cargo test -p orgasmic-cli --bin orgasmic artifact
-:WRITE_SCOPE: crates/orgasmic-cli/src/artifact.rs crates/orgasmic-cli/src/main.rs
-:END:
-
-** Description
-The griller flow submits a QuestionForm artifact; users click answers in the
-UI, which land as comments on the artifact (journal.org, served by
-GET /api/artifacts/:id). There is no CLI verb to list them - a worker must
-hand-roll HTTP with the auth token. Add `orgasmic artifact comments <ART-ID>
-[--project <id>] [--include-consumed]` that calls the existing daemon
-endpoint and prints each comment: CID, author, time, message, anchor
-(question key/answer when present), consumed flag. JSON output, consistent
-with other read verbs.
-
-** Acceptance Criteria
-- [ ] `orgasmic artifact comments ART-XXXXX` prints the artifact's comments with CID, author, time, message, anchor, consumed flag (test)
-- [ ] `--include-consumed` includes consumed comments; default hides them (test)
-- [ ] unknown artifact id yields a clear error naming the id
 
 * IN_REVIEW TASK-EPG6H tx split: route node-scoped events to journals per the AP971.5 table :e01mc:node_kernel:
 :PROPERTIES:
@@ -7207,6 +7210,18 @@ Acceptance:
 - a manager session that edits source with no declared tier is visibly out of policy, and the omission is detectable from tx after the fact
 - declaring `trivial` costs one command
 - router and workflow text agree with the CLI surface, with no leftover prose implying manager-direct is the default
+
+* DONE TASK-3E5JT artifact comments carry the journal time :work:
+:PROPERTIES:
+:ID: TASK-3E5JT
+:PRIORITY: P3
+:END:
+
+** Description
+GET /api/artifacts/:id serves comments without the journal :TIME:; the CLI comments verb prints time:null. Add time to CommentRecord and map entry.time; CLI passes it through.
+
+** Acceptance Criteria
+- [ ] artifact comments output carries the comment's :TIME: value (test)
 
 * DONE TASK-3K9ZG Sanitize artifact ids on submit + add artifact to id mint :artifacts:daemon:security:hardening:
 :PROPERTIES:
@@ -14446,6 +14461,30 @@ GATES (manager independently re-ran on merged main): cargo test -p orgasmic-daem
 Review: manager inline (operator-accepted review gate [2026-07-04]); diff correct, criterion-5 invariant tested, include_consumed UI logic verified safe (never sent for the current view, so no consumed leak).
 
 QUALIFIED: the full live two-BROWSER two-MEMBER smoke with a real LLM-driven regenerate (goal Reached-When) exercises pre-existing WS-lock/hot-session machinery (already verified in 2ZQSB/RH4M5/DJGM5) and needs LLM creds; deferred to operator acceptance. The EDQPG code delta itself is fully covered deterministically by the new real-HTTP daemon test + vitest.
+
+* DONE TASK-EHE15 artifact comments: CLI verb to list an artifact's comment answers :work:
+:PROPERTIES:
+:ID: TASK-EHE15
+:PRIORITY: P2
+:READ_SCOPE: crates/orgasmic-cli/** crates/orgasmic-daemon/src/artifacts.rs crates/orgasmic-daemon/src/api.rs
+:TEST_CMD: cargo test -p orgasmic-cli --bin orgasmic artifact
+:WRITE_SCOPE: crates/orgasmic-cli/src/artifact.rs crates/orgasmic-cli/src/main.rs
+:END:
+
+** Description
+The griller flow submits a QuestionForm artifact; users click answers in the
+UI, which land as comments on the artifact (journal.org, served by
+GET /api/artifacts/:id). There is no CLI verb to list them - a worker must
+hand-roll HTTP with the auth token. Add `orgasmic artifact comments <ART-ID>
+[--project <id>] [--include-consumed]` that calls the existing daemon
+endpoint and prints each comment: CID, author, time, message, anchor
+(question key/answer when present), consumed flag. JSON output, consistent
+with other read verbs.
+
+** Acceptance Criteria
+- [ ] `orgasmic artifact comments ART-XXXXX` prints the artifact's comments with CID, author, time, message, anchor, consumed flag (test)
+- [ ] `--include-consumed` includes consumed comments; default hides them (test)
+- [ ] unknown artifact id yields a clear error naming the id
 
 * DONE TASK-EMY0M TASK-QPKCD fix round 4: project-scoped crash-safe rescue authority
 :PROPERTIES:

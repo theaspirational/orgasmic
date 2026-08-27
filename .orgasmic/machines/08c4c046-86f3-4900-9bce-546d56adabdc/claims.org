@@ -27,3 +27,17 @@
 :TARGET:       .orgasmic/tasks/TASK-EHE15
 :EVENT_ID:     0fabfb00-50d5-4679-9059-bbfbcd9785ee
 :END:
+
+* TX 2026-08-27 Thu 22:35:04.047064 task.claimed TASK-JHWNP
+:PROPERTIES:
+:TX_ID:        tx-20260827223503-e98ea847
+:TIME:         [2026-08-27 Thu 22:35:04.047064]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JHWNP
+:TARGET:       .orgasmic/tasks/TASK-JHWNP
+:WRITE_SCOPE:  crates/**
+:EVENT_ID:     48b072ac-9142-47bf-b2d9-768dbdd9a2ae
+:END:

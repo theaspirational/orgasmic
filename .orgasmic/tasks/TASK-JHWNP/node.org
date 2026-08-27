@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JHWNP
 #+orgasmic_version: 2
 
-* BACKLOG TASK-JHWNP worktree-per-task-chain: implementer and fix rounds share one worktree; only review gets a fresh checkout    :dispatch:worktree:
+* IN_PROGRESS TASK-JHWNP worktree-per-task-chain: implementer and fix rounds share one worktree; only review gets a fresh checkout :dispatch:worktree:
 :PROPERTIES:
 :ID: TASK-JHWNP
 :PRIORITY: P2
