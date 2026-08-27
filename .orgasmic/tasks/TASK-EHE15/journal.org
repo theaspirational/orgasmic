@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-EHE15
+#+orgasmic_version: 2
+
+* tx-20260827-orgasmic-6469 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6469
+:TIME:    [2026-08-27 Thu 17:49:32]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EHE15
+:TARGET: .orgasmic/tasks/TASK-EHE15/node.org
+:REASON: close the griller QuestionForm loop: answers are readable only via raw HTTP today
+:EVENT_ID: 3c4bd904-2304-4ba6-9fa5-21ce088b8e14
+:END:
