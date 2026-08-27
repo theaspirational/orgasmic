@@ -30,3 +30,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 0697a168-5053-49f7-beaa-355e66f655c1
 :END:
+
+* tx-20260827-orgasmic-6478 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6478
+:TIME:    [2026-08-27 Thu 22:58:25]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JHWNP
+:TARGET: .orgasmic/tasks/TASK-JHWNP/node.org
+:REASON: implementer finalized cd43bf91; dispatching cross-family review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 102442cd-1a5a-4efd-b907-61caa25b485e
+:END:
