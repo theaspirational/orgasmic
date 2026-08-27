@@ -1,0 +1,16 @@
+#+title: orgasmic tx claims
+#+orgasmic_version: 1
+
+* TX 2026-08-27 Thu 17:50:26.607706 task.claimed TASK-EHE15
+:PROPERTIES:
+:TX_ID:        tx-20260827175026-56fb8e3f
+:TIME:         [2026-08-27 Thu 17:50:26.607706]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EHE15
+:TARGET:       .orgasmic/tasks/TASK-EHE15
+:WRITE_SCOPE:  crates/orgasmic-cli/src/artifact.rs crates/orgasmic-cli/src/main.rs
+:EVENT_ID:     18b6a093-0ef1-4674-9fa8-2c23f7028d84
+:END:

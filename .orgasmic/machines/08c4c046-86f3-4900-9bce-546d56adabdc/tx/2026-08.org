@@ -1,0 +1,53 @@
+#+title: orgasmic tx 2026-08
+#+orgasmic_version: 1
+
+* TX 2026-08-27 Thu 17:50:26 manager.dispatch_started TASK-EHE15
+:PROPERTIES:
+:TX_ID:        tx-20260827-orgasmic-12d8684b-aba9-49c7-97a5-6fb91c0a6d1f
+:TIME:         [2026-08-27 Thu 17:50:26]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EHE15
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ehe15
+:BRANCH:       task-ehe15-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-ehe15/brief-ehe15.md
+:STARTED_AT:   [2026-08-27 Thu 17:50:26]
+:LIVENESS:     31344134889329f9ac40e77b9c4bf4bc005f25b3
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:REASON_INITIAL: operator ordered immediate dispatch; claude stdio as session harness, harness-default model/effort (ordinary tier)
+:EVENT_ID:     f3713e62-290a-4005-9222-0606a46f50c4
+:END:
+
+* TX 2026-08-27 Thu 17:50:26 run.created TASK-EHE15
+:PROPERTIES:
+:TX_ID:        tx-20260827-orgasmic-69ce53c9-c7fc-4a8d-988d-3dacfe9a2a64
+:TIME:         [2026-08-27 Thu 17:50:26]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EHE15
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-EHE15-implementer-20260827T175026.jsonl
+:REASON:       operator ordered immediate dispatch; claude stdio as session harness, harness-default model/effort (ordinary tier)
+:RUN_ID:       run-01M125GD7QNAP2BJ1B6XZEKKMD
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-sdk-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ehe15
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-ehe15/brief-ehe15.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-ehe15/brief-ehe15-03044f75b5c144cbbf8000202e5e65fc-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-ehe15/brief-ehe15-03044f75b5c144cbbf8000202e5e65fc-stdout.log
+:DISPATCH_ATTEMPT: 03044f75b5c144cbbf8000202e5e65fc
+:PID:          65162
+:DISPATCH_TX:  tx-20260827-orgasmic-12d8684b-aba9-49c7-97a5-6fb91c0a6d1f
+:EVENT_ID:     824b4c51-533d-40ca-8742-f14ce1afdea0
+:END:
