@@ -30,3 +30,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 6f6fba42-0b1a-4579-ac97-3f2f163f1d2b
 :END:
+
+* tx-20260827-orgasmic-6471 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6471
+:TIME:    [2026-08-27 Thu 18:00:03]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EHE15
+:TARGET: .orgasmic/tasks/TASK-EHE15/node.org
+:REASON: merged 460ccec5; manager-verified (tests 3/3, live smoke); time field blocked daemon-side, follow-up candidate
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 1ddab069-fd4e-49dd-bd1c-01962386f1ea
+:END:
