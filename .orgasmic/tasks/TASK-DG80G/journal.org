@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-DG80G
+#+orgasmic_version: 2
+
+* tx-20260827-orgasmic-6486 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6486
+:TIME:    [2026-08-27 Thu 23:47:30]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-DG80G
+:TARGET: .orgasmic/tasks/TASK-DG80G/node.org
+:REASON: created task TASK-DG80G
+:EVENT_ID: 612bc78c-9548-4fae-a43a-240bb9e82da6
+:END:

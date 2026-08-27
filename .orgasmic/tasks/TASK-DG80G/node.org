@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-DG80G
+#+orgasmic_version: 2
+
+* BACKLOG TASK-DG80G Chain-hold follow-ups from TASK-JHWNP.1 re-review: pending-round asymmetry + comment/parse hardening
+:PROPERTIES:
+:ID: TASK-DG80G
+:PRIORITY: P2
+:RELATES_TO: TASK-JHWNP
+:END:
+
+Re-review of TASK-JHWNP.1 (APPROVE, tx-20260827-orgasmic-a374583b) surfaced 1 MEDIUM + 2 LOW in the NEW release-path code. Not ship-blocking; must land before multi-task chain dispatches are relied on.
+
+- MEDIUM-A — multi-task hold born expired. `chain_hold_has_pending_round` (manager.rs:7234-7243) requires EVERY task to still be implementer-dispatchable, while `release_chain_worktree_holds` (manager.rs:7317) releases on ANY intersection. A multi-task hold can be born already expired: the next prune deletes the checkout the close just promised to hold (prune salvages, so no data loss). Fix: seed `pending = false` and OR across the lock reason's tasks, matching the `any` at :7317. Also add `restore_task_lifecycle_stages` to the lifecycle-failure arm at manager.rs:965. Test: dispatch `A B`, partial-close A done, close B `aborted --no-worktree-remove`, assert `worktree-prune` prints SKIP and the tree survives.
+
+- LOW-B — comment at manager.rs:9349-9352 justifies the MEDIUM-3 arm with the wrong evidence. Real reason: the close commit writes no second append (api.rs:18076), so the pending entry outlives a healthy close, and `dispatch-status` mid-round-2 would otherwise replay `in_progress -> todo` onto a live task. Rewrite the comment; consider promoting the unit case to that scenario.
+
+- LOW-C — `git worktree list --porcelain -z` needs a minimum git version. Document it, or fall back to the non-`-z` parse when it errors.
+
+Full verdict: .orgasmic/tmp/dispatch/task-jhwnp.1-review/ (ledger tmp).
