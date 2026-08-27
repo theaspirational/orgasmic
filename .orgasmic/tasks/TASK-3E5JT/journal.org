@@ -14,3 +14,51 @@
 :REASON: follow-up to TASK-EHE15: CommentRecord drops :TIME:
 :EVENT_ID: fb8df17d-a9a0-40f0-9213-59d842488ef1
 :END:
+
+* tx-20260827-orgasmic-6473 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6473
+:TIME:    [2026-08-27 Thu 18:09:12]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-3E5JT
+:TARGET: .orgasmic/tasks/TASK-3E5JT/node.org
+:REASON: manager-direct trivial fix
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 85687e71-f96f-44ce-b892-ca4f0b75e37c
+:END:
+
+* tx-20260827-orgasmic-6474 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6474
+:TIME:    [2026-08-27 Thu 18:09:16]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-3E5JT
+:TARGET: .orgasmic/tasks/TASK-3E5JT/node.org
+:REASON: self-review: focused tests green
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 8c63d552-89c1-4a8c-b8d1-1f000ffa653b
+:END:
+
+* tx-20260827-orgasmic-6475 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6475
+:TIME:    [2026-08-27 Thu 18:09:16]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-3E5JT
+:TARGET: .orgasmic/tasks/TASK-3E5JT/node.org
+:REASON: landed b76bd524; daemon artifacts 40/40, cli artifact 3/3
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 94f3eb67-2c4e-44c7-8572-11be9f69951e
+:END:

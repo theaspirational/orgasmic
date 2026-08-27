@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-3E5JT
 #+orgasmic_version: 2
 
-* BACKLOG TASK-3E5JT artifact comments carry the journal time    :work:
+* DONE TASK-3E5JT artifact comments carry the journal time :work:
 :PROPERTIES:
 :ID: TASK-3E5JT
 :PRIORITY: P3
