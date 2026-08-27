@@ -110,8 +110,12 @@ impl Home {
     pub fn board(&self) -> PathBuf {
         self.user().join("board.org")
     }
+    /// Namespaced under `ledgers/` like `worktrees/<id>`, never `<id>/` directly:
+    /// the home root's top level is reserved (install.sh keeps `orgasmic` and
+    /// `current` as symlinks into `runtimes/`), so a project named after any
+    /// reserved entry would have its ledger clobbered on the next runtime install.
     pub fn project_ledger(&self, project_id: &str) -> PathBuf {
-        self.root.join(project_id).join("ledger")
+        self.root.join("ledgers").join(project_id)
     }
 
     pub fn required_dirs(&self) -> Vec<PathBuf> {
