@@ -88,3 +88,18 @@
 :CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ehe15
 :EVENT_ID:     2c7f861b-3fdd-4be3-9659-f53c77d2c4d8
 :END:
+
+* TX 2026-08-27 Thu 18:07:38 manager.tier TASK-3E5JT
+:PROPERTIES:
+:TX_ID:        tx-20260827-orgasmic-b5600232-3f94-48b3-be82-7c2278267bee
+:TIME:         [2026-08-27 Thu 18:07:38]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-3E5JT
+:REASON:       two mapped fields + CLI passthrough, no behavior branches
+:TIER:         trivial
+:TRIGGERS:     none
+:EVENT_ID:     16c6eee5-c23e-44a2-8677-5a7da2a0acef
+:END:

@@ -1,0 +1,14 @@
+#+title: orgasmic task TASK-3E5JT
+#+orgasmic_version: 2
+
+* BACKLOG TASK-3E5JT artifact comments carry the journal time    :work:
+:PROPERTIES:
+:ID: TASK-3E5JT
+:PRIORITY: P3
+:END:
+
+** Description
+GET /api/artifacts/:id serves comments without the journal :TIME:; the CLI comments verb prints time:null. Add time to CommentRecord and map entry.time; CLI passes it through.
+
+** Acceptance Criteria
+- [ ] artifact comments output carries the comment's :TIME: value (test)
