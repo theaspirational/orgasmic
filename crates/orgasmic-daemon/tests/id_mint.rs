@@ -5,8 +5,45 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use orgasmic_core::{mint_node_id, Home, NodeIdClass};
+use orgasmic_core::{mint_node_id_for_class, Home, NodeIdClass};
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
+
+/// Concatenated `node.org` bodies of one collection (node-dir layout,
+/// dec_E01MC retired the aggregate `decisions.org` / `glossary.org` /
+/// `tasks/backlog.org` files).
+fn read_collection(project_root: &std::path::Path, collection: &str) -> String {
+    let dir = project_root.join(".orgasmic").join(collection);
+    let mut nodes: Vec<std::path::PathBuf> = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|entry| entry.path().join("node.org"))
+            .filter(|node| node.is_file())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    nodes.sort();
+    let mut raw = String::new();
+    for node in nodes {
+        raw.push_str(&std::fs::read_to_string(&node).unwrap_or_default());
+        raw.push('\n');
+    }
+    raw
+}
+
+/// Where this project's tx files land: the legacy `.orgasmic/tx/` unless a
+/// per-machine `.orgasmic/machines/<id>/tx/` exists (TASK-MSYN4).
+fn project_tx_dir(project_root: &std::path::Path) -> std::path::PathBuf {
+    let dotorg = project_root.join(".orgasmic");
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        for machine in machines.flatten() {
+            let candidate = machine.path().join("tx");
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+    }
+    dotorg.join("tx")
+}
 
 fn test_options() -> DaemonOptions {
     DaemonOptions {
@@ -56,7 +93,7 @@ fn symlink_repo_source(home: &Home) {
 
 fn read_project_tx(project_root: &Path) -> String {
     let mut raw = String::new();
-    let tx_dir = project_root.join(".orgasmic/tx");
+    let tx_dir = project_tx_dir(project_root);
     if let Ok(entries) = std::fs::read_dir(&tx_dir) {
         for entry in entries.flatten() {
             if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
@@ -82,7 +119,7 @@ fn seed_synthetic_open_dispatch(
     task_id: &str,
     dispatch_tx_id: &str,
 ) {
-    let tx_dir = project_root.join(".orgasmic/tx");
+    let tx_dir = project_tx_dir(project_root);
     std::fs::create_dir_all(&tx_dir).unwrap();
     let tx_file = tx_dir.join(format!("{}.org", chrono::Utc::now().format("%Y-%m")));
     let entry = format!(
@@ -209,10 +246,7 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
             "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:END:\n"
         ),
     );
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n",
-    );
+    std::fs::create_dir_all(project_root.join(".orgasmic/tasks")).unwrap();
     write(
         &home.board(),
         format!(
@@ -230,8 +264,8 @@ async fn graph_create_rejects_legacy_numeric_decision_id() {
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
     write(
-        &project_root.join(".orgasmic/decisions.org"),
-        "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_001 Existing\n:PROPERTIES:\n:ID: dec_001\n:END:\n",
+        &project_root.join(".orgasmic/decisions/dec_001/node.org"),
+        "#+title: orgasmic decision dec_001\n#+orgasmic_version: 2\n\n* dec_001 Existing\n:PROPERTIES:\n:ID: dec_001\n:END:\n",
     );
 
     let running = boot(home.clone()).await;
@@ -264,10 +298,7 @@ async fn graph_create_auto_mints_decision_id() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/decisions.org"),
-        "#+title: decisions\n#+orgasmic_version: 1\n\n",
-    );
+    std::fs::create_dir_all(project_root.join(".orgasmic/decisions")).unwrap();
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
@@ -303,10 +334,7 @@ async fn graph_create_auto_mints_glossary_term_without_term_prefix() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/glossary.org"),
-        "#+title: glossary\n#+orgasmic_version: 1\n\n",
-    );
+    std::fs::create_dir_all(project_root.join(".orgasmic/glossary")).unwrap();
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
@@ -328,7 +356,7 @@ async fn graph_create_auto_mints_glossary_term_without_term_prefix() {
     let id = body["id"].as_str().unwrap();
     assert!(id.starts_with("term_"));
 
-    let glossary = std::fs::read_to_string(project_root.join(".orgasmic/glossary.org")).unwrap();
+    let glossary = read_collection(&project_root, "glossary");
     assert!(
         glossary.contains(&format!("* {id} Minted term")),
         "expected minted heading without term: prefix, got:\n{glossary}"
@@ -349,14 +377,8 @@ async fn daemon_create_verbs_emit_heading_tokens_without_identity_lint() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/decisions.org"),
-        "#+title: decisions\n#+orgasmic_version: 1\n\n",
-    );
-    write(
-        &project_root.join(".orgasmic/glossary.org"),
-        "#+title: glossary\n#+orgasmic_version: 1\n\n",
-    );
+    std::fs::create_dir_all(project_root.join(".orgasmic/decisions")).unwrap();
+    std::fs::create_dir_all(project_root.join(".orgasmic/glossary")).unwrap();
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
@@ -409,11 +431,11 @@ async fn daemon_create_verbs_emit_heading_tokens_without_identity_lint() {
     let glossary_id = glossary["id"].as_str().unwrap();
     let task_id = task["id"].as_str().unwrap();
 
-    let decisions = std::fs::read_to_string(project_root.join(".orgasmic/decisions.org")).unwrap();
+    let decisions = read_collection(&project_root, "decisions");
     assert!(decisions.contains(&format!("* {decision_id} Tokened decision")));
-    let glossary = std::fs::read_to_string(project_root.join(".orgasmic/glossary.org")).unwrap();
+    let glossary = read_collection(&project_root, "glossary");
     assert!(glossary.contains(&format!("* {glossary_id} Tokened glossary")));
-    let tasks = std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+    let tasks = read_collection(&project_root, "tasks");
     assert!(tasks.contains(&format!("* BACKLOG {task_id} Tokened task")));
 
     let errors: Vec<serde_json::Value> = client
@@ -442,16 +464,16 @@ async fn daemon_create_verbs_emit_heading_tokens_without_identity_lint() {
 
 #[tokio::test]
 async fn minted_task_round_trips_board_get_and_subtask_derivation() {
-    let task_id = mint_node_id(NodeIdClass::Task);
+    let task_id = mint_node_id_for_class(NodeIdClass::Task);
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Minted parent\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Minted parent\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
         ),
     );
 
@@ -509,7 +531,7 @@ async fn minted_task_round_trips_board_get_and_subtask_derivation() {
 
 #[tokio::test]
 async fn minted_task_dispatch_and_close_round_trip() {
-    let task_id = mint_node_id(NodeIdClass::Task);
+    let task_id = mint_node_id_for_class(NodeIdClass::Task);
     let worker_id = "implementer-codex-appserver";
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -518,9 +540,9 @@ async fn minted_task_dispatch_and_close_round_trip() {
     seed_project(&home, &project_root, "orgasmic");
     seed_implementer_worker(&home, worker_id);
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Minted dispatch\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Minted dispatch\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
         ),
     );
 
@@ -556,8 +578,8 @@ async fn legacy_numeric_task_resolves_dispatch_and_close() {
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Legacy task\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n",
+        &project_root.join(".orgasmic/tasks/TASK-001/node.org"),
+        "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 Legacy task\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n",
     );
     let worker_id = "implementer-codex-appserver";
     seed_implementer_worker(&home, worker_id);

@@ -25,6 +25,7 @@ mod manager;
 mod member;
 mod node;
 mod path_env;
+mod project_migrate;
 mod sequencer_markers;
 #[cfg(test)]
 mod test_support;
@@ -184,6 +185,11 @@ Examples:
     Project {
         #[command(subcommand)]
         cmd: ProjectCmd,
+    },
+    /// Build derived aggregate read views for the current project.
+    Views {
+        #[command(subcommand)]
+        cmd: ViewsCmd,
     },
     /// Show the global board.
     Board,
@@ -473,6 +479,21 @@ enum ProjectCmd {
         #[arg(long)]
         ids: bool,
     },
+    /// Convert aggregate task, decision, and glossary files to node directories.
+    Migrate {
+        /// Report the migration without changing files.
+        #[arg(long)]
+        dry_run: bool,
+        /// Move the migrated ledger to the orphan `orgasmic` branch.
+        #[arg(long)]
+        to_branch: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ViewsCmd {
+    /// Build .orgasmic/views/{board,glossary,decisions}.org from node directories.
+    Build,
 }
 
 #[derive(Subcommand, Debug)]
@@ -583,9 +604,9 @@ enum TaskCmd {
         project: Option<String>,
         /// Move the task to another lifecycle stage (`backlog`, `todo`,
         /// `in_progress`, `in_review`, `done`, `cancelled`). Rewrites the
-        /// heading keyword, relocates the subtree to that stage's file and
-        /// records a `task.state_transitioned` tx — so it runs as its own call
-        /// and cannot be combined with `--priority`/`--property`.
+        /// heading keyword in this task's node and records a
+        /// `task.state_transitioned` tx — so it runs as its own call and cannot
+        /// be combined with `--priority`/`--property`.
         #[arg(long)]
         state: Option<String>,
         /// Rewrite the heading's title prose (TASK-XPYRR). The lifecycle
@@ -620,6 +641,44 @@ enum TaskCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Edit or delete authored comments in this task's journal.
+    Comment {
+        #[command(subcommand)]
+        cmd: TaskCommentCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TaskCommentCmd {
+    /// Replace one comment body using its current body as the OCC token.
+    Edit {
+        /// Task node id, e.g. `TASK-XXXXX`
+        id: String,
+        /// Journal entry id of the comment to edit
+        entry_id: String,
+        /// Registered project id; omitted → resolved from the cwd
+        #[arg(long)]
+        project: Option<String>,
+        /// Current comment body (the OCC token); the edit is refused if it no longer matches
+        #[arg(long)]
+        expected_body: String,
+        /// New comment body
+        #[arg(long)]
+        body: String,
+    },
+    /// Tombstone one comment using its current body as the OCC token.
+    Delete {
+        /// Task node id, e.g. `TASK-XXXXX`
+        id: String,
+        /// Journal entry id of the comment to delete
+        entry_id: String,
+        /// Registered project id; omitted → resolved from the cwd
+        #[arg(long)]
+        project: Option<String>,
+        /// Current comment body (the OCC token); the delete is refused if it no longer matches
+        #[arg(long)]
+        expected_body: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -641,13 +700,13 @@ enum MintClassArg {
     Artifact,
 }
 
-impl From<MintClassArg> for orgasmic_core::NodeIdClass {
-    fn from(value: MintClassArg) -> Self {
-        match value {
-            MintClassArg::Task => Self::Task,
-            MintClassArg::Decision => Self::Decision,
-            MintClassArg::Term => Self::Term,
-            MintClassArg::Artifact => Self::Artifact,
+impl MintClassArg {
+    fn collection(&self) -> &'static str {
+        match self {
+            Self::Task => "tasks",
+            Self::Decision => "decisions",
+            Self::Term => "glossary",
+            Self::Artifact => "artifacts",
         }
     }
 }
@@ -1454,7 +1513,13 @@ fn main() -> Result<()> {
             } => cmd_project_init(&home, path, name, default_branch, force, no_register),
             ProjectCmd::Add { path } => cmd_project_add(&home, path),
             ProjectCmd::List { ids } => cmd_project_list(&home, ids),
+            ProjectCmd::Migrate { dry_run, to_branch } => {
+                project_migrate::run(&home, dry_run, to_branch)
+            }
         },
+        Cmd::Views {
+            cmd: ViewsCmd::Build,
+        } => cmd_views_build(&home),
         Cmd::Board => cmd_project_list(&home, false),
         Cmd::Serve {
             bind,
@@ -1490,7 +1555,7 @@ fn main() -> Result<()> {
             AuthCmd::Show => cmd_auth_show(&home),
         },
         Cmd::Question { cmd } => cmd_question(&home, cmd),
-        Cmd::Id { cmd } => cmd_id(cmd),
+        Cmd::Id { cmd } => cmd_id(&home, cmd),
         Cmd::Glossary { cmd } => cmd_glossary(&home, cmd),
         Cmd::Decision { cmd } => cmd_decision(&home, cmd),
         Cmd::Graph { cmd } => cmd_graph(&home, cmd),
@@ -1759,7 +1824,7 @@ fn cmd_exec_pinned(
 fn cmd_entry(home: &Home, args: EntryArgs) -> Result<()> {
     use sha2::{Digest, Sha256};
 
-    let project_root = find_project_root_optional()?;
+    let project_root = find_project_root_optional(home)?;
     let router = render_runtime_entry_router(home, project_root.as_deref())?;
     let fingerprint = format!("{:x}", Sha256::digest(router.as_bytes()));
     if let Some(project_root) = project_root.as_deref() {
@@ -1908,16 +1973,15 @@ fn inject_default_workflow(router: &str, workflow: &str) -> Result<String> {
     Ok(rendered)
 }
 
-fn find_project_root_optional() -> Result<Option<PathBuf>> {
-    let mut dir = std::env::current_dir().context("cwd")?;
-    loop {
-        if dir.join(".orgasmic/project.org").is_file() {
-            return Ok(Some(dir));
-        }
-        if !dir.pop() {
-            return Ok(None);
-        }
-    }
+fn find_project_root_optional(home: &Home) -> Result<Option<PathBuf>> {
+    manager::find_project_root_optional_from(home, &std::env::current_dir().context("cwd")?)
+}
+
+fn cmd_views_build(home: &Home) -> Result<()> {
+    let root = find_project_root_optional(home)?.context("no .orgasmic/project.org found")?;
+    let changed = orgasmic_core::build_views(&root)?;
+    println!("built .orgasmic/views ({changed} changed)");
+    Ok(())
 }
 
 fn entry_version_notice(project_root: &Path) -> Option<String> {
@@ -3011,6 +3075,45 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
         let value: serde_json::Value = match cmd {
+            TaskCmd::Comment { cmd } => {
+                let (id, entry_id, project, body) = match cmd {
+                    TaskCommentCmd::Edit {
+                        id,
+                        entry_id,
+                        project,
+                        expected_body,
+                        body,
+                    } => (
+                        id,
+                        entry_id,
+                        project,
+                        serde_json::json!({"expected_body": expected_body, "body": body}),
+                    ),
+                    TaskCommentCmd::Delete {
+                        id,
+                        entry_id,
+                        project,
+                        expected_body,
+                    } => (
+                        id,
+                        entry_id,
+                        project,
+                        serde_json::json!({"expected_body": expected_body}),
+                    ),
+                };
+                let project = manager::resolve_project(project)?;
+                let action = if body.get("body").is_some() {
+                    "edit"
+                } else {
+                    "delete"
+                };
+                client
+                    .post_json(
+                        &format!("/tasks/{id}/comments/{entry_id}/{action}?project={project}"),
+                        &body,
+                    )
+                    .await?
+            }
             TaskCmd::Create {
                 id,
                 project,
@@ -3155,10 +3258,19 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
     })
 }
 
-fn cmd_id(cmd: IdCmd) -> Result<()> {
+fn cmd_id(home: &Home, cmd: IdCmd) -> Result<()> {
     match cmd {
         IdCmd::Mint { class } => {
-            println!("{}", orgasmic_core::mint_node_id(class.into()));
+            let descriptor_dir = home.source().join("shipped/schema/node-types");
+            let registry = if descriptor_dir.is_dir() {
+                orgasmic_daemon::node_types::NodeTypeRegistry::load(&descriptor_dir)?
+            } else {
+                orgasmic_daemon::node_types::NodeTypeRegistry::embedded()?
+            };
+            let descriptor = registry.descriptor(class.collection()).with_context(|| {
+                format!("missing shipped descriptor for {}", class.collection())
+            })?;
+            println!("{}", orgasmic_core::mint_node_id(descriptor));
             Ok(())
         }
     }

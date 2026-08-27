@@ -275,7 +275,7 @@ pub fn mint_node_id(class: NodeIdClass) -> String {
     format!("{}{}", class.prefix(), random_stem())
 }
 
-fn random_stem() -> String {
+pub(crate) fn random_stem() -> String {
     let mut rng = rand::thread_rng();
     loop {
         let stem: String = (0..STEM_LEN)
@@ -418,8 +418,8 @@ pub fn is_valid_greenfield_dec_id(value: &str) -> bool {
 /// any `arch_` identity occurrence into a parse error.
 ///
 /// Be precise about the risk, because the stage-D review overstated it: after
-/// this stage `collect_identity_occurrences` reads task files, `decisions.org`
-/// and `glossary.org` only, so **no `arch_` heading id has a producer any more**
+/// this stage `collect_identity_occurrences` reads task, decision, and glossary
+/// node directories only, so **no `arch_` heading id has a producer any more**
 /// and the failure is latent rather than live. The arm is retained because it
 /// costs nothing and this is an exported general-purpose predicate over
 /// arbitrary id strings — including the `arch_` tokens that history keeps

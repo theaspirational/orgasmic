@@ -14,7 +14,7 @@
 //! Closes AC #4 (stable request IDs for retriable mutations).
 
 use std::collections::{HashMap, HashSet};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -523,12 +523,33 @@ pub struct WriterHandle {
     /// gives up can name what it gave up on.
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
     metrics: Arc<WriterMetrics>,
+    index: Option<crate::index::Index>,
+    machine_id: Option<String>,
     /// Appends currently queued behind a session lease
     /// (orgasmic:TASK-FZB6T.3 finding 1). Read only by the regression that
     /// schedules an append at the pre-rename instant; the writer publishes it
     /// unconditionally so the two builds cannot diverge.
     #[cfg_attr(not(test), allow(dead_code))]
     deferred_appends: Arc<std::sync::atomic::AtomicUsize>,
+    /// Last apply-own-write projection failure (TASK-8AV8B). The write it
+    /// belongs to is already durable, so `publish_paths` records the failure
+    /// here rather than failing the call: reporting "failed to record
+    /// transaction" for a transaction that committed is a lie the caller acts
+    /// on. `refresh_after_tx` takes it and answers the committed-503 contract.
+    apply_failure: Arc<std::sync::Mutex<Option<String>>>,
+    /// Paths this writer committed but could not apply to the projection, in
+    /// write order. The writes they belong to are already durable,
+    /// so they are queued rather than lost. The queue outlives the error
+    /// itself because the retry that repairs the projection usually hits the
+    /// API idempotency cache and never re-publishes: without it that retry
+    /// would answer 200 over a still-stale view.
+    ///
+    /// It holds paths rather than a dirty bit, and one queue serves the whole
+    /// daemon, so whoever runs the repair repairs every project that is behind.
+    /// As a bare flag it was global but the repair was project-scoped, so a
+    /// write to one project could clear the staleness recorded for another and
+    /// then answer 200 over a view that was still stale.
+    unapplied: Arc<std::sync::Mutex<Vec<PathBuf>>>,
     #[cfg(test)]
     transaction_gate: Arc<Mutex<Option<Arc<TestTransactionGate>>>>,
     /// Test-only, handle-local lifecycle fault. This state is intentionally
@@ -737,6 +758,11 @@ fn multi_transaction_identity(txs: &[TxAppend], rewrites: &[FileRewrite]) -> Mut
         // Prepared tx ids and timestamps are server-generated, so they change
         // when an HTTP retry rebuilds the same semantic request. Everything
         // caller-controlled remains part of the collision identity.
+        //
+        // EVENT_ID (TASK-MSYN4) joins that server-generated class: it is minted
+        // per attempt, so leaving it in makes every lost-response retry look
+        // like a different mutation and fail closed. Duplicate delivery is
+        // still caught downstream by event-id dedup at ingest.
         "txs": txs
             .iter()
             .map(|tx| serde_json::json!({
@@ -751,7 +777,10 @@ fn multi_transaction_identity(txs: &[TxAppend], rewrites: &[FileRewrite]) -> Mut
                 "task": tx.entry.task,
                 "target": tx.entry.target,
                 "reason": tx.entry.reason,
-                "extra": tx.entry.extra,
+                "extra": tx.entry.extra
+                    .iter()
+                    .filter(|(key, _)| key != "EVENT_ID")
+                    .collect::<Vec<_>>(),
             }))
             .collect::<Vec<_>>(),
     })
@@ -818,6 +847,79 @@ fn cached_transaction_from_map(
 }
 
 impl WriterHandle {
+    pub(crate) fn applies_own_writes(&self) -> bool {
+        self.index.is_some()
+    }
+
+    /// Apply the paths this write just produced to the live projection.
+    ///
+    /// A failure here is NOT a failed write — the bytes are already durable.
+    /// Record it and return Ok so the caller reports the committed-but-
+    /// unprojected 503 (with its tx id) instead of a generic "write failed".
+    async fn publish_paths(&self, paths: impl IntoIterator<Item = PathBuf>) -> Result<()> {
+        let Some(index) = self.index.as_ref() else {
+            return Ok(());
+        };
+        let pending: Vec<PathBuf> = paths.into_iter().collect();
+        for (i, path) in pending.iter().enumerate() {
+            if let Err(error) = index.apply_written_path(path).await {
+                tracing::error!(path = %path.display(), error = %error, "write committed but index apply failed");
+                *self.apply_failure.lock().unwrap() = Some(error);
+                // Stop at the first failure. Applying the remaining paths would
+                // leave the projection torn — half this write visible — which is
+                // harder to reason about than uniformly stale. This path and
+                // the ones after it go on the repair queue instead.
+                self.unapplied
+                    .lock()
+                    .unwrap()
+                    .extend(pending[i..].iter().cloned());
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Take the last projection failure, if any. Clears the error but leaves
+    /// the repair queue — the view is still stale until a repair runs.
+    pub(crate) fn take_apply_failure(&self) -> Option<String> {
+        self.apply_failure.lock().unwrap().take()
+    }
+
+    /// Re-apply everything committed but not yet projected, and report whether
+    /// the projection is now whole.
+    ///
+    /// Any caller may run this and every caller should: the queue is
+    /// daemon-wide, so whoever gets here repairs every project rather than only
+    /// its own. On failure the offending path and those behind it go back on
+    /// the front of the queue, keeping write order, and the error becomes the
+    /// caller's committed-503.
+    pub(crate) async fn repair_projection(&self) -> std::result::Result<(), String> {
+        let Some(index) = self.index.as_ref() else {
+            return Ok(());
+        };
+        let pending = std::mem::take(&mut *self.unapplied.lock().unwrap());
+        for (i, path) in pending.iter().enumerate() {
+            if let Err(error) = index.apply_written_path(path).await {
+                self.unapplied
+                    .lock()
+                    .unwrap()
+                    .splice(0..0, pending[i..].iter().cloned());
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    fn guard_node_paths<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) -> Result<()> {
+        let Some(machine_id) = self.machine_id.as_deref() else {
+            return Ok(());
+        };
+        for path in paths {
+            guard_node_write(path, machine_id)?;
+        }
+        Ok(())
+    }
+
     /// Append a tx entry through the daemon writer. Re-using `request_id`
     /// is safe — the second call returns the same result.
     pub async fn append_tx(
@@ -825,14 +927,21 @@ impl WriterHandle {
         req: TxAppend,
         request_id: Option<String>,
     ) -> Result<TxAppendResult> {
+        let written_path = req.tx_path.clone();
+        self.guard_node_paths([written_path.as_path()])?;
         let request_id = request_id
             .or_else(|| req.request_id.clone())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if let Some(CachedResponse::Tx { result, .. }) = cache.get(&request_id) {
-                return Ok(result.clone());
+            match cache.get(&request_id) {
+                Some(CachedResponse::Tx { result, .. }) => Some(result.clone()),
+                _ => None,
             }
+        };
+        if let Some(result) = cached {
+            self.publish_paths([written_path]).await?;
+            return Ok(result);
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -840,8 +949,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        let mut cache = self.idempotency.lock().await;
-        cache.insert(
+        self.idempotency.lock().await.insert(
             request_id,
             CachedResponse::Tx {
                 result: res.clone(),
@@ -849,6 +957,7 @@ impl WriterHandle {
                 mutation_id: None,
             },
         );
+        self.publish_paths([written_path]).await?;
         Ok(res)
     }
 
@@ -876,6 +985,17 @@ impl WriterHandle {
     }
 
     pub async fn transaction(&self, rewrites: Vec<FileRewrite>, tx: TxAppend) -> Result<String> {
+        self.guard_node_paths(
+            rewrites
+                .iter()
+                .map(|rewrite| rewrite.path.as_path())
+                .chain(std::iter::once(tx.tx_path.as_path())),
+        )?;
+        let written_paths = rewrites
+            .iter()
+            .map(|rewrite| rewrite.path.clone())
+            .chain(std::iter::once(tx.tx_path.clone()))
+            .collect::<Vec<_>>();
         #[cfg(test)]
         if let Some(gate) = self.transaction_gate.lock().await.take() {
             gate.entered.notify_one();
@@ -886,11 +1006,13 @@ impl WriterHandle {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let mutation = transaction_identity(&tx, &rewrites);
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if let Some(result) = cached_transaction_from_map(&cache, &request_id, &mutation)? {
-                return Ok(result.tx_id.clone());
-            }
+            cached_transaction_from_map(&cache, &request_id, &mutation)?
+        };
+        if let Some(result) = cached {
+            self.publish_paths(written_paths).await?;
+            return Ok(result.tx_id);
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -907,6 +1029,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
         Ok(res.tx_id)
     }
 
@@ -919,6 +1042,17 @@ impl WriterHandle {
         rewrites: Vec<FileRewrite>,
         txs: Vec<TxAppend>,
     ) -> Result<Vec<TxAppendResult>> {
+        self.guard_node_paths(
+            rewrites
+                .iter()
+                .map(|rewrite| rewrite.path.as_path())
+                .chain(txs.iter().map(|tx| tx.tx_path.as_path())),
+        )?;
+        let written_paths = rewrites
+            .iter()
+            .map(|rewrite| rewrite.path.clone())
+            .chain(txs.iter().map(|tx| tx.tx_path.clone()))
+            .collect::<Vec<_>>();
         let first = txs
             .first()
             .ok_or_else(|| anyhow!("multi transaction requires at least one tx"))?;
@@ -928,13 +1062,13 @@ impl WriterHandle {
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let mutation = multi_transaction_identity(&txs, &rewrites);
         let cache_key = multi_cache_key(&request_id);
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if let Some((results, MultiDurability::Durable)) =
-                cached_multi_from_map(&cache, &cache_key, &request_id, &mutation)?
-            {
-                return Ok(results);
-            }
+            cached_multi_from_map(&cache, &cache_key, &request_id, &mutation)?
+        };
+        if let Some((results, MultiDurability::Durable)) = cached {
+            self.publish_paths(written_paths).await?;
+            return Ok(results);
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -949,7 +1083,9 @@ impl WriterHandle {
             })
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
-        rx.await.map_err(|_| anyhow!("writer reply dropped"))?
+        let results = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
+        Ok(results)
     }
 
     /// Apply a single-file read-modify-write and append its tx as one writer
@@ -962,15 +1098,19 @@ impl WriterHandle {
         tx: TxAppend,
         mutation: MutationIdentity,
     ) -> Result<String> {
+        self.guard_node_paths([file.path.as_path(), tx.tx_path.as_path()])?;
+        let written_paths = [file.path.clone(), tx.tx_path.clone()];
         let request_id = tx
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if let Some(result) = cached_transaction_from_map(&cache, &request_id, &mutation)? {
-                return Ok(result.tx_id);
-            }
+            cached_transaction_from_map(&cache, &request_id, &mutation)?
+        };
+        if let Some(result) = cached {
+            self.publish_paths(written_paths).await?;
+            return Ok(result.tx_id);
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -987,6 +1127,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
         Ok(res.tx_id)
     }
 
@@ -1000,11 +1141,14 @@ impl WriterHandle {
         mutation: MutationIdentity,
         mutation_id: String,
     ) -> Result<CachedMutation> {
+        self.guard_node_paths([file.path.as_path(), tx.tx_path.as_path()])?;
+        let written_paths = [file.path.clone(), tx.tx_path.clone()];
         let request_id = tx
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
+            self.publish_paths(written_paths).await?;
             return Ok(cached);
         }
         let (reply, rx) = oneshot::channel();
@@ -1022,6 +1166,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let _ = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
         self.cached_mutation(&request_id, &mutation)
             .await?
             .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
@@ -1034,11 +1179,23 @@ impl WriterHandle {
         mutation: MutationIdentity,
         mutation_id: String,
     ) -> Result<CachedMutation> {
+        self.guard_node_paths(
+            rewrites
+                .iter()
+                .map(|rewrite| rewrite.path.as_path())
+                .chain(std::iter::once(tx.tx_path.as_path())),
+        )?;
+        let written_paths = rewrites
+            .iter()
+            .map(|rewrite| rewrite.path.clone())
+            .chain(std::iter::once(tx.tx_path.clone()))
+            .collect::<Vec<_>>();
         let request_id = tx
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
+            self.publish_paths(written_paths).await?;
             return Ok(cached);
         }
         let (reply, rx) = oneshot::channel();
@@ -1056,6 +1213,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let _ = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
         self.cached_mutation(&request_id, &mutation)
             .await?
             .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
@@ -1237,21 +1395,97 @@ impl WriterHandle {
     /// task while the path is flocked; concurrent `mutate_file` calls
     /// against the same path serialize through the writer channel.
     pub async fn mutate_file(&self, req: FileMutate) -> Result<()> {
+        let written_path = req.path.clone();
+        self.guard_node_paths([written_path.as_path()])?;
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::Mutate { req, reply })
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
-        rx.await.map_err(|_| anyhow!("writer reply dropped"))?
+        rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths([written_path]).await
+    }
+
+    /// Append one structured entry without exposing journal.org to whole-file
+    /// callers.
+    pub async fn append_journal_entry(
+        &self,
+        path: PathBuf,
+        node_id: String,
+        entry: orgasmic_core::node_kernel::JournalEntry,
+    ) -> Result<()> {
+        entry.validate()?;
+        reject_journal_prose(&entry.body)?;
+        let display_path = path.clone();
+        self.mutate_file(FileMutate {
+            path,
+            transform: Box::new(move |current| {
+                let entries = orgasmic_core::node_kernel::parse_journal(current, "journal.org")?;
+                if entries.iter().any(|item| item.entry_id == entry.entry_id) {
+                    bail!("journal entry {} already exists", entry.entry_id);
+                }
+                let next = orgasmic_core::node_kernel::append_entry(current, &node_id, &entry);
+                checked_journal_bytes(&display_path, next)
+            }),
+        })
+        .await
+    }
+
+    /// Surgically edit authored prose. OCC compares only the target comment,
+    /// so an unrelated append does not make a valid edit stale.
+    pub async fn edit_journal_comment(
+        &self,
+        path: PathBuf,
+        entry_id: String,
+        expected_body: String,
+        new_body: String,
+        edited_at: String,
+    ) -> Result<()> {
+        reject_journal_prose(&new_body)?;
+        let display_path = path.clone();
+        self.mutate_file(FileMutate {
+            path,
+            transform: Box::new(move |current| {
+                require_comment_body(current, &entry_id, &expected_body)?;
+                let next = orgasmic_core::node_kernel::edit_comment_body(
+                    current, &entry_id, &new_body, &edited_at,
+                )?;
+                checked_journal_bytes(&display_path, next)
+            }),
+        })
+        .await
+    }
+
+    /// Delete authored prose while preserving its reply-chain identity.
+    pub async fn tombstone_journal_comment(
+        &self,
+        path: PathBuf,
+        entry_id: String,
+        expected_body: String,
+    ) -> Result<()> {
+        let display_path = path.clone();
+        self.mutate_file(FileMutate {
+            path,
+            transform: Box::new(move |current| {
+                require_comment_body(current, &entry_id, &expected_body)?;
+                let next = orgasmic_core::node_kernel::tombstone_comment(current, &entry_id)?;
+                checked_journal_bytes(&display_path, next)
+            }),
+        })
+        .await
     }
 
     pub async fn rewrite_file(&self, req: FileRewrite, request_id: Option<String>) -> Result<()> {
+        let written_path = req.path.clone();
+        self.guard_node_paths([written_path.as_path()])?;
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if matches!(cache.get(&request_id), Some(CachedResponse::Rewrite)) {
-                return Ok(());
-            }
+            matches!(cache.get(&request_id), Some(CachedResponse::Rewrite))
+        };
+        if cached {
+            self.publish_paths([written_path]).await?;
+            return Ok(());
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -1259,8 +1493,11 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        let mut cache = self.idempotency.lock().await;
-        cache.insert(request_id, CachedResponse::Rewrite);
+        self.idempotency
+            .lock()
+            .await
+            .insert(request_id, CachedResponse::Rewrite);
+        self.publish_paths([written_path]).await?;
         Ok(())
     }
 
@@ -1361,9 +1598,51 @@ impl WriterHandle {
     }
 }
 
+fn reject_journal_prose(body: &str) -> Result<()> {
+    if let Some((line, _)) = body
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.starts_with("* "))
+    {
+        bail!(
+            "journal prose line {} starts with a column-0 `* ` heading; nested `**` headings are allowed",
+            line + 1
+        );
+    }
+    Ok(())
+}
+
+fn require_comment_body(current: &str, entry_id: &str, expected_body: &str) -> Result<()> {
+    let entries = orgasmic_core::node_kernel::parse_journal(current, "journal.org")?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.entry_id == entry_id)
+        .ok_or_else(|| anyhow!("journal entry {entry_id} not found"))?;
+    if entry.ty != "comment" {
+        bail!("journal entry {entry_id} is not an editable comment");
+    }
+    if entry.body != expected_body {
+        bail!("journal comment {entry_id} changed since it was read");
+    }
+    Ok(())
+}
+
+fn checked_journal_bytes(path: &Path, next: String) -> Result<Vec<u8>> {
+    orgasmic_core::node_kernel::parse_journal(&next, "journal.org")?;
+    if orgasmic_core::node_kernel::journal_size_lint(&next) {
+        warn!(
+            path = %path.display(),
+            bytes = next.len(),
+            threshold = orgasmic_core::node_kernel::JOURNAL_SIZE_LINT_BYTES,
+            "journal.org exceeds the v1 size lint threshold"
+        );
+    }
+    Ok(next.into_bytes())
+}
+
 /// Boot the writer task and return a clone-able handle.
 pub fn spawn(events: EventBus) -> WriterHandle {
-    spawn_with_catalog(events, None)
+    spawn_with_catalog_and_index(events, None, None)
 }
 
 /// [`spawn`] with a run catalog attached to the session-append boundary.
@@ -1382,6 +1661,23 @@ pub fn spawn(events: EventBus) -> WriterHandle {
 pub fn spawn_with_catalog(
     events: EventBus,
     catalog: Option<crate::run_catalog::RunCatalog>,
+) -> WriterHandle {
+    spawn_with_catalog_and_index(events, catalog, None)
+}
+
+pub fn spawn_with_catalog_and_index(
+    events: EventBus,
+    catalog: Option<crate::run_catalog::RunCatalog>,
+    index: Option<crate::index::Index>,
+) -> WriterHandle {
+    spawn_with_catalog_index_and_machine(events, catalog, index, None)
+}
+
+pub(crate) fn spawn_with_catalog_index_and_machine(
+    events: EventBus,
+    catalog: Option<crate::run_catalog::RunCatalog>,
+    index: Option<crate::index::Index>,
+    machine_id: Option<String>,
 ) -> WriterHandle {
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
@@ -1402,12 +1698,79 @@ pub fn spawn_with_catalog(
         idempotency,
         in_flight,
         metrics,
+        index,
+        machine_id,
         deferred_appends,
+        apply_failure: Arc::new(std::sync::Mutex::new(None)),
+        unapplied: Arc::new(std::sync::Mutex::new(Vec::new())),
         #[cfg(test)]
         transaction_gate: Arc::new(Mutex::new(None)),
         #[cfg(test)]
         session_append_failure: Arc::new(std::sync::Mutex::new(None)),
     }
+}
+
+/// A node write refused because another machine holds the claim (TASK-CLM6W).
+/// Typed rather than a bare message so the API can answer 409 naming the holder
+/// instead of the generic 500 every other writer error collapses to — the
+/// refusal is the operator's answer, not an internal failure. It carries no
+/// filesystem path: this text reaches HTTP responses, which must stay path-free.
+#[derive(Debug)]
+pub(crate) struct ClaimConflict {
+    pub node_id: String,
+    pub holder: String,
+    pub machine: String,
+}
+
+impl std::fmt::Display for ClaimConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "node {} is claimed by machine {}; machine {} cannot write it",
+            self.node_id, self.holder, self.machine
+        )
+    }
+}
+
+impl std::error::Error for ClaimConflict {}
+
+fn guard_node_write(path: &Path, machine_id: &str) -> Result<()> {
+    let Some(dotorg) = path
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+    else {
+        return Ok(());
+    };
+    let relative = path.strip_prefix(dotorg).expect("ancestor is a prefix");
+    let mut parts = relative.components().filter_map(|part| match part {
+        std::path::Component::Normal(value) => value.to_str(),
+        _ => None,
+    });
+    let Some(collection) = parts.next() else {
+        return Ok(());
+    };
+    if matches!(collection, "machines" | "tx" | "tmp" | "views") {
+        return Ok(());
+    }
+    let Some(node_id) = parts.next() else {
+        return Ok(());
+    };
+    let Some(project_root) = dotorg.parent() else {
+        return Ok(());
+    };
+    let claims = orgasmic_core::read_claims(project_root)?;
+    if let Some(claim) = claims
+        .get(node_id)
+        .filter(|claim| claim.holder != machine_id)
+    {
+        return Err(ClaimConflict {
+            node_id: node_id.to_string(),
+            holder: claim.holder.clone(),
+            machine: machine_id.to_string(),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 /// What a command is, for the shutdown-loss report (TASK-Q07Y5).
@@ -2190,8 +2553,14 @@ fn process_tx_batch(
 }
 
 struct CachedTxWriter {
-    writer: TxWriter,
+    writer: LedgerWriter,
     identity: FileIdentity,
+    event_ids: HashMap<String, String>,
+}
+
+enum LedgerWriter {
+    Tx(TxWriter),
+    Journal(File),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2229,9 +2598,72 @@ impl FileIdentity {
 
 impl CachedTxWriter {
     fn open(path: &Path) -> Result<Self> {
-        let writer = TxWriter::open(path).with_context(|| format!("open {}", path.display()))?;
+        let writer = if path.file_name().and_then(|name| name.to_str()) == Some("journal.org") {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("create {}", parent.display()))?;
+            }
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .read(true)
+                .open(path)
+                .with_context(|| format!("open {}", path.display()))?;
+            if file.metadata()?.len() == 0 {
+                let node_id = path
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| anyhow!("journal path has no node id: {}", path.display()))?;
+                file.write_all(orgasmic_core::node_kernel::journal_header(node_id).as_bytes())?;
+            }
+            LedgerWriter::Journal(file)
+        } else {
+            LedgerWriter::Tx(
+                TxWriter::open(path).with_context(|| format!("open {}", path.display()))?,
+            )
+        };
         let identity = FileIdentity::from_path(path)?;
-        Ok(Self { writer, identity })
+        let event_ids = read_event_ids(path)?;
+        Ok(Self {
+            writer,
+            identity,
+            event_ids,
+        })
+    }
+
+    fn append(&mut self, entry: &TxEntry) -> Result<String> {
+        let event_id = event_id(entry);
+        if let Some(existing) = self.event_ids.get(event_id) {
+            return Ok(existing.clone());
+        }
+        match &mut self.writer {
+            LedgerWriter::Tx(writer) => writer.append(entry)?,
+            LedgerWriter::Journal(file) => {
+                let entry = journal_entry(entry);
+                entry.validate()?;
+                reject_journal_prose(&entry.body)?;
+                file.write_all(orgasmic_core::node_kernel::journal_entry_block(&entry).as_bytes())?;
+            }
+        }
+        self.event_ids
+            .insert(event_id.to_string(), entry.tx_id.clone());
+        Ok(entry.tx_id.clone())
+    }
+
+    fn append_many(&mut self, entries: &[TxEntry]) -> Result<Vec<String>> {
+        let mut ids = Vec::with_capacity(entries.len());
+        for entry in entries {
+            ids.push(self.append(entry)?);
+        }
+        Ok(ids)
+    }
+
+    fn sync_data(&self) -> Result<()> {
+        match &self.writer {
+            LedgerWriter::Tx(writer) => writer.sync_data().map_err(Into::into),
+            LedgerWriter::Journal(file) => file.sync_data().map_err(Into::into),
+        }
     }
 
     fn path_still_names_writer(&self, path: &Path) -> bool {
@@ -2239,6 +2671,90 @@ impl CachedTxWriter {
             .map(|current| current == self.identity)
             .unwrap_or(false)
     }
+}
+
+fn event_id(entry: &TxEntry) -> &str {
+    entry
+        .extra
+        .iter()
+        .find(|(key, _)| key == "EVENT_ID")
+        .map(|(_, value)| value.as_str())
+        .unwrap_or(&entry.tx_id)
+}
+
+fn read_event_ids(path: &Path) -> Result<HashMap<String, String>> {
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let pairs: Vec<(String, String)> =
+        if path.file_name().and_then(|name| name.to_str()) == Some("journal.org") {
+            orgasmic_core::node_kernel::parse_journal(&source, &path.to_string_lossy())?
+                .into_iter()
+                .map(|entry| {
+                    (
+                        entry
+                            .extra("EVENT_ID")
+                            .unwrap_or(&entry.entry_id)
+                            .to_string(),
+                        entry.entry_id,
+                    )
+                })
+                .collect()
+        } else {
+            parse_tx_file(&source, &path.to_string_lossy())?
+                .into_iter()
+                .map(|entry| (event_id(&entry).to_string(), entry.tx_id))
+                .collect()
+        };
+    Ok(pairs.into_iter().collect())
+}
+
+fn journal_entry(entry: &TxEntry) -> orgasmic_core::node_kernel::JournalEntry {
+    let mut extras = Vec::new();
+    for (key, value) in [
+        ("PROJECT", entry.project.as_deref()),
+        ("TASK", entry.task.as_deref()),
+        ("TARGET", entry.target.as_deref()),
+        ("REASON", entry.reason.as_deref()),
+    ] {
+        if let Some(value) = value {
+            extras.push((key.to_string(), value.to_string()));
+        }
+    }
+    let body = entry
+        .extra
+        .iter()
+        .find(|(key, _)| key == "BODY")
+        .map(|(_, value)| unescape_property_value(value))
+        .unwrap_or_default();
+    extras.extend(entry.extra.iter().filter(|(key, _)| key != "BODY").cloned());
+    orgasmic_core::node_kernel::JournalEntry {
+        entry_id: entry.tx_id.clone(),
+        time: entry.time.clone(),
+        ty: entry.ty.clone(),
+        actor: entry.actor.clone(),
+        machine: entry.machine.clone(),
+        extras,
+        body,
+    }
+}
+
+fn unescape_property_value(value: &str) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        match (ch, chars.clone().next()) {
+            ('\\', Some('n')) => {
+                chars.next();
+                out.push('\n');
+            }
+            ('\\', Some('\\')) => {
+                chars.next();
+                out.push('\\');
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 impl ProjectTxSeqCache {
@@ -2274,13 +2790,70 @@ fn tx_handles_detached_from_paths(
 fn prepare_tx_entry(seq_cache: &mut ProjectTxSeqCache, req: &TxAppend) -> Result<TxEntry> {
     let mut entry = req.entry.clone();
     if let TxIdPolicy::ProjectSequence { project_id, date } = &req.tx_id_policy {
-        let tx_dir = req
-            .tx_path
-            .parent()
-            .ok_or_else(|| anyhow!("tx path has no parent: {}", req.tx_path.display()))?;
-        entry.tx_id = next_project_tx_id(seq_cache, project_id, tx_dir, date)?;
+        entry.tx_id = if is_machine_tx_path(&req.tx_path) {
+            format!(
+                "tx-{date}-{}-{}",
+                project_tx_slug(project_id),
+                Uuid::new_v4()
+            )
+        } else {
+            next_project_tx_id(seq_cache, project_id, &project_tx_dir(&req.tx_path)?, date)?
+        };
+    }
+    let supplied: Vec<_> = entry
+        .extra
+        .iter()
+        .filter(|(key, _)| key == "EVENT_ID")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    match supplied.as_slice() {
+        [] => entry
+            .extra
+            .push(("EVENT_ID".to_string(), Uuid::new_v4().to_string())),
+        [id] => {
+            Uuid::parse_str(id).context("EVENT_ID is not a UUID")?;
+        }
+        _ => bail!("event has duplicate EVENT_ID properties"),
     }
     Ok(entry)
+}
+
+fn is_machine_tx_path(path: &Path) -> bool {
+    let parts: Vec<_> = path
+        .components()
+        .filter_map(|part| part.as_os_str().to_str())
+        .collect();
+    parts
+        .windows(4)
+        .any(|parts| parts[0] == "machines" && parts[2] == "tx")
+}
+
+fn project_tx_dir(ledger_path: &Path) -> Result<PathBuf> {
+    if is_machine_tx_path(ledger_path) {
+        return ledger_path
+            .ancestors()
+            .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+            .map(|dotorg| dotorg.join("tx"))
+            .ok_or_else(|| anyhow!("machine tx path is not under .orgasmic"));
+    }
+    if ledger_path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some("tx")
+    {
+        return Ok(ledger_path.parent().expect("checked parent").to_path_buf());
+    }
+    ledger_path
+        .ancestors()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+        .map(|dotorg| dotorg.join("tx"))
+        .ok_or_else(|| {
+            anyhow!(
+                "project journal is not under .orgasmic: {}",
+                ledger_path.display()
+            )
+        })
 }
 
 fn write_tx_append(
@@ -2299,12 +2872,11 @@ fn write_tx_append(
             handles.get_mut(tx_path).expect("just inserted")
         }
     };
-    writer
-        .writer
+    let tx_id = writer
         .append(entry)
         .with_context(|| format!("append to {}", tx_path.display()))?;
     Ok(TxAppendResult {
-        tx_id: entry.tx_id.clone(),
+        tx_id,
         tx_path: tx_path.to_path_buf(),
     })
 }
@@ -2315,7 +2887,6 @@ fn sync_tx_writer(handles: &HashMap<PathBuf, CachedTxWriter>, path: &Path) -> Re
         .get(path)
         .ok_or_else(|| anyhow!("no cached tx writer for {}", path.display()))?;
     writer
-        .writer
         .sync_data()
         .with_context(|| format!("fsync {}", path.display()))?;
     test_hooks::after_sync();
@@ -2353,15 +2924,14 @@ fn append_txs_inner(
             handles.get_mut(&first.tx_path).expect("just inserted")
         }
     };
-    writer
-        .writer
+    let tx_ids = writer
         .append_many(&entries)
         .with_context(|| format!("append to {}", first.tx_path.display()))?;
     *seq_cache = staged_seq_cache;
-    Ok(entries
+    Ok(tx_ids
         .into_iter()
-        .map(|entry| TxAppendResult {
-            tx_id: entry.tx_id,
+        .map(|tx_id| TxAppendResult {
+            tx_id,
             tx_path: first.tx_path.clone(),
         })
         .collect())
@@ -2394,9 +2964,23 @@ fn scan_project_tx_max_seq(project_id: &str, tx_dir: &Path) -> Result<u32> {
     let slug = project_tx_slug(project_id);
     let mut max_seen = 0_u32;
     let mut entries_scanned = 0_usize;
-    if tx_dir.is_dir() {
+    let mut tx_dirs = vec![tx_dir.to_path_buf()];
+    if let Some(dotorg) = tx_dir
+        .parent()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+    {
+        if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+            tx_dirs.extend(
+                machines
+                    .flatten()
+                    .map(|machine| machine.path().join("tx"))
+                    .filter(|path| path.is_dir()),
+            );
+        }
+    }
+    for tx_dir in tx_dirs.into_iter().filter(|path| path.is_dir()) {
         let dir_entries =
-            std::fs::read_dir(tx_dir).with_context(|| format!("read {}", tx_dir.display()))?;
+            std::fs::read_dir(&tx_dir).with_context(|| format!("read {}", tx_dir.display()))?;
         for entry in dir_entries {
             let entry = match entry {
                 Ok(e) => e,
@@ -2439,6 +3023,57 @@ fn scan_project_tx_max_seq(project_id: &str, tx_dir: &Path) -> Result<u32> {
             for entry in entries {
                 if let Some(seq) = project_tx_sequence(&entry.tx_id, &slug) {
                     max_seen = max_seen.max(seq);
+                }
+            }
+        }
+    }
+    if let Some(dotorg) = tx_dir
+        .parent()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+    {
+        for collection in std::fs::read_dir(dotorg)
+            .with_context(|| format!("read {}", dotorg.display()))?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.path().is_dir()
+                    && entry.file_name() != "tx"
+                    && entry.file_name() != "machines"
+            })
+        {
+            let nodes = match std::fs::read_dir(collection.path()) {
+                Ok(nodes) => nodes,
+                Err(error) => {
+                    warn!(path = %collection.path().display(), %error, "skip unreadable node collection during sequence scan");
+                    continue;
+                }
+            };
+            for node in nodes.filter_map(|entry| entry.ok()) {
+                let path = node.path().join("journal.org");
+                if !path.is_file() {
+                    continue;
+                }
+                let source = match std::fs::read_to_string(&path) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        warn!(path = %path.display(), %error, "skip unreadable journal during sequence scan");
+                        continue;
+                    }
+                };
+                let entries = match orgasmic_core::node_kernel::parse_journal(
+                    &source,
+                    &path.to_string_lossy(),
+                ) {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        warn!(path = %path.display(), %error, "skip corrupt journal during sequence scan");
+                        continue;
+                    }
+                };
+                entries_scanned += entries.len();
+                for entry in entries {
+                    if let Some(seq) = project_tx_sequence(&entry.entry_id, &slug) {
+                        max_seen = max_seen.max(seq);
+                    }
                 }
             }
         }
@@ -3043,6 +3678,35 @@ mod tests {
         assert!(source.contains("tx-test-1"));
     }
 
+    #[tokio::test]
+    async fn duplicate_event_id_is_a_persistent_no_op() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tx_path = tmp.path().join("tx/2026-08.org");
+        let handle = spawn(EventBus::new());
+        let submitted_event_id = Uuid::new_v4().to_string();
+        let append = |tx_id: &str| {
+            let mut entry = sample_entry(tx_id);
+            entry
+                .extra
+                .push(("EVENT_ID".to_string(), submitted_event_id.clone()));
+            TxAppend {
+                tx_path: tx_path.clone(),
+                entry,
+                project_id: Some("orgasmic".into()),
+                tx_id_policy: TxIdPolicy::Preserve,
+                request_id: None,
+            }
+        };
+        let first = handle.append_tx(append("tx-first"), None).await.unwrap();
+        let duplicate = handle.append_tx(append("tx-retry"), None).await.unwrap();
+
+        assert_eq!(duplicate.tx_id, first.tx_id);
+        let entries =
+            parse_tx_file(&std::fs::read_to_string(tx_path).unwrap(), "2026-08.org").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(event_id(&entries[0]), submitted_event_id);
+    }
+
     /// orgasmic:TASK-Q07Y5 — the defect TASK-WGXKD.2's reviewer named: shutdown
     /// queued behind a write blocked in the writer task and waited forever, so
     /// the SIGTERM path had an unbounded term and no kill timeout could be
@@ -3546,19 +4210,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_sequence_ids_are_assigned_inside_writer() {
+    async fn ap971_project_sequence_cold_start_scans_tx_and_node_journals() {
         let tmp = tempfile::tempdir().unwrap();
-        let tx_path = tmp.path().join("tx").join("2026-06.org");
+        let dotorg = tmp.path().join(".orgasmic");
+        let tx_path = dotorg.join("tx").join("2026-06.org");
         std::fs::create_dir_all(tx_path.parent().unwrap()).unwrap();
         std::fs::write(
             tx_path.parent().unwrap().join("2026-05.org"),
             "#+title: orgasmic project tx 2026-05\n#+orgasmic_version: 1\n\n* TX 2026-05-21 22:10 manager.action orgasmic\n:PROPERTIES:\n:TX_ID:        tx-20260521-orgasmic-0036\n:TIME:         [2026-05-21 Thu 22:10:00]\n:TYPE:         manager.action\n:ACTOR:        dev@example.com\n:MACHINE:      host.local\n:PROJECT:      orgasmic\n:END:\n",
         )
         .unwrap();
+        let journal_path = dotorg.join("tasks/TASK-X/journal.org");
+        std::fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
+        let journal = orgasmic_core::node_kernel::append_entry(
+            "",
+            "TASK-X",
+            &orgasmic_core::node_kernel::JournalEntry {
+                entry_id: "tx-20260522-orgasmic-0041".into(),
+                time: "[2026-05-22 Fri 10:00:00]".into(),
+                ty: "comment".into(),
+                actor: "dev@example.com".into(),
+                machine: "host.local".into(),
+                extras: vec![],
+                body: "journal wins the cold-start max".into(),
+            },
+        );
+        std::fs::write(journal_path, journal).unwrap();
         let bus = EventBus::new();
         let handle = spawn(bus);
+        let target_journal = dotorg.join("tasks/TASK-Y/journal.org");
         let req = TxAppend {
-            tx_path: tx_path.clone(),
+            tx_path: target_journal.clone(),
             entry: sample_entry("placeholder"),
             project_id: Some("orgasmic".into()),
             tx_id_policy: TxIdPolicy::ProjectSequence {
@@ -3571,9 +4253,10 @@ mod tests {
             .append_tx(req, Some("req-project-seq".into()))
             .await
             .unwrap();
-        assert_eq!(res.tx_id, "tx-20260601-orgasmic-0037");
-        let source = std::fs::read_to_string(&tx_path).unwrap();
-        assert!(source.contains(":TX_ID:        tx-20260601-orgasmic-0037"));
+        assert_eq!(res.tx_id, "tx-20260601-orgasmic-0042");
+        let source = std::fs::read_to_string(target_journal).unwrap();
+        let entries = orgasmic_core::node_kernel::parse_journal(&source, "journal.org").unwrap();
+        assert_eq!(entries[0].entry_id, "tx-20260601-orgasmic-0042");
         assert!(!source.contains("placeholder"));
     }
 
@@ -3673,6 +4356,80 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    #[tokio::test]
+    async fn journal_ops_append_edit_with_occ_and_tombstone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("journal.org");
+        let handle = spawn(EventBus::new());
+        let entry = orgasmic_core::node_kernel::JournalEntry {
+            entry_id: "tx-1".into(),
+            time: "[2026-08-26 Wed 10:00:00]".into(),
+            ty: "comment".into(),
+            actor: "owner".into(),
+            machine: "mac".into(),
+            extras: vec![],
+            body: "first\n\n** Detail\nnested".into(),
+        };
+
+        handle
+            .append_journal_entry(path.clone(), "TASK-X".into(), entry)
+            .await
+            .unwrap();
+        let parsed = orgasmic_core::node_kernel::parse_journal(
+            &std::fs::read_to_string(&path).unwrap(),
+            "journal.org",
+        )
+        .unwrap();
+        assert_eq!(parsed[0].body, "first\n\n** Detail\nnested");
+
+        let before_refusal = std::fs::read(&path).unwrap();
+        let error = handle
+            .edit_journal_comment(
+                path.clone(),
+                "tx-1".into(),
+                parsed[0].body.clone(),
+                "replacement\n* forged entry".into(),
+                "[2026-08-26 Wed 10:01:00]".into(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("column-0 `* `"));
+        assert_eq!(std::fs::read(&path).unwrap(), before_refusal);
+
+        handle
+            .edit_journal_comment(
+                path.clone(),
+                "tx-1".into(),
+                parsed[0].body.clone(),
+                "edited".into(),
+                "[2026-08-26 Wed 10:01:00]".into(),
+            )
+            .await
+            .unwrap();
+        let edited = std::fs::read_to_string(&path).unwrap();
+        assert!(edited.contains(":EDITED_AT: [2026-08-26 Wed 10:01:00]"));
+
+        let stale = handle
+            .tombstone_journal_comment(path.clone(), "tx-1".into(), parsed[0].body.clone())
+            .await
+            .unwrap_err();
+        assert!(stale.to_string().contains("changed since it was read"));
+
+        handle
+            .tombstone_journal_comment(path.clone(), "tx-1".into(), "edited".into())
+            .await
+            .unwrap();
+        let parsed = orgasmic_core::node_kernel::parse_journal(
+            &std::fs::read_to_string(path).unwrap(),
+            "journal.org",
+        )
+        .unwrap();
+        assert_eq!(
+            (parsed[0].ty.as_str(), parsed[0].body.as_str()),
+            ("comment.deleted", "")
+        );
     }
 
     #[test]
@@ -3790,5 +4547,46 @@ mod tests {
             "crash must leave heading in source (zero-or-two invariant: not duplicated)"
         );
         assert!(!tx_path.exists(), "tx append must not run on rollback");
+    }
+
+    #[tokio::test]
+    async fn node_write_claimed_by_another_machine_is_refused_with_holder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let node = tmp.path().join(".orgasmic/tasks/TASK-CLAIM/node.org");
+        std::fs::create_dir_all(node.parent().unwrap()).unwrap();
+        std::fs::write(&node, "old").unwrap();
+        let claims = tmp.path().join(".orgasmic/machines/machine-b/claims.org");
+        std::fs::create_dir_all(claims.parent().unwrap()).unwrap();
+        let mut event = TxEntry::new(
+            "claim-b",
+            orgasmic_core::claims::CLAIMED,
+            "[2026-08-26 Wed 10:00:00]",
+            "test",
+            "machine-b",
+        );
+        event.task = Some("TASK-CLAIM".into());
+        let mut claims_writer = TxWriter::open(claims).unwrap();
+        claims_writer.append(&event).unwrap();
+        drop(claims_writer);
+
+        let writer = spawn_with_catalog_index_and_machine(
+            EventBus::new(),
+            None,
+            None,
+            Some("machine-a".into()),
+        );
+        let error = writer
+            .rewrite_file(
+                FileRewrite {
+                    path: node.clone(),
+                    new_contents: b"new".to_vec(),
+                },
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("claimed by machine machine-b"));
+        assert_eq!(std::fs::read_to_string(node).unwrap(), "old");
+        writer.shutdown().await;
     }
 }

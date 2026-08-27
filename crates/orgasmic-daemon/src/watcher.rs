@@ -253,7 +253,7 @@ async fn debounce_loop(
     }
 }
 
-fn canonical(p: &std::path::Path) -> PathBuf {
+pub(crate) fn canonical(p: &std::path::Path) -> PathBuf {
     if let Ok(canon) = std::fs::canonicalize(p) {
         return canon;
     }
@@ -313,8 +313,8 @@ async fn flush(
     let board = canonical(&home.board());
     let home_tx_dir = canonical(&home.tx());
 
-    let mut touched_projects: HashSet<String> = HashSet::new();
-    let mut touched_home_tx = false;
+    let mut project_paths: Vec<(String, PathBuf)> = Vec::new();
+    let mut home_tx_paths = Vec::new();
     let mut touched_board = false;
 
     for path in pending.drain() {
@@ -330,7 +330,7 @@ async fn flush(
             continue;
         }
         if canon.starts_with(&home_tx_dir) {
-            touched_home_tx = true;
+            home_tx_paths.push(canon.clone());
             debug!(
                 path = %path.display(),
                 canon = %canon.display(),
@@ -348,7 +348,12 @@ async fn flush(
                     classified = "dropped_tmp".to_string();
                     break;
                 }
-                touched_projects.insert(entry.id.clone());
+                let views_dir = canonical(&entry_root.join(".orgasmic/views"));
+                if canon.starts_with(&views_dir) {
+                    classified = "dropped_views".to_string();
+                    break;
+                }
+                project_paths.push((entry.id.clone(), canon.clone()));
                 classified = format!("project={}", entry.id);
                 break;
             }
@@ -405,15 +410,27 @@ async fn flush(
             }
         }
     }
-    if touched_home_tx {
-        match index.schedule_home_tx_refresh().await {
+    for path in home_tx_paths {
+        let result = if path.extension().and_then(|ext| ext.to_str()) == Some("org") {
+            index.apply_written_path(&path).await.map(|_| ())
+        } else {
+            index.schedule_home_tx_refresh().await
+        };
+        match result {
             Ok(()) => events.publish(Topic::Daemon, EventPayload::DaemonHeartbeat),
-            Err(err) => warn!(error = %err, "home tx refresh failed"),
+            Err(err) => warn!(path = %path.display(), error = %err, "home tx refresh failed"),
         }
     }
-    for project_id in touched_projects {
-        if let Err(err) = index.schedule_watcher_refresh(&project_id).await {
-            warn!(project = %project_id, error = %err, "project refresh failed");
+    let mut published = HashSet::new();
+    for (project_id, path) in project_paths {
+        let changed = match index.apply_written_path(&path).await {
+            Ok(changed) => changed,
+            Err(err) => {
+                warn!(project = %project_id, path = %path.display(), error = %err, "project refresh failed");
+                continue;
+            }
+        };
+        if !changed || !published.insert(project_id.clone()) {
             continue;
         }
         events.publish(
@@ -443,9 +460,9 @@ mod tests {
     use std::path::Path;
 
     const PROJECT_ORG: &str = "#+title: x\n#+orgasmic_version: 1\n\n* PROJECT proj-x\n:PROPERTIES:\n:ID:               proj-x\n:END:\n";
-    const INITIAL_BACKLOG: &str = "#+title: x\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 do :work:\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n";
-    const TWO_TASK_BACKLOG: &str = "#+title: x\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 do :work:\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n\n* BACKLOG TASK-002 next :work:\n:PROPERTIES:\n:ID:               TASK-002\n:END:\n";
-    const IMPLEMENTED_BACKLOG: &str = "#+title: x\n#+orgasmic_version: 1\n\n* IN_PROGRESS TASK-001 do :work:\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n";
+    const INITIAL_TASK: &str = "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 do :work:\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n";
+    const SECOND_TASK: &str = "#+title: orgasmic task TASK-002\n#+orgasmic_version: 2\n\n* BACKLOG TASK-002 next :work:\n:PROPERTIES:\n:ID:               TASK-002\n:END:\n";
+    const IMPLEMENTED_TASK: &str = "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* IN_PROGRESS TASK-001 do :work:\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n";
 
     struct ProjectFixture {
         home: Home,
@@ -467,8 +484,9 @@ mod tests {
         std::fs::create_dir_all(&orgasmic_dir).unwrap();
         std::fs::create_dir_all(orgasmic_dir.join("tasks")).unwrap();
         std::fs::write(orgasmic_dir.join("project.org"), PROJECT_ORG).unwrap();
-        let sprint = orgasmic_dir.join("tasks/backlog.org");
-        std::fs::write(&sprint, INITIAL_BACKLOG).unwrap();
+        let sprint = orgasmic_dir.join("tasks/TASK-001/node.org");
+        std::fs::create_dir_all(sprint.parent().unwrap()).unwrap();
+        std::fs::write(&sprint, INITIAL_TASK).unwrap();
         std::fs::write(
             home.board(),
             format!(
@@ -542,11 +560,11 @@ mod tests {
         let fixture = setup_project(tmp.path(), project_root.clone(), project_root.clone()).await;
         let mut sub = fixture.bus.subscribe();
 
-        // Mutate the sprint file: add a second task heading. Touch twice to
+        // Mutate the task node. Touch twice to
         // increase the odds of at least one event landing on slow platforms.
-        std::fs::write(&fixture.sprint, TWO_TASK_BACKLOG).unwrap();
+        std::fs::write(&fixture.sprint, IMPLEMENTED_TASK).unwrap();
         tokio::time::sleep(Duration::from_millis(120)).await;
-        std::fs::write(&fixture.sprint, INITIAL_BACKLOG).unwrap();
+        std::fs::write(&fixture.sprint, INITIAL_TASK).unwrap();
 
         let mut saw_event = false;
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -577,20 +595,21 @@ mod tests {
         let edit_project_root = std::fs::canonicalize(&project_root).unwrap();
         let edit_orgasmic_dir = edit_project_root.join(".orgasmic");
 
-        let tasks_dir = edit_orgasmic_dir.join("tasks");
-        let tmp_path = tasks_dir.join("backlog.org.tmp");
+        let task_dir = edit_orgasmic_dir.join("tasks/TASK-002");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        let tmp_path = task_dir.join("node.org.tmp");
         let mut file = std::fs::File::create(&tmp_path).unwrap();
-        file.write_all(TWO_TASK_BACKLOG.as_bytes()).unwrap();
+        file.write_all(SECOND_TASK.as_bytes()).unwrap();
         file.sync_all().unwrap();
         drop(file);
-        std::fs::rename(&tmp_path, tasks_dir.join("backlog.org")).unwrap();
+        std::fs::rename(&tmp_path, task_dir.join("node.org")).unwrap();
 
         assert!(
             eventually(&fixture.index, |snap| snap
                 .task("proj-x", "TASK-002")
                 .is_some())
             .await,
-            "expected atomic backlog.org rename to refresh project"
+            "expected atomic node.org rename to refresh project"
         );
     }
 
@@ -607,8 +626,8 @@ mod tests {
             .unwrap();
         let tmp_path = fixture
             .orgasmic_dir
-            .join("tasks/backlog.org.00000000-0000-0000-0000-000000000000.tmp");
-        std::fs::write(&tmp_path, IMPLEMENTED_BACKLOG).unwrap();
+            .join("tasks/TASK-001/node.org.00000000-0000-0000-0000-000000000000.tmp");
+        std::fs::write(&tmp_path, IMPLEMENTED_TASK).unwrap();
         std::fs::rename(&tmp_path, &fixture.sprint).unwrap();
         drop(open_sprint);
 
@@ -619,7 +638,7 @@ mod tests {
                     .unwrap_or(false)
             })
             .await,
-            "expected CLI-shaped backlog.org rename to refresh project"
+            "expected CLI-shaped node.org rename to refresh project"
         );
     }
 
@@ -630,10 +649,10 @@ mod tests {
         let new_root = tmp.path().join("new");
         let fixture = setup_project(tmp.path(), old_root.clone(), old_root).await;
         let new_orgasmic = new_root.join(".orgasmic");
-        std::fs::create_dir_all(new_orgasmic.join("tasks")).unwrap();
+        std::fs::create_dir_all(new_orgasmic.join("tasks/TASK-001")).unwrap();
         std::fs::write(new_orgasmic.join("project.org"), PROJECT_ORG).unwrap();
-        let new_sprint = new_orgasmic.join("tasks/backlog.org");
-        std::fs::write(&new_sprint, INITIAL_BACKLOG).unwrap();
+        let new_sprint = new_orgasmic.join("tasks/TASK-001/node.org");
+        std::fs::write(&new_sprint, INITIAL_TASK).unwrap();
         std::fs::write(
             fixture.home.board(),
             format!(
@@ -655,7 +674,9 @@ mod tests {
 
         // Let the command loop replace the watch before touching the new root.
         tokio::time::sleep(Duration::from_millis(300)).await;
-        std::fs::write(&new_sprint, TWO_TASK_BACKLOG).unwrap();
+        let second_task = new_orgasmic.join("tasks/TASK-002/node.org");
+        std::fs::create_dir_all(second_task.parent().unwrap()).unwrap();
+        std::fs::write(&second_task, SECOND_TASK).unwrap();
 
         assert!(
             eventually(&fixture.index, |snap| {
@@ -678,10 +699,12 @@ mod tests {
         let project_root = tmp.path().join("proj");
         let fixture = setup_project(tmp.path(), project_root.clone(), project_root.clone()).await;
 
-        std::fs::write(&fixture.sprint, TWO_TASK_BACKLOG).unwrap();
+        let second_task = project_root.join(".orgasmic/tasks/TASK-002/node.org");
+        std::fs::create_dir_all(second_task.parent().unwrap()).unwrap();
+        std::fs::write(&second_task, SECOND_TASK).unwrap();
         let deleted_tmp_path = project_root
-            .join(".orgasmic/tasks")
-            .join("backlog.org.00000000-0000-0000-0000-000000000000.tmp");
+            .join(".orgasmic/tasks/TASK-002")
+            .join("node.org.00000000-0000-0000-0000-000000000000.tmp");
         let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Any)))
             .add_path(deleted_tmp_path);
         let mut pending = HashSet::new();

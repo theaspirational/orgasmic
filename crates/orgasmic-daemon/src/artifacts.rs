@@ -5,21 +5,21 @@
 //! Layout per artifact:
 //!   .orgasmic/artifacts/ART-<slug>/
 //!     artifact.mdx   — opaque MDX; never parsed as Org
-//!     artifact.org   — single heading with :ID: :TITLE: :SUBJECT_NODES: :PROMPT: :VERSION: :STATE:
-//!     reviews.org    — append-only comment headings
+//!     node.org       — single heading with :ID: :TITLE: :SUBJECT_NODES: :PROMPT: :VERSION: :STATE:
+//!     journal.org    — append-only comment entries
 //!     versions/      — vN.mdx archives (written at regeneration, TASK-EDQPG)
 //!
-//! artifact.org and reviews.org are read through the canonical
-//! `orgasmic_core::OrgFile` parser (no hand-rolled second parser); writes
-//! that mutate an existing heading go through `OrgRewriter` or a targeted
-//! property-span splice computed from the canonical parse.
+//! Node and comment parsing/rendering is delegated to
+//! `orgasmic_core::node_kernel`; artifact-only property mutations still use
+//! `OrgRewriter` or a targeted property-span splice.
 
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use orgasmic_core::{Heading, OrgFile, OrgRewriter};
+use orgasmic_core::node_kernel::{self, JournalEntry, JOURNAL_FILE, NODE_FILE};
+use orgasmic_core::{OrgFile, OrgRewriter};
 use serde::{Deserialize, Serialize};
 
 /// All Agent-Native block types that are valid in artifact.mdx.
@@ -49,7 +49,7 @@ pub const BLOCK_TYPES: &[&str] = &[
     "EntityRelationship",
 ];
 
-/// Whole artifactor launch address persisted atomically on artifact.org.
+/// Whole artifactor launch address persisted atomically on node.org.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArtifactLaunchAddress {
     pub mode: String,
@@ -73,7 +73,7 @@ pub struct ArtifactSummary {
     pub open_comment_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_address: Option<ArtifactLaunchAddress>,
-    /// Legacy fields — populated when reading old artifact.org files.
+    /// Legacy fields — populated when reading old node.org files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,7 +96,7 @@ pub struct ArtifactDetail {
     pub comments: Vec<CommentRecord>,
 }
 
-/// One entry from reviews.org.
+/// One entry from journal.org.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommentRecord {
     pub cid: String,
@@ -105,7 +105,7 @@ pub struct CommentRecord {
     pub anchor: String,
     pub resolution_target: String,
     /// CID of the comment this one replies to. Empty for a top-level comment.
-    /// `#[serde(default)]` + empty default so legacy reviews.org files (written
+    /// `#[serde(default)]` + empty default so legacy journal.org files (written
     /// before threaded replies existed, with no `:REPLY_TO:` property) keep
     /// parsing and round-trip as top-level.
     #[serde(default)]
@@ -134,19 +134,19 @@ pub fn artifacts_dir(project_root: &Path) -> PathBuf {
 }
 
 pub fn artifact_dir(project_root: &Path, art_id: &str) -> PathBuf {
-    artifacts_dir(project_root).join(art_id)
+    node_kernel::node_dir(project_root, "artifacts", art_id)
 }
 
-fn artifact_org_path(art_dir: &Path) -> PathBuf {
-    art_dir.join("artifact.org")
+fn node_org_path(art_dir: &Path) -> PathBuf {
+    art_dir.join(NODE_FILE)
 }
 
 fn artifact_mdx_path(art_dir: &Path) -> PathBuf {
     art_dir.join("artifact.mdx")
 }
 
-fn reviews_org_path(art_dir: &Path) -> PathBuf {
-    art_dir.join("reviews.org")
+fn journal_org_path(art_dir: &Path) -> PathBuf {
+    art_dir.join(JOURNAL_FILE)
 }
 
 /// Directory holding archived `vN.mdx` snapshots. `pub` so callers folding
@@ -275,7 +275,7 @@ pub fn validate_mdx(content: &str) -> Vec<String> {
 /// value with a literal `\n` would prematurely terminate its
 /// `:KEY: value` property-drawer line and corrupt everything after it
 /// (tx.org's `:PROMPT:` contract already promises "escaped single-line";
-/// artifact.org's `:TITLE:`/`:PROMPT:` follow the same discipline).
+/// node.org's `:TITLE:`/`:PROMPT:` follow the same discipline).
 pub fn escape_single_line(value: &str) -> String {
     value.replace("\r\n", " ").replace(['\n', '\r'], " ")
 }
@@ -286,12 +286,12 @@ pub fn escape_single_line(value: &str) -> String {
 /// be read by the canonical parser as structure rather than free text — either
 /// a `* heading` or an org block marker (`#+begin_…` / `#+end_…`). Both are
 /// injection vectors from a member-authored comment body:
-/// - a column-0 `*` line forks reviews.org into a spurious extra heading
+/// - a column-0 `*` line forks journal.org into a spurious extra heading
 ///   (`orgasmic_core::org::heading_level` matches `*` only at byte 0);
 /// - an unbalanced `#+begin_`/`#+end_` line drives the file-global block mask
 ///   (`org::org_block_line_mask`), which lower-cases and trim-starts the line
 ///   before matching and never resets at EOF — so one stray marker can suppress
-///   heading recognition for every LATER comment in the same reviews.org
+///   heading recognition for every LATER comment in the same journal.org
 ///   (TASK-KBHAN).
 ///
 /// A single leading comma neutralizes both: the parser's `trim_start()` strips
@@ -309,8 +309,7 @@ fn comment_line_needs_escape(line: &str) -> bool {
 }
 
 /// Escape a comment message so no line can be misread as a `* heading` or an
-/// org block marker once appended to reviews.org. Reversed by the unescape step
-/// in [`comment_record_from_heading`].
+/// org block marker once appended to journal.org. Reversed by [`parse_comments`].
 fn escape_comment_message(message: &str) -> String {
     message
         .split('\n')
@@ -325,10 +324,10 @@ fn escape_comment_message(message: &str) -> String {
         .join("\n")
 }
 
-// ── artifact.org read/write ──────────────────────────────────────────────────
+// ── node.org read/write ──────────────────────────────────────────────────
 
-/// Content for a brand-new artifact.org file.
-pub fn artifact_org_content(
+/// Content for a brand-new artifact node.org file.
+pub fn artifact_node_content(
     id: &str,
     title: &str,
     subject_nodes: &[String],
@@ -340,9 +339,7 @@ pub fn artifact_org_content(
     let prompt = escape_single_line(prompt);
     let subject_str = subject_nodes.join(" ");
     format!(
-        "#+title: orgasmic artifact {id}\n\
-         #+orgasmic_version: 1\n\
-         \n\
+        "{}\
          * {id} {title}\n\
          :PROPERTIES:\n\
          :ID:           {id}\n\
@@ -351,20 +348,21 @@ pub fn artifact_org_content(
          :PROMPT:       {prompt}\n\
          :VERSION:      {version}\n\
          :STATE:        {state}\n\
-         :END:\n"
+         :END:\n",
+        node_kernel::node_org_header("artifact", id)
     )
 }
 
-/// Rewrite artifact.org updating :VERSION: and :STATE: only, via the
+/// Rewrite node.org updating :VERSION: and :STATE: only, via the
 /// canonical `OrgRewriter` (touches only those two property value spans;
 /// every other byte, including drawer column alignment, is preserved).
-pub fn update_artifact_org(current: &str, new_version: u32, new_state: &str) -> Result<Vec<u8>> {
-    let file = OrgFile::parse(current, "artifact.org").context("parse artifact.org")?;
+pub fn update_artifact_node(current: &str, new_version: u32, new_state: &str) -> Result<Vec<u8>> {
+    let file = OrgFile::parse(current, NODE_FILE).context("parse node.org")?;
     let Some(id) = file.headings.first().and_then(|h| h.property("ID")) else {
-        bail!("artifact.org has no heading with an :ID:");
+        bail!("node.org has no heading with an :ID:");
     };
     let id = id.to_string();
-    let mut rw = OrgRewriter::new(&file, "artifact.org");
+    let mut rw = OrgRewriter::new(&file, NODE_FILE);
     rw.set_property(&id, "VERSION", &new_version.to_string())
         .context("update :VERSION:")?;
     rw.set_property(&id, "STATE", new_state)
@@ -372,19 +370,19 @@ pub fn update_artifact_org(current: &str, new_version: u32, new_state: &str) -> 
     Ok(rw.finish().into_bytes())
 }
 
-/// Persist the artifactor launch address on an existing artifact.org heading.
+/// Persist the artifactor launch address on an existing node.org heading.
 /// Replaces the whole `:LAUNCH_ADDRESS:` record atomically; clears legacy
 /// per-field properties and omits optional model/effort when not supplied.
 pub fn persist_artifact_launch_address(
     current: &str,
     address: &ArtifactLaunchAddress,
 ) -> Result<Vec<u8>> {
-    let file = OrgFile::parse(current, "artifact.org").context("parse artifact.org")?;
+    let file = OrgFile::parse(current, NODE_FILE).context("parse node.org")?;
     let Some(id) = file.headings.first().and_then(|h| h.property("ID")) else {
-        bail!("artifact.org has no heading with an :ID:");
+        bail!("node.org has no heading with an :ID:");
     };
     let id = id.to_string();
-    let mut rw = OrgRewriter::new(&file, "artifact.org");
+    let mut rw = OrgRewriter::new(&file, NODE_FILE);
     let json = serde_json::to_string(address).context("serialize launch address")?;
     rw.upsert_property(&id, "LAUNCH_ADDRESS", &json)
         .context("update :LAUNCH_ADDRESS:")?;
@@ -416,31 +414,44 @@ fn parse_launch_harness_args(raw: Option<&str>) -> Option<Vec<String>> {
 pub fn parse_artifact_launch_address(
     heading: &orgasmic_core::Heading,
 ) -> Option<ArtifactLaunchAddress> {
-    if let Some(raw) = heading.property("LAUNCH_ADDRESS") {
+    parse_launch_address(|key| heading.property(key))
+}
+
+fn parse_artifact_launch_address_properties(
+    properties: &[(String, String)],
+) -> Option<ArtifactLaunchAddress> {
+    parse_launch_address(|key| {
+        properties
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.as_str())
+    })
+}
+
+fn parse_launch_address<'a>(
+    get: impl Fn(&str) -> Option<&'a str>,
+) -> Option<ArtifactLaunchAddress> {
+    if let Some(raw) = get("LAUNCH_ADDRESS") {
         if let Ok(address) = serde_json::from_str::<ArtifactLaunchAddress>(raw.trim()) {
             return Some(address);
         }
     }
-    let mode = heading.property("LAUNCH_MODE")?;
-    let harness = heading.property("LAUNCH_HARNESS")?;
+    let mode = get("LAUNCH_MODE")?;
+    let harness = get("LAUNCH_HARNESS")?;
     Some(ArtifactLaunchAddress {
         mode: mode.to_string(),
         harness: harness.to_string(),
-        harness_args: parse_launch_harness_args(heading.property("LAUNCH_HARNESS_ARGS"))
-            .unwrap_or_default(),
-        model: heading.property("LAUNCH_MODEL").map(str::to_string),
-        effort: heading.property("LAUNCH_EFFORT").map(str::to_string),
+        harness_args: parse_launch_harness_args(get("LAUNCH_HARNESS_ARGS")).unwrap_or_default(),
+        model: get("LAUNCH_MODEL").map(str::to_string),
+        effort: get("LAUNCH_EFFORT").map(str::to_string),
     })
 }
 
-// ── reviews.org read/write ───────────────────────────────────────────────────
+// ── journal.org read/write ───────────────────────────────────────────────────
 
-/// Initial content for a new reviews.org file (created before first comment).
-pub fn reviews_org_header(art_id: &str) -> String {
-    format!(
-        "#+title: orgasmic artifact reviews {art_id}\n\
-         #+orgasmic_version: 1\n"
-    )
+/// Initial content for a new journal.org file (created before first comment).
+pub fn artifact_journal_header(art_id: &str) -> String {
+    node_kernel::journal_header(art_id)
 }
 
 /// Fields for one new comment. Grouped into a struct (rather than passed
@@ -457,10 +468,17 @@ pub struct NewComment<'a> {
     pub message: &'a str,
 }
 
-/// Org heading block for one comment, ready to append to reviews.org. Lines
+/// Journal entry block for one comment. Lines
 /// in the message that would be misread as a heading (leading `*`) are
 /// comma-escaped first.
-pub fn comment_org_block(comment: &NewComment<'_>) -> String {
+#[cfg(test)]
+fn comment_org_block(comment: &NewComment<'_>) -> String {
+    let entry = comment_journal_entry(comment, "[1970-01-01 Thu 00:00:00]", "legacy");
+    entry.validate().expect("valid test comment");
+    node_kernel::journal_entry_block(&entry)
+}
+
+fn comment_journal_entry(comment: &NewComment<'_>, time: &str, machine: &str) -> JournalEntry {
     let NewComment {
         cid,
         author,
@@ -470,40 +488,41 @@ pub fn comment_org_block(comment: &NewComment<'_>) -> String {
         reply_to,
         message,
     } = comment;
-    let message = escape_comment_message(message);
-    format!(
-        "\n* {cid}\n\
-         :PROPERTIES:\n\
-         :CID:              {cid}\n\
-         :AUTHOR:           {author}\n\
-         :VERSION:          {version}\n\
-         :ANCHOR:           {anchor}\n\
-         :RESOLUTION_TARGET: {resolution_target}\n\
-         :REPLY_TO:         {reply_to}\n\
-         :RESOLVED:         false\n\
-         :CONSUMED:         false\n\
-         :END:\n\
-         \n\
-         {message}\n"
-    )
+    JournalEntry {
+        entry_id: (*cid).to_string(),
+        time: time.to_string(),
+        ty: "comment".into(),
+        actor: (*author).to_string(),
+        machine: machine.to_string(),
+        extras: vec![
+            ("VERSION".into(), version.to_string()),
+            ("ANCHOR".into(), (*anchor).to_string()),
+            ("RESOLUTION_TARGET".into(), (*resolution_target).to_string()),
+            ("REPLY_TO".into(), (*reply_to).to_string()),
+            ("RESOLVED".into(), "false".into()),
+        ],
+        body: escape_comment_message(message),
+    }
 }
 
-/// Compute the new reviews.org content after appending one comment. Seeds
+/// Compute the new journal.org content after appending one comment. Seeds
 /// the `#+title`/`#+orgasmic_version` header when `current` is empty (the
 /// file does not exist on disk yet). Pure — callers write the result
 /// through `state.writer.transaction` alongside the tx entry so the file
 /// rewrite and the tx append commit atomically.
-pub fn append_comment(current: &str, art_id: &str, comment: &NewComment<'_>) -> String {
-    let mut out = if current.is_empty() {
-        reviews_org_header(art_id)
-    } else {
-        current.to_string()
-    };
-    out.push_str(&comment_org_block(comment));
-    out
+pub fn append_comment(
+    current: &str,
+    art_id: &str,
+    comment: &NewComment<'_>,
+    time: &str,
+    machine: &str,
+) -> Result<String> {
+    let entry = comment_journal_entry(comment, time, machine);
+    entry.validate()?;
+    Ok(node_kernel::append_entry(current, art_id, &entry))
 }
 
-/// Rewrite reviews.org toggling `cid`'s `RESOLVED` flag only, leaving
+/// Rewrite journal.org toggling `cid`'s `RESOLVED` flag only, leaving
 /// `CONSUMED` untouched. Two-axis thread state (dec_V44E4 / dec_KF2MR):
 /// open/resolved is people-facing and settable by any member with
 /// `artifacts.comment`; consumed is agent-facing and set only by
@@ -511,13 +530,13 @@ pub fn append_comment(current: &str, art_id: &str, comment: &NewComment<'_>) -> 
 /// span via the canonical parser and splices only that span, leaving every
 /// other byte (including column alignment) untouched.
 pub fn set_comment_resolved(current: &str, cid: &str, resolved: bool) -> Result<Vec<u8>> {
-    let file = OrgFile::parse(current, "reviews.org").context("parse reviews.org")?;
+    let file = OrgFile::parse(current, JOURNAL_FILE).context("parse journal.org")?;
     let Some(heading) = file
         .headings
         .iter()
-        .find(|h| h.property("CID") == Some(cid))
+        .find(|h| h.property("TX_ID") == Some(cid) && h.property("TYPE") == Some("comment"))
     else {
-        bail!("comment {cid} not found in reviews.org");
+        bail!("comment {cid} not found in journal.org");
     };
 
     let Some(entry) = heading.property_entries().find(|e| e.key == "RESOLVED") else {
@@ -534,46 +553,6 @@ pub fn set_comment_resolved(current: &str, cid: &str, resolved: bool) -> Result<
 }
 
 // ── index projection ─────────────────────────────────────────────────────────
-
-/// Build a [`CommentRecord`] from a parsed reviews.org heading, unescaping
-/// the leading-`*` comma escape and trimming the template's blank-line
-/// padding around the message body.
-fn comment_record_from_heading(file: &OrgFile, heading: &Heading) -> Option<CommentRecord> {
-    let cid = heading.property("CID")?.to_string();
-    if cid.is_empty() {
-        return None;
-    }
-    let version = heading
-        .property("VERSION")
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(1);
-    let resolved = heading
-        .property("RESOLVED")
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    let consumed = heading
-        .property("CONSUMED")
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    let message = trim_and_unescape_comment_body(file.slice(heading.body.clone()));
-    Some(CommentRecord {
-        cid,
-        author: heading.property("AUTHOR").unwrap_or("").to_string(),
-        version,
-        anchor: heading
-            .property("ANCHOR")
-            .map(str::to_string)
-            .unwrap_or_else(|| "{}".into()),
-        resolution_target: heading
-            .property("RESOLUTION_TARGET")
-            .unwrap_or("")
-            .to_string(),
-        reply_to: heading.property("REPLY_TO").unwrap_or("").to_string(),
-        resolved,
-        consumed,
-        message,
-    })
-}
 
 /// Trim leading/trailing blank lines from a raw heading body (the template
 /// blank line right after `:END:`), then reverse the structural escape
@@ -599,49 +578,61 @@ fn trim_and_unescape_comment_body(raw: &str) -> String {
         .join("\n")
 }
 
-/// Parse all comment records from reviews.org content via the canonical Org
-/// parser. Each comment is a level-1 heading whose free body (everything
-/// after its property drawer) is the message text.
+/// Parse comment records from the shared node journal.
 pub fn parse_comments(content: &str) -> Vec<CommentRecord> {
-    let Ok(file) = OrgFile::parse(content, "reviews.org") else {
-        return Vec::new();
-    };
-    file.headings
-        .iter()
-        .filter_map(|heading| comment_record_from_heading(&file, heading))
+    node_kernel::parse_journal(content, JOURNAL_FILE)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| entry.ty == "comment")
+        .map(|entry| CommentRecord {
+            cid: entry.entry_id.clone(),
+            author: entry.actor.clone(),
+            version: entry
+                .extra("VERSION")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1),
+            anchor: entry.extra("ANCHOR").unwrap_or("{}").to_string(),
+            resolution_target: entry.extra("RESOLUTION_TARGET").unwrap_or("").to_string(),
+            reply_to: entry.extra("REPLY_TO").unwrap_or("").to_string(),
+            resolved: entry.extra("RESOLVED") == Some("true"),
+            consumed: entry.extra("CONSUMED") == Some("true"),
+            message: trim_and_unescape_comment_body(&entry.body),
+        })
         .collect()
 }
 
 /// Load an ArtifactSummary from an ART-* directory.
 pub fn load_artifact(art_dir: &Path) -> Option<ArtifactSummary> {
-    let org_path = artifact_org_path(art_dir);
+    let org_path = node_org_path(art_dir);
     let content = fs::read_to_string(&org_path).ok()?;
-    let file = OrgFile::parse(content, org_path.display().to_string()).ok()?;
-    let heading = file.headings.first()?;
+    let node = node_kernel::parse_node(&content, &org_path.display().to_string()).ok()?;
+    let property = |key: &str| {
+        node.properties
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.as_str())
+    };
 
-    let id = heading.property("ID")?.to_string();
+    let id = node.id.clone();
     if id.is_empty() {
         return None;
     }
-    let title = heading.property("TITLE").unwrap_or("").to_string();
-    let subject_nodes: Vec<String> = heading
-        .property("SUBJECT_NODES")
+    let title = property("TITLE").unwrap_or("").to_string();
+    let subject_nodes: Vec<String> = property("SUBJECT_NODES")
         .unwrap_or("")
         .split_whitespace()
         .map(str::to_string)
         .collect();
-    let version = heading
-        .property("VERSION")
+    let version = property("VERSION")
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(1);
-    let state = heading
-        .property("STATE")
+    let state = property("STATE")
         .map(str::to_string)
         .unwrap_or_else(|| "submitted".to_string());
 
     // Count open comments (never resolved+consumed).
     let open_comment_count = {
-        let reviews_path = reviews_org_path(art_dir);
+        let reviews_path = journal_org_path(art_dir);
         if let Ok(reviews_content) = fs::read_to_string(&reviews_path) {
             parse_comments(&reviews_content)
                 .iter()
@@ -652,7 +643,7 @@ pub fn load_artifact(art_dir: &Path) -> Option<ArtifactSummary> {
         }
     };
 
-    let launch_address = parse_artifact_launch_address(heading);
+    let launch_address = parse_artifact_launch_address_properties(&node.properties);
     Some(ArtifactSummary {
         id,
         title,
@@ -691,15 +682,12 @@ pub fn load_artifact_detail(
 ) -> Result<ArtifactDetail, ArtifactLoadError> {
     let summary = load_artifact(art_dir).ok_or(ArtifactLoadError::NotFound)?;
 
-    let org_path = artifact_org_path(art_dir);
+    let org_path = node_org_path(art_dir);
     let org_content = fs::read_to_string(&org_path).map_err(|_| ArtifactLoadError::NotFound)?;
-    let prompt = OrgFile::parse(org_content, org_path.display().to_string())
+    let prompt = node_kernel::parse_node(&org_content, &org_path.display().to_string())
         .ok()
-        .and_then(|file| {
-            file.headings
-                .first()
-                .and_then(|h| h.property("PROMPT").map(str::to_string))
-        })
+        .and_then(|node| node.properties.into_iter().find(|(key, _)| key == "PROMPT"))
+        .map(|(_, value)| value)
         .unwrap_or_default();
 
     // MDX content: either current or a versioned archive.
@@ -710,7 +698,7 @@ pub fn load_artifact_detail(
         fs::read_to_string(artifact_mdx_path(art_dir)).unwrap_or_default()
     };
 
-    let reviews_path = reviews_org_path(art_dir);
+    let reviews_path = journal_org_path(art_dir);
     let mut comments = if let Ok(reviews_content) = fs::read_to_string(&reviews_path) {
         parse_comments(&reviews_content)
     } else {
@@ -769,8 +757,8 @@ pub fn new_cid() -> String {
 /// Delegates to `orgasmic_core::mint_node_id` so the minter and
 /// [`orgasmic_core::is_valid_greenfield_artifact_id`] validator share one
 /// grammar definition (`NodeIdClass::Artifact`).
-pub fn new_artifact_id() -> String {
-    orgasmic_core::mint_node_id(orgasmic_core::NodeIdClass::Artifact)
+pub fn new_artifact_id(descriptor: &orgasmic_core::NodeTypeDescriptor) -> String {
+    orgasmic_core::mint_node_id(descriptor)
 }
 
 /// Validate an incoming `art_id` path segment against the minted-artifact
@@ -818,49 +806,25 @@ pub fn validate_art_id_readable(art_id: &str) -> Result<(), String> {
     }
 }
 
-/// Rewrite reviews.org marking every currently open (neither resolved nor
-/// consumed) comment as resolved+consumed in one pass.
+/// Rewrite journal.org marking every unconsumed comment as consumed.
 ///
 /// Used when a regenerate closes out the current version's comment surface
 /// (dec_V44E4: "the fresh version starts with a clean comment surface").
-/// Mirrors [`set_comment_resolved`]'s targeted property-span splice,
-/// generalized to every open heading instead of one `cid`.
 pub fn consume_all_open_comments(current: &str) -> Result<Vec<u8>> {
-    if current.trim().is_empty() {
-        return Ok(current.as_bytes().to_vec());
-    }
-    let file = OrgFile::parse(current, "reviews.org").context("parse reviews.org")?;
-
-    let mut edits: Vec<_> = Vec::new();
-    for heading in &file.headings {
-        let resolved = heading.property("RESOLVED") == Some("true");
-        let consumed = heading.property("CONSUMED") == Some("true");
-        if resolved && consumed {
-            continue;
-        }
-        edits.extend(
-            heading
-                .property_entries()
-                .filter(|e| e.key == "RESOLVED" || e.key == "CONSUMED")
-                .map(|e| (e.value_span.clone(), "true")),
-        );
-    }
-    edits.sort_by_key(|(range, _)| range.start);
-
-    let mut out = String::with_capacity(current.len());
-    let mut cursor = 0usize;
-    for (range, replacement) in edits {
-        out.push_str(&current[cursor..range.start]);
-        out.push_str(replacement);
-        cursor = range.end;
-    }
-    out.push_str(&current[cursor..]);
-    Ok(out.into_bytes())
+    node_kernel::consume_open_comments(current).map(|(content, _)| content.into_bytes())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn artifact_descriptor() -> orgasmic_core::NodeTypeDescriptor {
+        orgasmic_core::NodeTypeDescriptor::parse(
+            include_str!("../../../shipped/schema/node-types/artifact.org"),
+            "node.org",
+        )
+        .unwrap()
+    }
 
     #[test]
     fn block_registry_has_22_entries() {
@@ -996,7 +960,7 @@ mod tests {
         });
         // The written block carries a :REPLY_TO: property line.
         assert!(
-            block.contains(":REPLY_TO:         CID-parent001"),
+            block.contains(":REPLY_TO: CID-parent001"),
             "block should write the REPLY_TO property: {block}"
         );
         let content = format!("{header}{block}");
@@ -1006,23 +970,21 @@ mod tests {
     }
 
     #[test]
-    fn legacy_reviews_without_reply_to_parses_with_empty_default() {
-        // A reviews.org heading written before threaded replies existed has no
-        // :REPLY_TO: property; it must still parse, defaulting reply_to to "".
-        let content = "#+title: reviews\n#+orgasmic_version: 1\n\
-             \n* CID-legacy001\n\
-             :PROPERTIES:\n\
-             :CID:              CID-legacy001\n\
-             :AUTHOR:           user@test.com\n\
-             :VERSION:          1\n\
-             :ANCHOR:           {}\n\
-             :RESOLUTION_TARGET: \n\
-             :RESOLVED:         false\n\
-             :CONSUMED:         false\n\
-             :END:\n\
-             \n\
-             Legacy comment.\n";
-        let records = parse_comments(content);
+    fn journal_comment_without_reply_to_parses_with_empty_default() {
+        let content = node_kernel::append_entry(
+            "",
+            "ART-ABCDE",
+            &JournalEntry {
+                entry_id: "CID-legacy001".into(),
+                time: "[1970-01-01 Thu 00:00:00]".into(),
+                ty: "comment".into(),
+                actor: "user@test.com".into(),
+                machine: "legacy".into(),
+                extras: vec![("VERSION".into(), "1".into())],
+                body: "Legacy comment.".into(),
+            },
+        );
+        let records = parse_comments(&content);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].cid, "CID-legacy001");
         assert_eq!(records[0].reply_to, "");
@@ -1046,7 +1008,7 @@ mod tests {
 
         // The stored bytes must not contain a column-0 `*` line — otherwise
         // the canonical parser would misread it as a second heading.
-        let file = OrgFile::parse(content.clone(), "reviews.org").expect("parses cleanly");
+        let file = OrgFile::parse(content.clone(), "journal.org").expect("parses cleanly");
         assert_eq!(
             file.headings.len(),
             1,
@@ -1086,7 +1048,7 @@ mod tests {
     fn comment_body_block_marker_does_not_suppress_later_comments() {
         // TASK-KBHAN: a member-authored comment whose body carries an org block
         // marker must not drive the file-global block mask and swallow LATER
-        // comments in the same reviews.org. Teeth: the first comment carries an
+        // comments in the same journal.org. Teeth: the first comment carries an
         // UNBALANCED `#+begin_src` (no matching `#+end_`) plus a lowercase-defeating
         // uppercase marker and an indented one; a second comment follows.
         let header = "#+title: reviews\n#+orgasmic_version: 1\n";
@@ -1171,7 +1133,7 @@ mod tests {
     #[test]
     fn new_artifact_id_is_art_prefixed_five_char_crockford_stem() {
         for _ in 0..50 {
-            let id = new_artifact_id();
+            let id = new_artifact_id(&artifact_descriptor());
             let stem = id.strip_prefix("ART-").expect("ART- prefix");
             assert_eq!(stem.len(), 5, "{id}");
             assert!(
@@ -1189,7 +1151,7 @@ mod tests {
 
     #[test]
     fn validate_art_id_accepts_minted_and_rejects_traversal() {
-        assert!(validate_art_id(&new_artifact_id()).is_ok());
+        assert!(validate_art_id(&new_artifact_id(&artifact_descriptor())).is_ok());
         assert!(validate_art_id("ART-8KX2M").is_ok());
         for bad in [
             "../../etc/passwd",
@@ -1208,7 +1170,7 @@ mod tests {
     #[test]
     fn validate_art_id_readable_accepts_legacy_and_rejects_traversal() {
         // Minted ids and the strict grammar are of course still fine.
-        assert!(validate_art_id_readable(&new_artifact_id()).is_ok());
+        assert!(validate_art_id_readable(&new_artifact_id(&artifact_descriptor())).is_ok());
         assert!(validate_art_id_readable("ART-8KX2M").is_ok());
         // Legacy / hand-authored semantic ids the strict grammar rejects but
         // that are perfectly safe path segments — now openable.
@@ -1234,7 +1196,7 @@ mod tests {
 
     #[test]
     fn consume_all_open_comments_closes_every_open_heading_and_skips_closed_ones() {
-        let header = reviews_org_header("ART-XYZAB");
+        let header = artifact_journal_header("ART-XYZAB");
         let open_a = comment_org_block(&NewComment {
             cid: "CID-open0001",
             author: "a@t.com",
@@ -1273,7 +1235,8 @@ mod tests {
         let closed = String::from_utf8(consume_all_open_comments(&content).unwrap()).unwrap();
         let records = parse_comments(&closed);
         assert_eq!(records.len(), 2);
-        assert!(records.iter().all(|c| c.resolved && c.consumed));
+        assert!(records.iter().all(|c| c.consumed));
+        assert!(records.iter().all(|c| !c.resolved));
     }
 
     #[test]
@@ -1282,19 +1245,19 @@ mod tests {
     }
 
     #[test]
-    fn update_artifact_org_changes_version_and_state() {
-        let org = artifact_org_content("ART-ABC", "My Title", &[], "prompt", 1, "submitted");
+    fn update_artifact_node_changes_version_and_state() {
+        let org = artifact_node_content("ART-ABC", "My Title", &[], "prompt", 1, "submitted");
         let updated =
-            String::from_utf8(update_artifact_org(&org, 2, "regenerating").unwrap()).unwrap();
-        let file = OrgFile::parse(updated, "artifact.org").unwrap();
+            String::from_utf8(update_artifact_node(&org, 2, "regenerating").unwrap()).unwrap();
+        let file = OrgFile::parse(updated, "node.org").unwrap();
         let heading = file.headings.first().unwrap();
         assert_eq!(heading.property("VERSION"), Some("2"));
         assert_eq!(heading.property("STATE"), Some("regenerating"));
     }
 
     #[test]
-    fn artifact_org_content_escapes_multiline_title_and_prompt() {
-        let org = artifact_org_content(
+    fn artifact_node_content_escapes_multiline_title_and_prompt() {
+        let org = artifact_node_content(
             "ART-ABC",
             "Multi\nline title",
             &[],
@@ -1304,7 +1267,7 @@ mod tests {
         );
         // Escaping must produce a file the canonical parser accepts as a
         // single well-formed heading with no injected properties.
-        let file = OrgFile::parse(org, "artifact.org").unwrap();
+        let file = OrgFile::parse(org, "node.org").unwrap();
         assert_eq!(file.headings.len(), 1);
         let heading = &file.headings[0];
         assert_eq!(heading.property("TITLE"), Some("Multi line title"));
@@ -1323,7 +1286,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let art_dir = tmp.path().join("ART-XYZAB");
         fs::create_dir_all(&art_dir).unwrap();
-        let org_content = artifact_org_content(
+        let org_content = artifact_node_content(
             "ART-XYZAB",
             "Test Artifact",
             &["arch_ARSPJ".to_string()],
@@ -1331,7 +1294,7 @@ mod tests {
             1,
             "submitted",
         );
-        fs::write(art_dir.join("artifact.org"), &org_content).unwrap();
+        fs::write(art_dir.join(NODE_FILE), &org_content).unwrap();
         fs::write(art_dir.join("artifact.mdx"), "<RichText>hello</RichText>\n").unwrap();
 
         let summary = load_artifact(&art_dir).unwrap();
@@ -1348,8 +1311,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let art_dir = tmp.path().join("ART-XYZAB");
         fs::create_dir_all(&art_dir).unwrap();
-        let org_content = artifact_org_content("ART-XYZAB", "Title", &[], "prompt", 1, "submitted");
-        fs::write(art_dir.join("artifact.org"), &org_content).unwrap();
+        let org_content =
+            artifact_node_content("ART-XYZAB", "Title", &[], "prompt", 1, "submitted");
+        fs::write(art_dir.join(NODE_FILE), &org_content).unwrap();
         fs::write(art_dir.join("artifact.mdx"), "<RichText>hi</RichText>\n").unwrap();
 
         let missing_artifact = tmp.path().join("ART-NOPE");
@@ -1371,8 +1335,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let art_dir = tmp.path().join("ART-XYZAB");
         fs::create_dir_all(&art_dir).unwrap();
-        let org_content = artifact_org_content("ART-XYZAB", "Title", &[], "prompt", 1, "submitted");
-        fs::write(art_dir.join("artifact.org"), &org_content).unwrap();
+        let org_content =
+            artifact_node_content("ART-XYZAB", "Title", &[], "prompt", 1, "submitted");
+        fs::write(art_dir.join(NODE_FILE), &org_content).unwrap();
         fs::write(art_dir.join("artifact.mdx"), "<RichText>hi</RichText>\n").unwrap();
 
         let block = comment_org_block(&NewComment {
@@ -1384,12 +1349,12 @@ mod tests {
             reply_to: "",
             message: "old",
         });
-        let reviews = format!("{}{}", reviews_org_header("ART-XYZAB"), block);
+        let reviews = format!("{}{}", artifact_journal_header("ART-XYZAB"), block);
         // Default view excludes CONSUMED (agent axis), not merely resolved, so
         // the fixture must be consumed via the production close-out path.
         let consumed = consume_all_open_comments(&reviews).unwrap();
         fs::write(
-            art_dir.join("reviews.org"),
+            art_dir.join(JOURNAL_FILE),
             String::from_utf8(consumed).unwrap(),
         )
         .unwrap();
@@ -1410,8 +1375,9 @@ mod tests {
         fs::create_dir_all(versions_dir(&art_dir)).unwrap();
 
         // Current/live version is 2; v1 is archived.
-        let org_content = artifact_org_content("ART-XYZAB", "Title", &[], "prompt", 2, "submitted");
-        fs::write(art_dir.join("artifact.org"), &org_content).unwrap();
+        let org_content =
+            artifact_node_content("ART-XYZAB", "Title", &[], "prompt", 2, "submitted");
+        fs::write(art_dir.join(NODE_FILE), &org_content).unwrap();
         fs::write(
             art_dir.join("artifact.mdx"),
             "<RichText>v2 body</RichText>\n",
@@ -1433,7 +1399,7 @@ mod tests {
             reply_to: "",
             message: "v1 thread comment",
         });
-        let v1_only = format!("{}{}", reviews_org_header("ART-XYZAB"), v1_block);
+        let v1_only = format!("{}{}", artifact_journal_header("ART-XYZAB"), v1_block);
         let v1_consumed = String::from_utf8(consume_all_open_comments(&v1_only).unwrap()).unwrap();
 
         // v2 has one fresh, still-open comment.
@@ -1448,7 +1414,7 @@ mod tests {
         });
         let mut reviews = v1_consumed;
         reviews.push_str(&v2_block);
-        fs::write(art_dir.join("reviews.org"), &reviews).unwrap();
+        fs::write(art_dir.join(JOURNAL_FILE), &reviews).unwrap();
 
         // Archived view (version=1): only v1's own comment, returned despite
         // being consumed and despite include_consumed=false.
@@ -1494,7 +1460,7 @@ mod tests {
         assert!(!updated.contains(":LAUNCH_MODE:"));
         assert!(!updated.contains(":LAUNCH_MODEL:"));
 
-        let file = OrgFile::parse(&updated, "artifact.org").unwrap();
+        let file = OrgFile::parse(&updated, "node.org").unwrap();
         let heading = file.headings.first().expect("heading");
         let parsed = parse_artifact_launch_address(heading).expect("parsed address");
         assert_eq!(parsed, first);
@@ -1509,7 +1475,7 @@ mod tests {
         let updated2 =
             String::from_utf8(persist_artifact_launch_address(&updated, &second).unwrap())
                 .expect("persist second address");
-        let file2 = OrgFile::parse(&updated2, "artifact.org").unwrap();
+        let file2 = OrgFile::parse(&updated2, "node.org").unwrap();
         let parsed2 = parse_artifact_launch_address(file2.headings.first().unwrap())
             .expect("parsed second address");
         assert_eq!(parsed2, second);

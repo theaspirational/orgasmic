@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
-    dotorg_tasks_dir, goal_file_path, iter_task_file_paths, parse_tx_file, project_dispatch_dir,
-    projects, read_session_file, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
-    SessionEventKind, TaskHeading, TxEntry,
+    fold_dispatches, goal_file_path, parse_tx_file, project_dispatch_dir, projects, read_claims,
+    read_session_file, task_node_file_path, DispatchFold, Lifecycle, LifecycleStage, OrgFile,
+    ProjectFile, RuntimeIdentity, SessionEventKind, TaskHeading, TxEntry,
 };
 // orgasmic:task_ZKZBF.2 — the ONE key-shape rule (this used to be a verbatim
 // copy of core's; a copy drifting is how the drawer check and the ledger
@@ -1434,6 +1434,7 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
                 &client,
                 &project_id,
                 transition,
+                &open.tx_id,
                 &close_lifecycle_request_id(task, &open.tx_id),
             ))
             .with_context(|| format!("recover lifecycle transition for legacy close {task}"))?;
@@ -2429,12 +2430,11 @@ fn durable_report_path_for_finalize(
         .into_iter()
         .find(|entry| entry.id == project_id)
         .map(|entry| entry.path)?;
-    let started_tx = scan_dispatches(&project_root)
+    let record = scan_dispatches(&project_root)
         .ok()?
         .into_iter()
-        .find(|record| record.run_ids.iter().any(|id| id == run_id))
-        .map(|record| record.tx_id)?;
-    orgasmic_core::dispatch_record_report_rel(&started_tx).ok()
+        .find(|record| record.run_ids.iter().any(|id| id == run_id))?;
+    orgasmic_core::dispatch_record_report_rel(record.tasks.first()?, &record.tx_id).ok()
 }
 
 /// Make a manager-supplied `--property REPORT_PATH=` project-relative, or
@@ -2918,6 +2918,7 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
         Err(_) => Vec::new(),
     };
     let mut open = scan_open_dispatches(&project_root)?;
+    let claims = read_claims(&project_root).context("read task claims for dispatch-status")?;
     if let Some(task) = args.task.as_deref() {
         open.retain(|record| record.tasks.iter().any(|got| got == task));
     }
@@ -2930,8 +2931,23 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
         if args.partial_closed && partial_closed.is_none() {
             continue;
         }
+        let holders = record
+            .tasks
+            .iter()
+            .filter_map(|task| claims.get(task).map(|claim| claim.holder.clone()))
+            .collect::<BTreeSet<_>>();
+        let double_claims = record
+            .tasks
+            .iter()
+            .filter_map(|task| {
+                claims
+                    .get(task)
+                    .filter(|claim| claim.contenders.len() > 1)
+                    .map(|claim| format!("{task}:[{}]", claim.contenders.join(",")))
+            })
+            .collect::<Vec<_>>();
         println!(
-            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} {} {} {} {}{}",
+            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} {} {} {} {} CLAIM_HOLDER={} DOUBLE_CLAIM={}{}",
             record.tx_id,
             task_list_property(&record.tasks),
             record.kind,
@@ -2968,6 +2984,16 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 "[reported]"
             } else {
                 "[unreported]"
+            },
+            if holders.is_empty() {
+                "-".to_string()
+            } else {
+                holders.into_iter().collect::<Vec<_>>().join(",")
+            },
+            if double_claims.is_empty() {
+                "-".to_string()
+            } else {
+                double_claims.join(";")
             },
             partial_closed
                 .map(|annotation| format!(" {annotation}"))
@@ -3023,7 +3049,7 @@ fn classify_dispatch_wait_round(
     }
     if generations
         .iter()
-        .all(|generation| generation.status == "reported")
+        .all(|generation| matches!(generation.status.as_str(), "reported" | "closed"))
     {
         DispatchWaitRound::Reported
     } else {
@@ -7142,7 +7168,14 @@ fn remove_worktree_required_with_hook(
     // Failed-dispatch rollback passes `started_tx: None` and still deletes.
     let (report_path, report_error, error) = match started_tx {
         Some(started_tx) => {
-            match promote_and_persist_dispatch_record(&artifacts, project_root, started_tx, path) {
+            let task_id = task.split_whitespace().next().unwrap_or(task);
+            match promote_and_persist_dispatch_record(
+                &artifacts,
+                project_root,
+                task_id,
+                started_tx,
+                path,
+            ) {
                 Ok(outcome) => (outcome.report_path, outcome.error, None),
                 Err(err) => (
                     None,
@@ -7394,6 +7427,7 @@ fn cleanup_dispatch(
             open.worktree.as_deref(),
             last,
             stdout,
+            open.tasks.first().map(String::as_str).unwrap_or("task"),
             &open.tx_id,
         ) {
             Ok(outcome) => {
@@ -7459,6 +7493,7 @@ fn promote_dispatch_artifacts_in_place(
     worktree: Option<&Path>,
     last_path: &Path,
     stdout_path: &Path,
+    task_id: &str,
     started_tx: &str,
 ) -> Result<orgasmic_core::PromoteOutcome, String> {
     let _cleanup_lock =
@@ -7479,7 +7514,7 @@ fn promote_dispatch_artifacts_in_place(
             Some(stdout_path),
         )?,
     };
-    promote_and_persist_dispatch_record(&artifacts, project_root, started_tx, last_path)
+    promote_and_persist_dispatch_record(&artifacts, project_root, task_id, started_tx, last_path)
 }
 
 /// Promote validated artifacts, then put the promoted directory into git
@@ -7489,13 +7524,18 @@ fn promote_dispatch_artifacts_in_place(
 fn promote_and_persist_dispatch_record(
     artifacts: &orgasmic_core::DispatchAttemptArtifacts,
     project_root: &Path,
+    task_id: &str,
     started_tx: &str,
     label_path: &Path,
 ) -> Result<orgasmic_core::PromoteOutcome, String> {
-    let mut outcome =
-        orgasmic_core::promote_validated_dispatch_attempt(artifacts, project_root, started_tx)?;
+    let mut outcome = orgasmic_core::promote_validated_dispatch_attempt(
+        artifacts,
+        project_root,
+        task_id,
+        started_tx,
+    )?;
     if outcome.report_path.is_some() {
-        if let Err(err) = commit_promoted_dispatch_record(project_root, started_tx) {
+        if let Err(err) = commit_promoted_dispatch_record(project_root, task_id, started_tx) {
             let commit_err = format!(
                 "commit promoted dispatch record for {}: {err}",
                 label_path.display()
@@ -7509,7 +7549,7 @@ fn promote_and_persist_dispatch_record(
     Ok(outcome)
 }
 
-/// Put `.orgasmic/dispatch-records/<started_tx>/` into git history as a
+/// Put `.orgasmic/tasks/<ID>/dispatches/<started_tx>/` into git history as a
 /// dedicated, path-scoped commit.
 ///
 /// TASK-QGWK7.1 shipped this as `git add` alone. That met "in the index" but
@@ -7526,10 +7566,14 @@ fn promote_and_persist_dispatch_record(
 /// manager's own change still belongs to the manager; this commits only
 /// orgasmic's own bookkeeping, under a path no worker change can occupy.
 // orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
-fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
+fn commit_promoted_dispatch_record(
+    project_root: &Path,
+    task_id: &str,
+    started_tx: &str,
+) -> Result<(), String> {
     use std::ffi::OsStr;
 
-    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
+    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, task_id, started_tx)?;
     let git_dir = PathBuf::from(git_capture(
         project_root,
         ["rev-parse", "--absolute-git-dir"],
@@ -7697,8 +7741,8 @@ fn sequencer_operation_in_progress(git_dir: &Path) -> Option<&'static str> {
 /// convention, and the print below names the ref it landed on.
 // orgasmic:TASK-QGWK7.1.1.1,TASK-QGWK7.1.1.1.1
 fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchRecord) {
-    // Reachability is load-bearing on `close_tx_ran_cleanup` (see its
-    // definition) setting `cleanup_already_run` for `ok`/`worktree_missing`
+    // Reachability is load-bearing on the core dispatch fold setting
+    // `cleanup_already_run` for `ok`/`worktree_missing`
     // ONLY: that is what stops a staggered multi-task close stamping
     // `cleanup_already_run` over the `partial` this repair keys on.
     let Some(status) = closed_dispatch_cleanup_status(project_root, &closed.tx_id) else {
@@ -7707,7 +7751,11 @@ fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchR
     if !cleanup_status_reports_failure(&status) {
         return;
     }
-    let Ok(dest_dir) = orgasmic_core::dispatch_record_dir(project_root, &closed.tx_id) else {
+    let Some(task_id) = closed.tasks.first() else {
+        return;
+    };
+    let Ok(dest_dir) = orgasmic_core::dispatch_record_dir(project_root, task_id, &closed.tx_id)
+    else {
         return;
     };
     if !dest_dir.is_dir() {
@@ -7727,7 +7775,7 @@ fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchR
             return;
         }
     };
-    match commit_promoted_dispatch_record(project_root, &closed.tx_id) {
+    match commit_promoted_dispatch_record(project_root, task_id, &closed.tx_id) {
         // orgasmic:TASK-QGWK7.1.1.1.1 — B-3: `Ok(())` is not proof that
         // anything was committed. If `promote last.txt` fails AFTER
         // `create_dir_all` succeeds (`paths.rs`), `dest_dir` exists but is
@@ -8059,15 +8107,56 @@ pub(crate) fn resolve_project(project: Option<String>) -> Result<String> {
 }
 
 pub(crate) fn find_project_root() -> Result<PathBuf> {
-    let mut dir = std::env::current_dir().context("cwd")?;
+    let home = Home::from_env().context("resolve orgasmic home")?;
+    find_project_root_optional_from(&home, &std::env::current_dir().context("cwd")?)?
+        .ok_or_else(|| anyhow::anyhow!("could not resolve a registered orgasmic project from cwd"))
+}
+
+pub(crate) fn find_project_root_optional_from(home: &Home, cwd: &Path) -> Result<Option<PathBuf>> {
+    let mut dir = cwd.to_path_buf();
     loop {
         if dir.join(".orgasmic/project.org").is_file() {
-            return Ok(dir);
+            return Ok(Some(dir));
         }
         if !dir.pop() {
-            bail!("could not find .orgasmic/project.org in cwd or ancestors");
+            break;
         }
     }
+
+    let Some(common_dir) = git_common_dir(cwd) else {
+        return Ok(None);
+    };
+    let matches = projects::read_board(home)?
+        .into_iter()
+        .filter(|entry| git_common_dir(&entry.path).as_ref() == Some(&common_dir))
+        .map(|entry| entry.path)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [root] => Ok(Some(root.clone())),
+        _ => bail!(
+            "multiple registered projects share git common dir {}",
+            common_dir.display()
+        ),
+    }
+}
+
+fn git_common_dir(path: &Path) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--git-common-dir"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    std::fs::canonicalize(if value.is_absolute() {
+        value
+    } else {
+        path.join(value)
+    })
+    .ok()
 }
 
 /// Project root for verbs that read or write `.orgasmic/` state as FILES —
@@ -8246,33 +8335,27 @@ fn validate_task_dispatchable(
 }
 
 fn read_task_lifecycle(project_root: &Path, task_id: &str) -> Result<TaskLifecycleInfo> {
-    for path in iter_task_file_paths(project_root) {
-        if !path.exists() {
-            continue;
-        }
-        let source =
-            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        let file = OrgFile::parse(source.clone(), path.to_string_lossy())?;
-        for heading in &file.headings {
-            if heading.property("ID") != Some(task_id) {
-                continue;
-            }
-            let fix_subtask = heading
-                .property("FIX_SUBTASK")
-                .map(trueish_property_value)
-                .unwrap_or(false);
-            let task = TaskHeading::from_heading(&file, heading, path.to_string_lossy().as_ref())?;
-            return Ok(TaskLifecycleInfo {
-                id: task.id.to_string(),
-                stage: task.lifecycle_stage,
-                fix_subtask,
-            });
-        }
+    let path = task_node_file_path(project_root, task_id);
+    let source = std::fs::read_to_string(&path)
+        .with_context(|| format!("task {task_id} not found at {}", path.display()))?;
+    let file = OrgFile::parse(source, path.to_string_lossy())?;
+    let heading = file
+        .headings
+        .first()
+        .context("task node.org has no heading")?;
+    if heading.property("ID") != Some(task_id) {
+        bail!("{} does not contain task {task_id}", path.display());
     }
-    bail!(
-        "task {task_id} not found in any task file under {}",
-        dotorg_tasks_dir(project_root).display()
-    );
+    let fix_subtask = heading
+        .property("FIX_SUBTASK")
+        .map(trueish_property_value)
+        .unwrap_or(false);
+    let task = TaskHeading::from_heading(&file, heading, path.to_string_lossy().as_ref())?;
+    Ok(TaskLifecycleInfo {
+        id: task.id.to_string(),
+        stage: task.lifecycle_stage,
+        fix_subtask,
+    })
 }
 
 fn trueish_property_value(value: &str) -> bool {
@@ -8325,10 +8408,8 @@ fn dispatch_lifecycle_transitions(
 /// close tx itself (`LIFECYCLE_FROM`/`LIFECYCLE_TO`) before the transition is
 /// attempted.
 ///
-/// orgasmic:task_EP3H1 — close now commits the terminal tx, rewrite, and
-/// `task.state_transitioned` under one writer lock. The tx still carries its
-/// own intent so [`reconcile_torn_closes`] can repair ledgers produced before
-/// that atomic path, as well as surviving client-side response loss.
+/// The tx keeps this intent for the derived transition view and so the
+/// legacy-only [`reconcile_torn_closes`] can repair pre-atomic closes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CloseTransition {
     task: String,
@@ -8585,6 +8666,7 @@ async fn post_task_state(
     client: &DaemonClient,
     project_id: &str,
     transition: &CloseTransition,
+    closed_tx: &str,
     request_id: &str,
 ) -> Result<TaskStateOutcome> {
     client
@@ -8595,19 +8677,22 @@ async fn post_task_state(
             ),
             &serde_json::json!({
                 "state": transition.to.as_str(),
+                "repair_closed_tx": closed_tx,
                 "request_id": request_id,
             }),
         )
         .await
 }
 
-/// Finish any `dispatch-close` whose lifecycle leg never landed.
+/// Finish a legacy `dispatch-close` whose lifecycle leg never landed.
 ///
 /// orgasmic:task_EP3H1 — a close appends its tx and then transitions the task
 /// in a second daemon request. Under load the second one times out
 /// client-side (measured at load average ~190 on 2026-07-29) and the operator
 /// is left with a closed dispatch and a task stranded at its pre-close stage.
-/// The close tx records the transition it intended, so the repair is decidable
+/// New closes append that tx and rewrite node.org in one `transaction_multi`,
+/// so only pre-AP971 closes can reach this repair. The close tx records the
+/// transition it intended, so the repair is decidable
 /// from the ledger alone: a close is torn when it is the last lifecycle event
 /// for its task AND the task is still sitting at the recorded `LIFECYCLE_FROM`.
 /// Any later `task.state_transitioned` — including one an operator made on
@@ -8633,6 +8718,7 @@ fn reconcile_torn_closes(
             client,
             project_id,
             &transition,
+            &started_tx,
             &close_lifecycle_request_id(&transition.task, &started_tx),
         ));
         match outcome {
@@ -9498,46 +9584,60 @@ fn overlapping_tasks(open_tasks: &[String], requested_tasks: &[String]) -> Vec<S
 /// ones; `dispatch-close` also needs the closed ones so a re-run is a no-op
 /// instead of "no open dispatch" (TASK-6AYEJ).
 fn scan_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
-    let mut open = Vec::<DispatchRecord>::new();
-    for entry in read_tx_entries(project_root)? {
-        match entry.ty.as_str() {
-            "manager.dispatch_started" => {
-                if let Some(mut record) = dispatch_record_from_entry(&entry) {
-                    // Tx records store project-relative paths (no user-specific
-                    // prefixes in committed files); resolve them back against
-                    // the project root for local use (ps matching, cleanup).
-                    for path in [&mut record.worktree, &mut record.brief_path] {
-                        if let Some(p) = path.as_mut() {
-                            if p.is_relative() {
-                                *p = project_root.join(&p);
-                            }
-                        }
-                    }
-                    open.push(record);
+    Ok(fold_dispatches(&read_tx_entries(project_root)?)
+        .into_iter()
+        .map(|dispatch| {
+            let mut record = dispatch_record_from_fold(dispatch);
+            // Tx records store project-relative paths (no user-specific
+            // prefixes in committed files); resolve them back against the
+            // project root for local use (ps matching, cleanup).
+            for path in [&mut record.worktree, &mut record.brief_path] {
+                if let Some(path) = path.as_mut().filter(|path| path.is_relative()) {
+                    *path = project_root.join(&path);
                 }
             }
-            "run.created" => {
-                attach_run_created_to_dispatch(&mut open, &entry);
-            }
-            // A worker's own finalize (TASK-6AYEJ): the worker is done, the
-            // dispatch is not. Record it so `dispatch-status` can tell
-            // "awaiting the manager's close" apart from "the worker died",
-            // but leave the dispatch open for `dispatch-close`.
-            "implementer.reported" | "reviewer.reported" | "architector.reported" => {
-                mark_matching_dispatch_reported(&mut open, &entry)
-            }
-            // Historical note: until TASK-6AYEJ these same `*.done` types were
-            // ALSO emitted by `dispatch finalize`, so ~10 dispatches on this
-            // repo are closed by a worker-authored tx. They stay closed — the
-            // terminal set is unchanged, so no backfill or migration is needed.
-            "implementer.done"
-            | "reviewer.done"
-            | "architector.done"
-            | "manager.dispatch_aborted" => close_matching_dispatch(&mut open, &entry),
-            _ => {}
-        }
+            record
+        })
+        .collect())
+}
+
+fn dispatch_record_from_fold(dispatch: DispatchFold) -> DispatchRecord {
+    let started = &dispatch.started;
+    let run = dispatch.run.as_ref();
+    let run_extra = |key| run.and_then(|entry| extra(entry, key));
+    DispatchRecord {
+        tx_id: started.tx_id.clone(),
+        tasks: started
+            .task
+            .as_deref()
+            .map(split_task_list)
+            .unwrap_or_default(),
+        kind: extra(started, "KIND").unwrap_or_default().to_string(),
+        worktree: extra(started, "WORKTREE").map(PathBuf::from),
+        branch: extra(started, "BRANCH").map(str::to_string),
+        model: extra_compat(started, "MODEL", "CODEX_MODEL").map(str::to_string),
+        effort: extra_compat(started, "EFFORT", "CODEX_EFFORT").map(str::to_string),
+        brief_path: extra_compat(started, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
+        last_path: run_extra("LAST_PATH").map(PathBuf::from),
+        stdout_path: run_extra("STDOUT_PATH").map(PathBuf::from),
+        dispatch_attempt_token: run_extra("DISPATCH_ATTEMPT").map(str::to_string),
+        run_id: dispatch.addressed_run_id,
+        run_ids: dispatch.run_ids,
+        worker_id: run_extra("WORKER").map(str::to_string),
+        driver: run_extra("DRIVER").map(str::to_string),
+        harness: run_extra("HARNESS").map(str::to_string),
+        pid: run_extra("PID").and_then(|pid| pid.parse().ok()),
+        started_at: extra(started, "STARTED_AT")
+            .map(str::to_string)
+            .or_else(|| Some(started.time.clone())),
+        worker_pid: extra_compat(started, "WORKER_PID", "CODEX_PID")
+            .and_then(|pid| pid.parse().ok()),
+        goal_id: extra(started, "GOAL_ID").map(str::to_string),
+        closed_tasks: dispatch.closed_tasks,
+        cleanup_already_run: dispatch.cleanup_already_run,
+        reported: dispatch.reported,
+        closed: dispatch.closed,
     }
-    Ok(open)
 }
 
 fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
@@ -9548,19 +9648,42 @@ fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
 }
 
 fn read_tx_entries(project_root: &Path) -> Result<Vec<TxEntry>> {
-    let tx_dir = project_root.join(".orgasmic/tx");
-    if !tx_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut paths = Vec::new();
-    for entry in std::fs::read_dir(&tx_dir).with_context(|| format!("read {}", tx_dir.display()))? {
-        let entry = entry.with_context(|| format!("read entry in {}", tx_dir.display()))?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("org") {
-            paths.push(path);
+    // Project tx lives in the legacy `.orgasmic/tx/` and, since TASK-MSYN4, in
+    // per-machine `.orgasmic/machines/<machine-id>/tx/`. This fold backs
+    // dispatch-status/wait/close, so reading only the legacy directory makes
+    // every dispatch invisible on a machine writing the new layout.
+    let dotorg = project_root.join(".orgasmic");
+    let mut tx_dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        for machine in machines.flatten() {
+            tx_dirs.push(machine.path().join("tx"));
         }
     }
-    paths.sort();
+    let mut paths = Vec::new();
+    for tx_dir in tx_dirs {
+        if !tx_dir.is_dir() {
+            continue;
+        }
+        for entry in
+            std::fs::read_dir(&tx_dir).with_context(|| format!("read {}", tx_dir.display()))?
+        {
+            let entry = entry.with_context(|| format!("read entry in {}", tx_dir.display()))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("org") {
+                paths.push(path);
+            }
+        }
+    }
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Sort by file name, not full path: the month file is the ordering key, and
+    // the same month from two machines must interleave by name, not by root.
+    paths.sort_by(|a, b| {
+        a.file_name()
+            .cmp(&b.file_name())
+            .then_with(|| a.as_path().cmp(b.as_path()))
+    });
     let mut entries = Vec::new();
     for path in paths {
         let source =
@@ -9570,215 +9693,6 @@ fn read_tx_entries(project_root: &Path) -> Result<Vec<TxEntry>> {
         entries.append(&mut parsed);
     }
     Ok(entries)
-}
-
-fn dispatch_record_from_entry(entry: &TxEntry) -> Option<DispatchRecord> {
-    let task = entry.task.clone()?;
-    let tasks = split_task_list(&task);
-    if tasks.is_empty() {
-        return None;
-    }
-    let kind = extra(entry, "KIND")?.to_string();
-    Some(DispatchRecord {
-        tx_id: entry.tx_id.clone(),
-        tasks,
-        kind,
-        worktree: extra(entry, "WORKTREE").map(PathBuf::from),
-        branch: extra(entry, "BRANCH").map(str::to_string),
-        // Read the harness-neutral keys first, falling back to the legacy
-        // `CODEX_*` spellings so historical tx records still parse.
-        model: extra_compat(entry, "MODEL", "CODEX_MODEL").map(str::to_string),
-        effort: extra_compat(entry, "EFFORT", "CODEX_EFFORT").map(str::to_string),
-        brief_path: extra_compat(entry, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
-        last_path: None,
-        stdout_path: None,
-        dispatch_attempt_token: None,
-        run_id: None,
-        run_ids: BTreeSet::new(),
-        worker_id: None,
-        driver: None,
-        harness: None,
-        pid: None,
-        started_at: extra(entry, "STARTED_AT")
-            .map(str::to_string)
-            .or_else(|| Some(entry.time.clone())),
-        worker_pid: extra_compat(entry, "WORKER_PID", "CODEX_PID")
-            .and_then(|pid| pid.parse::<u32>().ok()),
-        goal_id: extra(entry, "GOAL_ID").map(str::to_string),
-        closed_tasks: BTreeSet::new(),
-        cleanup_already_run: false,
-        reported: false,
-        closed: false,
-    })
-}
-
-/// A fresh recovery/resume acquires a REPLACEMENT run for the same dispatch
-/// generation (TASK-6AYEJ.2). The daemon records the origin→replacement link as
-/// `run.created ORIGIN=recovery`; carry it onto the generation so a finalize
-/// from the replacement still resolves to this dispatch. Both ids stay valid —
-/// they are the same generation, so a report from either is honestly this
-/// dispatch's report.
-fn attach_recovery_run_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) {
-    let (Some(origin_run_id), Some(run_id)) =
-        (extra(entry, "ORIGIN_RUN_ID"), extra(entry, "RUN_ID"))
-    else {
-        return;
-    };
-    for record in open.iter_mut().rev() {
-        if !record.closed && record.run_ids.iter().any(|got| got == origin_run_id) {
-            record.run_ids.insert(run_id.to_string());
-            record.run_id = Some(run_id.to_string());
-            return;
-        }
-    }
-}
-
-fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) {
-    if extra(entry, "ORIGIN") == Some("recovery") {
-        attach_recovery_run_to_dispatch(open, entry);
-        return;
-    }
-    if extra(entry, "ORIGIN") != Some("cli_dispatch") {
-        return;
-    }
-    let dispatch_tx = extra(entry, "DISPATCH_TX");
-    let run_id = extra(entry, "RUN_ID").map(str::to_string);
-    let worker_id = extra(entry, "WORKER").map(str::to_string);
-    let driver = extra(entry, "DRIVER").map(str::to_string);
-    let harness = extra(entry, "HARNESS").map(str::to_string);
-    let pid = extra(entry, "PID").and_then(|pid| pid.parse::<u32>().ok());
-    let last_path = extra(entry, "LAST_PATH").map(PathBuf::from);
-    let stdout_path = extra(entry, "STDOUT_PATH").map(PathBuf::from);
-    let dispatch_attempt_token = extra(entry, "DISPATCH_ATTEMPT").map(str::to_string);
-    let kind = extra(entry, "KIND");
-    let tasks = entry
-        .task
-        .as_deref()
-        .map(split_task_list)
-        .unwrap_or_default();
-    for record in open.iter_mut().rev() {
-        let tx_matches = dispatch_tx.map(|tx| tx == record.tx_id).unwrap_or(false);
-        let task_matches = !tasks.is_empty()
-            && tasks
-                .iter()
-                .any(|task| record.tasks.iter().any(|got| got == task));
-        let kind_matches = kind.map(|got| got == record.kind).unwrap_or(true);
-        if tx_matches || (task_matches && kind_matches && record.run_id.is_none()) {
-            if let Some(run_id) = run_id.as_deref() {
-                record.run_ids.insert(run_id.to_string());
-            }
-            record.run_id = run_id;
-            record.worker_id = worker_id;
-            record.driver = driver;
-            record.harness = harness;
-            record.pid = pid;
-            if last_path.is_some() {
-                record.last_path = last_path;
-            }
-            if stdout_path.is_some() {
-                record.stdout_path = stdout_path;
-            }
-            if dispatch_attempt_token.is_some() {
-                record.dispatch_attempt_token = dispatch_attempt_token;
-            }
-            return;
-        }
-    }
-}
-
-/// Attach a worker's `*.reported` finalize tx to its still-open dispatch
-/// (TASK-6AYEJ). Matches on the run id when the report carries one — against
-/// every run id the generation has owned, so a finalize from a recovery
-/// replacement still lands (TASK-6AYEJ.2) — and falls back to the
-/// newest-unclosed-overlapping-task rule [`close_matching_dispatch`] uses ONLY
-/// for a report that genuinely lacks a RUN_ID.
-///
-/// A present-but-unmatched RUN_ID fails closed (TASK-6AYEJ.1): a late report
-/// for run A, dispatched and then aborted before run B took the same task,
-/// cannot match A (A is closed, and closed records are excluded), and falling
-/// through to task overlap would flag B — telling the manager the wrong worker
-/// finished. Unattached is the honest answer.
-fn mark_matching_dispatch_reported(open: &mut [DispatchRecord], reported: &TxEntry) {
-    if let Some(run_id) = extra(reported, "RUN_ID") {
-        for record in open.iter_mut().rev() {
-            if !record.closed && record.run_ids.iter().any(|got| got == run_id) {
-                record.reported = true;
-                return;
-            }
-        }
-        return;
-    }
-    let reported_tasks = reported
-        .task
-        .as_deref()
-        .map(split_task_list)
-        .unwrap_or_default();
-    for record in open.iter_mut().rev() {
-        if !record.closed
-            && reported_tasks
-                .iter()
-                .any(|task| record.tasks.iter().any(|got| got == task))
-        {
-            record.reported = true;
-            return;
-        }
-    }
-}
-
-fn close_matching_dispatch(open: &mut [DispatchRecord], close: &TxEntry) {
-    let close_tasks = close
-        .task
-        .as_deref()
-        .map(split_task_list)
-        .unwrap_or_default();
-    if let Some(closed_tx) = extra(close, "CLOSED_TX") {
-        for record in open.iter_mut().rev() {
-            if record.tx_id == closed_tx {
-                if close_tx_ran_cleanup(close) {
-                    record.cleanup_already_run = true;
-                }
-                mark_dispatch_closed(record, &close_tasks);
-                return;
-            }
-        }
-    }
-    for record in open.iter_mut().rev() {
-        if !record.closed
-            && close_tasks
-                .iter()
-                .any(|task| record.tasks.iter().any(|got| got == task))
-        {
-            if close_tx_ran_cleanup(close) {
-                record.cleanup_already_run = true;
-            }
-            mark_dispatch_closed(record, &close_tasks);
-            return;
-        }
-    }
-}
-
-fn close_tx_ran_cleanup(close: &TxEntry) -> bool {
-    matches!(
-        extra(close, "CLEANUP_STATUS"),
-        Some(status)
-            if status == CleanupStatus::Ok.as_str()
-                || status == CleanupStatus::WorktreeMissing.as_str()
-    )
-}
-
-fn mark_dispatch_closed(record: &mut DispatchRecord, close_tasks: &[String]) {
-    if close_tasks.is_empty() {
-        for task in &record.tasks {
-            record.closed_tasks.insert(task.clone());
-        }
-    } else {
-        for task in close_tasks {
-            if record.tasks.iter().any(|got| got == task) {
-                record.closed_tasks.insert(task.clone());
-            }
-        }
-    }
-    record.closed = record.closed_tasks.len() >= record.tasks.len();
 }
 
 fn partial_closed_annotation(record: &DispatchRecord) -> Option<String> {
@@ -10864,11 +10778,11 @@ mod tests {
     #[test]
     fn closes_architector_lifecycle_to_done() {
         let tmp = tempfile::tempdir().unwrap();
-        let in_progress = tmp.path().join(".orgasmic/tasks/in_progress.org");
+        let in_progress = tmp.path().join(".orgasmic/tasks/TASK-086/node.org");
         std::fs::create_dir_all(in_progress.parent().unwrap()).unwrap();
         std::fs::write(
             &in_progress,
-            "#+title: in progress\n#+orgasmic_version: 1\n\n* IN_PROGRESS TASK-086 Architecture run\n:PROPERTIES:\n:ID:               TASK-086\n:END:\n",
+            "#+title: orgasmic task TASK-086\n#+orgasmic_version: 2\n\n* IN_PROGRESS TASK-086 Architecture run\n:PROPERTIES:\n:ID:               TASK-086\n:END:\n",
         )
         .unwrap();
         let open = architector_record();
@@ -11881,7 +11795,7 @@ mod tests {
             .expect("close must name a promoted REPORT_PATH");
         assert_eq!(
             report_path,
-            ".orgasmic/dispatch-records/tx-start-task-clean/last.txt"
+            ".orgasmic/tasks/TASK-CLEAN/dispatches/tx-start-task-clean/report.md"
         );
         assert!(
             fixture.root.join(report_path).exists(),
@@ -11971,7 +11885,7 @@ mod tests {
         assert!(output.status.success());
         let listed = String::from_utf8_lossy(&output.stdout);
         assert!(
-            listed.contains("last.txt"),
+            listed.contains("report.md"),
             "promoted record must be in the git index after close so durability does not depend on which git add form a manager uses; git ls-files --stage:\n{listed}"
         );
     }
@@ -12089,7 +12003,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-lockout/last.txt")
+                .join(".orgasmic/tasks/TASK-LOCKOUT/dispatches/tx-start-task-lockout/report.md")
                 .exists(),
             "the report itself is never the casualty of a failed persist"
         );
@@ -12111,7 +12025,8 @@ mod tests {
     }
 
     fn staged_record_paths(root: &Path, started_tx: &str) -> String {
-        let dest_dir = root.join(".orgasmic/dispatch-records").join(started_tx);
+        let dest_dir = root.join(".orgasmic/tasks");
+        let _ = started_tx;
         String::from_utf8_lossy(
             &Command::new("git")
                 .args(["ls-files", "--stage", "--"])
@@ -12166,7 +12081,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-seq/last.txt")
+                .join(".orgasmic/tasks/TASK-SEQ/dispatches/tx-start-task-seq/report.md")
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12246,7 +12161,7 @@ mod tests {
         );
         let promoted = fixture
             .root
-            .join(".orgasmic/dispatch-records/tx-start-task-revert/last.txt");
+            .join(".orgasmic/tasks/TASK-REVERT/dispatches/tx-start-task-revert/report.md");
         assert!(
             promoted.exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
@@ -12323,7 +12238,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-revert-n/last.txt")
+                .join(".orgasmic/tasks/TASK-REVERT-N/dispatches/tx-start-task-revert-n/report.md")
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12520,7 +12435,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-abandoned/last.txt")
+                .join(".orgasmic/tasks/TASK-ABANDONED/dispatches/tx-start-task-abandoned/report.md")
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12535,13 +12450,13 @@ mod tests {
         // Straight through the guarded function, since the promoted files are
         // already on disk and that is all it needs.
         git_ok(&fixture.root, &["revert", "--quit"]);
-        commit_promoted_dispatch_record(&fixture.root, "tx-start-task-abandoned")
+        commit_promoted_dispatch_record(&fixture.root, "TASK-ABANDONED", "tx-start-task-abandoned")
             .expect("`git revert --quit` must leave the record persistable");
         let in_history = Command::new("git")
             .args([
                 "cat-file",
                 "-e",
-                "HEAD:.orgasmic/dispatch-records/tx-start-task-abandoned/last.txt",
+                "HEAD:.orgasmic/tasks/TASK-ABANDONED/dispatches/tx-start-task-abandoned/report.md",
             ])
             .current_dir(&fixture.root)
             .output()
@@ -12614,7 +12529,9 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-handcommit/last.txt")
+                .join(
+                    ".orgasmic/tasks/TASK-HANDCOMMIT/dispatches/tx-start-task-handcommit/report.md"
+                )
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12655,7 +12572,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-detached/last.txt")
+                .join(".orgasmic/tasks/TASK-DETACHED/dispatches/tx-start-task-detached/report.md")
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12697,7 +12614,7 @@ mod tests {
             .args([
                 "cat-file",
                 "-e",
-                "HEAD:.orgasmic/dispatch-records/tx-start-task-ignored/last.txt",
+                "HEAD:.orgasmic/tasks/TASK-IGNORED/dispatches/tx-start-task-ignored/report.md",
             ])
             .current_dir(&fixture.root)
             .output()
@@ -12717,13 +12634,13 @@ mod tests {
         let mut inside = vec![(
             "REPORT_PATH".to_string(),
             project_root
-                .join(".orgasmic/dispatch-records/tx-1/last.txt")
+                .join(".orgasmic/tasks/TASK-X/dispatches/tx-1/report.md")
                 .display()
                 .to_string(),
         )];
         normalize_report_path_property(&project_root, &mut inside).unwrap();
         assert_eq!(
-            inside[0].1, ".orgasmic/dispatch-records/tx-1/last.txt",
+            inside[0].1, ".orgasmic/tasks/TASK-X/dispatches/tx-1/report.md",
             "an absolute path under the project must be relativized, not committed as-is"
         );
 
@@ -12792,6 +12709,7 @@ mod tests {
                 worktree.as_deref(),
                 &last,
                 &stdout,
+                "TASK-LOCK",
                 &tx_id,
             );
             done_tx.send(result).unwrap();
@@ -13524,6 +13442,10 @@ mod tests {
         };
         assert!(matches!(
             classify_dispatch_wait_round(&[generation("reported")]),
+            DispatchWaitRound::Reported
+        ));
+        assert!(matches!(
+            classify_dispatch_wait_round(&[generation("closed")]),
             DispatchWaitRound::Reported
         ));
         assert!(matches!(

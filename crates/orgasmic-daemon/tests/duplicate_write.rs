@@ -60,10 +60,7 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
             "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:END:\n"
         ),
     );
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n",
-    );
+    std::fs::create_dir_all(project_root.join(".orgasmic/tasks")).unwrap();
     write(
         &home.board(),
         format!(
@@ -71,18 +68,34 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
             project_root.display()
         ),
     );
-    write(
-        &project_root.join(".orgasmic/glossary.org"),
-        "#+title: glossary\n#+orgasmic_version: 1\n\n",
-    );
-    write(
-        &project_root.join(".orgasmic/decisions.org"),
-        "#+title: decisions\n#+orgasmic_version: 1\n\n",
-    );
+    std::fs::create_dir_all(project_root.join(".orgasmic/glossary")).unwrap();
+    std::fs::create_dir_all(project_root.join(".orgasmic/decisions")).unwrap();
+}
+
+/// Concatenated `node.org` bodies of one collection. The node-dir layout
+/// (dec_E01MC) retired the aggregate `glossary.org` / `decisions.org` /
+/// `tasks/backlog.org` files these assertions used to read.
+fn read_collection(project_root: &Path, collection: &str) -> String {
+    let dir = project_root.join(".orgasmic").join(collection);
+    let mut nodes: Vec<std::path::PathBuf> = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|entry| entry.path().join("node.org"))
+            .filter(|node| node.is_file())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    nodes.sort();
+    let mut raw = String::new();
+    for node in nodes {
+        raw.push_str(&std::fs::read_to_string(&node).unwrap_or_default());
+        raw.push('\n');
+    }
+    raw
 }
 
 fn count_glossary_headings(project_root: &Path) -> usize {
-    let raw = std::fs::read_to_string(project_root.join(".orgasmic/glossary.org")).unwrap();
+    let raw = read_collection(project_root, "glossary");
     raw.lines()
         .filter(|line| line.starts_with("* term_") || line.starts_with("* term:"))
         .count()
@@ -90,11 +103,19 @@ fn count_glossary_headings(project_root: &Path) -> usize {
 
 fn read_project_tx(project_root: &Path) -> String {
     let mut raw = String::new();
-    let tx_dir = project_root.join(".orgasmic/tx");
-    if let Ok(entries) = std::fs::read_dir(&tx_dir) {
-        for entry in entries.flatten() {
-            if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
-                raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+    // Legacy `.orgasmic/tx/` plus per-machine `.orgasmic/machines/<id>/tx/`
+    // (TASK-MSYN4); mirrors production's `project_tx_dirs`.
+    let dotorg = project_root.join(".orgasmic");
+    let mut tx_dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        tx_dirs.extend(machines.flatten().map(|machine| machine.path().join("tx")));
+    }
+    for tx_dir in tx_dirs {
+        if let Ok(entries) = std::fs::read_dir(&tx_dir) {
+            for entry in entries.flatten() {
+                if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
+                    raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                }
             }
         }
     }
@@ -102,8 +123,7 @@ fn read_project_tx(project_root: &Path) -> String {
 }
 
 fn count_task_id(project_root: &Path, id: &str) -> usize {
-    std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org"))
-        .unwrap_or_default()
+    read_collection(project_root, "tasks")
         .lines()
         .filter(|line| line.starts_with("* BACKLOG ") && line.contains(id))
         .count()
@@ -116,18 +136,9 @@ fn append_project(home: &Home, project_root: &Path, project_id: &str) {
             "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:END:\n"
         ),
     );
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n",
-    );
-    write(
-        &project_root.join(".orgasmic/glossary.org"),
-        "#+title: glossary\n#+orgasmic_version: 1\n\n",
-    );
-    write(
-        &project_root.join(".orgasmic/decisions.org"),
-        "#+title: decisions\n#+orgasmic_version: 1\n\n",
-    );
+    std::fs::create_dir_all(project_root.join(".orgasmic/tasks")).unwrap();
+    std::fs::create_dir_all(project_root.join(".orgasmic/glossary")).unwrap();
+    std::fs::create_dir_all(project_root.join(".orgasmic/decisions")).unwrap();
     let mut board = std::fs::read_to_string(home.board()).unwrap();
     board.push_str(&format!(
         "\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
@@ -242,7 +253,7 @@ async fn concurrent_graph_retry_returns_one_cached_identity() {
     let right: serde_json::Value = right.unwrap().json().await.unwrap();
     assert_eq!(left["id"], right["id"]);
     assert_eq!(left["tx_id"], right["tx_id"]);
-    let decisions = std::fs::read_to_string(project_root.join(".orgasmic/decisions.org")).unwrap();
+    let decisions = read_collection(&project_root, "decisions");
     assert_eq!(decisions.matches("Concurrent retry").count(), 1);
 
     let _ = running.shutdown.send(());
@@ -257,8 +268,12 @@ async fn node_delete_rejects_inbound_references_and_tasks() {
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
     write(
-        &project_root.join(".orgasmic/glossary.org"),
-        "#+title: glossary\n#+orgasmic_version: 1\n\n* term_DEK01 Target\n:PROPERTIES:\n:ID: term_DEK01\n:END:\n\n* term_REF02 User\n:PROPERTIES:\n:ID: term_REF02\n:RELATES_TO: term_DEK01\n:END:\n",
+        &project_root.join(".orgasmic/glossary/term_DEK01/node.org"),
+        "#+title: orgasmic glossary term_DEK01\n#+orgasmic_version: 2\n\n* term_DEK01 Target\n:PROPERTIES:\n:ID: term_DEK01\n:END:\n",
+    );
+    write(
+        &project_root.join(".orgasmic/glossary/term_REF02/node.org"),
+        "#+title: orgasmic glossary term_REF02\n#+orgasmic_version: 2\n\n* term_REF02 User\n:PROPERTIES:\n:ID: term_REF02\n:RELATES_TO: term_DEK01\n:END:\n",
     );
     let running = boot(home.clone()).await;
     let token = read_token(&home);
@@ -291,11 +306,7 @@ async fn node_delete_rejects_inbound_references_and_tasks() {
         .await
         .unwrap();
     assert_eq!(rejected.status(), reqwest::StatusCode::BAD_REQUEST);
-    assert!(
-        std::fs::read_to_string(project_root.join(".orgasmic/glossary.org"))
-            .unwrap()
-            .contains("term_DEK01")
-    );
+    assert!(read_collection(&project_root, "glossary").contains("term_DEK01"));
 
     let task: serde_json::Value = client
         .post(format!("{base}/api/projects/orgasmic/tasks"))
@@ -444,8 +455,8 @@ async fn org_node_delete_requires_occ_records_tx_and_survives_reindex() {
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
     write(
-        &project_root.join(".orgasmic/glossary.org"),
-        "#+title: glossary\n#+orgasmic_version: 1\n\n* term_DEK01 Delete Me\n:PROPERTIES:\n:ID: term_DEK01\n:CANONICAL: delete me\n:DEFINITION: doomed\n:END:\n",
+        &project_root.join(".orgasmic/glossary/term_DEK01/node.org"),
+        "#+title: orgasmic glossary term_DEK01\n#+orgasmic_version: 2\n\n* term_DEK01 Delete Me\n:PROPERTIES:\n:ID: term_DEK01\n:CANONICAL: delete me\n:DEFINITION: doomed\n:END:\n",
     );
 
     let running = boot(home.clone()).await;
@@ -504,7 +515,7 @@ async fn org_node_delete_requires_occ_records_tx_and_survives_reindex() {
     assert_eq!(deleted_body["id"], "term_DEK01");
     assert!(!deleted_body["tx_id"].as_str().unwrap().is_empty());
 
-    let glossary = std::fs::read_to_string(project_root.join(".orgasmic/glossary.org")).unwrap();
+    let glossary = read_collection(&project_root, "glossary");
     assert!(!glossary.contains("term_DEK01"));
     let tx = read_project_tx(&project_root);
     assert!(

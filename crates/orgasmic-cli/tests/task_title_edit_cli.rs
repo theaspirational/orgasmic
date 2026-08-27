@@ -160,11 +160,13 @@ fn wait_for_project_loaded(
 
 /// The one heading line carrying `task_id`, read straight off disk. The
 /// assertions below are about the *line*, not the daemon's view of it.
-fn heading_line(project_root: &Path, stage_file: &str, task_id: &str) -> String {
+fn heading_line(project_root: &Path, task_id: &str) -> String {
+    // Node-dir layout (dec_E01MC): one node file per task, whatever its state.
     let path = project_root
         .join(".orgasmic")
         .join("tasks")
-        .join(stage_file);
+        .join(task_id)
+        .join("node.org");
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     text.lines()
@@ -177,11 +179,12 @@ fn heading_line(project_root: &Path, stage_file: &str, task_id: &str) -> String 
 /// Printed either side of the edit under `--nocapture`, so the round-trip
 /// evidence a reviewer wants is the artifact itself rather than a summary of
 /// assertions that passed.
-fn heading_subtree(project_root: &Path, stage_file: &str, task_id: &str) -> String {
+fn heading_subtree(project_root: &Path, task_id: &str) -> String {
     let path = project_root
         .join(".orgasmic")
         .join("tasks")
-        .join(stage_file);
+        .join(task_id)
+        .join("node.org");
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let mut out = String::new();
@@ -286,14 +289,14 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
     );
     assert_eq!(before["title"].as_str().unwrap(), RETRACTED_TITLE);
     let before_body = before["body"].clone();
-    let before_line = heading_line(&project_root, "in_progress.org", &task_id);
+    let before_line = heading_line(&project_root, &task_id);
     assert!(
         before_line.contains(":daemon:drivers:tmux:testing:"),
         "fixture must carry tags: {before_line}"
     );
     eprintln!(
         "----- BEFORE -----\n{}",
-        heading_subtree(&project_root, "in_progress.org", &task_id)
+        heading_subtree(&project_root, &task_id)
     );
 
     // --- THE FIX: the title is correctable through the task surface. ---
@@ -318,12 +321,12 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
 
     eprintln!(
         "----- AFTER  -----\n{}",
-        heading_subtree(&project_root, "in_progress.org", &task_id)
+        heading_subtree(&project_root, &task_id)
     );
 
     // The heading line, byte-exact. Every component it encodes is named here,
     // so a write that dropped any one of them cannot pass.
-    let line = heading_line(&project_root, "in_progress.org", &task_id);
+    let line = heading_line(&project_root, &task_id);
     assert_eq!(
         line,
         format!("* IN_PROGRESS {task_id} {CORRECTED_TITLE}    :daemon:drivers:tmux:testing:"),
@@ -386,7 +389,7 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
         ],
     );
     let untagged_id = untagged["id"].as_str().expect("minted id").to_string();
-    let untagged_before = heading_line(&project_root, "backlog.org", &untagged_id);
+    let untagged_before = heading_line(&project_root, &untagged_id);
 
     // Each refusal must name its own cause: an operator who cannot tell which
     // character was the problem cannot rephrase the title.
@@ -420,7 +423,7 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
             "refusal must name the title and why it was refused ({why}): {stderr}"
         );
         assert_eq!(
-            heading_line(&project_root, "backlog.org", &untagged_id),
+            heading_line(&project_root, &untagged_id),
             untagged_before,
             "a refused title edit must not have partially landed ({why})"
         );
@@ -443,7 +446,7 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
         ],
     );
     assert_eq!(
-        heading_line(&project_root, "in_progress.org", &task_id),
+        heading_line(&project_root, &task_id),
         format!(
             "* IN_PROGRESS {task_id} correct the diagnosis :retracted:    :daemon:drivers:tmux:testing:"
         ),

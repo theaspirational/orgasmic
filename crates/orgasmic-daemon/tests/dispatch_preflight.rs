@@ -73,9 +73,9 @@ fn seed_worker(home: &Home, id: &str, driver: &str, harness: &str, provider: &st
 fn seed_project(home: &Home, project_root: &Path, project_id: &str, task_id: &str) {
     symlink_repo_source(home);
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Preflight task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Preflight task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
         ),
     );
     write(

@@ -7,12 +7,15 @@
 //! Downstream crates (daemon, drivers, cli) depend on orgasmic-core for every
 //! piece of durable state they touch.
 
+pub mod claims;
 pub mod home;
 pub mod id;
 pub mod id_repair;
 pub mod identity_lint;
 pub mod members;
+pub mod node_kernel;
 pub mod node_kind;
+pub mod node_type;
 pub mod org;
 pub mod paths;
 pub mod projects;
@@ -25,14 +28,16 @@ pub mod schema_examples;
 pub mod session;
 pub mod slots;
 pub mod tx;
+pub mod views;
+pub use claims::{fold_claims, read_claims, TaskClaim};
 pub use home::{resolve_loader, Home, HomeError};
 pub use id::{
     is_dec_id, is_legacy_sequential_create_id, is_minted_stem, is_valid_greenfield_arch_id,
     is_valid_greenfield_artifact_id, is_valid_greenfield_dec_id, is_valid_greenfield_identity,
     is_valid_greenfield_task_id, is_valid_greenfield_term_id, is_valid_task_path_id,
-    looks_like_legacy_numeric_task, mint_node_id, node_id_class_by_prefix, parse_parent_value,
-    validate_parent_exists, validate_parent_pointer, validate_parent_tree, NodeIdClass, ParentTree,
-    ParentTreeError, ParentTreeNode, CROCKFORD,
+    looks_like_legacy_numeric_task, mint_node_id as mint_node_id_for_class,
+    node_id_class_by_prefix, parse_parent_value, validate_parent_exists, validate_parent_pointer,
+    validate_parent_tree, NodeIdClass, ParentTree, ParentTreeError, ParentTreeNode, CROCKFORD,
 };
 pub use id_repair::{repair_id_collisions, repair_id_collisions_with_incoming, IdRepairError};
 pub use identity_lint::{
@@ -45,16 +50,17 @@ pub use members::{
     MemberEntry,
 };
 pub use node_kind::NodeKind;
+pub use node_type::{create_node_dir, mint_node_id, NodeTypeDescriptor};
 pub use org::{
     body_heading_lines, wrap_raw_body, Heading, HeadingLine, HeadingLineEdit, OrgError, OrgFile,
     OrgRewriter, PropertyDrawer, PropertyEntry,
 };
 pub use paths::{
-    dispatch_record_dir, dispatch_record_report_rel, dotorg_tasks_dir, goal_file_path,
-    goal_file_rel, handoff_file_path, iter_task_file_paths, lifecycle_stage_file_name,
-    project_dispatch_dir, project_dispatch_records_dir, project_sessions_dir, project_tmp_dir,
+    collection_node_file_paths, dispatch_record_dir, dispatch_record_report_rel, dotorg_tasks_dir,
+    goal_file_path, goal_file_rel, handoff_file_path, lifecycle_stage_file_name,
+    project_dispatch_dir, project_sessions_dir, project_tmp_dir,
     promote_validated_dispatch_attempt, prune_dispatch_stem_after_worktree,
-    prune_validated_dispatch_attempt, task_file_path, task_file_rel,
+    prune_validated_dispatch_attempt, task_file_path, task_file_rel, task_node_file_path,
     validate_dispatch_cleanup_targets, validate_dispatch_promote_targets,
     verify_dispatch_worktree_identity, DispatchAttemptArtifacts, PromoteOutcome, DEFAULT_TASK_FILE,
     DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE, STDOUT_PROMOTE_MAX_BYTES, TASKS_DIR,
@@ -84,4 +90,5 @@ pub use slots::{
     compile as compile_slots, default_registry as default_slot_registry, dry_run as slot_dry_run,
     scan as scan_slots, DryRunReport, SlotError, SlotRef, SlotValues,
 };
-pub use tx::{parse_tx_file, TxEntry, TxError, TxWriter};
+pub use tx::{fold_dispatches, parse_tx_file, DispatchFold, TxEntry, TxError, TxWriter};
+pub use views::build_views;

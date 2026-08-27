@@ -36,6 +36,7 @@
 //! not anticipate is caught by [`TxEntry::assert_round_trip`] before a byte
 //! is written: this ledger only accepts what it can read back.
 
+use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -80,6 +81,194 @@ pub struct TxEntry {
     /// (key, value) tuples to preserve insertion order; keys are written
     /// in the order they appear here.
     pub extra: Vec<(String, String)>,
+}
+
+/// One dispatch generation derived from the project tx ledger.
+#[derive(Debug, Clone)]
+pub struct DispatchFold {
+    pub started: TxEntry,
+    pub run: Option<TxEntry>,
+    pub addressed_run_id: Option<String>,
+    pub run_ids: BTreeSet<String>,
+    pub closed_tasks: BTreeSet<String>,
+    pub cleanup_already_run: bool,
+    pub reported: bool,
+    pub closed: bool,
+}
+
+/// Fold the project-level dispatch lifecycle once for every reader.
+pub fn fold_dispatches(entries: &[TxEntry]) -> Vec<DispatchFold> {
+    let mut dispatches = Vec::new();
+
+    // Starts and their initial runs are order-sensitive for legacy rows that
+    // predate DISPATCH_TX, so keep their ledger order.
+    for entry in entries {
+        match entry.ty.as_str() {
+            "manager.dispatch_started"
+                if !entry_tasks(entry).is_empty() && extra(entry, "KIND").is_some() =>
+            {
+                dispatches.push(DispatchFold {
+                    started: entry.clone(),
+                    run: None,
+                    addressed_run_id: None,
+                    run_ids: BTreeSet::new(),
+                    closed_tasks: BTreeSet::new(),
+                    cleanup_already_run: false,
+                    reported: false,
+                    closed: false,
+                });
+            }
+            "run.created" if extra(entry, "ORIGIN") == Some("cli_dispatch") => {
+                attach_initial_run(&mut dispatches, entry)
+            }
+            _ => {}
+        }
+    }
+
+    // Recovery edges may be spread across monthly files in either lexical
+    // order. Reach a fixed point so A->B->C always belongs to one generation.
+    loop {
+        let mut changed = false;
+        for entry in entries {
+            if entry.ty != "run.created" || extra(entry, "ORIGIN") != Some("recovery") {
+                continue;
+            }
+            let (Some(origin), Some(replacement)) =
+                (extra(entry, "ORIGIN_RUN_ID"), extra(entry, "RUN_ID"))
+            else {
+                continue;
+            };
+            if let Some(dispatch) = dispatches
+                .iter_mut()
+                .rev()
+                .find(|dispatch| dispatch.run_ids.contains(origin))
+            {
+                if dispatch.run_ids.insert(replacement.to_string()) {
+                    dispatch.addressed_run_id = Some(replacement.to_string());
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for entry in entries {
+        match entry.ty.as_str() {
+            "implementer.reported" | "reviewer.reported" | "architector.reported" => {
+                mark_reported(&mut dispatches, entry)
+            }
+            "implementer.done"
+            | "reviewer.done"
+            | "architector.done"
+            | "manager.dispatch_aborted" => close_dispatch(&mut dispatches, entry),
+            _ => {}
+        }
+    }
+    dispatches
+}
+
+fn attach_initial_run(dispatches: &mut [DispatchFold], entry: &TxEntry) {
+    let dispatch_tx = extra(entry, "DISPATCH_TX");
+    let tasks = entry_tasks(entry);
+    let kind = extra(entry, "KIND");
+    for dispatch in dispatches.iter_mut().rev() {
+        let started_tasks = entry_tasks(&dispatch.started);
+        let exact = dispatch_tx == Some(dispatch.started.tx_id.as_str());
+        let legacy = !tasks.is_empty()
+            && tasks.iter().any(|task| started_tasks.contains(task))
+            && kind
+                .map(|kind| extra(&dispatch.started, "KIND") == Some(kind))
+                .unwrap_or(true)
+            && dispatch.addressed_run_id.is_none();
+        if exact || legacy {
+            if let Some(run_id) = extra(entry, "RUN_ID") {
+                dispatch.run_ids.insert(run_id.to_string());
+                dispatch.addressed_run_id = Some(run_id.to_string());
+            }
+            dispatch.run = Some(entry.clone());
+            return;
+        }
+    }
+}
+
+fn mark_reported(dispatches: &mut [DispatchFold], entry: &TxEntry) {
+    if let Some(run_id) = extra(entry, "RUN_ID") {
+        if let Some(dispatch) = dispatches
+            .iter_mut()
+            .rev()
+            .find(|dispatch| !dispatch.closed && dispatch.run_ids.contains(run_id))
+        {
+            dispatch.reported = true;
+        }
+        return;
+    }
+    let tasks = entry_tasks(entry);
+    if let Some(dispatch) = dispatches.iter_mut().rev().find(|dispatch| {
+        !dispatch.closed
+            && tasks
+                .iter()
+                .any(|task| entry_tasks(&dispatch.started).contains(task))
+    }) {
+        dispatch.reported = true;
+    }
+}
+
+fn close_dispatch(dispatches: &mut [DispatchFold], entry: &TxEntry) {
+    let close_tasks = entry_tasks(entry);
+    let index = extra(entry, "CLOSED_TX")
+        .and_then(|tx| {
+            dispatches
+                .iter()
+                .rposition(|dispatch| dispatch.started.tx_id == tx)
+        })
+        .or_else(|| {
+            dispatches.iter().rposition(|dispatch| {
+                !dispatch.closed
+                    && close_tasks
+                        .iter()
+                        .any(|task| entry_tasks(&dispatch.started).contains(task))
+            })
+        });
+    let Some(dispatch) = index.map(|index| &mut dispatches[index]) else {
+        return;
+    };
+    if matches!(
+        extra(entry, "CLEANUP_STATUS"),
+        Some("ok" | "worktree_missing")
+    ) {
+        dispatch.cleanup_already_run = true;
+    }
+    let started_tasks = entry_tasks(&dispatch.started);
+    if close_tasks.is_empty() {
+        dispatch.closed_tasks.extend(started_tasks.iter().cloned());
+    } else {
+        dispatch.closed_tasks.extend(
+            close_tasks
+                .into_iter()
+                .filter(|task| started_tasks.contains(task)),
+        );
+    }
+    dispatch.closed = dispatch.closed_tasks.len() >= started_tasks.len();
+}
+
+fn entry_tasks(entry: &TxEntry) -> Vec<String> {
+    entry
+        .task
+        .as_deref()
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+fn extra<'a>(entry: &'a TxEntry, key: &str) -> Option<&'a str> {
+    entry
+        .extra
+        .iter()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value.as_str())
 }
 
 impl TxEntry {
@@ -871,5 +1060,98 @@ mod tests {
         }
         let source = std::fs::read_to_string(&path).unwrap();
         assert!(source.starts_with("#+title: orgasmic tx 2026-06\n#+orgasmic_version: 1\n"));
+    }
+
+    #[test]
+    fn dispatch_fold_shares_recovery_reporting_and_close_state() {
+        let entry = |id: &str, ty: &str, task: &str, extra: &[(&str, &str)]| {
+            let mut entry = TxEntry::new(id, ty, "[2026-08-26 Wed 10:00:00]", "test", "host");
+            entry.project = Some("orgasmic".into());
+            entry.task = Some(task.into());
+            entry.extra = extra
+                .iter()
+                .map(|(key, value)| ((*key).into(), (*value).into()))
+                .collect();
+            entry
+        };
+        let entries = vec![
+            entry(
+                "start-a",
+                "manager.dispatch_started",
+                "TASK-A",
+                &[("KIND", "implementer")],
+            ),
+            entry(
+                "recovery-c",
+                "run.created",
+                "TASK-A",
+                &[
+                    ("ORIGIN", "recovery"),
+                    ("ORIGIN_RUN_ID", "run-b"),
+                    ("RUN_ID", "run-c"),
+                ],
+            ),
+            entry(
+                "run-a",
+                "run.created",
+                "TASK-A",
+                &[
+                    ("ORIGIN", "cli_dispatch"),
+                    ("DISPATCH_TX", "start-a"),
+                    ("RUN_ID", "run-a"),
+                ],
+            ),
+            entry(
+                "recovery-b",
+                "run.created",
+                "TASK-A",
+                &[
+                    ("ORIGIN", "recovery"),
+                    ("ORIGIN_RUN_ID", "run-a"),
+                    ("RUN_ID", "run-b"),
+                ],
+            ),
+            entry(
+                "report-a",
+                "implementer.reported",
+                "TASK-A",
+                &[("RUN_ID", "run-c")],
+            ),
+            entry(
+                "done-a",
+                "implementer.done",
+                "TASK-A",
+                &[("CLOSED_TX", "start-a")],
+            ),
+            entry(
+                "start-c",
+                "manager.dispatch_started",
+                "TASK-C",
+                &[("KIND", "architector")],
+            ),
+            entry(
+                "abort-c",
+                "manager.dispatch_aborted",
+                "TASK-C",
+                &[("CLOSED_TX", "start-c")],
+            ),
+        ];
+
+        let dispatches = fold_dispatches(&entries);
+        let a = dispatches
+            .iter()
+            .find(|d| d.started.tx_id == "start-a")
+            .unwrap();
+        assert_eq!(
+            a.run_ids,
+            BTreeSet::from(["run-a".into(), "run-b".into(), "run-c".into()])
+        );
+        assert_eq!(a.addressed_run_id.as_deref(), Some("run-c"));
+        assert!(a.reported && a.closed);
+        let c = dispatches
+            .iter()
+            .find(|d| d.started.tx_id == "start-c")
+            .unwrap();
+        assert!(c.closed && !c.reported);
     }
 }

@@ -2,7 +2,7 @@
 :PROPERTIES:
 :ID:                 glossary
 :SOURCE_KIND:        project-file
-:FILE:               .orgasmic/glossary.org
+:FILE:               .orgasmic/views/glossary.org
 :RENDER_POLICY:      reference
 :VERSION:            1
 :END:

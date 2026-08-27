@@ -58,12 +58,12 @@ describe('parse-error coverage api', () => {
 
   it('names projects skipped by full coverage from the failed segment', async () => {
     getWithHeader.mockResolvedValue({
-      data: [{ path: '/healthy/glossary.org', message: 'bad ref', at: 'now' }],
+      data: [{ path: '/healthy/.orgasmic/glossary/term_TEST/node.org', message: 'bad ref', at: 'now' }],
       header: 'partial; ready=1/2; unloaded=[]; loading=[]; failed=[blocked]',
     });
 
     await expect(loadFullParseErrorCoverage()).resolves.toEqual({
-      errors: [{ path: '/healthy/glossary.org', message: 'bad ref', at: 'now' }],
+      errors: [{ path: '/healthy/.orgasmic/glossary/term_TEST/node.org', message: 'bad ref', at: 'now' }],
       coverage: {
         state: 'partial',
         detail: 'partial; ready=1/2; unloaded=[]; loading=[]; failed=[blocked]',

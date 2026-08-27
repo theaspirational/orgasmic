@@ -10,8 +10,8 @@ use std::sync::{
 };
 
 use orgasmic_core::{
-    org::OrgRewriter, parse_tx_file, DecisionNode, GlossaryTerm, LifecycleStage, OrgFile,
-    ProjectFile, TaskHeading,
+    collection_node_file_paths, org::OrgRewriter, parse_tx_file, DecisionNode, GlossaryTerm,
+    LifecycleStage, OrgFile, ProjectFile, TaskHeading,
 };
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Metadata, Subscriber};
@@ -19,13 +19,25 @@ use tracing::{Event, Metadata, Subscriber};
 fn repo_root() -> PathBuf {
     let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
-        if here.join(".orgasmic").is_dir() && here.join("shipped").is_dir() {
+        if here.join("crates").is_dir() && here.join("shipped").is_dir() {
             return here;
         }
         if !here.pop() {
             panic!("could not locate orgasmic repo root from CARGO_MANIFEST_DIR");
         }
     }
+}
+
+/// The live ledger left the tracked tree with TASK-LBRX7 (orphan `orgasmic`
+/// branch), so a fresh clone has no `.orgasmic/` next to `shipped/`. The
+/// live-corpus tests below only run where a ledger is present; elsewhere
+/// they skip rather than assert on files git no longer delivers.
+fn live_ledger_present() -> bool {
+    if repo_root().join(".orgasmic/project.org").is_file() {
+        return true;
+    }
+    eprintln!("skipping: no live .orgasmic ledger in this tree (post TASK-LBRX7 cutover)");
+    false
 }
 
 fn read(rel: &str) -> String {
@@ -49,11 +61,14 @@ fn count_warnings(run: impl FnOnce()) -> usize {
 
 #[test]
 fn parses_real_done_tasks() {
-    let path = ".orgasmic/tasks/done.org";
+    if !live_ledger_present() {
+        return;
+    }
+    let path = ".orgasmic/tasks/TASK-VWBDJ/node.org";
     let f = parse_or_panic(path);
     let task_003 = f
         .find_by_id("TASK-VWBDJ")
-        .expect("TASK-VWBDJ present in done.org");
+        .expect("TASK-VWBDJ present in its node.org");
     let view = TaskHeading::from_heading(&f, task_003, path).unwrap();
     assert_eq!(view.id, "TASK-VWBDJ");
     assert!(view
@@ -63,28 +78,47 @@ fn parses_real_done_tasks() {
     assert!(view.produces.iter().any(|s| s.contains("org.rs")));
     let acceptance = view.acceptance.expect("acceptance section parsed");
     assert!(acceptance.contains("Slot compilation is strict"));
-    // Every implementer task in the sprint must parse with a recognized state
+    // Every task node in the live corpus must parse with a recognized state
     // (this is what the test is actually trying to prove — that the schema
     // accepts the live corpus, regardless of which task happens to be DONE).
-    let parsed_tasks = f
-        .headings
-        .iter()
-        .filter_map(|h| TaskHeading::from_heading(&f, h, path).ok())
-        .collect::<Vec<_>>();
-    assert!(!parsed_tasks.is_empty(), "done.org should contain tasks");
-    assert!(
-        parsed_tasks
-            .iter()
-            .any(|t| t.lifecycle_stage == LifecycleStage::Done),
-        "done.org should include completed tasks"
-    );
+    let mut parsed_tasks = 0usize;
+    let mut any_done = false;
+    for node_path in collection_node_file_paths(&repo_root(), "tasks").unwrap() {
+        let rel = node_path
+            .strip_prefix(repo_root())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let f = parse_or_panic(&rel);
+        for h in &f.headings {
+            if let Ok(t) = TaskHeading::from_heading(&f, h, &rel) {
+                parsed_tasks += 1;
+                any_done |= t.lifecycle_stage == LifecycleStage::Done;
+            }
+        }
+    }
+    assert!(parsed_tasks > 0, "task corpus should contain tasks");
+    assert!(any_done, "task corpus should include completed tasks");
 }
 
 #[test]
 fn live_state_files_parse_without_retired_property_warnings() {
+    if !live_ledger_present() {
+        return;
+    }
     let mut parsed_tasks = 0;
+    let node_rels: Vec<String> = collection_node_file_paths(&repo_root(), "tasks")
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            p.strip_prefix(repo_root())
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
     let warnings = count_warnings(|| {
-        for rel in [".orgasmic/tasks/backlog.org", ".orgasmic/tasks/done.org"] {
+        for rel in &node_rels {
             let f = parse_or_panic(rel);
             for heading in &f.headings {
                 let looks_like_task = heading
@@ -211,10 +245,15 @@ fn task_heading_empty_provider_model_effort_properties_are_dropped() {
 
 #[test]
 fn parses_real_decisions() {
-    let f = parse_or_panic(".orgasmic/decisions.org");
+    if !live_ledger_present() {
+        return;
+    }
+    let f = parse_or_panic(".orgasmic/decisions/dec_R75SW/node.org");
     assert!(!f.headings.is_empty());
     let dec_heading = f.find_by_id("dec_R75SW").expect("dec_R75SW present");
-    let view = DecisionNode::from_heading(&f, dec_heading, ".orgasmic/decisions.org").unwrap();
+    let view =
+        DecisionNode::from_heading(&f, dec_heading, ".orgasmic/decisions/dec_R75SW/node.org")
+            .unwrap();
     assert_eq!(view.id, "dec_R75SW");
     assert!(!view.tags.is_empty(), "decision carries topic tag(s)");
     assert!(
@@ -239,15 +278,22 @@ fn parses_real_decisions() {
 
 #[test]
 fn parses_real_glossary() {
-    let f = parse_or_panic(".orgasmic/glossary.org");
+    if !live_ledger_present() {
+        return;
+    }
+    let f = parse_or_panic(".orgasmic/glossary/term_YC32J/node.org");
     let tx_term = f.find_by_id("term_YC32J").expect("term term_YC32J present");
-    let view = GlossaryTerm::from_heading(tx_term, ".orgasmic/glossary.org").unwrap();
+    let view =
+        GlossaryTerm::from_heading(tx_term, ".orgasmic/glossary/term_YC32J/node.org").unwrap();
     assert_eq!(view.canonical, Some("tx file"));
     assert!(view.definition.unwrap().contains("append-only audit"));
 }
 
 #[test]
 fn parses_real_project() {
+    if !live_ledger_present() {
+        return;
+    }
     let f = parse_or_panic(".orgasmic/project.org");
     let view = ProjectFile::from_org(&f, ".orgasmic/project.org").unwrap();
     assert_eq!(view.id, "orgasmic");
@@ -256,6 +302,9 @@ fn parses_real_project() {
 
 #[test]
 fn parses_real_tx_file() {
+    if !live_ledger_present() {
+        return;
+    }
     let tx_path = std::fs::read_dir(repo_root().join(".orgasmic/tx"))
         .unwrap()
         .filter_map(Result::ok)
@@ -274,8 +323,13 @@ fn parses_real_tx_file() {
 #[test]
 fn parses_shipped_schema_files() {
     parse_or_panic("shipped/schema/tx.org");
+    parse_or_panic("shipped/schema/journal.org");
     parse_or_panic("shipped/prompt-studio/slots.org");
     parse_or_panic("shipped/schema/state-machine.org");
+    parse_or_panic("shipped/schema/node-types/task.org");
+    parse_or_panic("shipped/schema/node-types/decision.org");
+    parse_or_panic("shipped/schema/node-types/glossary.org");
+    parse_or_panic("shipped/schema/node-types/artifact.org");
     parse_or_panic("shipped/entry/router.org");
     parse_or_panic("shipped/workflows/default.org");
 }
@@ -283,12 +337,10 @@ fn parses_shipped_schema_files() {
 #[test]
 fn parses_shipped_project_scaffold() {
     for name in [
-        "shipped/project-scaffold/tasks/backlog.org",
-        "shipped/project-scaffold/tasks/todo.org",
-        "shipped/project-scaffold/tasks/in_progress.org",
-        "shipped/project-scaffold/tasks/in_review.org",
-        "shipped/project-scaffold/tasks/done.org",
-        "shipped/project-scaffold/tasks/cancelled.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.1/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.2/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.3/node.org",
     ] {
         parse_or_panic(name);
     }
@@ -296,29 +348,25 @@ fn parses_shipped_project_scaffold() {
     parse_or_panic("shipped/project-scaffold/tasks/handoff.org");
     // Project scaffold uses {{PROJECT_NAME}} placeholders; the parser must
     // still accept it because slot syntax is not Org syntax.
-    parse_or_panic("shipped/project-scaffold/decisions.org");
     parse_or_panic("shipped/project-scaffold/project.org");
     parse_or_panic("shipped/project-scaffold/entry.org");
 }
 
 #[test]
-fn shipped_scaffold_state_files_ship_without_seed_headings() {
-    // backlog.org is the exception: it ships the bootstrap task tree (see
-    // shipped_scaffold_seeds_bootstrap_task_tree). The other five state files
-    // must be empty — placeholder seeds trip the TASK-HC7PW phantom lint.
-    for name in [
-        "todo.org",
-        "in_progress.org",
-        "in_review.org",
-        "done.org",
-        "cancelled.org",
-    ] {
-        let rel = format!("shipped/project-scaffold/tasks/{name}");
-        let f = parse_or_panic(&rel);
-        assert!(
-            f.headings.is_empty(),
-            "{rel} must not ship seed headings (TASK-HC7PW phantom lint)"
-        );
+fn shipped_scaffold_ships_no_aggregate_task_state_files() {
+    // Node-dir layout (dec_E01MC): the scaffold ships the bootstrap tree as
+    // node dirs plus the goal.org/handoff.org singletons. An aggregate
+    // per-state file reappearing would resurrect the retired layout.
+    let dir = repo_root().join("shipped/project-scaffold/tasks");
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                name == "goal.org" || name == "handoff.org",
+                "unexpected aggregate task file in scaffold: {name}"
+            );
+        }
     }
 }
 
@@ -328,16 +376,24 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
     // bootstrap id) and three subtasks: infer-project, infer-decisions, then
     // migrate-instructions. Every heading must be schema-valid so the daemon
     // can index a just-bootstrapped project, and the parent/subtask structure +
-    // ordering must hold (dec_056). Under the file-per-state layout
-    // (dec_QQYXM) the tree ships in backlog.org — its stage.
+    // ordering must hold (dec_056). Under the node-dir layout (dec_E01MC)
+    // the tree ships as one node dir per task.
     // orgasmic:TASK-RQ270.5 — infer-architecture was removed with the
     // architecture layer (dec_HBK6A); migrate-instructions took the .3 slot.
-    let rel = "shipped/project-scaffold/tasks/backlog.org";
-    let f = parse_or_panic(rel);
-    let tasks: Vec<TaskHeading> = f
-        .headings
+    let rels = [
+        "shipped/project-scaffold/tasks/TASK-C9V29/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.1/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.2/node.org",
+        "shipped/project-scaffold/tasks/TASK-C9V29.3/node.org",
+    ];
+    let files: Vec<(&str, OrgFile)> = rels.iter().map(|rel| (*rel, parse_or_panic(rel))).collect();
+    let tasks: Vec<TaskHeading> = files
         .iter()
-        .map(|h| TaskHeading::from_heading(&f, h, rel).expect("bootstrap task is schema-valid"))
+        .flat_map(|(rel, f)| {
+            f.headings.iter().map(move |h| {
+                TaskHeading::from_heading(f, h, rel).expect("bootstrap task is schema-valid")
+            })
+        })
         .collect();
 
     let parent = tasks
@@ -378,12 +434,20 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
 
 #[test]
 fn round_trip_rewrite_is_byte_stable_outside_touched_heading() {
-    let path = ".orgasmic/tasks/done.org";
-    let original = read(path);
+    // The live task corpus and the scaffold are one heading per node file
+    // now; the multi-heading byte-stability property is proven on a synthetic
+    // multi-heading source instead.
+    let path = "inline-multi.org";
+    let original = String::from(
+        "#+title: sprint\n\n\
+         * BACKLOG TASK-AAA First\n:PROPERTIES:\n:ID:               TASK-AAA\n:END:\n** Description\nAlpha.\n\n\
+         * BACKLOG TASK-BBB Second\n:PROPERTIES:\n:ID:               TASK-BBB\n:PRIORITY:         P2\n:END:\n** Description\nBeta.\n\n\
+         * BACKLOG TASK-CCC Third\n:PROPERTIES:\n:ID:               TASK-CCC\n:END:\n** Description\nGamma.\n",
+    );
     let parsed = OrgFile::parse(original.clone(), path).unwrap();
     let mut rw = OrgRewriter::new(&parsed, path);
-    // Touch only TASK-VWBDJ's PRIORITY property.
-    rw.set_property("TASK-VWBDJ", "PRIORITY", "P0").unwrap();
+    // Touch only TASK-BBB's PRIORITY property.
+    rw.set_property("TASK-BBB", "PRIORITY", "P0").unwrap();
     let rewritten = rw.finish();
     assert_ne!(rewritten, original, "rewrite must change the file");
     // Every other top-level heading should still appear at the same offset.
@@ -398,7 +462,7 @@ fn round_trip_rewrite_is_byte_stable_outside_touched_heading() {
         .iter()
         .zip(rewritten_parsed.headings.iter())
     {
-        if a.property("ID") == Some("TASK-VWBDJ") {
+        if a.property("ID") == Some("TASK-BBB") {
             continue;
         }
         assert_eq!(
@@ -412,7 +476,10 @@ fn round_trip_rewrite_is_byte_stable_outside_touched_heading() {
 
 #[test]
 fn round_trip_through_section_body_rewrite() {
-    let path = ".orgasmic/tasks/done.org";
+    if !live_ledger_present() {
+        return;
+    }
+    let path = ".orgasmic/tasks/TASK-VWBDJ/node.org";
     let original = read(path);
     let parsed = OrgFile::parse(original.clone(), path).unwrap();
     let mut rw = OrgRewriter::new(&parsed, path);
@@ -430,12 +497,16 @@ fn round_trip_through_section_body_rewrite() {
         reparsed.slice(worklog.body.clone()),
         "- [2026-05-21 Thu 21:00] Implemented orgasmic-core.\n"
     );
-    // TASK-V3DWJ's content unchanged.
-    let task_004 = reparsed.find_by_id("TASK-V3DWJ").unwrap();
+    // The untouched Description section's bytes are unchanged.
     let original_parsed = OrgFile::parse(&original, path).unwrap();
-    let task_004_orig = original_parsed.find_by_id("TASK-V3DWJ").unwrap();
+    let desc_orig = original_parsed
+        .find_by_id("TASK-VWBDJ")
+        .unwrap()
+        .section("Description")
+        .unwrap();
+    let desc_new = updated.section("Description").unwrap();
     assert_eq!(
-        reparsed.slice(task_004.span.clone()),
-        original_parsed.slice(task_004_orig.span.clone()),
+        reparsed.slice(desc_new.body.clone()),
+        original_parsed.slice(desc_orig.body.clone()),
     );
 }

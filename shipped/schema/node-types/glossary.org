@@ -1,0 +1,16 @@
+#+title: orgasmic glossary node type
+#+version: 1
+
+* NODE-TYPE glossary
+:PROPERTIES:
+:COLLECTION: glossary
+:ID_PREFIX: term_
+:LABEL: Glossary term
+:LABEL_PLURAL: Glossary terms
+:REQUIRED_PROPERTIES: ID
+:STATES:
+:TRANSITIONS:
+:REGENERATE_PROMPT: glossary-regenerate
+:END:
+
+Glossary terms are state-free definition nodes.

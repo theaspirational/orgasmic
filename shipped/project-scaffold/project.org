@@ -1,5 +1,5 @@
 #+title: {{PROJECT_NAME}}
-#+orgasmic_version: 1
+#+orgasmic_version: 2
 
 * PROJECT {{PROJECT_NAME}}
 :PROPERTIES:

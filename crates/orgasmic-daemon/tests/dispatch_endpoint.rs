@@ -92,9 +92,9 @@ fn seed_project(
 ) {
     symlink_repo_source(home);
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Dispatch endpoint task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Dispatch endpoint task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
         ),
     );
     write(
@@ -116,9 +116,9 @@ fn seed_project_with_task_worker(
 ) {
     symlink_repo_source(home);
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Task with pinned worker\n:PROPERTIES:\n:ID:               {task_id}\n:WORKER:           {task_worker_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Task with pinned worker\n:PROPERTIES:\n:ID:               {task_id}\n:WORKER:           {task_worker_id}\n:END:\n"
         ),
     );
     write(
@@ -143,16 +143,7 @@ async fn get_runs_json(running: &RunningDaemon, token: &str) -> serde_json::Valu
 }
 
 fn collect_project_tx(project_root: &Path) -> String {
-    let mut raw = String::new();
-    let tx_dir = project_root.join(".orgasmic/tx");
-    if let Ok(entries) = std::fs::read_dir(&tx_dir) {
-        for entry in entries.flatten() {
-            if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
-                raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
-            }
-        }
-    }
-    raw
+    read_project_tx(project_root)
 }
 
 fn auto_spawn_session_paths(project_root: &Path) -> Vec<PathBuf> {
@@ -254,15 +245,7 @@ fn dispatch_body(
 async fn wait_for_run_created(project_root: &Path, worker_id: &str) -> String {
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while std::time::Instant::now() < deadline {
-        let mut raw = String::new();
-        let tx_dir = project_root.join(".orgasmic/tx");
-        if let Ok(entries) = std::fs::read_dir(&tx_dir) {
-            for entry in entries.flatten() {
-                if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
-                    raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
-                }
-            }
-        }
+        let raw = read_project_tx(project_root);
         if raw.contains(":TYPE:         run.created")
             && raw.contains(":ORIGIN:")
             && raw.contains("cli_dispatch")
@@ -553,9 +536,9 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
         ),
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Sandbox override task\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=false,allow_patch=true,allow_network=true,allow_writes_outside_cwd=false\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Sandbox override task\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=false,allow_patch=true,allow_network=true,allow_writes_outside_cwd=false\n:END:\n"
         ),
     );
     write(
@@ -621,9 +604,9 @@ dispatch:
     let project_root = tmp.path().join("proj");
     let task_id = "TASK-SANDBOX-MATRIX";
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Sandbox matrix\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Sandbox matrix\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:END:\n"
         ),
     );
     write(
@@ -1557,12 +1540,22 @@ async fn live_run_ids(running: &RunningDaemon, token: &str) -> Vec<String> {
 }
 
 fn read_project_tx(project_root: &Path) -> String {
+    // Mirrors production's `project_tx_dirs`: project tx lives in the legacy
+    // `.orgasmic/tx/` and, since TASK-MSYN4, in per-machine
+    // `.orgasmic/machines/<machine-id>/tx/`. Read both so this helper does not
+    // silently return empty under the per-machine layout.
+    let dotorg = project_root.join(".orgasmic");
+    let mut tx_dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        tx_dirs.extend(machines.flatten().map(|machine| machine.path().join("tx")));
+    }
     let mut raw = String::new();
-    let tx_dir = project_root.join(".orgasmic/tx");
-    if let Ok(entries) = std::fs::read_dir(&tx_dir) {
-        for entry in entries.flatten() {
-            if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
-                raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+    for tx_dir in tx_dirs {
+        if let Ok(entries) = std::fs::read_dir(&tx_dir) {
+            for entry in entries.flatten() {
+                if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
+                    raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                }
             }
         }
     }
@@ -1583,9 +1576,9 @@ fn seed_dual_kind_project(
 ) {
     symlink_repo_source(home);
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(format!(".orgasmic/tasks/{task_id}/node.org")),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Dispatch endpoint task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
+            "#+title: orgasmic task {task_id}\n#+orgasmic_version: 2\n\n* BACKLOG {task_id} Dispatch endpoint task\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n"
         ),
     );
     write(
@@ -2527,9 +2520,9 @@ async fn get_project_invalid_task_returns_404_quickly_without_paths() {
         "TASK-VALID",
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+        &project_root.join(".orgasmic/tasks/TASK-VALID/node.org"),
         format!(
-            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-VALID Valid task\n:PROPERTIES:\n:ID:               TASK-VALID\n:END:\n\n** Description\n{}\n",
+            "#+title: orgasmic task TASK-VALID\n#+orgasmic_version: 2\n\n* BACKLOG TASK-VALID Valid task\n:PROPERTIES:\n:ID:               TASK-VALID\n:END:\n\n** Description\n{}\n",
             "x".repeat(64 * 1024)
         ),
     );

@@ -83,6 +83,46 @@ fn write(path: &Path, contents: impl AsRef<str>) {
     std::fs::write(path, contents.as_ref()).unwrap();
 }
 
+/// Seed a node collection from a legacy aggregate body. dec_E01MC replaced
+/// `tasks/<state>.org`, `decisions.org` and `glossary.org` with one directory
+/// per node, so a fixture that used to be a single file becomes one `node.org`
+/// per top-level heading. The `:ID:` property names the directory.
+/// Since TASK-MSYN4 a project's tx lands in `.orgasmic/machines/<id>/tx/`; the
+/// legacy `.orgasmic/tx/` is still accepted so this holds either way.
+fn is_project_tx_path(project_root: &Path, tx_path: &Path) -> bool {
+    let dotorg = project_root.join(".orgasmic");
+    tx_path.starts_with(dotorg.join("tx")) || tx_path.starts_with(dotorg.join("machines"))
+}
+
+fn write_nodes(project_root: &Path, collection: &str, contents: impl AsRef<str>) {
+    let label = match collection {
+        "tasks" => "task",
+        "decisions" => "decision",
+        "glossary" => "glossary",
+        other => panic!("unknown node collection {other}"),
+    };
+    let body = contents.as_ref();
+    let body = body
+        .split_once("\n\n")
+        .map(|(_header, rest)| rest)
+        .unwrap_or(body);
+    for chunk in body.split("\n* ").filter(|c| !c.trim().is_empty()) {
+        let chunk = chunk.strip_prefix("* ").unwrap_or(chunk);
+        let id = chunk
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(":ID:"))
+            .unwrap_or_else(|| panic!("node fixture has no :ID: property:\n{chunk}"))
+            .trim();
+        write(
+            &project_root.join(format!(".orgasmic/{collection}/{id}/node.org")),
+            format!(
+                "#+title: orgasmic {label} {id}\n#+orgasmic_version: 2\n\n* {}\n",
+                chunk.trim_end()
+            ),
+        );
+    }
+}
+
 fn seed_git_origin(repo: &Path, origin: &str) {
     let status = Command::new("git")
         .arg("init")
@@ -101,7 +141,9 @@ fn seed_git_origin(repo: &Path, origin: &str) {
 fn repo_root() -> PathBuf {
     let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
-        if here.join(".orgasmic").is_dir() && here.join("shipped").is_dir() {
+        // Not `.orgasmic`: TASK-LBRX7 moved the live ledger onto an orphan
+        // branch, so the worked tree no longer carries one.
+        if here.join("crates").is_dir() && here.join("shipped").is_dir() {
             return here;
         }
         if !here.pop() {
@@ -121,8 +163,7 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
             "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:END:\n"
         ),
     );
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
     );
     write(
@@ -201,56 +242,17 @@ fn seed_unregistered_project(project_root: &Path, project_id: &str) {
             "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:DEFAULT_BRANCH:   main\n:END:\n"
         ),
     );
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NEW New task :work:\n:PROPERTIES:\n:ID:               TASK-NEW\n:END:\n",
     );
 }
 
 fn seed_project_scaffold(home: &Home) {
-    let dst = home.source().join("shipped/project-scaffold");
-    std::fs::create_dir_all(dst.join("tasks")).unwrap();
-    write(&dst.join(".gitignore"), "tmp/\n");
-    write(
-        &dst.join("entry.org"),
-        "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
-    );
-    write(
-        &dst.join("project.org"),
-        "#+title: {{PROJECT_NAME}}\n#+orgasmic_version: 1\n\n* PROJECT {{PROJECT_NAME}}\n:PROPERTIES:\n:ID:               {{PROJECT_ID}}\n:END:\n",
-    );
-    write(
-        &dst.join("decisions.org"),
-        "#+title: {{PROJECT_NAME}} decisions\n#+orgasmic_version: 1\n\n* dec_001 Bootstrap project state    :bootstrap:\n:PROPERTIES:\n:ID:               dec_001\n:DECIDED_AT:       [2026-06-09 Tue]\n:END:\n** Context\nThe project has just been scaffolded.\n** Decision\nKeep an initial bootstrap decision as an anchor for repo-specific decisions.\n** Consequences\nLater decisions continue with sequential dec_NNN records.\n",
-    );
-    write(
-        &dst.join("tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Example task\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n",
-    );
-    for (rel, title) in [
-        ("tasks/todo.org", "Todo"),
-        ("tasks/in_progress.org", "In progress"),
-        ("tasks/in_review.org", "In review"),
-        ("tasks/done.org", "Done"),
-        ("tasks/cancelled.org", "Cancelled"),
-    ] {
-        write(
-            &dst.join(rel),
-            format!("#+title: {title}\n#+orgasmic_version: 1\n"),
-        );
-    }
-    write(
-        &dst.join("tasks/goal.org"),
-        "#+title: Goal\n#+orgasmic_version: 1\n\n* GOAL Bootstrap project state\n:PROPERTIES:\n:ID: goal-bootstrap\n:STATUS: active\n:END:\n\n** Statement\nBootstrap.\n",
-    );
-    write(
-        &dst.join("tasks/handoff.org"),
-        "#+title: Handoff\n#+orgasmic_version: 1\n\n* HANDOFF current\n:PROPERTIES:\n:ID: handoff-current\n:GOAL_ID: goal-bootstrap\n:END:\n\n** Next likely actions\n- Start TASK-001.\n",
-    );
-    write(
-        &dst.join("gotchas.org"),
-        "#+title: Gotchas\n#+orgasmic_version: 1\n\n* Gotchas\n:PROPERTIES:\n:ID:               gotchas\n:END:\n",
-    );
+    // Point the daemon at the real `shipped/project-scaffold` instead of a
+    // hand-written copy. The hand-written one silently rotted when dec_E01MC
+    // replaced the aggregate files with node dirs, and the scaffolded project
+    // stopped being loadable.
+    symlink_repo_source(home);
 }
 
 async fn post_project_json(
@@ -485,7 +487,11 @@ async fn post_projects_scaffolds_and_registers_uninitialized_project() {
     let project_org = project_root.join(".orgasmic/project.org");
     assert!(project_org.exists());
     let raw = std::fs::read_to_string(project_org).unwrap();
-    assert!(raw.contains(":ID:               fresh"));
+    assert!(
+        raw.lines()
+            .any(|line| line.starts_with(":ID:") && line.split_whitespace().nth(1) == Some("fresh")),
+        "{raw}"
+    );
     assert!(!raw.contains(":REPO_URL:"));
     wait_for_project_repo_url(
         &client,
@@ -867,6 +873,13 @@ async fn task_activity_missing_task_is_path_free_404() {
 }
 
 #[cfg(unix)]
+fn make_readonly_dir(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    perms.set_mode(0o555);
+    std::fs::set_permissions(path, perms).unwrap();
+}
+
 fn make_readonly(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let mut perms = std::fs::metadata(path).unwrap().permissions();
@@ -989,14 +1002,13 @@ async fn create_subtask_writer_transaction_failure_is_path_free() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "proj-writer-tx-fail");
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Parent task\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n",
     );
 
     let running = boot(home.clone()).await;
-    let sprint_path = project_root.join(".orgasmic/tasks/backlog.org");
-    make_readonly(&sprint_path);
+    let sprint_path = project_root.join(".orgasmic/tasks");
+    make_readonly_dir(&sprint_path);
 
     let token = read_token(&home);
     let client = reqwest::Client::new();
@@ -1215,7 +1227,7 @@ async fn corrupted_working_file_does_not_block_start() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "proj-working");
-    let sprint = project_root.join(".orgasmic/tasks/backlog.org");
+    let sprint = project_root.join(".orgasmic/tasks/TASK-BAD/node.org");
     write(
         &sprint,
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BAD Broken task\n:PROPERTIES:\nno-end-marker\n",
@@ -1323,7 +1335,7 @@ async fn end_to_end_tx_record_appends_to_disk() {
 }
 
 #[tokio::test]
-async fn project_tx_record_routes_to_project_and_uses_project_sequence() {
+async fn project_tx_record_routes_to_its_machine_ledger_with_global_ids() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1358,13 +1370,22 @@ async fn project_tx_record_routes_to_project_and_uses_project_sequence() {
     let json: serde_json::Value = resp.json().await.unwrap();
     let tx_id = json["tx_id"].as_str().unwrap();
     let tx_path = std::path::PathBuf::from(json["tx_path"].as_str().unwrap());
-    assert!(tx_path.starts_with(project_root.join(".orgasmic/tx")));
+    let machine_id = std::fs::read_to_string(home.machine_id()).unwrap();
+    assert!(tx_path.starts_with(
+        project_root
+            .join(".orgasmic/machines")
+            .join(machine_id.trim())
+            .join("tx")
+    ));
     assert!(
-        tx_id.ends_with("-orgasmic-0037"),
-        "project tx id should continue existing sequence, got {tx_id}"
+        tx_id.contains("-orgasmic-")
+            && uuid::Uuid::parse_str(tx_id.splitn(4, '-').nth(3).unwrap_or_default()).is_ok(),
+        "project tx id should carry a UUID, got {tx_id}"
     );
     let raw = std::fs::read_to_string(&tx_path).unwrap();
     assert!(raw.contains(":ACTOR:        manager@example.com"));
+    assert!(raw.contains(&format!(":MACHINE:      {}", machine_id.trim())));
+    assert!(raw.contains(":EVENT_ID:"));
     assert!(raw.contains(":TX_ID:        tx-"));
 
     let resp = client
@@ -1567,8 +1588,7 @@ async fn create_subtask_rewrites_sprint_and_indexes_edge() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Parent task\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n",
     );
 
@@ -1596,7 +1616,8 @@ async fn create_subtask_rewrites_sprint_and_indexes_edge() {
     assert_eq!(body["id"], "TASK-001.1");
     assert!(body["heading"].as_str().unwrap().contains("TASK-001.1"));
 
-    let raw = std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+    let raw =
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-001.1/node.org")).unwrap();
     assert!(raw.contains("* BACKLOG TASK-001.1 Child task"));
     assert!(raw.contains(":ID:               TASK-001.1"));
 
@@ -1620,8 +1641,7 @@ async fn orphan_parent_task_surfaces_via_parse_errors_endpoint() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-999.1 Orphan child\n:PROPERTIES:\n:ID:               TASK-999.1\n:END:\n",
     );
 
@@ -1845,8 +1865,7 @@ async fn catalog_is_served_unloaded_before_first_project_read() {
         &project_root.join(".orgasmic/project.org"),
         "#+title: x\n#+orgasmic_version: 1\n\n* PROJECT proj-pre\n:PROPERTIES:\n:ID:               proj-pre\n:END:\n",
     );
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: x\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
     );
     std::fs::write(
@@ -1932,7 +1951,7 @@ async fn daemon_binds_with_blocked_registered_project_still_unloaded() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("blocked-project");
     seed_project(&home, &project_root, "blocked-project");
-    let task_file = project_root.join(".orgasmic/tasks/backlog.org");
+    let task_file = project_root.join(".orgasmic/tasks/TASK-PRE/node.org");
     std::fs::remove_file(&task_file).unwrap();
     let task_file_c = std::ffi::CString::new(task_file.as_os_str().as_bytes()).unwrap();
     let rc = unsafe { libc::mkfifo(task_file_c.as_ptr(), 0o600) };
@@ -1966,8 +1985,7 @@ async fn task_list_route_serializes_depends_on_arrays() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "proj-pre");
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-A TASK-B\n:END:\n\n* BACKLOG TASK-A First dependency :work:\n:PROPERTIES:\n:ID:               TASK-A\n:END:\n\n* BACKLOG TASK-B Second dependency :work:\n:PROPERTIES:\n:ID:               TASK-B\n:END:\n\n* BACKLOG TASK-OPEN Open task :work:\n:PROPERTIES:\n:ID:               TASK-OPEN\n:END:\n",
     );
 
@@ -1985,11 +2003,22 @@ async fn task_list_route_serializes_depends_on_arrays() {
         .unwrap();
     assert!(resp.status().is_success());
     let tasks: serde_json::Value = resp.json().await.unwrap();
+    // One node dir per task now, so list order follows the directory, not the
+    // order they appeared in a single sprint file: select by id.
+    let by_id = |id: &str| {
+        tasks
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == id)
+            .unwrap_or_else(|| panic!("task {id} missing from {tasks}"))
+            .clone()
+    };
     assert_eq!(
-        tasks[0]["depends_on"],
+        by_id("TASK-BKC12")["depends_on"],
         serde_json::json!(["TASK-A", "TASK-B"])
     );
-    assert_eq!(tasks[1]["depends_on"], serde_json::json!([]));
+    assert_eq!(by_id("TASK-OPEN")["depends_on"], serde_json::json!([]));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -2002,8 +2031,7 @@ async fn graph_edges_route_exposes_forward_and_inverse_queries() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "proj-pre");
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-WRK12 Work task :work:\n:PROPERTIES:\n:ID:               TASK-WRK12\n:DEPENDS_ON:       TASK-BAS12\n:IMPLEMENTS:       arch_APP12\n:PRODUCES:         crates/example.rs\n:END:\n\n* BACKLOG TASK-BAS12 Base task :work:\n:PROPERTIES:\n:ID:               TASK-BAS12\n:END:\n",
     );
     let running = boot(home.clone()).await;
@@ -2060,8 +2088,7 @@ async fn daemon_watcher_refreshes_after_direct_sprint_write() {
     let client = reqwest::Client::new();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* IN_PROGRESS TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
     );
 
@@ -2118,8 +2145,7 @@ async fn board_refresh_live_loads_freshly_registered_project() {
         &new_root.join(".orgasmic/project.org"),
         "#+title: proj-new\n#+orgasmic_version: 1\n\n* PROJECT proj-new\n:PROPERTIES:\n:ID:               proj-new\n:END:\n",
     );
-    write(
-        &new_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&new_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NEW New task :work:\n:PROPERTIES:\n:ID:               TASK-NEW\n:END:\n",
     );
     write(
@@ -2132,8 +2158,12 @@ async fn board_refresh_live_loads_freshly_registered_project() {
     );
 
     // No restart: poll a `task update` (property write) against the freshly
-    // registered project until the watcher-driven live-load lands.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    // registered project until the watcher-driven live-load lands. The budget
+    // is generous because what is asserted is "loads with no restart", not
+    // "loads fast": this is the one test on the real FSEvents backend, and
+    // every daemon-booting test in the binary serializes on the same flock, so
+    // a tight deadline turns any newly added daemon test into a failure here.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let mut last_status = None;
     let mut updated_priority = None;
     while tokio::time::Instant::now() < deadline {
@@ -2164,8 +2194,7 @@ async fn board_refresh_live_loads_freshly_registered_project() {
 
     // Watch actually registered: a further file edit inside the new
     // project's tasks dir reindexes without any additional API call.
-    write(
-        &new_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&new_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NEW New task :work:\n:PROPERTIES:\n:ID:               TASK-NEW\n:END:\n\n* BACKLOG TASK-SECOND Second task :work:\n:PROPERTIES:\n:ID:               TASK-SECOND\n:END:\n",
     );
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -2235,12 +2264,10 @@ async fn task_008_graph_routes_are_real() {
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/decisions.org"),
+    write_nodes(&project_root, "decisions",
         "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_001 Choice :product-scope:\n:PROPERTIES:\n:ID:                 dec_001\n:DECIDES:            dec_002\n:GLOSSARY_REFS:      term-a\n:END:\n** Context\nA test decision.\n** Decision\nChoose option a.\n** Consequences\nNone notable.\n",
     );
-    write(
-        &project_root.join(".orgasmic/glossary.org"),
+    write_nodes(&project_root, "glossary",
         "#+title: glossary\n#+orgasmic_version: 1\n\n* term:term-a Term A\n:PROPERTIES:\n:ID:                 term-a\n:CANONICAL:          term a\n:RELATES_TO:         dec_001\n:DEFINITION:         A test term.\n:END:\n",
     );
     let running = boot(home.clone()).await;
@@ -2832,10 +2859,8 @@ async fn task_007_content_routes_are_real() {
     let body: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(body["spec"]["id"], "griller");
     assert!(body["diagnostics"].as_array().unwrap().is_empty());
-    assert!(body["text"]
-        .as_str()
-        .unwrap()
-        .contains(".orgasmic/glossary.org"));
+    // dec_E01MC retired `.orgasmic/glossary.org`; the spec names the surface.
+    assert!(body["text"].as_str().unwrap().contains("orgasmic glossary"));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -2848,8 +2873,7 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
     home.ensure().unwrap();
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-DISPATCH-CLASS Classifier dispatch smoke\n:PROPERTIES:\n:ID:               TASK-DISPATCH-CLASS\n:END:\n",
     );
     write(
@@ -2984,8 +3008,7 @@ async fn get_task_detail_returns_parsed_body_sections() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BODY Body sections task :work:\n:PROPERTIES:\n:ID:               TASK-BODY\n:END:\n\n** Description\nFirst *bold* paragraph.\n\n** Acceptance Criteria\n- [ ] Opens with parsed sections.\n\n** Evidence\n- cli passes\n\n** Notes\nKeep scoped.\n",
     );
     let running = boot(home.clone()).await;
@@ -3030,7 +3053,7 @@ async fn goal_lifecycle_set_clear_supersede_round_trip() {
     seed_project(&home, &project_root, "orgasmic");
     write(
         &project_root.join(".orgasmic/tasks/goal.org"),
-        "#+title: Goal\n#+orgasmic_version: 1\n#+scope: project\n\n* GOAL Bootstrap goal :goal:\n:PROPERTIES:\n:ID:               goal-bootstrap\n:SET_AT:           [2026-06-01 Sat]\n:SET_BY:           seed@example.com\n:REPLACES:         —\n:END:\n\n** Statement\nBootstrap.\n",
+                "#+title: Goal\n#+orgasmic_version: 1\n#+scope: project\n\n* GOAL Bootstrap goal :goal:\n:PROPERTIES:\n:ID:               goal-bootstrap\n:SET_AT:           [2026-06-01 Sat]\n:SET_BY:           seed@example.com\n:REPLACES:         —\n:END:\n\n** Statement\nBootstrap.\n",
     );
 
     let running = boot(home.clone()).await;
@@ -3057,7 +3080,7 @@ async fn goal_lifecycle_set_clear_supersede_round_trip() {
         .unwrap();
     assert_eq!(set["goal_id"], "goal-test-first");
     let tx_path = std::path::PathBuf::from(set["tx_path"].as_str().unwrap());
-    assert!(tx_path.starts_with(project_root.join(".orgasmic/tx")));
+    assert!(is_project_tx_path(&project_root, &tx_path), "{tx_path:?}");
 
     let goal_after_set =
         std::fs::read_to_string(project_root.join(".orgasmic/tasks/goal.org")).unwrap();
@@ -3152,11 +3175,11 @@ async fn goal_set_syncs_handoff_goal_id() {
     seed_project(&home, &project_root, "orgasmic");
     write(
         &project_root.join(".orgasmic/tasks/goal.org"),
-        "#+title: Goal\n#+orgasmic_version: 1\n#+scope: project\n\n* GOAL Bootstrap goal :goal:\n:PROPERTIES:\n:ID:               goal-bootstrap\n:SET_AT:           [2026-06-01 Sat]\n:SET_BY:           seed@example.com\n:REPLACES:         —\n:END:\n\n** Statement\nBootstrap.\n",
+                "#+title: Goal\n#+orgasmic_version: 1\n#+scope: project\n\n* GOAL Bootstrap goal :goal:\n:PROPERTIES:\n:ID:               goal-bootstrap\n:SET_AT:           [2026-06-01 Sat]\n:SET_BY:           seed@example.com\n:REPLACES:         —\n:END:\n\n** Statement\nBootstrap.\n",
     );
     write(
         &project_root.join(".orgasmic/tasks/handoff.org"),
-        "#+title: Handoff\n#+orgasmic_version: 1\n\n* HANDOFF current :handoff:\n:PROPERTIES:\n:ID:               handoff-current\n:GOAL_ID:          goal-bootstrap\n:LIVENESS:         base-sha\n:END:\n\n** Done so far\nNothing yet.\n",
+                "#+title: Handoff\n#+orgasmic_version: 1\n\n* HANDOFF current :handoff:\n:PROPERTIES:\n:ID:               handoff-current\n:GOAL_ID:          goal-bootstrap\n:LIVENESS:         base-sha\n:END:\n\n** Done so far\nNothing yet.\n",
     );
 
     let running = boot(home.clone()).await;
@@ -3247,7 +3270,7 @@ async fn project_tx_record_survives_daemon_restart() {
         .unwrap();
     let tx_id = append["tx_id"].as_str().unwrap().to_string();
     let tx_path = std::path::PathBuf::from(append["tx_path"].as_str().unwrap());
-    assert!(tx_path.starts_with(project_root.join(".orgasmic/tx")));
+    assert!(is_project_tx_path(&project_root, &tx_path), "{tx_path:?}");
     assert!(std::fs::read_to_string(&tx_path).unwrap().contains(&tx_id));
 
     let _ = running.shutdown.send(());
@@ -3295,9 +3318,8 @@ async fn task_state_flip_persists_through_daemon_writer() {
     );
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    let sprint_path = project_root.join(".orgasmic/tasks/backlog.org");
-    write(
-        &sprint_path,
+    let sprint_path = project_root.join(".orgasmic/tasks/TASK-STATE/node.org");
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-STATE State flip task :work:\n:PROPERTIES:\n:ID:               TASK-STATE\n:END:\n\n** Description\nFlip me.\n",
     );
 
@@ -3312,7 +3334,7 @@ async fn task_state_flip_persists_through_daemon_writer() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "request_id": "task-state-flip-1",
-            "state": "done",
+            "state": "in_progress",
             "reason": "integration state flip"
         }))
         .send()
@@ -3321,24 +3343,25 @@ async fn task_state_flip_persists_through_daemon_writer() {
         .json()
         .await
         .unwrap();
-    assert_eq!(updated["id"], "TASK-STATE");
-    assert_eq!(updated["lifecycle_stage"], "done");
+    assert_eq!(updated["id"], "TASK-STATE", "{updated}");
+    assert_eq!(updated["lifecycle_stage"], "in_progress");
 
-    let done_path = project_root.join(".orgasmic/tasks/done.org");
-    let done = std::fs::read_to_string(&done_path).unwrap();
-    assert!(done.contains("* DONE TASK-STATE State flip task"));
-    let sprint = std::fs::read_to_string(&sprint_path).unwrap();
-    assert!(!sprint.contains("TASK-STATE"));
+    // A state flip rewrites the node's own TODO keyword in place; there is no
+    // per-state file to move it between any more.
+    let node = std::fs::read_to_string(&sprint_path).unwrap();
+    assert!(
+        node.contains("* IN_PROGRESS TASK-STATE State flip task"),
+        "{node}"
+    );
 
-    let tx_dir = project_root.join(".orgasmic/tx");
-    let tx_raw = std::fs::read_dir(&tx_dir)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
-        .collect::<String>();
-    assert!(tx_raw.contains("task.state_transitioned"));
-    assert!(tx_raw.contains(":FROM_STATE:   backlog"));
-    assert!(tx_raw.contains(":TO_STATE:     done"));
+    // dec_E01MC routes a task-scoped tx to that node's own journal, so the
+    // record is next to the node, not in the project ledger.
+    let journal = project_root.join(".orgasmic/tasks/TASK-STATE/journal.org");
+    let tx_raw = std::fs::read_to_string(&journal).unwrap();
+    assert!(tx_raw.contains("task.state_transitioned"), "{tx_raw}");
+    assert!(tx_raw.contains(":FROM_STATE:"), "{tx_raw}");
+    assert!(tx_raw.contains("backlog"), "{tx_raw}");
+    assert!(tx_raw.contains("in_progress"), "{tx_raw}");
 
     let property_updated: serde_json::Value = client
         .post(format!(
@@ -3359,16 +3382,15 @@ async fn task_state_flip_persists_through_daemon_writer() {
     assert_eq!(property_updated["id"], "TASK-STATE");
     assert_eq!(property_updated["priority"], "P1");
 
-    let done_after_property = std::fs::read_to_string(&done_path).unwrap();
+    let done_after_property = std::fs::read_to_string(&sprint_path).unwrap();
     assert!(done_after_property.lines().any(|line| {
         line.starts_with(":PRIORITY:") && line.split_whitespace().last() == Some("P1")
     }));
-    let tx_raw_after_property = std::fs::read_dir(&tx_dir)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
-        .collect::<String>();
-    assert!(tx_raw_after_property.contains("task.property_updated"));
+    let tx_raw_after_property = std::fs::read_to_string(&journal).unwrap();
+    assert!(
+        tx_raw_after_property.contains("task.property_updated"),
+        "{tx_raw_after_property}"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -3384,8 +3406,7 @@ async fn task_update_default_output_is_compact() {
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
+    write_nodes(&project_root, "tasks",
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-COMPACT Compact output task :work:\n:PROPERTIES:\n:ID:               TASK-COMPACT\n:END:\n",
     );
 
@@ -3481,6 +3502,77 @@ async fn run_recover_abandon_is_reachable_over_the_wire() {
         !error.contains("recoverable run"),
         "abandon must not fall through to the crash-recovery inventory lookup, \
          whose buckets never contain a live run: {body}"
+    );
+
+    ctx.shutdown().await;
+}
+
+/// TASK-CLM6W acceptance: a write to a node dir another machine holds is
+/// refused with a clear error naming the holder. The writer-level unit test
+/// pins the message; this pins that the message survives the trip to HTTP.
+/// Every other writer error deliberately collapses to a generic 500 because its
+/// text can carry filesystem paths — this one used to collapse with them, so
+/// the operator saw "failed to rewrite org file" and no mention of the claim.
+#[tokio::test]
+async fn node_write_claimed_by_another_machine_is_a_409_naming_the_holder() {
+    let ctx = SparseProject::boot("proj-claim-gate").await;
+    let holder = "11111111-2222-3333-4444-555555555555";
+    write(
+        &ctx.project_root
+            .join(format!(".orgasmic/machines/{holder}/claims.org")),
+        format!(
+            "#+title: claims\n#+orgasmic_version: 1\n\n\
+             * TX claim task.claimed TASK-PRE\n\
+             :PROPERTIES:\n\
+             :TX_ID: claim-holder\n\
+             :TIME: [2026-08-26 Wed 10:00:00]\n\
+             :TYPE: task.claimed\n\
+             :ACTOR: dev@example.com\n\
+             :MACHINE: {holder}\n\
+             :PROJECT: proj-claim-gate\n\
+             :TASK: TASK-PRE\n\
+             :EVENT_ID: claim-event-holder\n\
+             :END:\n"
+        ),
+    );
+
+    let node = ".orgasmic/tasks/TASK-PRE/node.org";
+    let node_path = ctx.project_root.join(node);
+    let before = std::fs::read_to_string(&node_path).unwrap();
+
+    let resp = ctx
+        .client
+        .post(format!("http://{}/api/org/file", ctx.running.addr))
+        .bearer_auth(&ctx.token)
+        .json(&serde_json::json!({
+            "project": ctx.project_id,
+            "path": node,
+            "contents": "#+title: orgasmic task TASK-PRE\n#+orgasmic_version: 2\n\n* BACKLOG TASK-PRE Edited from the wrong machine :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let reject = [
+        ctx.project_root.as_path(),
+        ctx.home_root.as_path(),
+        node_path.as_path(),
+    ];
+    let error = assert_path_free_error_response(
+        resp,
+        reqwest::StatusCode::CONFLICT,
+        "claimed by machine",
+        &reject,
+    )
+    .await;
+    assert!(
+        error.contains(holder),
+        "refusal must name the holding machine: {error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&node_path).unwrap(),
+        before,
+        "a refused write must not touch the node"
     );
 
     ctx.shutdown().await;

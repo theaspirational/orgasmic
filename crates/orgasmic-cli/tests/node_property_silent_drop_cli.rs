@@ -243,7 +243,13 @@ impl Fixture {
     fn drawer(&self, task_id: &str) -> String {
         let dir = self.project_root.join(".orgasmic").join("tasks");
         for entry in std::fs::read_dir(&dir).expect("read tasks dir") {
-            let path = entry.expect("dir entry").path();
+            let entry_path = entry.expect("dir entry").path();
+            // Node-dir layout: each task is `<id>/node.org`.
+            let path = if entry_path.is_dir() {
+                entry_path.join("node.org")
+            } else {
+                entry_path
+            };
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
@@ -271,8 +277,35 @@ impl Fixture {
     /// A whole graph file off disk: `.orgasmic/decisions.org` etc. Empty when
     /// the file does not exist yet (a refused create must not create it).
     fn graph_file(&self, name: &str) -> String {
-        let path = self.project_root.join(".orgasmic").join(name);
-        std::fs::read_to_string(&path).unwrap_or_default()
+        let dotorg = self.project_root.join(".orgasmic");
+        // Node-dir layout (dec_E01MC): a collection is a directory of
+        // `<id>/node.org` files; the singletons stay plain files.
+        let collection = match name {
+            "glossary.org" => Some("glossary"),
+            "decisions.org" => Some("decisions"),
+            _ => None,
+        };
+        match collection {
+            Some(collection) => {
+                let dir = dotorg.join(collection);
+                let mut paths: Vec<_> = std::fs::read_dir(&dir)
+                    .map(|entries| {
+                        entries
+                            .filter_map(Result::ok)
+                            .map(|e| e.path().join("node.org"))
+                            .filter(|p| p.is_file())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                paths.sort();
+                paths
+                    .into_iter()
+                    .filter_map(|p| std::fs::read_to_string(p).ok())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            None => std::fs::read_to_string(dotorg.join(name)).unwrap_or_default(),
+        }
     }
 
     /// Writes drawer lines into a task's drawer the way the pre-refusal
@@ -283,7 +316,13 @@ impl Fixture {
     fn seed_drawer_lines(&self, task_id: &str, lines: &[String]) {
         let dir = self.project_root.join(".orgasmic").join("tasks");
         for entry in std::fs::read_dir(&dir).expect("read tasks dir") {
-            let path = entry.expect("dir entry").path();
+            let entry_path = entry.expect("dir entry").path();
+            // Node-dir layout: each task is `<id>/node.org`.
+            let path = if entry_path.is_dir() {
+                entry_path.join("node.org")
+            } else {
+                entry_path
+            };
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };

@@ -393,8 +393,10 @@ fn manager_convention_documents_generation_bound_close() {
 #[test]
 fn manager_convention_names_post_close_report_path() {
     let text = manager_dispatch_convention();
+    // dec_E01MC: the promoted record moved into the task node dir's reserved
+    // `dispatches/<started-tx>/` (AP971.1), matching `dispatch_record_dir`.
     assert!(
-        text.contains(".orgasmic/dispatch-records/<started_tx>/last.txt"),
+        text.contains(".orgasmic/tasks/<ID>/dispatches/<started_tx>/report.md"),
         "step 4 must name where a closed dispatch's report lives"
     );
     assert!(

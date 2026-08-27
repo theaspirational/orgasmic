@@ -296,12 +296,12 @@ check the rest of the invocation too.
    cleanup with the salvage path, and flips the lifecycle stage.
 
    *After close, the worker report lives at
-   =<project_root>/.orgasmic/dispatch-records/<started_tx>/last.txt=*
+   =<project_root>/.orgasmic/tasks/<ID>/dispatches/<started_tx>/report.md=*
    (TASK-QGWK7, TASK-QGWK7.1). Close *promotes* =last.txt= and a bounded
    =stdout.log= out of gitignored =tmp/= into that tracked directory, keyed by
-   the dispatch GENERATION (=started_tx=), not the task — so a chain of six
-   dispatches keeps six distinct records. The close tx (and the worker's
-   =*.reported= tx) carries =:REPORT_PATH:= naming that =last.txt=. Close also
+   task and dispatch GENERATION (=started_tx=), so a chain of six dispatches
+   keeps six distinct records. The close tx (and the worker's =*.reported= tx)
+   carries =:REPORT_PATH:= naming =report.md=. Close also
    *commits* that directory, on its own, as =chore(orgasmic): dispatch record
    <started_tx>= (TASK-QGWK7.1.1). Durability then does not depend on which
    =git add= form a later state chore uses, nor on the manager remembering to

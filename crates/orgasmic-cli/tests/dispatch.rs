@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
-use orgasmic_core::Home;
+use orgasmic_core::tx::TxWriter;
+use orgasmic_core::{Home, TxEntry};
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 use orgasmic_drivers::modes::tmux::{own_tmux_server_for_tests, real_tmux_on_path};
 use orgasmic_drivers::test_tooling::{
@@ -299,24 +300,43 @@ fn seed_project(home: &Home, project_root: &Path) {
         &project_root.join(".orgasmic/project.org"),
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
     );
-    write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: backlog\n#+orgasmic_version: 1\n\n* BACKLOG TASK-DISPATCH Dispatch CLI smoke :cli:\n:PROPERTIES:\n:ID:               TASK-DISPATCH\n:END:\n\n* BACKLOG TASK-ABORT Dispatch abort smoke :cli:\n:PROPERTIES:\n:ID:               TASK-ABORT\n:END:\n\n* BACKLOG TASK-FIX Fix subtask smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX\n:END:\n\n* BACKLOG TASK-FIX-DECL Declarative fix subtask smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX-DECL\n:FIX_SUBTASK:      t\n:END:\n\n* BACKLOG TASK-FIX-FINAL Final fix round smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX-FINAL\n:FIX_SUBTASK:      t\n:END:\n\n* BACKLOG TASK-NO-MERGE Missing merge smoke :cli:\n:PROPERTIES:\n:ID:               TASK-NO-MERGE\n:END:\n\n* BACKLOG TASK-BUNDLE-A Bundle smoke A :cli:\n:PROPERTIES:\n:ID:               TASK-BUNDLE-A\n:END:\n\n* BACKLOG TASK-BUNDLE-B Bundle smoke B :cli:\n:PROPERTIES:\n:ID:               TASK-BUNDLE-B\n:END:\n\n* BACKLOG TASK-CLEANUP Cleanup smoke :cli:\n:PROPERTIES:\n:ID:               TASK-CLEANUP\n:END:\n",
-    );
-    write(
-        &project_root.join(".orgasmic/tasks/in_review.org"),
-        "#+title: in review\n#+orgasmic_version: 1\n\n* IN_REVIEW TASK-REVIEW Reviewer dispatch smoke :cli:\n:PROPERTIES:\n:ID:               TASK-REVIEW\n:END:\n\n* IN_REVIEW TASK-REVIEW-ISSUES Reviewer issue smoke :cli:\n:PROPERTIES:\n:ID:               TASK-REVIEW-ISSUES\n:END:\n\n* IN_REVIEW TASK-SHIP-CLEAN Ship verdict smoke :cli:\n:PROPERTIES:\n:ID:               TASK-SHIP-CLEAN\n:END:\n\n* IN_REVIEW TASK-HAS-ISSUES Has-issues verdict smoke :cli:\n:PROPERTIES:\n:ID:               TASK-HAS-ISSUES\n:END:\n",
-    );
-    for (name, title) in [
-        ("todo.org", "todo"),
-        ("in_progress.org", "in progress"),
-        ("done.org", "done"),
-        ("cancelled.org", "cancelled"),
-    ] {
-        write(
-            &project_root.join(".orgasmic/tasks").join(name),
-            format!("#+title: {title}\n#+orgasmic_version: 1\n\n"),
-        );
+    let backlog = [
+        ("TASK-DISPATCH", "Dispatch CLI smoke", ""),
+        ("TASK-ABORT", "Dispatch abort smoke", ""),
+        ("TASK-FIX", "Fix subtask smoke", ""),
+        (
+            "TASK-FIX-DECL",
+            "Declarative fix subtask smoke",
+            ":FIX_SUBTASK:      t\n",
+        ),
+        (
+            "TASK-FIX-FINAL",
+            "Final fix round smoke",
+            ":FIX_SUBTASK:      t\n",
+        ),
+        ("TASK-NO-MERGE", "Missing merge smoke", ""),
+        ("TASK-BUNDLE-A", "Bundle smoke A", ""),
+        ("TASK-BUNDLE-B", "Bundle smoke B", ""),
+        ("TASK-CLEANUP", "Cleanup smoke", ""),
+    ];
+    let in_review = [
+        ("TASK-REVIEW", "Reviewer dispatch smoke", ""),
+        ("TASK-REVIEW-ISSUES", "Reviewer issue smoke", ""),
+        ("TASK-SHIP-CLEAN", "Ship verdict smoke", ""),
+        ("TASK-HAS-ISSUES", "Has-issues verdict smoke", ""),
+    ];
+    for (keyword, tasks) in [("BACKLOG", &backlog[..]), ("IN_REVIEW", &in_review[..])] {
+        for (id, title, extra) in tasks {
+            write(
+                &project_root
+                    .join(".orgasmic/tasks")
+                    .join(id)
+                    .join("node.org"),
+                format!(
+                    "#+title: orgasmic task {id}\n#+orgasmic_version: 2\n\n* {keyword} {id} {title} :cli:\n:PROPERTIES:\n:ID:               {id}\n{extra}:END:\n"
+                ),
+            );
+        }
     }
     write(
         &project_root.join(".orgasmic/tasks/goal.org"),
@@ -647,20 +667,22 @@ fn wait_for_file(path: &Path) {
 }
 
 fn sprint_source(project_root: &Path) -> String {
-    [
-        "backlog.org",
-        "todo.org",
-        "in_progress.org",
-        "in_review.org",
-        "done.org",
-        "cancelled.org",
-    ]
-    .into_iter()
-    .map(|name| project_root.join(".orgasmic/tasks").join(name))
-    .filter(|path| path.is_file())
-    .map(|path| std::fs::read_to_string(path).unwrap())
-    .collect::<Vec<_>>()
-    .join("\n")
+    let dir = project_root.join(".orgasmic/tasks");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|e| e.path().join("node.org"))
+                .filter(|p| p.is_file())
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn assert_task_stage(project_root: &Path, task: &str, keyword: &str, state: &str) {
@@ -684,12 +706,56 @@ fn tx_file_name() -> String {
     format!("{}.org", chrono::Utc::now().format("%Y-%m"))
 }
 
+/// Project tx lives in the legacy `.orgasmic/tx/` and, since TASK-MSYN4, in
+/// per-machine `.orgasmic/machines/<machine-id>/tx/`. Resolve whichever holds
+/// this month's file, preferring an existing one; fall back to the legacy path
+/// so callers that assert on absence keep a stable path to name.
 fn tx_file_path(project_root: &Path) -> PathBuf {
-    project_root.join(".orgasmic/tx").join(tx_file_name())
+    let dotorg = project_root.join(".orgasmic");
+    let name = tx_file_name();
+    let legacy = dotorg.join("tx").join(&name);
+    if legacy.is_file() {
+        return legacy;
+    }
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        for machine in machines.flatten() {
+            let candidate = machine.path().join("tx").join(&name);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    legacy
 }
 
+/// The whole project ledger, across the legacy `.orgasmic/tx/` and every
+/// per-machine `.orgasmic/machines/<machine-id>/tx/` (TASK-MSYN4). Assertions
+/// search for entries, and which file a given entry landed in is not part of
+/// what they pin — reading one file makes them fail by layout, not by behavior.
 fn tx_log(project_root: &Path) -> String {
-    std::fs::read_to_string(tx_file_path(project_root)).unwrap()
+    let dotorg = project_root.join(".orgasmic");
+    let mut tx_dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        tx_dirs.extend(machines.flatten().map(|machine| machine.path().join("tx")));
+    }
+    let mut paths = Vec::new();
+    for tx_dir in tx_dirs {
+        if let Ok(entries) = std::fs::read_dir(&tx_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("org") {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+    paths.sort();
+    let mut raw = String::new();
+    for path in paths {
+        raw.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+        raw.push('\n');
+    }
+    raw
 }
 
 fn tx_id_for(raw: &str, ty: &str, task: &str) -> String {
@@ -840,8 +906,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert_task_stage(&project_root, "TASK-DISPATCH", "IN_PROGRESS", "in_progress");
     let _ = last;
 
-    let tx_path = project_root.join(".orgasmic/tx");
-    let tx_raw = std::fs::read_to_string(tx_path.join(tx_file_name())).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         manager.dispatch_started"));
     assert!(tx_raw.contains(":TASK:         TASK-DISPATCH"));
     assert!(
@@ -858,6 +923,41 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     );
     assert!(status_stdout.contains("TASK=TASK-DISPATCH"));
     assert!(status_stdout.contains("[exists]"));
+
+    let other_claims = project_root.join(".orgasmic/machines/machine-other/claims.org");
+    std::fs::create_dir_all(other_claims.parent().unwrap()).unwrap();
+    let mut other_claim = TxEntry::new(
+        "claim-other",
+        orgasmic_core::claims::CLAIMED,
+        "[2099-01-01 Thu 00:00:00]",
+        "test",
+        "machine-other",
+    );
+    other_claim.task = Some("TASK-DISPATCH".into());
+    let mut claim_writer = TxWriter::open(&other_claims).unwrap();
+    claim_writer.append(&other_claim).unwrap();
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.contains("DOUBLE_CLAIM=TASK-DISPATCH:[")
+            && status_stdout.contains("machine-other"),
+        "dispatch-status must surface both claimants: {status_stdout}"
+    );
+    let mut other_release = TxEntry::new(
+        "claim-other-release",
+        orgasmic_core::claims::RELEASED,
+        "[2100-01-01 Fri 00:00:00]",
+        "test",
+        "machine-other",
+    );
+    other_release.task = Some("TASK-DISPATCH".into());
+    claim_writer.append(&other_release).unwrap();
+    drop(claim_writer);
 
     let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     let close_stdout = run_orgasmic(
@@ -889,7 +989,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert!(close_stdout.contains("closed: TASK-DISPATCH implementer.done tx="));
     assert!(!worktree.exists(), "worktree should be removed on close");
     assert_task_stage(&project_root, "TASK-DISPATCH", "IN_REVIEW", "in_review");
-    let tx_raw = std::fs::read_to_string(tx_path.join(tx_file_name())).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         implementer.done"));
     assert!(tx_raw.contains(":MERGE_SHA:    "));
     assert!(tx_raw.contains(":CLOSED_TX:    "));
@@ -905,6 +1005,12 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert!(
         status_stdout.trim().is_empty(),
         "closed dispatch should not appear in status: {status_stdout}"
+    );
+    assert!(
+        !orgasmic_core::read_claims(&project_root)
+            .unwrap()
+            .contains_key("TASK-DISPATCH"),
+        "dispatch close must release the machine claim"
     );
 
     let review_brief = codex_dir.join("task-review-brief.md");
@@ -1042,7 +1148,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     );
     assert!(review_close_stdout.contains("closed: TASK-REVIEW reviewer.done tx="));
     assert_task_stage(&project_root, "TASK-REVIEW", "DONE", "done");
-    let tx_raw = std::fs::read_to_string(tx_path.join(tx_file_name())).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         reviewer.done"));
     assert!(tx_raw.contains(":VERDICT:      clean"));
     assert!(tx_raw.contains(":FINDINGS_TOTAL: 0"));
@@ -1690,7 +1796,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
         ],
     );
     assert_task_stage(&project_root, "TASK-ABORT", "TODO", "todo");
-    let tx_raw = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         manager.dispatch_aborted"));
     assert!(tx_raw.contains(":CLEANUP_STATUS: ok"));
 
@@ -3406,7 +3512,7 @@ async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
     assert!(stderr.contains("warning: dispatch cleanup status=worktree_failed"));
     assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
 
-    let tx_raw = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
+    let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":CLEANUP_STATUS: worktree_failed"));
     assert!(tx_raw.contains(":CLEANUP_ERROR:"));
     let cleanup_status = run_orgasmic(
@@ -3681,6 +3787,11 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
+    let task_path = project_root.join(".orgasmic/tasks/TASK-DISPATCH/node.org");
+    let task = std::fs::read_to_string(&task_path)
+        .unwrap()
+        .replace("* BACKLOG TASK-DISPATCH", "* TODO TASK-DISPATCH");
+    write(&task_path, task);
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
@@ -3738,7 +3849,7 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
         "unexpected stderr: {stderr}"
     );
 
-    assert_task_stage(&project_root, "TASK-DISPATCH", "BACKLOG", "backlog");
+    assert_task_stage(&project_root, "TASK-DISPATCH", "TODO", "todo");
     assert!(
         !worktree.exists(),
         "daemon cleanup should remove worktree after CLI timeout"
@@ -4039,10 +4150,11 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
         !attempt_stdout.exists(),
         "selected attempt stdout.log should leave tmp/ on close"
     );
-    let promoted_last =
-        project_root.join(format!(".orgasmic/dispatch-records/{started_tx}/last.txt"));
+    let promoted_last = project_root.join(format!(
+        ".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/report.md"
+    ));
     let promoted_stdout = project_root.join(format!(
-        ".orgasmic/dispatch-records/{started_tx}/stdout.log"
+        ".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/stdout.log"
     ));
     assert!(
         promoted_last.exists(),
@@ -4060,7 +4172,7 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
     let close_tx = tx_log(&project_root);
     assert!(
         close_tx.contains(&format!(
-            ":REPORT_PATH:  .orgasmic/dispatch-records/{started_tx}/last.txt"
+            ":REPORT_PATH:  .orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/report.md"
         )),
         "close tx must name the promoted report: {close_tx}"
     );
@@ -8328,12 +8440,15 @@ async fn task_update_from_dispatch_worktree_lands_in_the_live_ledger() {
         .unwrap_or_else(|| panic!("task update returned no tx_id: {stdout}"))
         .to_string();
 
+    let journal = Path::new(".orgasmic/tasks/TASK-DISPATCH/journal.org");
     assert!(
-        tx_log(&project_root).contains(&tx_id),
-        "tx {tx_id} returned from inside the worktree must exist in the LIVE ledger"
+        std::fs::read_to_string(project_root.join(journal))
+            .unwrap()
+            .contains(&tx_id),
+        "tx {tx_id} returned from inside the worktree must exist in the LIVE task journal"
     );
     assert!(
-        !worktree.join(".orgasmic/tx").exists(),
+        !worktree.join(journal).exists(),
         "the frozen snapshot must not be the thing that absorbed the write"
     );
     let from_root = run_orgasmic(
@@ -8419,6 +8534,11 @@ async fn dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
+    let task_path = project_root.join(".orgasmic/tasks/TASK-CLEANUP/node.org");
+    let task = std::fs::read_to_string(&task_path)
+        .unwrap()
+        .replace("* BACKLOG TASK-CLEANUP", "* IN_PROGRESS TASK-CLEANUP");
+    write(&task_path, task);
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
@@ -8464,21 +8584,21 @@ async fn dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request() {
         "the close must have no client-visible boundary between ledger legs: {close_stderr}"
     );
     assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
-    let ledger = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
+    let ledger = tx_log(&project_root);
     let close = ledger
         .find("implementer.done TASK-CLEANUP")
         .expect("terminal close tx must be present");
-    let transition = ledger
-        .find("task.state_transitioned TASK-CLEANUP")
-        .expect("atomic close must include the lifecycle transition tx");
     assert!(
-        close < transition,
-        "terminal tx must immediately precede its lifecycle record"
+        ledger[close..].contains(":LIFECYCLE_FROM: in_progress")
+            && ledger[close..].contains(":LIFECYCLE_TO: in_review"),
+        "the atomic terminal tx must retain the lifecycle intent: {ledger}"
     );
     assert_eq!(
-        ledger[close..transition].matches("* TX ").count(),
-        1,
-        "no concurrent tx may interleave the two close legs"
+        ledger
+            .matches("task.state_transitioned TASK-CLEANUP")
+            .count(),
+        0,
+        "the lifecycle leg is derived from the atomic close and must not append a second tx"
     );
     drop(proxy);
 
@@ -8517,9 +8637,24 @@ async fn legacy_torn_dispatch_close_is_still_repaired_by_next_manager_command() 
          :LIFECYCLE_TO: in_review\n\
          :END:\n",
     );
-    write(&tx_path, ledger);
-
     let running = boot(home.clone()).await;
+    let live = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["task", "update", "TASK-CLEANUP", "--state", "in_review"],
+    );
+    assert!(
+        !live.status.success()
+            && String::from_utf8_lossy(&live.stderr)
+                .contains("not allowed by the shipped task descriptor"),
+        "a live backlog -> in_review transition must remain guarded: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&live.stdout),
+        String::from_utf8_lossy(&live.stderr)
+    );
+
+    write(&tx_path, ledger);
     let status_stdout = run_orgasmic(
         &home,
         &running,
@@ -11272,8 +11407,9 @@ async fn a_record_persist_that_failed_is_recovered_by_re_running_the_close() {
             && first_stderr.contains("commit promoted dispatch record"),
         "the failed persist must be reported through CLEANUP_ERROR: {first_stderr}"
     );
-    let promoted_last =
-        project_root.join(format!(".orgasmic/dispatch-records/{started_tx}/last.txt"));
+    let promoted_last = project_root.join(format!(
+        ".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/report.md"
+    ));
     assert!(
         promoted_last.exists(),
         "the report itself is never the casualty of a failed persist"
@@ -11283,7 +11419,7 @@ async fn a_record_persist_that_failed_is_recovered_by_re_running_the_close() {
             .args([
                 "cat-file",
                 "-e",
-                &format!("HEAD:.orgasmic/dispatch-records/{started_tx}/last.txt"),
+                &format!("HEAD:.orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/report.md"),
             ])
             .current_dir(root)
             .status()
@@ -11460,7 +11596,9 @@ async fn a_record_commit_cannot_land_on_a_branch_the_close_never_resolved() {
             .args([
                 "cat-file",
                 "-e",
-                &format!("refs/heads/main:.orgasmic/dispatch-records/{started_tx}/last.txt"),
+                &format!(
+                    "refs/heads/main:.orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/report.md"
+                ),
             ])
             .current_dir(&project_root)
             .status()
@@ -11683,7 +11821,7 @@ async fn a_record_commit_rollback_reports_both_the_clean_and_the_failed_arm() {
                 "--cached",
                 "--name-only",
                 "--",
-                ".orgasmic/dispatch-records",
+                ".orgasmic/tasks/TASK-DISPATCH/dispatches",
             ],
         )
     };
@@ -11728,7 +11866,7 @@ async fn a_record_commit_rollback_reports_both_the_clean_and_the_failed_arm() {
     assert!(
         second_stderr.contains("run `git restore --staged -- ")
             && second_stderr.contains(&format!(
-                ".orgasmic/dispatch-records/{started_tx}` before your next"
+                ".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}` before your next"
             )),
         "and it must hand over the exact command that clears the state: {second_stderr}"
     );
@@ -11845,8 +11983,9 @@ async fn a_re_persist_lands_on_the_branch_the_re_run_is_standing_on() {
 
     // ...and the manager has moved on to `main` before re-running it.
     run_git(&project_root, &["checkout", "main"]);
-    let promoted_last =
-        project_root.join(format!(".orgasmic/dispatch-records/{started_tx}/last.txt"));
+    let promoted_last = project_root.join(format!(
+        ".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/report.md"
+    ));
     assert!(
         promoted_last.exists(),
         "an untracked promoted record survives the checkout, which is what makes the re-run \
@@ -11984,7 +12123,7 @@ async fn an_empty_promoted_record_directory_is_never_reported_as_committed() {
 
     // The torn-promote shape: the directory is there, the files are not.
     let dest_dir = project_root
-        .join(".orgasmic/dispatch-records")
+        .join(".orgasmic/tasks/TASK-DISPATCH/dispatches")
         .join(&started_tx);
     for entry in std::fs::read_dir(&dest_dir).unwrap() {
         std::fs::remove_file(entry.unwrap().path()).unwrap();

@@ -496,6 +496,17 @@ fn compile_values(view: &PromptSpecView, req: &PromptCompileRequest) -> SlotValu
     values.entry("run.previous_state".to_string()).or_default();
     values.entry("evidence.so_far".to_string()).or_default();
     values.entry("worklog.tail".to_string()).or_default();
+    values.entry("node.id".to_string()).or_default();
+    values.entry("node.type".to_string()).or_default();
+    values
+        .entry("node.content".to_string())
+        .or_insert_with(|| "not set".to_string());
+    values
+        .entry("node.comments".to_string())
+        .or_insert_with(|| "not set".to_string());
+    values
+        .entry("node.extra_prompt".to_string())
+        .or_insert_with(|| "not set".to_string());
     values
 }
 
@@ -1365,8 +1376,6 @@ mod tests {
                 "artifact.user_prompt".to_string(),
                 "none (spec compile check)".to_string(),
             );
-            req.values
-                .insert("artifact.regen_context".to_string(), "not set".to_string());
 
             let compiled = compile_prompt_spec(&home, &spec.id, req).unwrap();
 

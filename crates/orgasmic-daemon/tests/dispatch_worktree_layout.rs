@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use orgasmic_core::{mint_node_id, Home, NodeIdClass};
+use orgasmic_core::{mint_node_id_for_class, Home, NodeIdClass};
 use orgasmic_daemon::{Daemon, DaemonOptions};
 
 fn test_options() -> DaemonOptions {
@@ -91,8 +91,8 @@ fn seed_project(project_root: &Path) {
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID: orgasmic\n:END:\n",
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NESTED Parent task\n:PROPERTIES:\n:ID: TASK-NESTED\n:END:\n",
+        &project_root.join(".orgasmic/tasks/TASK-NESTED/node.org"),
+        "#+title: orgasmic task TASK-NESTED\n#+orgasmic_version: 2\n\n* BACKLOG TASK-NESTED Parent task\n:PROPERTIES:\n:ID: TASK-NESTED\n:END:\n",
     );
 }
 
@@ -126,13 +126,15 @@ async fn nested_dispatch_worktree_org_is_not_indexed_or_parsed() {
     seed_board(&home, &project_root, "proj-nested");
 
     let worktree = add_dispatch_worktree(&project_root, "task-nested", "task-nested-impl");
-    assert!(worktree.join(".orgasmic/tasks/backlog.org").is_file());
+    assert!(worktree
+        .join(".orgasmic/tasks/TASK-NESTED/node.org")
+        .is_file());
 
-    let decoy_id = mint_node_id(NodeIdClass::Task);
+    let decoy_id = mint_node_id_for_class(NodeIdClass::Task);
     write(
-        &worktree.join(".orgasmic/tasks/backlog.org"),
+        &worktree.join(format!(".orgasmic/tasks/{decoy_id}/node.org")),
         format!(
-            "#+title: nested backlog\n#+orgasmic_version: 1\n\n* BACKLOG {decoy_id} Nested decoy\n:PROPERTIES:\n:ID: {decoy_id}\n:END:\n"
+            "#+title: orgasmic task {decoy_id}\n#+orgasmic_version: 2\n\n* BACKLOG {decoy_id} Nested decoy\n:PROPERTIES:\n:ID: {decoy_id}\n:END:\n"
         ),
     );
     write(
@@ -199,8 +201,8 @@ async fn nested_dispatch_worktree_org_is_not_indexed_or_parsed() {
     );
 
     write(
-        &worktree.join(".orgasmic/tasks/backlog.org"),
-        "#+title: nested sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-TOUCH Watcher touch\n:PROPERTIES:\n:ID: TASK-TOUCH\n:END:\n",
+        &worktree.join(".orgasmic/tasks/TASK-TOUCH/node.org"),
+        "#+title: orgasmic task TASK-TOUCH\n#+orgasmic_version: 2\n\n* BACKLOG TASK-TOUCH Watcher touch\n:PROPERTIES:\n:ID: TASK-TOUCH\n:END:\n",
     );
     tokio::time::sleep(Duration::from_millis(800)).await;
 

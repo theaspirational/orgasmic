@@ -18,7 +18,7 @@ function task(
     parent_task: parentTask,
     owner: 'human',
     tags: [],
-    source_file: '.orgasmic/tasks/backlog.org',
+    source_file: `.orgasmic/tasks/${id}/node.org`,
   };
 }
 

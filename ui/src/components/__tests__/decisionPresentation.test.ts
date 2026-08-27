@@ -10,7 +10,7 @@ function decision(overrides: Partial<DecisionSummary> = {}): DecisionSummary {
     title: 'Native run evidence and retrospective execution are explicit opt-in operations',
     tags: [],
     glossary_refs: [],
-    source_file: 'decisions.org',
+    source_file: '.orgasmic/decisions/dec_001/node.org',
     ...overrides,
   };
 }

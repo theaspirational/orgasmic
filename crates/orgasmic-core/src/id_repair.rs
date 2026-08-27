@@ -287,18 +287,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let dup = mint_node_id(NodeIdClass::Decision);
-        let keep_path = root.join(".orgasmic/decisions.org");
-        let incoming_path = root.join(".orgasmic/tasks/backlog.org");
+        let keep_path = root.join(".orgasmic/decisions").join(&dup).join("node.org");
+        let incoming_path = root.join(".orgasmic/tasks").join(&dup).join("node.org");
         write(
             &keep_path,
             &format!(
-                "#+title: decisions\n\n* {dup} Keep\n:PROPERTIES:\n:ID: {dup}\n:END:\n** Decision\nKeep side.\n"
+                "#+title: orgasmic decision {dup}\n#+orgasmic_version: 2\n\n* {dup} Keep\n:PROPERTIES:\n:ID: {dup}\n:END:\n** Decision\nKeep side.\n"
             ),
         );
         write(
             &incoming_path,
             &format!(
-                "#+title: backlog\n\n* BACKLOG {dup} Incoming\n:PROPERTIES:\n:ID: {dup}\n:DEPENDS_ON: {dup}\n:END:\n"
+                "#+title: orgasmic task {dup}\n#+orgasmic_version: 2\n\n* BACKLOG {dup} Incoming\n:PROPERTIES:\n:ID: {dup}\n:DEPENDS_ON: {dup}\n:END:\n"
             ),
         );
         let mut incoming = HashMap::new();

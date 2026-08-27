@@ -1,0 +1,42 @@
+#+title: orgasmic task TASK-C9V29
+#+orgasmic_version: 2
+
+* BACKLOG TASK-C9V29 Bootstrap orgasmic: populate .orgasmic/ from this repo :bootstrap:
+:PROPERTIES:
+:ID:               TASK-C9V29
+:STATE:            backlog
+:PRIORITY:         P1
+:WRITE_SCOPE:      .orgasmic/tx/**
+:READ_SCOPE:       .orgasmic/**
+:DEPENDS_ON:
+:BLOCKED_BY:
+:LAST_UPDATED:
+:END:
+
+** Description
+Umbrella task that turns a freshly scaffolded `.orgasmic/` into real project
+state by auditing this repository and grilling the operator. It owns no file of
+its own; it completes when its three subtasks are DONE.
+
+Run the subtasks in order — TASK-C9V29.1 -> TASK-C9V29.2 -> TASK-C9V29.3. Each
+one:
+1. Audits the codebase for concrete evidence (READMEs, manifests, source layout,
+   tests, config) instead of guessing.
+2. Grills the operator in small batches of high-value questions to confirm
+   intent and fill the gaps code cannot answer.
+3. Writes its target `.orgasmic/` file with real records — not placeholders — so
+   later agents have a worked example to follow.
+4. Leaves an activity record via `orgasmic tx record`.
+
+Requires a running daemon and CLI (`/orgasmic install`, then `orgasmic daemon
+start`). Bootstrap `.orgasmic/` writes use `orgasmic node body set|append`,
+`orgasmic decision create`, and `orgasmic task update` — see `orgasmic --help`.
+Replace this task with your own once bootstrap is complete.
+
+** Acceptance Criteria
+- [ ] TASK-C9V29.1, TASK-C9V29.2, and TASK-C9V29.3 are all DONE.
+- [ ] `project.org` and the `decisions/` and `glossary/` collections hold
+      real, repo-specific records (no `[Replace ...]` placeholders remain).
+- [ ] `.orgasmic/tx/` has at least one activity record from this bootstrap.
+
+** Worklog

@@ -1,28 +1,15 @@
 #+title: orgasmic task lifecycle and run sub-states
-#+version: 3
+#+version: 4
 
 * STATE-MACHINE task-lifecycle
 :PROPERTIES:
-:VERSION: 3
+:VERSION: 4
 :END:
 
-** Heading keywords
-Org TODO keywords are single uppercase tokens; multi-word states use
-underscores. Display labels are prose:
-- BACKLOG -> Backlog
-- TODO -> Todo
-- IN_PROGRESS -> In Progress
-- IN_REVIEW -> In Review
-- DONE -> Done
-- CANCELLED -> Cancelled
-
-** Transitions
-- backlog     -> todo | in_progress | cancelled
-- todo        -> in_progress | cancelled
-- in_progress -> in_review | todo | cancelled
-- in_review   -> in_progress | done | cancelled
-- done        -> terminal
-- cancelled   -> terminal
+** Descriptor
+The authoritative task states and transitions are shipped in
+[[file:node-types/task.org][node-types/task.org]]. Org TODO keywords are their uppercase forms; multi-word
+states use underscores.
 
 ** Rule
 The task heading TODO keyword is the human-facing lifecycle column. Worker-phase

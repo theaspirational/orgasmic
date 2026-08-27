@@ -19,9 +19,9 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
 use orgasmic_core::{
-    iter_task_file_paths, lint_decision_heading_id_token, lint_project_identities,
-    lint_task_heading_id_token, validate_parent_tree, DecisionNode, GlossaryTerm, Heading, Home,
-    LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError, ParentTreeNode,
+    collection_node_file_paths, lint_decision_heading_id_token, lint_project_identities,
+    lint_task_heading_id_token, projects, validate_parent_tree, DecisionNode, GlossaryTerm,
+    Heading, Home, LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError, ParentTreeNode,
     SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
@@ -30,7 +30,7 @@ use tokio::process::Command;
 use tokio::sync::{oneshot, Mutex, RwLock, Semaphore};
 use tracing::warn;
 
-use crate::artifacts::{load_project_artifacts, ArtifactSummary};
+use crate::artifacts::{load_artifact, load_project_artifacts, ArtifactSummary};
 
 /// One project's materialized state.
 #[derive(Debug, Clone, Serialize)]
@@ -156,6 +156,7 @@ pub enum ActivityKind {
     Comment,
     StateTransition,
     RunLifecycle,
+    Claim,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -314,6 +315,10 @@ pub struct IndexSnapshot {
     pub rebuilt_at: Option<DateTime<Utc>>,
     #[serde(skip)]
     artifact_projects: HashSet<String>,
+    #[serde(skip)]
+    file_contents: HashMap<PathBuf, String>,
+    #[serde(skip)]
+    decision_supersedes: HashMap<PathBuf, HashSet<String>>,
 }
 
 impl IndexSnapshot {
@@ -745,6 +750,7 @@ enum BuiltRefresh {
     HomeTx {
         tx: Vec<TxRecord>,
         parse_errors: Vec<ParseError>,
+        file_contents: HashMap<PathBuf, String>,
     },
 }
 
@@ -775,6 +781,8 @@ struct BuiltProjectRefresh {
     project: Option<ProjectIndex>,
     tx: Vec<TxRecord>,
     parse_errors: Vec<ParseError>,
+    file_contents: HashMap<PathBuf, String>,
+    decision_supersedes: HashMap<PathBuf, HashSet<String>>,
 }
 
 struct CapturedRefresh {
@@ -816,6 +824,310 @@ impl Index {
 
     pub async fn snapshot(&self) -> IndexSnapshot {
         self.inner.read().await.clone()
+    }
+
+    /// Apply one filesystem write to the live projection. Classified node and
+    /// tx paths never enter the project refresh coordinator; only paths whose
+    /// ownership cannot be determined fall back to an authoritative rescan.
+    pub async fn apply_written_path(&self, path: &Path) -> Result<bool, String> {
+        // Apply-own-write (TASK-8AV8B) replaced the post-commit refresh scan as
+        // the way a committed write reaches the projection, so the injected
+        // failure that pins the committed-but-unprojected 503 contract has to
+        // reach here too — otherwise that contract is only tested on a path
+        // production no longer takes.
+        #[cfg(test)]
+        if self
+            .refresh_test_hooks
+            .fail_next
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |remaining| remaining.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err("injected index refresh failure".to_string());
+        }
+        if path.starts_with(self.home.tx()) {
+            return self.reload_tx_file(None, path).await;
+        }
+        // Two callers reach here with differently-shaped paths: the watcher
+        // canonicalizes its fs events, the writer passes the raw path it just
+        // wrote. Board entry paths are a third shape (as-registered). On macOS
+        // `/tmp` is a symlink to `/private/tmp`, so comparing any two of those
+        // raw makes `strip_prefix` fail and the write silently classify as
+        // "nothing changed". Canonicalize every side before matching.
+        let canon_path = crate::watcher::canonical(path);
+        let board_entry = {
+            let snap = self.inner.read().await;
+            snap.board
+                .iter()
+                .filter_map(|entry| {
+                    let root = crate::watcher::canonical(&entry.path);
+                    canon_path
+                        .strip_prefix(&root)
+                        .ok()
+                        .map(|relative| (entry.clone(), relative.to_path_buf(), root))
+                })
+                .max_by_key(|(_, _, root)| root.components().count())
+        };
+        let Some((entry, relative, _)) = board_entry else {
+            return Ok(false);
+        };
+        let parts = relative
+            .components()
+            .filter_map(|part| match part {
+                std::path::Component::Normal(value) => value.to_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if parts.first() != Some(&".orgasmic") {
+            return Ok(false);
+        }
+        if matches!(parts.get(1).copied(), Some("tmp" | "views")) {
+            return Ok(false);
+        }
+        // Project tx lives in two shapes: the legacy `.orgasmic/tx/YYYY-MM.org`
+        // and TASK-MSYN4's per-machine `.orgasmic/machines/<machine-id>/tx/YYYY-MM.org`
+        // (both collected by `project_tx_dirs`). Route each to the tx reloader;
+        // without the `machines/` arm the node-dir branch below claims
+        // `machines/<machine-id>` as a collection node and the write is lost.
+        let tx_file = match parts.get(1).copied() {
+            Some("tx") => (parts.len() == 3).then_some(()),
+            Some("machines") => ((parts.len() == 5 && parts.get(3) == Some(&"tx"))
+                || (parts.len() == 4 && parts.get(3) == Some(&"claims.org")))
+            .then_some(()),
+            _ => None,
+        };
+        if parts.get(1) == Some(&"tx") || parts.get(1) == Some(&"machines") {
+            if tx_file.is_some()
+                && canon_path.extension().and_then(|ext| ext.to_str()) == Some("org")
+            {
+                // `reload_tx_file` keys `file_contents`/`source_path` by this
+                // path, and the bulk `collect_tx_dir` builds its keys from the
+                // registered root. Rebuild in that same shape so a reload
+                // replaces the collector's records instead of duplicating them.
+                let ledger_path = entry.path.join(&relative);
+                let changed = self.reload_tx_file(Some(&entry.id), &ledger_path).await?;
+                if parts.get(3) == Some(&"claims.org") {
+                    orgasmic_core::build_views(&entry.path)
+                        .map_err(|error| format!("build claim views: {error:#}"))?;
+                }
+                return Ok(changed);
+            }
+            self.refresh_project(&entry.id).await?;
+            return Ok(true);
+        }
+        if let (Some(collection), Some(node_id)) = (parts.get(1), parts.get(2)) {
+            if !node_id.ends_with(".org") {
+                return self.reload_node_dir(&entry, collection, node_id).await;
+            }
+        }
+        self.refresh_project(&entry.id).await?;
+        Ok(true)
+    }
+
+    async fn reload_tx_file(&self, project_id: Option<&str>, path: &Path) -> Result<bool, String> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => Some(contents),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(format!("read {}: {error}", path.display())),
+        };
+        let mut snap = self.inner.write().await;
+        if contents.as_ref() == snap.file_contents.get(path) {
+            return Ok(false);
+        }
+        snap.tx.retain(|record| record.source_path != path);
+        snap.parse_errors.retain(|error| error.path != path);
+        match contents {
+            Some(contents) => {
+                snap.file_contents
+                    .insert(path.to_path_buf(), contents.clone());
+                match parse_tx_file(&contents, &path.to_string_lossy()) {
+                    Ok(entries) => snap.tx.extend(entries.into_iter().map(|entry| TxRecord {
+                        project_id: project_id.map(str::to_string),
+                        source_path: path.to_path_buf(),
+                        entry,
+                    })),
+                    Err(error) => snap.parse_errors.push(ParseError {
+                        path: path.to_path_buf(),
+                        kind: ParseErrorKind::HistoricalTx,
+                        line: tx_parse_error_line(&error, &contents),
+                        message: error.to_string(),
+                        at: Utc::now(),
+                    }),
+                }
+            }
+            None => {
+                snap.file_contents.remove(path);
+            }
+        }
+        rebuild_all_activity_indexes(&mut snap);
+        Ok(true)
+    }
+
+    async fn reload_node_dir(
+        &self,
+        board_entry: &BoardEntry,
+        collection: &str,
+        node_id: &str,
+    ) -> Result<bool, String> {
+        let node_dir = board_entry
+            .path
+            .join(".orgasmic")
+            .join(collection)
+            .join(node_id);
+        let node_path = node_dir.join(orgasmic_core::node_kernel::NODE_FILE);
+        let journal_path = node_dir.join(orgasmic_core::node_kernel::JOURNAL_FILE);
+        let read_optional = |path: &Path| match std::fs::read_to_string(path) {
+            Ok(contents) => Ok(Some(contents)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("read {}: {error}", path.display())),
+        };
+        let node_contents = read_optional(&node_path)?;
+        let journal_contents = read_optional(&journal_path)?;
+        let artifact = (collection == "artifacts").then(|| load_artifact(&node_dir));
+
+        let mut snap = self.inner.write().await;
+        if node_contents.as_ref() == snap.file_contents.get(&node_path)
+            && journal_contents.as_ref() == snap.file_contents.get(&journal_path)
+        {
+            return Ok(false);
+        }
+        let Some(mut project) = snap.projects.remove(&board_entry.id) else {
+            drop(snap);
+            self.refresh_project(&board_entry.id).await?;
+            return Ok(true);
+        };
+        snap.parse_errors
+            .retain(|error| !error.path.starts_with(&node_dir));
+        for (path, contents) in [
+            (&node_path, node_contents.as_ref()),
+            (&journal_path, journal_contents.as_ref()),
+        ] {
+            if let Some(contents) = contents {
+                snap.file_contents
+                    .insert(path.to_path_buf(), contents.clone());
+            } else {
+                snap.file_contents.remove(path);
+            }
+        }
+
+        snap.tx.retain(|record| record.source_path != journal_path);
+        if let Some(contents) = journal_contents {
+            match orgasmic_core::node_kernel::parse_journal(
+                &contents,
+                &journal_path.to_string_lossy(),
+            ) {
+                Ok(entries) => snap.tx.extend(entries.into_iter().map(|entry| TxRecord {
+                    project_id: Some(board_entry.id.clone()),
+                    source_path: journal_path.clone(),
+                    entry: journal_tx_entry(entry, &board_entry.id, Some(node_id)),
+                })),
+                Err(error) => snap.parse_errors.push(ParseError {
+                    path: journal_path.clone(),
+                    kind: ParseErrorKind::HistoricalTx,
+                    message: error.to_string(),
+                    line: None,
+                    at: Utc::now(),
+                }),
+            }
+        }
+
+        if collection == "tasks" {
+            if let Some(contents) = node_contents.as_ref() {
+                match OrgFile::parse(contents.clone(), node_path.to_string_lossy()) {
+                    Ok(file) => {
+                        remove_tasks_from_node(&mut project, &node_dir);
+                        lint_phantom_task_headings(&file, &node_path, &mut snap);
+                        lint_task_heading_id_tokens(&file, &node_path, &mut snap);
+                        for heading in &file.headings {
+                            match parse_task(&file, heading, &node_path) {
+                                Ok(Some(task)) => {
+                                    project
+                                        .task_bodies
+                                        .insert(task.id.clone(), parse_task_body(&file, heading));
+                                    project.tasks.push(task);
+                                }
+                                Ok(None) => {}
+                                Err(error) => push_parse_error(
+                                    &mut snap,
+                                    node_path.clone(),
+                                    error.to_string(),
+                                ),
+                            }
+                        }
+                    }
+                    Err(error) => push_parse_error(&mut snap, node_path.clone(), error.to_string()),
+                }
+            } else {
+                remove_tasks_from_node(&mut project, &node_dir);
+            }
+        } else if collection == "decisions" {
+            if let Some(contents) = node_contents.as_ref() {
+                match OrgFile::parse(contents.clone(), node_path.to_string_lossy()) {
+                    Ok(file) => {
+                        remove_graph_node_source(&mut project.graph, &node_dir);
+                        snap.decision_supersedes.remove(&node_path);
+                        lint_decision_heading_id_tokens(&file, &node_path, &mut snap);
+                        let superseded =
+                            load_decisions(&file, &node_path, &mut project.graph, &mut snap);
+                        snap.decision_supersedes
+                            .insert(node_path.clone(), superseded);
+                    }
+                    Err(error) => push_parse_error(&mut snap, node_path.clone(), error.to_string()),
+                }
+            } else {
+                remove_graph_node_source(&mut project.graph, &node_dir);
+                snap.decision_supersedes.remove(&node_path);
+            }
+        } else if collection == "glossary" {
+            if let Some(contents) = node_contents.as_ref() {
+                match OrgFile::parse(contents.clone(), node_path.to_string_lossy()) {
+                    Ok(file) => {
+                        remove_graph_node_source(&mut project.graph, &node_dir);
+                        load_glossary(&file, &node_path, &mut project.graph);
+                    }
+                    Err(error) => push_parse_error(&mut snap, node_path.clone(), error.to_string()),
+                }
+            } else {
+                remove_graph_node_source(&mut project.graph, &node_dir);
+            }
+        }
+
+        project
+            .graph
+            .nodes
+            .retain(|node| !matches!(node.layer.as_str(), "task" | "artifact"));
+        project.graph.edges.clear();
+        load_task_graph(&mut project);
+        let superseded = snap
+            .decision_supersedes
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<HashSet<_>>();
+        apply_superseded_flags(&mut project.graph, &superseded);
+        build_decision_tree_index(&mut project.graph, &board_entry.path, &mut snap);
+        project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, &mut snap);
+        project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
+        lint_dangling_graph_edges(&project, &mut snap);
+        if collection == "artifacts" && snap.artifact_projects.contains(&board_entry.id) {
+            project.artifacts.retain(|item| item.id != node_id);
+            if let Some(Some(artifact)) = artifact {
+                project.artifacts.push(artifact);
+            }
+        }
+        project.last_loaded_at = Some(Utc::now());
+        snap.projects.insert(board_entry.id.clone(), project);
+        let load = snap
+            .project_loads
+            .entry(board_entry.id.clone())
+            .or_default();
+        load.state = ProjectLoadState::Ready;
+        load.generation = load.generation.saturating_add(1);
+        load.last_loaded_at = Some(Utc::now());
+        Ok(true)
     }
 
     pub async fn catalog(&self) -> Vec<ProjectCatalogEntry> {
@@ -1960,11 +2272,15 @@ impl Index {
                     .into_iter()
                     .filter(|error| is_under(&error.path, &board_entry.path))
                     .collect();
+                let file_contents = next.file_contents;
+                let decision_supersedes = next.decision_supersedes;
                 Ok(BuiltRefresh::Project(Box::new(BuiltProjectRefresh {
                     board_entry,
                     project,
                     tx,
                     parse_errors,
+                    file_contents,
+                    decision_supersedes,
                 })))
             }
             RefreshSeed::Artifacts { board_entry } => {
@@ -1997,6 +2313,7 @@ impl Index {
                         .into_iter()
                         .filter(|error| is_under(&error.path, &scan_index.home.tx()))
                         .collect(),
+                    file_contents: next.file_contents,
                 })
             }
         };
@@ -2061,6 +2378,8 @@ impl Index {
                     project,
                     tx,
                     parse_errors,
+                    file_contents,
+                    decision_supersedes,
                 } = *project_refresh;
                 let Some(current_entry) =
                     snap.board.iter().find(|entry| entry.id == board_entry.id)
@@ -2076,6 +2395,12 @@ impl Index {
                 snap.parse_errors
                     .retain(|error| !is_under(&error.path, &board_entry.path));
                 snap.parse_errors.extend(parse_errors);
+                snap.file_contents
+                    .retain(|path, _| !is_under(path, &board_entry.path));
+                snap.file_contents.extend(file_contents);
+                snap.decision_supersedes
+                    .retain(|path, _| !is_under(path, &board_entry.path));
+                snap.decision_supersedes.extend(decision_supersedes);
                 snap.tx
                     .retain(|record| record.project_id.as_deref() != Some(board_entry.id.as_str()));
                 snap.tx.extend(tx);
@@ -2141,9 +2466,16 @@ impl Index {
                 project.artifacts = artifacts;
                 snap.artifact_projects.insert(board_entry.id);
             }
-            BuiltRefresh::HomeTx { tx, parse_errors } => {
+            BuiltRefresh::HomeTx {
+                tx,
+                parse_errors,
+                file_contents,
+            } => {
                 snap.tx.retain(|record| record.project_id.is_some());
                 snap.tx.extend(tx);
+                snap.file_contents
+                    .retain(|path, _| !is_under(path, &self.home.tx()));
+                snap.file_contents.extend(file_contents);
                 snap.parse_errors
                     .retain(|error| !is_under(&error.path, &self.home.tx()));
                 snap.parse_errors.extend(parse_errors);
@@ -2482,30 +2814,17 @@ impl Index {
         if !path.exists() {
             return;
         }
-        match read_org(&path) {
-            Ok(file) => {
-                for h in &file.headings {
-                    let id = h.property("ID").unwrap_or("").to_string();
-                    if id.is_empty() {
-                        continue;
-                    }
-                    snap.board.push(BoardEntry {
-                        id,
-                        path: PathBuf::from(
-                            h.property("PATH")
-                                .or_else(|| h.property("LOCAL_PATH"))
-                                .unwrap_or(""),
-                        ),
-                        branch: h
-                            .property("BRANCH")
-                            .or_else(|| h.property("DEFAULT_BRANCH"))
-                            .unwrap_or("")
-                            .to_string(),
-                        status: h.property("STATUS").unwrap_or("active").to_string(),
-                    });
-                }
-            }
+        match projects::read_board(&self.home) {
+            Ok(entries) => snap
+                .board
+                .extend(entries.into_iter().map(|entry| BoardEntry {
+                    id: entry.id,
+                    path: entry.path,
+                    branch: entry.branch,
+                    status: entry.status,
+                })),
             Err(err) => {
+                let err = err.to_string();
                 if !parse_error_already_recorded(snap, &path, &err) {
                     warn!(path = %path.display(), error = %err, "board parse failed");
                     snap.parse_errors.push(ParseError {
@@ -2551,23 +2870,30 @@ impl Index {
         };
         let mut project = project;
         // Identity lint (duplicate ids, malformed mints, dangling .orgasmic
-        // references) lives inside ordinary project loading: it reads only
-        // task files, decisions.org, and glossary.org.
+        // references) lives inside ordinary project loading.
         lint_project_identity_state(&board_entry.path, snap);
         // goal.org carries no tasks, so it is not in the task-file iteration;
         // read it just for the thin-goal lint (stale liveness vestiges).
         let goal_path = orgasmic_core::goal_file_path(&board_entry.path);
         if goal_path.exists() {
-            match read_org(&goal_path) {
+            match read_org_tracked(&goal_path, snap) {
                 Ok(file) => lint_goal_liveness(&file, &goal_path, snap),
                 Err(err) => push_parse_error(snap, goal_path, err),
             }
         }
-        for path in iter_task_file_paths(&board_entry.path) {
-            if !path.exists() {
-                continue;
+        let task_paths = match collection_node_file_paths(&board_entry.path, "tasks") {
+            Ok(paths) => paths,
+            Err(err) => {
+                push_parse_error(
+                    snap,
+                    board_entry.path.join(".orgasmic/tasks"),
+                    err.to_string(),
+                );
+                Vec::new()
             }
-            match read_org(&path) {
+        };
+        for path in task_paths {
+            match read_org_tracked(&path, snap) {
                 Ok(file) => {
                     lint_phantom_task_headings(&file, &path, snap);
                     lint_task_heading_id_tokens(&file, &path, snap);
@@ -2601,10 +2927,12 @@ impl Index {
         self.load_graph(board_entry, &mut project, snap);
         load_task_graph(&mut project);
         lint_dangling_graph_edges(&project, snap);
-        let project_tx_dir = board_entry.path.join(".orgasmic").join("tx");
-        if project_tx_dir.is_dir() {
+        let dotorg = board_entry.path.join(".orgasmic");
+        for project_tx_dir in project_tx_dirs(&dotorg) {
             collect_tx_dir(&project_tx_dir, Some(board_entry.id.as_str()), snap);
         }
+        collect_claim_files(&dotorg, board_entry.id.as_str(), snap);
+        collect_project_journals(&board_entry.path, &board_entry.id, snap);
         project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, snap);
         project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
         let prior = snap.projects.insert(board_entry.id.clone(), project);
@@ -2625,6 +2953,13 @@ impl Index {
                 snap.projects.insert(board_entry.id.clone(), prior);
             }
         }
+        if let Err(error) = orgasmic_core::build_views(&board_entry.path) {
+            push_parse_error(
+                snap,
+                board_entry.path.join(".orgasmic/views"),
+                format!("build derived views: {error:#}"),
+            );
+        }
     }
 
     fn load_graph(
@@ -2633,19 +2968,25 @@ impl Index {
         project: &mut ProjectIndex,
         snap: &mut IndexSnapshot,
     ) {
-        let orgasmic_dir = board_entry.path.join(".orgasmic");
-        let decisions_path = orgasmic_dir.join("decisions.org");
         let mut all_superseded: HashSet<String> = HashSet::new();
-        if decisions_path.exists() {
-            match read_org(&decisions_path) {
+        let decision_paths = collection_node_file_paths(&board_entry.path, "decisions")
+            .unwrap_or_else(|err| {
+                push_parse_error(
+                    snap,
+                    board_entry.path.join(".orgasmic/decisions"),
+                    err.to_string(),
+                );
+                Vec::new()
+            });
+        for decisions_path in decision_paths {
+            match read_org_tracked(&decisions_path, snap) {
                 Ok(file) => {
                     lint_decision_heading_id_tokens(&file, &decisions_path, snap);
-                    all_superseded.extend(load_decisions(
-                        &file,
-                        &decisions_path,
-                        &mut project.graph,
-                        snap,
-                    ));
+                    let superseded =
+                        load_decisions(&file, &decisions_path, &mut project.graph, snap);
+                    all_superseded.extend(superseded.iter().cloned());
+                    snap.decision_supersedes
+                        .insert(decisions_path.clone(), superseded);
                 }
                 Err(err) => push_parse_error(snap, decisions_path, err),
             }
@@ -2655,9 +2996,17 @@ impl Index {
         apply_superseded_flags(&mut project.graph, &all_superseded);
         build_decision_tree_index(&mut project.graph, &board_entry.path, snap);
 
-        let glossary = orgasmic_dir.join("glossary.org");
-        if glossary.exists() {
-            match read_org(&glossary) {
+        let glossary_paths = collection_node_file_paths(&board_entry.path, "glossary")
+            .unwrap_or_else(|err| {
+                push_parse_error(
+                    snap,
+                    board_entry.path.join(".orgasmic/glossary"),
+                    err.to_string(),
+                );
+                Vec::new()
+            });
+        for glossary in glossary_paths {
+            match read_org_tracked(&glossary, snap) {
                 Ok(file) => load_glossary(&file, &glossary, &mut project.graph),
                 Err(err) => push_parse_error(snap, glossary, err),
             }
@@ -2880,7 +3229,7 @@ fn decision_tree_parse_error(
                 .find(|decision| decision.id == id)
                 .map(|decision| decision.source_file.clone())
         })
-        .unwrap_or_else(|| project_root.join(".orgasmic/decisions.org"));
+        .unwrap_or_else(|| project_root.join(".orgasmic/decisions"));
     (path, format!("decision tree :PARENT: error: {err}"))
 }
 
@@ -2909,6 +3258,33 @@ fn load_glossary(file: &OrgFile, source: &Path, graph: &mut GraphIndex) {
             source_file: source.to_path_buf(),
         });
     }
+}
+
+fn remove_tasks_from_node(project: &mut ProjectIndex, node_dir: &Path) {
+    let removed = project
+        .tasks
+        .iter()
+        .filter(|task| task.source_file.starts_with(node_dir))
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>();
+    project
+        .tasks
+        .retain(|task| !task.source_file.starts_with(node_dir));
+    for id in removed {
+        project.task_bodies.remove(&id);
+    }
+}
+
+fn remove_graph_node_source(graph: &mut GraphIndex, node_dir: &Path) {
+    graph
+        .decisions
+        .retain(|decision| !decision.source_file.starts_with(node_dir));
+    graph
+        .glossary
+        .retain(|term| !term.source_file.starts_with(node_dir));
+    graph
+        .nodes
+        .retain(|node| !node.source_file.starts_with(node_dir));
 }
 
 fn load_task_graph(project: &mut ProjectIndex) {
@@ -3041,26 +3417,44 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
     };
     for entry in read.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("org") {
-            continue;
+        if path.extension().and_then(|e| e.to_str()) == Some("org") {
+            collect_tx_file(&path, project_id, snap);
         }
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => match parse_tx_file(&contents, &path.to_string_lossy()) {
+    }
+}
+
+fn collect_tx_file(path: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot) {
+    let mut seen: HashSet<String> = snap
+        .tx
+        .iter()
+        .map(|record| tx_event_id(&record.entry).to_string())
+        .collect();
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            snap.file_contents
+                .insert(path.to_path_buf(), contents.clone());
+            match parse_tx_file(&contents, &path.to_string_lossy()) {
                 Ok(entries) => {
                     for entry in entries {
+                        // TASK-MSYN4: per-machine ledgers are read as a union,
+                        // so the same event id can appear from a retry or a
+                        // legacy tx file already folded above.
+                        if !seen.insert(tx_event_id(&entry).to_string()) {
+                            continue;
+                        }
                         snap.tx.push(TxRecord {
                             project_id: project_id.map(str::to_string),
-                            source_path: path.clone(),
+                            source_path: path.to_path_buf(),
                             entry,
                         });
                     }
                 }
                 Err(err) => {
                     let message = err.to_string();
-                    if !parse_error_already_recorded(snap, &path, &message) {
+                    if !parse_error_already_recorded(snap, path, &message) {
                         warn!(path = %path.display(), error = %message, "tx parse failed");
                         snap.parse_errors.push(ParseError {
-                            path: path.clone(),
+                            path: path.to_path_buf(),
                             kind: ParseErrorKind::HistoricalTx,
                             line: tx_parse_error_line(&err, &contents),
                             message,
@@ -3068,22 +3462,170 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
                         });
                     }
                 }
-            },
-            Err(err) => {
-                let message = err.to_string();
-                if !parse_error_already_recorded(snap, &path, &message) {
-                    warn!(path = %path.display(), error = %message, "tx read failed");
-                    snap.parse_errors.push(ParseError {
-                        path: path.clone(),
-                        kind: ParseErrorKind::HistoricalTx,
-                        message,
-                        line: None,
-                        at: Utc::now(),
-                    });
-                }
+            }
+        }
+        Err(err) => {
+            let message = err.to_string();
+            if !parse_error_already_recorded(snap, path, &message) {
+                warn!(path = %path.display(), error = %message, "tx read failed");
+                snap.parse_errors.push(ParseError {
+                    path: path.to_path_buf(),
+                    kind: ParseErrorKind::HistoricalTx,
+                    message,
+                    line: None,
+                    at: Utc::now(),
+                });
             }
         }
     }
+}
+
+fn collect_project_journals(project_root: &Path, project_id: &str, snap: &mut IndexSnapshot) {
+    let dotorg = project_root.join(".orgasmic");
+    let Ok(collections) = std::fs::read_dir(dotorg) else {
+        return;
+    };
+    for collection in collections.flatten() {
+        let collection_path = collection.path();
+        // `machines/` holds per-machine tx ledgers (TASK-MSYN4), not nodes;
+        // `project_tx_dirs` collects those.
+        if !collection_path.is_dir()
+            || matches!(
+                collection.file_name().to_str(),
+                Some("tx" | "tmp" | "views" | "machines")
+            )
+        {
+            continue;
+        }
+        let Ok(nodes) = std::fs::read_dir(collection_path) else {
+            continue;
+        };
+        for node in nodes.flatten() {
+            let journal = node.path().join(orgasmic_core::node_kernel::JOURNAL_FILE);
+            if journal.is_file() {
+                collect_journal_file(&journal, project_id, snap);
+            }
+        }
+    }
+}
+
+fn collect_journal_file(path: &Path, project_id: &str, snap: &mut IndexSnapshot) {
+    let node_id = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            snap.file_contents
+                .insert(path.to_path_buf(), contents.clone());
+            match orgasmic_core::node_kernel::parse_journal(&contents, &path.to_string_lossy()) {
+                Ok(entries) => snap.tx.extend(entries.into_iter().map(|entry| TxRecord {
+                    project_id: Some(project_id.to_string()),
+                    source_path: path.to_path_buf(),
+                    entry: journal_tx_entry(entry, project_id, node_id),
+                })),
+                Err(error) => snap.parse_errors.push(ParseError {
+                    path: path.to_path_buf(),
+                    kind: ParseErrorKind::HistoricalTx,
+                    message: error.to_string(),
+                    line: None,
+                    at: Utc::now(),
+                }),
+            }
+        }
+        Err(error) => snap.parse_errors.push(ParseError {
+            path: path.to_path_buf(),
+            kind: ParseErrorKind::HistoricalTx,
+            message: error.to_string(),
+            line: None,
+            at: Utc::now(),
+        }),
+    }
+}
+
+fn journal_tx_entry(
+    entry: orgasmic_core::node_kernel::JournalEntry,
+    project_id: &str,
+    node_id: Option<&str>,
+) -> TxEntry {
+    let find = |key: &str| {
+        entry
+            .extras
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.clone())
+    };
+    let mut tx = TxEntry::new(
+        entry.entry_id,
+        entry.ty,
+        entry.time,
+        entry.actor,
+        entry.machine,
+    );
+    tx.project = find("PROJECT").or_else(|| Some(project_id.to_string()));
+    tx.task = find("TASK").or_else(|| {
+        node_id
+            .filter(|id| id.starts_with("TASK-"))
+            .map(str::to_string)
+    });
+    tx.target = find("TARGET");
+    tx.reason = find("REASON");
+    tx.extra = entry
+        .extras
+        .into_iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "PROJECT" | "TASK" | "TARGET" | "REASON"))
+        .collect();
+    if !entry.body.is_empty() {
+        tx.extra
+            .push(("BODY".into(), escape_property_value(&entry.body)));
+    }
+    tx
+}
+
+fn escape_property_value(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\n', "\\n")
+}
+
+fn project_tx_dirs(dotorg: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let legacy = dotorg.join("tx");
+    if legacy.is_dir() {
+        dirs.push(legacy);
+    }
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        dirs.extend(
+            machines
+                .flatten()
+                .map(|machine| machine.path().join("tx"))
+                .filter(|tx| tx.is_dir()),
+        );
+    }
+    dirs.sort();
+    dirs
+}
+
+fn collect_claim_files(dotorg: &Path, project_id: &str, snap: &mut IndexSnapshot) {
+    let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) else {
+        return;
+    };
+    let mut paths = machines
+        .flatten()
+        .map(|machine| machine.path().join("claims.org"))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    paths.sort();
+    for path in paths {
+        collect_tx_file(&path, Some(project_id), snap);
+    }
+}
+
+fn tx_event_id(entry: &TxEntry) -> &str {
+    entry
+        .extra
+        .iter()
+        .find(|(key, _)| key == "EVENT_ID")
+        .map(|(_, value)| value.as_str())
+        .unwrap_or(&entry.tx_id)
 }
 
 fn lint_project_identity_state(project_root: &Path, snap: &mut IndexSnapshot) {
@@ -3243,8 +3785,9 @@ fn first_heading_line(contents: &str) -> Option<usize> {
         .find_map(|(index, line)| line.starts_with("* ").then_some(index + 1))
 }
 
-fn read_org(path: &Path) -> Result<OrgFile, String> {
+fn read_org_tracked(path: &Path, snap: &mut IndexSnapshot) -> Result<OrgFile, String> {
     let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    snap.file_contents.insert(path.to_path_buf(), raw.clone());
     OrgFile::parse(raw, path.to_string_lossy()).map_err(|e| e.to_string())
 }
 
@@ -3585,6 +4128,8 @@ fn activity_entry_from_tx(entry: &TxEntry) -> Option<ActivityEntry> {
         ActivityKind::StateTransition
     } else if entry.ty.starts_with("run.") {
         ActivityKind::RunLifecycle
+    } else if matches!(entry.ty.as_str(), "task.claimed" | "task.claim_released") {
+        ActivityKind::Claim
     } else {
         return None;
     };
@@ -3674,6 +4219,21 @@ mod tests {
         std::fs::write(path, contents).unwrap();
     }
 
+    fn write_node(project: &Path, collection: &str, id: &str, label: &str, body: &str) {
+        write(
+            &project
+                .join(".orgasmic")
+                .join(collection)
+                .join(id)
+                .join("node.org"),
+            &format!("#+title: orgasmic {label} {id}\n#+orgasmic_version: 2\n\n{body}"),
+        );
+    }
+
+    fn remove_seed_task(project: &Path) {
+        std::fs::remove_dir_all(project.join(".orgasmic/tasks/TASK-001")).unwrap();
+    }
+
     fn make_home() -> (tempfile::TempDir, Home) {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
@@ -3696,10 +4256,10 @@ mod tests {
             &project,
             "#+title: x\n#+orgasmic_version: 1\n\n* PROJECT proj-x\n:PROPERTIES:\n:ID:               proj-x\n:END:\n",
         );
-        let sprint = project_root.join(".orgasmic/tasks/backlog.org");
+        let sprint = project_root.join(".orgasmic/tasks/TASK-001/node.org");
         write(
             &sprint,
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Do a thing :work:\n:PROPERTIES:\n:ID:               TASK-001\n:PRIORITY:         P1\n:END:\n\n** Description\nSeeded detail.\n\n** Acceptance Criteria\n- [ ] Body fields load.\n",
+            "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 Do a thing :work:\n:PROPERTIES:\n:ID:               TASK-001\n:PRIORITY:         P1\n:END:\n\n** Description\nSeeded detail.\n\n** Acceptance Criteria\n- [ ] Body fields load.\n",
         );
     }
 
@@ -3942,10 +4502,39 @@ mod tests {
         let (tmp, home) = make_home();
         let project = tmp.path().join("project");
         seed_project(&project);
-        write(
-            &project.join(".orgasmic/tasks/backlog.org"),
-            "#+title: dependency states\n#+orgasmic_version: 1\n\n* BACKLOG TASK-ACTIVE Active dependency\n:PROPERTIES:\n:ID: TASK-ACTIVE\n:END:\n\n* DONE TASK-DONE Satisfied dependency\n:PROPERTIES:\n:ID: TASK-DONE\n:END:\n\n* CANCELLED TASK-CANCEL Cancelled dependency\n:PROPERTIES:\n:ID: TASK-CANCEL\n:END:\n\n* BACKLOG TASK-BLOCKED Active dependency blocks\n:PROPERTIES:\n:ID: TASK-BLOCKED\n:DEPENDS_ON: TASK-ACTIVE\n:END:\n\n* BACKLOG TASK-SATISFIED Done dependency does not block\n:PROPERTIES:\n:ID: TASK-SATISFIED\n:DEPENDS_ON: TASK-DONE\n:END:\n\n* BACKLOG TASK-CANCELLED Cancelled dependency does not block\n:PROPERTIES:\n:ID: TASK-CANCELLED\n:DEPENDS_ON: TASK-CANCEL\n:END:\n\n* BACKLOG TASK-MISSING Missing dependency blocks\n:PROPERTIES:\n:ID: TASK-MISSING\n:DEPENDS_ON: TASK-NOT-HERE\n:END:\n",
-        );
+        remove_seed_task(&project);
+        for (id, body) in [
+            (
+                "TASK-ACTIVE",
+                "* BACKLOG TASK-ACTIVE Active dependency\n:PROPERTIES:\n:ID: TASK-ACTIVE\n:END:\n",
+            ),
+            (
+                "TASK-DONE",
+                "* DONE TASK-DONE Satisfied dependency\n:PROPERTIES:\n:ID: TASK-DONE\n:END:\n",
+            ),
+            (
+                "TASK-CANCEL",
+                "* CANCELLED TASK-CANCEL Cancelled dependency\n:PROPERTIES:\n:ID: TASK-CANCEL\n:END:\n",
+            ),
+            (
+                "TASK-BLOCKED",
+                "* BACKLOG TASK-BLOCKED Active dependency blocks\n:PROPERTIES:\n:ID: TASK-BLOCKED\n:DEPENDS_ON: TASK-ACTIVE\n:END:\n",
+            ),
+            (
+                "TASK-SATISFIED",
+                "* BACKLOG TASK-SATISFIED Done dependency does not block\n:PROPERTIES:\n:ID: TASK-SATISFIED\n:DEPENDS_ON: TASK-DONE\n:END:\n",
+            ),
+            (
+                "TASK-CANCELLED",
+                "* BACKLOG TASK-CANCELLED Cancelled dependency does not block\n:PROPERTIES:\n:ID: TASK-CANCELLED\n:DEPENDS_ON: TASK-CANCEL\n:END:\n",
+            ),
+            (
+                "TASK-MISSING",
+                "* BACKLOG TASK-MISSING Missing dependency blocks\n:PROPERTIES:\n:ID: TASK-MISSING\n:DEPENDS_ON: TASK-NOT-HERE\n:END:\n",
+            ),
+        ] {
+            write_node(&project, "tasks", id, "task", body);
+        }
         seed_board(&home, &project, "project");
         let index = Index::new(home);
         index.bootstrap_catalog().await;
@@ -4316,6 +4905,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn board_catalog_routes_the_daemon_to_the_hidden_ledger() {
+        let (tmp, home) = make_home();
+        let main = tmp.path().join("main");
+        std::fs::create_dir(&main).unwrap();
+        seed_board(&home, &main, "project");
+        let ledger = home.project_ledger("project");
+        seed_project(&ledger);
+
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+
+        assert_eq!(index.snapshot().await.board[0].path, ledger);
+    }
+
+    #[tokio::test]
     async fn changed_board_registration_invalidates_projection_and_repo_url() {
         let (tmp, home) = make_home();
         let old_root = tmp.path().join("old");
@@ -4361,9 +4965,13 @@ mod tests {
         let new_root = tmp.path().join("new");
         seed_project(&old_root);
         seed_project(&new_root);
-        write(
-            &new_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: tasks\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NEW New root task\n:PROPERTIES:\n:ID: TASK-NEW\n:END:\n",
+        remove_seed_task(&new_root);
+        write_node(
+            &new_root,
+            "tasks",
+            "TASK-NEW",
+            "task",
+            "* BACKLOG TASK-NEW New root task\n:PROPERTIES:\n:ID: TASK-NEW\n:END:\n",
         );
         seed_board(&home, &old_root, "project");
         let index = Index::new(home.clone());
@@ -4778,7 +5386,7 @@ mod tests {
         let project = tmp.path().join("blocked-project");
         seed_project(&project);
         seed_board(&home, &project, "blocked-project");
-        let task_file = project.join(".orgasmic/tasks/backlog.org");
+        let task_file = project.join(".orgasmic/tasks/TASK-001/node.org");
         std::fs::remove_file(&task_file).unwrap();
         let task_file_c = std::ffi::CString::new(task_file.as_os_str().as_bytes()).unwrap();
         let rc = unsafe { libc::mkfifo(task_file_c.as_ptr(), 0o600) };
@@ -4874,15 +5482,85 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_summary_indexes_depends_on_on_rebuild_and_refresh() {
+    async fn refresh_rebuilds_byte_stable_derived_views() {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
         write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-A TASK-B\n:END:\n\n* BACKLOG TASK-A First dependency :work:\n:PROPERTIES:\n:ID:               TASK-A\n:END:\n\n* BACKLOG TASK-B Second dependency :work:\n:PROPERTIES:\n:ID:               TASK-B\n:END:\n\n* BACKLOG TASK-002 Unblocked task :work:\n:PROPERTIES:\n:ID:               TASK-002\n:END:\n",
+            &project_root.join(".orgasmic/decisions/dec_A/node.org"),
+            "#+title: orgasmic decision dec_A\n#+orgasmic_version: 2\n\n* dec_A Choose A\n:PROPERTIES:\n:ID: dec_A\n:END:\n",
         );
+        write(
+            &project_root.join(".orgasmic/glossary/term_A/node.org"),
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A\n:PROPERTIES:\n:ID: term_A\n:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let views = project_root.join(".orgasmic/views");
+        let first = std::fs::read(views.join("board.org")).unwrap();
+        assert!(std::fs::read_to_string(views.join("decisions.org"))
+            .unwrap()
+            .contains("* dec_A Choose A"));
+        assert!(std::fs::read_to_string(views.join("glossary.org"))
+            .unwrap()
+            .contains("* term_A A"));
+
+        index.refresh_project("proj-x").await.unwrap();
+        assert_eq!(std::fs::read(views.join("board.org")).unwrap(), first);
+
+        write(
+            &project_root.join(".orgasmic/tasks/TASK-001/node.org"),
+            "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* IN_PROGRESS TASK-001 Changed\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
+        );
+        index.refresh_project("proj-x").await.unwrap();
+        let changed = std::fs::read_to_string(views.join("board.org")).unwrap();
+        assert_ne!(changed.as_bytes(), first);
+        assert!(changed.contains("* IN_PROGRESS TASK-001 Changed"));
+    }
+
+    #[tokio::test]
+    #[ignore = "manual probe against a migrated checkout"]
+    async fn migrated_repo_has_no_parse_errors() {
+        let root = PathBuf::from(
+            std::env::var_os("ORGASMIC_INDEX_ROOT").expect("set ORGASMIC_INDEX_ROOT"),
+        );
+        let (_tmp, home) = make_home();
+        seed_board(&home, &root, "migration-probe");
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        assert!(snap.parse_errors.is_empty(), "{:#?}", snap.parse_errors);
+        assert_eq!(snap.project("migration-probe").unwrap().tasks.len(), 724);
+    }
+
+    #[tokio::test]
+    async fn task_summary_indexes_depends_on_on_rebuild_and_refresh() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        for (id, body) in [
+            (
+                "TASK-001",
+                "* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-A TASK-B\n:END:\n",
+            ),
+            (
+                "TASK-A",
+                "* BACKLOG TASK-A First dependency :work:\n:PROPERTIES:\n:ID:               TASK-A\n:END:\n",
+            ),
+            (
+                "TASK-B",
+                "* BACKLOG TASK-B Second dependency :work:\n:PROPERTIES:\n:ID:               TASK-B\n:END:\n",
+            ),
+            (
+                "TASK-002",
+                "* BACKLOG TASK-002 Unblocked task :work:\n:PROPERTIES:\n:ID:               TASK-002\n:END:\n",
+            ),
+        ] {
+            write_node(&project_root, "tasks", id, "task", body);
+        }
 
         let index = Index::new(home);
         index.rebuild().await;
@@ -4896,9 +5574,22 @@ mod tests {
         let stats = index.catalog().await.remove(0).task_stats.unwrap();
         assert_eq!(stats.blocked, 1);
 
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-C\n:END:\n\n* BACKLOG TASK-C Refreshed dependency :work:\n:PROPERTIES:\n:ID:               TASK-C\n:END:\n",
+        for id in ["TASK-A", "TASK-B", "TASK-002"] {
+            std::fs::remove_dir_all(project_root.join(".orgasmic/tasks").join(id)).unwrap();
+        }
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-001",
+            "task",
+            "* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-C\n:END:\n",
+        );
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-C",
+            "task",
+            "* BACKLOG TASK-C Refreshed dependency :work:\n:PROPERTIES:\n:ID:               TASK-C\n:END:\n",
         );
         index.refresh_project("proj-x").await.unwrap();
         let snap = index.snapshot().await;
@@ -4915,10 +5606,21 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-RDY12\n:IMPLEMENTS:       arch_APP12\n:PRODUCES:         crates/example.rs\n:END:\n\n* BACKLOG TASK-RDY12 Ready dependency :work:\n:PROPERTIES:\n:ID:               TASK-RDY12\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-RDY12\n:IMPLEMENTS:       arch_APP12\n:PRODUCES:         crates/example.rs\n:END:\n",
+        );
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-RDY12",
+            "task",
+            "* BACKLOG TASK-RDY12 Ready dependency :work:\n:PROPERTIES:\n:ID:               TASK-RDY12\n:END:\n",
         );
         let index = Index::new(home);
         index.rebuild().await;
@@ -4954,10 +5656,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -4980,10 +5686,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/done.org"),
-            "#+title: x done\n#+orgasmic_version: 1\n\n* DONE TASK-BKC12 Historical implementation edge :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       arch_GONE99\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* DONE TASK-BKC12 Historical implementation edge :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       arch_GONE99\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5009,10 +5719,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:PRODUCES:         arch_GONE99\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:PRODUCES:         arch_GONE99\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5039,10 +5753,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       dec_GONE99\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       dec_GONE99\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5066,10 +5784,10 @@ mod tests {
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        let glossary = project_root.join(".orgasmic/glossary.org");
+        let glossary = project_root.join(".orgasmic/glossary/term_A/node.org");
         write(
             &glossary,
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5098,10 +5816,14 @@ mod tests {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12 TASK-MSS12\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-BKC12",
+            "task",
+            "* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12 TASK-MSS12\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5137,10 +5859,10 @@ mod tests {
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        let glossary = project_root.join(".orgasmic/glossary.org");
+        let glossary = project_root.join(".orgasmic/glossary/term_A/node.org");
         write(
             &glossary,
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5155,7 +5877,7 @@ mod tests {
         // no daemon restart — and confirm the count drops to zero.
         write(
             &glossary,
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
+            "#+title: orgasmic glossary term term_A\n#+orgasmic_version: 2\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
         );
         index.refresh_project("proj-x").await.unwrap();
         let snap = index.snapshot().await;
@@ -5384,9 +6106,12 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/glossary.org"),
-            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       arch_GONE99\n:END:\n",
+        write_node(
+            &project_root,
+            "glossary",
+            "term_A",
+            "glossary term",
+            "* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       arch_GONE99\n:END:\n",
         );
         assert!(
             !project_root.join(".orgasmic/architecture.org").exists(),
@@ -5454,11 +6179,11 @@ The following criteria must hold before close.
         let before = index.snapshot().await.project("proj-x").unwrap().clone();
         assert_eq!(before.tasks.len(), 1);
 
-        // Now corrupt the sprint file with a broken property drawer.
-        let sprint = project_root.join(".orgasmic/tasks/backlog.org");
+        // Now corrupt the task node with a broken property drawer.
+        let sprint = project_root.join(".orgasmic/tasks/TASK-001/node.org");
         std::fs::write(
             &sprint,
-            "#+title: x\n\n* BACKLOG TASK-001 oops\n:PROPERTIES:\nno-end-marker",
+            "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 oops\n:PROPERTIES:\nno-end-marker",
         )
         .unwrap();
 
@@ -5496,6 +6221,41 @@ The following criteria must hold before close.
     }
 
     #[tokio::test]
+    async fn activity_is_the_deduplicated_union_of_machine_ledgers() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        let event_id = uuid::Uuid::new_v4();
+        let entry = |tx_id: &str, machine: &str| {
+            format!(
+                "#+title: machine tx\n#+orgasmic_version: 1\n\n* TX 2026-08-26 10:00:00 comment TASK-001\n:PROPERTIES:\n:TX_ID: {tx_id}\n:TIME: [2026-08-26 Wed 10:00:00]\n:TYPE: comment\n:ACTOR: dev@example.com\n:MACHINE: {machine}\n:PROJECT: proj-x\n:TASK: TASK-001\n:EVENT_ID: {event_id}\n:BODY: hello\n:END:\n"
+            )
+        };
+        write(
+            &project_root.join(".orgasmic/machines/a/tx/2026-08.org"),
+            &entry("tx-a", "a"),
+        );
+        write(
+            &project_root.join(".orgasmic/machines/b/tx/2026-08.org"),
+            &entry("tx-b-retry", "b"),
+        );
+        write(
+            &project_root.join(".orgasmic/machines/c/claims.org"),
+            "#+title: claims\n#+orgasmic_version: 1\n\n* TX claim task.claimed TASK-001\n:PROPERTIES:\n:TX_ID: claim-c\n:TIME: [2026-08-26 Wed 09:59:00]\n:TYPE: task.claimed\n:ACTOR: dev@example.com\n:MACHINE: c\n:PROJECT: proj-x\n:TASK: TASK-001\n:EVENT_ID: claim-event-c\n:END:\n\n* TX release task.claim_released TASK-001\n:PROPERTIES:\n:TX_ID: release-c\n:TIME: [2026-08-26 Wed 10:01:00]\n:TYPE: task.claim_released\n:ACTOR: dev@example.com\n:MACHINE: c\n:PROJECT: proj-x\n:TASK: TASK-001\n:EVENT_ID: release-event-c\n:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let activity = &snap.project("proj-x").unwrap().activity_index["TASK-001"];
+        assert_eq!(activity.len(), 3);
+        assert_eq!(activity[0].kind, ActivityKind::Claim);
+        assert_eq!(activity[1].body, "hello");
+        assert_eq!(activity[2].kind, ActivityKind::Claim);
+    }
+
+    #[tokio::test]
     async fn goal_liveness_property_is_reported_as_parse_error() {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
@@ -5530,10 +6290,14 @@ The following criteria must hold before close.
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
+        remove_seed_task(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/tasks/backlog.org"),
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-999.1 Orphan\n:PROPERTIES:\n:ID:               TASK-999.1\n:END:\n",
+        write_node(
+            &project_root,
+            "tasks",
+            "TASK-999.1",
+            "task",
+            "* BACKLOG TASK-999.1 Orphan\n:PROPERTIES:\n:ID:               TASK-999.1\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5551,37 +6315,30 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n\
-* dec_AAAAA First root\n\
-:PROPERTIES:\n\
-:ID:                 dec_AAAAA\n\
-:END:\n\
-\n\
-* dec_BBBBB Second root\n\
-:PROPERTIES:\n\
-:ID:                 dec_BBBBB\n\
-:END:\n\
-\n\
-* dec_CCCCC Child one\n\
-:PROPERTIES:\n\
-:ID:                 dec_CCCCC\n\
-:PARENT:             dec_BBBBB\n\
-:END:\n\
-\n\
-* dec_DDDDD Child two\n\
-:PROPERTIES:\n\
-:ID:                 dec_DDDDD\n\
-:PARENT:             dec_BBBBB\n\
-:END:\n\
-\n\
-* dec_EEEEE Grandchild\n\
-:PROPERTIES:\n\
-:ID:                 dec_EEEEE\n\
-:PARENT:             dec_DDDDD\n\
-:END:\n",
-        );
+        for (id, body) in [
+            (
+                "dec_AAAAA",
+                "* dec_AAAAA First root\n:PROPERTIES:\n:ID:                 dec_AAAAA\n:END:\n",
+            ),
+            (
+                "dec_BBBBB",
+                "* dec_BBBBB Second root\n:PROPERTIES:\n:ID:                 dec_BBBBB\n:END:\n",
+            ),
+            (
+                "dec_CCCCC",
+                "* dec_CCCCC Child one\n:PROPERTIES:\n:ID:                 dec_CCCCC\n:PARENT:             dec_BBBBB\n:END:\n",
+            ),
+            (
+                "dec_DDDDD",
+                "* dec_DDDDD Child two\n:PROPERTIES:\n:ID:                 dec_DDDDD\n:PARENT:             dec_BBBBB\n:END:\n",
+            ),
+            (
+                "dec_EEEEE",
+                "* dec_EEEEE Grandchild\n:PROPERTIES:\n:ID:                 dec_EEEEE\n:PARENT:             dec_DDDDD\n:END:\n",
+            ),
+        ] {
+            write_node(&project_root, "decisions", id, "decision", body);
+        }
 
         let index = Index::new(home);
         index.rebuild().await;
@@ -5610,14 +6367,12 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n\
-* dec_RPHN1 Orphan child\n\
-:PROPERTIES:\n\
-:ID:                 dec_RPHN1\n\
-:PARENT:             dec_GHST1\n\
-:END:\n",
+        write_node(
+            &project_root,
+            "decisions",
+            "dec_RPHN1",
+            "decision",
+            "* dec_RPHN1 Orphan child\n:PROPERTIES:\n:ID:                 dec_RPHN1\n:PARENT:             dec_GHST1\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -5636,26 +6391,22 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n\
-* dec_AAAAA Parent now superseded\n\
-:PROPERTIES:\n\
-:ID:                 dec_AAAAA\n\
-:END:\n\
-\n\
-* dec_BBBBB Replacement\n\
-:PROPERTIES:\n\
-:ID:                 dec_BBBBB\n\
-:SUPERSEDES:         dec_AAAAA\n\
-:END:\n\
-\n\
-* dec_CCCCC Live child\n\
-:PROPERTIES:\n\
-:ID:                 dec_CCCCC\n\
-:PARENT:             dec_AAAAA\n\
-:END:\n",
-        );
+        for (id, body) in [
+            (
+                "dec_AAAAA",
+                "* dec_AAAAA Parent now superseded\n:PROPERTIES:\n:ID:                 dec_AAAAA\n:END:\n",
+            ),
+            (
+                "dec_BBBBB",
+                "* dec_BBBBB Replacement\n:PROPERTIES:\n:ID:                 dec_BBBBB\n:SUPERSEDES:         dec_AAAAA\n:END:\n",
+            ),
+            (
+                "dec_CCCCC",
+                "* dec_CCCCC Live child\n:PROPERTIES:\n:ID:                 dec_CCCCC\n:PARENT:             dec_AAAAA\n:END:\n",
+            ),
+        ] {
+            write_node(&project_root, "decisions", id, "decision", body);
+        }
 
         let index = Index::new(home);
         index.rebuild().await;
@@ -5678,20 +6429,19 @@ The following criteria must hold before close.
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n\
-* dec_X Old decision :history:\n\
-:PROPERTIES:\n\
-:ID:                 dec_X\n\
-:END:\n\
-** Decision\nThe old way.\n\n\
-* dec_Y Replacement decision :current:\n\
-:PROPERTIES:\n\
-:ID:                 dec_Y\n\
-:SUPERSEDES:         dec_X\n\
-:END:\n\
-** Decision\nThe new way.\n",
+        write_node(
+            &project_root,
+            "decisions",
+            "dec_X",
+            "decision",
+            "* dec_X Old decision :history:\n:PROPERTIES:\n:ID:                 dec_X\n:END:\n** Decision\nThe old way.\n",
+        );
+        write_node(
+            &project_root,
+            "decisions",
+            "dec_Y",
+            "decision",
+            "* dec_Y Replacement decision :current:\n:PROPERTIES:\n:ID:                 dec_Y\n:SUPERSEDES:         dec_X\n:END:\n** Decision\nThe new way.\n",
         );
 
         let index = Index::new(home);
@@ -5894,11 +6644,13 @@ The following criteria must hold before close.
             tokio::spawn(async move { first_index.refresh_after_tx("project", "tx-first").await });
         gate.entered.notified().await;
 
-        let backlog = project.join(".orgasmic/tasks/backlog.org");
-        let mut contents = std::fs::read_to_string(&backlog).unwrap();
-        contents
-            .push_str("\n* BACKLOG TASK-002 Later mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n");
-        write(&backlog, &contents);
+        write_node(
+            &project,
+            "tasks",
+            "TASK-002",
+            "task",
+            "* BACKLOG TASK-002 Later mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n",
+        );
         let second_index = index.clone();
         let second =
             tokio::spawn(
@@ -5930,11 +6682,13 @@ The following criteria must hold before close.
         let index = Index::new(home);
         index.rebuild().await;
 
-        let backlog = project.join(".orgasmic/tasks/backlog.org");
-        let mut contents = std::fs::read_to_string(&backlog).unwrap();
-        contents
-            .push_str("\n* BACKLOG TASK-002 Older mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n");
-        write(&backlog, &contents);
+        write_node(
+            &project,
+            "tasks",
+            "TASK-002",
+            "task",
+            "* BACKLOG TASK-002 Older mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n",
+        );
 
         let first_gate = index.gate_next_refresh();
         let second_gate = index.gate_next_refresh();
@@ -5951,9 +6705,13 @@ The following criteria must hold before close.
             let index = index.clone();
             tokio::spawn(async move { index.refresh_after_tx("project", "tx-older").await })
         };
-        contents
-            .push_str("\n* BACKLOG TASK-003 Later mutation\n:PROPERTIES:\n:ID: TASK-003\n:END:\n");
-        write(&backlog, &contents);
+        write_node(
+            &project,
+            "tasks",
+            "TASK-003",
+            "task",
+            "* BACKLOG TASK-003 Later mutation\n:PROPERTIES:\n:ID: TASK-003\n:END:\n",
+        );
         let newer = {
             let index = index.clone();
             tokio::spawn(async move { index.refresh_after_tx("project", "tx-newer").await })

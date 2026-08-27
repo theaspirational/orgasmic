@@ -6,8 +6,8 @@
 :END:
 
 Retired (dec_HBK6A): the architecture graph layer and its authoring policy are
-gone. Durable design rationale lives in `.orgasmic/decisions.org`; domain
-language in `.orgasmic/glossary.org`. Do not author `.orgasmic/architecture.org`
+gone. Durable design rationale is read from `.orgasmic/views/decisions.org`;
+domain language from `.orgasmic/views/glossary.org`. Do not author `.orgasmic/architecture.org`
 or mint `arch_*` ids. Keep this part only so historical prompt compilations that
 still name it resolve to an explicit retirement notice rather than silent
 topology guidance.

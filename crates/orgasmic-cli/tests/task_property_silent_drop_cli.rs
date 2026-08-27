@@ -226,7 +226,13 @@ impl Fixture {
     fn drawer(&self, task_id: &str) -> String {
         let dir = self.project_root.join(".orgasmic").join("tasks");
         for entry in std::fs::read_dir(&dir).expect("read tasks dir") {
-            let path = entry.expect("dir entry").path();
+            let entry_path = entry.expect("dir entry").path();
+            // Node-dir layout: each task is `<id>/node.org`.
+            let path = if entry_path.is_dir() {
+                entry_path.join("node.org")
+            } else {
+                entry_path
+            };
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };

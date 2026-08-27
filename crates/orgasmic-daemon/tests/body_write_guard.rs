@@ -102,8 +102,8 @@ fn seed_project_with_sections(home: &Home, project_root: &Path, project_id: &str
         ),
     );
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n\
+        &project_root.join(".orgasmic/tasks/TASK-G01/node.org"),
+        "#+title: orgasmic task TASK-G01\n#+orgasmic_version: 2\n\n\
          * BACKLOG TASK-G01 Guard test task :work:\n\
          :PROPERTIES:\n\
          :ID:               TASK-G01\n\
@@ -161,7 +161,7 @@ async fn add_section_rejects_column0_star_heading() {
     common::assert_body_rejects_paths(&body, &[&project_root]);
 
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-G01/node.org")).unwrap();
     assert!(
         !on_disk.contains("Phantom Heading") && !on_disk.contains("** Evidence"),
         "file must be unmodified after append rejection: {on_disk}"
@@ -235,7 +235,7 @@ async fn body_edit_rejects_column0_star_heading() {
 
     // Confirm the file on disk is unchanged.
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-G01/node.org")).unwrap();
     assert!(
         on_disk.contains("** Description\nOriginal description.\n"),
         "file must be unmodified after rejection"
@@ -307,7 +307,7 @@ async fn body_edit_accepts_indented_star_and_roundtrips() {
 
     // Byte-stable round-trip: the escaped text must appear verbatim on disk.
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-G01/node.org")).unwrap();
     assert!(
         on_disk.contains(" * Not a heading\nSome prose."),
         "indented star must survive round-trip: {on_disk}"
@@ -353,7 +353,7 @@ async fn body_edit_accepts_src_block_column0_star() {
     );
 
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-G01/node.org")).unwrap();
     assert!(
         on_disk.contains("#+begin_src org\n* Not a parsed heading\n#+end_src\nAfter block.\n"),
         "src block body must survive round-trip: {on_disk}"
@@ -460,7 +460,7 @@ async fn node_body_edit_accepts_escaped_leading_star_and_preserves_bytes() {
     );
 
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-G01/node.org")).unwrap();
     assert!(
         on_disk.contains("\n * Not a heading\n\tIndented detail.\n\n** Description\n"),
         "set_body must preserve leading whitespace bytes: {on_disk}"
@@ -506,7 +506,7 @@ async fn section_body_edit_preserves_escaped_leading_bytes() {
     );
 
     let on_disk =
-        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/TASK-G01/node.org")).unwrap();
     assert!(
         on_disk.contains("** Description\n  leading spaces\n * Not a heading\n\tTabbed detail.\n\n** Acceptance Criteria\n"),
         "set_section_body must preserve leading whitespace bytes: {on_disk}"
@@ -544,8 +544,8 @@ async fn phantom_heading_surfaces_via_parse_errors() {
     );
     // Sprint file with one valid task and one phantom heading (no :ID:, no state).
     write(
-        &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: sprint\n#+orgasmic_version: 1\n\n\
+        &project_root.join(".orgasmic/tasks/TASK-G01/node.org"),
+        "#+title: orgasmic task TASK-G01\n#+orgasmic_version: 2\n\n\
          * BACKLOG TASK-001 Valid task :work:\n\
          :PROPERTIES:\n:ID:               TASK-001\n:END:\n\n\
          * Phantom heading from daemon-free write\n\
