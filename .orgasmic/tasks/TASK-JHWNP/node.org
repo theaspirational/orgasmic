@@ -1,0 +1,27 @@
+#+title: orgasmic task TASK-JHWNP
+#+orgasmic_version: 2
+
+* BACKLOG TASK-JHWNP worktree-per-task-chain: implementer and fix rounds share one worktree; only review gets a fresh checkout    :dispatch:worktree:
+:PROPERTIES:
+:ID: TASK-JHWNP
+:PRIORITY: P2
+:TEST_CMD: scripts/run-tests.sh -p orgasmic-cli --test dispatch
+:WRITE_SCOPE: crates/**
+:END:
+
+** Description
+Today every dispatch creates a fresh worktree (~create_worktree~, manager.rs), so a task chain of implement -> review -> fix -> review pays full ecosystem setup per round. Rounds are serial in practice. Design goal: one worktree per task CHAIN for same-kind implementer rounds — round 2+ reuses round 1's worktree (warm caches, populated submodules) — while every reviewer dispatch keeps getting a fresh checkout, because a fresh checkout at the worker commit is the only thing that proves the COMMIT rather than the implementer's directory (missing ~git add~, ignored-local-state bugs).
+
+** Mechanics to build
+- ~manager dispatch~ same-task same-kind implementer reuse: when the task's previous implementer worktree still exists and its dispatch is closed, reuse it instead of ~create_worktree~. The reused tree must be CLEAN (previous round committed); a dirty or wedged tree refuses with an actionable message, never silently falls back. Explicit ~--fresh-worktree~ opts out.
+- Round branches: the new round's branch is created inside the reused worktree from ~--from~; derived-branch collision handling (dispatch.md already requires explicit ~--branch~ on round 2) stays coherent.
+- Close keeps a chain worktree: closing a non-final implementer round must be able to leave the worktree for the next round without the operator remembering ~--no-worktree-remove~. Final close (implementer.done with merge evidence) removes it as today.
+- Between-rounds protection: a kept chain worktree is not held by any open dispatch, so ~worktree-prune~ would salvage and reclaim it mid-chain. Design a hold the prune classifier respects (and releases at final close). Do NOT weaken any RMA18 refusal to do it.
+- Cross-kind reuse stays refused (TASK-096.1). Reviewer worktrees unchanged. Submodule settle/cleanup at chain end unchanged.
+
+** Acceptance
+- Test: round-2 implementer dispatch reuses round-1's worktree path and an untracked warm-cache marker file survives.
+- Test: dirty leftover tree -> reuse refused, message names the tree state and the escape.
+- Test: worktree-prune keeps a mid-chain worktree, reclaims it after final close.
+- Test: reviewer dispatch for the same task still creates a fresh worktree.
+- Existing dispatch/cleanup suites stay green; no RMA18 refusal weakened.

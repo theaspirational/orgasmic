@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-JHWNP
+#+orgasmic_version: 2
+
+* tx-20260827-orgasmic-6476 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6476
+:TIME:    [2026-08-27 Thu 22:34:38]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JHWNP
+:TARGET: .orgasmic/tasks/TASK-JHWNP/node.org
+:REASON: cut per-round worktree setup cost (npm ci/venv/submodule clone) measured across multi-round chains like TASK-BF1DP (6 worktrees for one task)
+:EVENT_ID: 5a95ab1c-7502-4d3e-9024-ea9d1b568ab0
+:END:
