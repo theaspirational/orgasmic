@@ -4926,32 +4926,6 @@ Work:
 
 Either way the outcome is a recorded answer. The defect being fixed here is that a persistence-shaped flag sits in the launch path with no stated reason.
 
-* IN_PROGRESS TASK-EHE15 artifact comments: CLI verb to list an artifact's comment answers :work:
-:PROPERTIES:
-:ID: TASK-EHE15
-:PRIORITY: P2
-:READ_SCOPE: crates/orgasmic-cli/** crates/orgasmic-daemon/src/artifacts.rs crates/orgasmic-daemon/src/api.rs
-:TEST_CMD: cargo test -p orgasmic-cli --bin orgasmic artifact
-:WRITE_SCOPE: crates/orgasmic-cli/src/artifact.rs crates/orgasmic-cli/src/main.rs
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:CLAIM_WRITE_SCOPE: crates/orgasmic-cli/src/artifact.rs crates/orgasmic-cli/src/main.rs
-:END:
-
-** Description
-The griller flow submits a QuestionForm artifact; users click answers in the
-UI, which land as comments on the artifact (journal.org, served by
-GET /api/artifacts/:id). There is no CLI verb to list them - a worker must
-hand-roll HTTP with the auth token. Add `orgasmic artifact comments <ART-ID>
-[--project <id>] [--include-consumed]` that calls the existing daemon
-endpoint and prints each comment: CID, author, time, message, anchor
-(question key/answer when present), consumed flag. JSON output, consistent
-with other read verbs.
-
-** Acceptance Criteria
-- [ ] `orgasmic artifact comments ART-XXXXX` prints the artifact's comments with CID, author, time, message, anchor, consumed flag (test)
-- [ ] `--include-consumed` includes consumed comments; default hides them (test)
-- [ ] unknown artifact id yields a clear error naming the id
-
 * IN_PROGRESS TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-TFXR2
@@ -5054,6 +5028,30 @@ TWCP9 decision, step 3. Claims live in per-machine append-only logs (`machines/<
 - [ ] write to a node dir claimed by another machine is refused with a clear error (test)
 - [ ] double-claim interval is visible in dispatch-status/views
 - [ ] projections fold multi-machine logs identically regardless of ingest order (test)
+
+* IN_REVIEW TASK-EHE15 artifact comments: CLI verb to list an artifact's comment answers :work:
+:PROPERTIES:
+:ID: TASK-EHE15
+:PRIORITY: P2
+:READ_SCOPE: crates/orgasmic-cli/** crates/orgasmic-daemon/src/artifacts.rs crates/orgasmic-daemon/src/api.rs
+:TEST_CMD: cargo test -p orgasmic-cli --bin orgasmic artifact
+:WRITE_SCOPE: crates/orgasmic-cli/src/artifact.rs crates/orgasmic-cli/src/main.rs
+:END:
+
+** Description
+The griller flow submits a QuestionForm artifact; users click answers in the
+UI, which land as comments on the artifact (journal.org, served by
+GET /api/artifacts/:id). There is no CLI verb to list them - a worker must
+hand-roll HTTP with the auth token. Add `orgasmic artifact comments <ART-ID>
+[--project <id>] [--include-consumed]` that calls the existing daemon
+endpoint and prints each comment: CID, author, time, message, anchor
+(question key/answer when present), consumed flag. JSON output, consistent
+with other read verbs.
+
+** Acceptance Criteria
+- [ ] `orgasmic artifact comments ART-XXXXX` prints the artifact's comments with CID, author, time, message, anchor, consumed flag (test)
+- [ ] `--include-consumed` includes consumed comments; default hides them (test)
+- [ ] unknown artifact id yields a clear error naming the id
 
 * IN_REVIEW TASK-EPG6H tx split: route node-scoped events to journals per the AP971.5 table :e01mc:node_kernel:
 :PROPERTIES:

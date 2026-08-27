@@ -67,3 +67,24 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-EHE15/dispatches/tx-20260827-orgasmic-12d8684b-aba9-49c7-97a5-6fb91c0a6d1f/report.md
 :EVENT_ID:     8d0e4f74-01a1-4957-b670-9ad01e338f97
 :END:
+
+* TX 2026-08-27 Thu 17:59:52 implementer.done TASK-EHE15
+:PROPERTIES:
+:TX_ID:        tx-20260827-orgasmic-8b0eb0a1-a702-4825-87d8-dacc5d9bfb0d
+:TIME:         [2026-08-27 Thu 17:59:52]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EHE15
+:REASON:       manager-reviewed: full diff read, focused tests rerun from scratch (3/3), live-daemon smoke on ART-04FYD and unknown-id error path; single-file 219-line additive CLI verb
+:MERGE_SHA:    460ccec5801c997b01fbbf8c5f552542b9ca921b
+:BRANCH:       task-ehe15-impl
+:NO_REVIEW_REQUIRED: true
+:CLOSED_TX:    tx-20260827-orgasmic-12d8684b-aba9-49c7-97a5-6fb91c0a6d1f
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ehe15
+:EVENT_ID:     2c7f861b-3fdd-4be3-9659-f53c77d2c4d8
+:END:

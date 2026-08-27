@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-EHE15
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-EHE15 artifact comments: CLI verb to list an artifact's comment answers :work:
+* IN_REVIEW TASK-EHE15 artifact comments: CLI verb to list an artifact's comment answers :work:
 :PROPERTIES:
 :ID: TASK-EHE15
 :PRIORITY: P2
