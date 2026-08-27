@@ -7,6 +7,7 @@
 :PRIORITY: P2
 :TEST_CMD: scripts/run-tests.sh -p orgasmic-cli --test dispatch
 :WRITE_SCOPE: crates/**
+:FIX_SUBTASK: TASK-JHWNP.1
 :END:
 
 ** Description

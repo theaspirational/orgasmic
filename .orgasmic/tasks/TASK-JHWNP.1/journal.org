@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-JHWNP.1
+#+orgasmic_version: 2
+
+* tx-20260827-orgasmic-6479 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6479
+:TIME:    [2026-08-27 Thu 23:10:06]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JHWNP.1
+:TARGET: .orgasmic/tasks/TASK-JHWNP.1/node.org
+:REASON: cross-family review (claude-opus-5/high) rejected cd43bf91: 2 HIGH on hold release
+:EVENT_ID: f17fa2e1-ea5e-4eb6-8bca-e0e80e465c9b
+:END:
