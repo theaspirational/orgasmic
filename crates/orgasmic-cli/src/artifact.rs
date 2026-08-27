@@ -4,6 +4,7 @@
 //! - `artifact blocks`           — list the block vocabulary
 //! - `artifact submit <id>`      — submit MDX; validates block registry
 //! - `artifact feedback <id>`    — add a comment, or --consume a CID
+//! - `artifact comments <id>`    — list an artifact's comments as JSON
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -78,6 +79,17 @@ pub enum ArtifactCmd {
         #[arg(long)]
         reply_to: Option<String>,
     },
+    /// List an artifact's comments as JSON (e.g. clicked QuestionForm answers).
+    Comments {
+        /// Artifact id (e.g. ART-XYZAB).
+        id: String,
+        /// Project id.
+        #[arg(long)]
+        project: Option<String>,
+        /// Include consumed comments (default hides them).
+        #[arg(long)]
+        include_consumed: bool,
+    },
 }
 
 pub fn cmd_artifact(home: &Home, cmd: ArtifactCmd) -> Result<()> {
@@ -109,6 +121,11 @@ pub fn cmd_artifact(home: &Home, cmd: ArtifactCmd) -> Result<()> {
             resolution_target,
             reply_to,
         ),
+        ArtifactCmd::Comments {
+            id,
+            project,
+            include_consumed,
+        } => cmd_comments(home, id, project, include_consumed),
     }
 }
 
@@ -243,6 +260,80 @@ fn cmd_feedback(
     })
 }
 
+fn cmd_comments(
+    home: &Home,
+    id: String,
+    project: Option<String>,
+    include_consumed: bool,
+) -> Result<()> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let client = DaemonClient::from_home_autostart_async(home).await?;
+        let project_id = resolve_project(home, project.as_deref()).await?;
+        let comments = fetch_comments(&client, &id, &project_id, include_consumed).await?;
+        println!("{}", serde_json::to_string_pretty(&comments)?);
+        Ok(())
+    })
+}
+
+/// GET the artifact detail and reduce it to a JSON array of comment entries.
+/// Consumed comments are filtered by the daemon (`include_consumed=false`
+/// default), not here.
+async fn fetch_comments(
+    client: &DaemonClient,
+    id: &str,
+    project_id: &str,
+    include_consumed: bool,
+) -> Result<serde_json::Value> {
+    let detail: serde_json::Value = client
+        .get(&format!(
+            "/artifacts/{id}?project={project_id}&include_consumed={include_consumed}"
+        ))
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("artifact not found") {
+                anyhow::anyhow!("artifact {id} not found")
+            } else {
+                e
+            }
+        })?;
+    Ok(render_comments(&detail))
+}
+
+/// One output entry per comment: cid, author, time, message, anchor, consumed.
+/// The stored anchor is a JSON string (question key/answer for QuestionForm
+/// clicks); parse it so consumers get an object, falling back to the raw
+/// string when it isn't valid JSON.
+fn render_comments(detail: &serde_json::Value) -> serde_json::Value {
+    let empty = Vec::new();
+    let comments = detail
+        .get("comments")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+    serde_json::Value::Array(
+        comments
+            .iter()
+            .map(|c| {
+                let anchor = c
+                    .get("anchor")
+                    .and_then(|a| a.as_str())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .unwrap_or_else(|| c.get("anchor").cloned().unwrap_or(serde_json::Value::Null));
+                serde_json::json!({
+                    "cid": c.get("cid"),
+                    "author": c.get("author"),
+                    // ponytail: always null — the daemon's CommentRecord drops the
+                    // journal :TIME:; populate once the endpoint serves it.
+                    "time": serde_json::Value::Null,
+                    "message": c.get("message"),
+                    "anchor": anchor,
+                    "consumed": c.get("consumed"),
+                })
+            })
+            .collect(),
+    )
+}
+
 /// Resolve the project id: use the explicit arg, or read from the current
 /// directory's `.orgasmic/project.org`, or fall back to the first board entry.
 async fn resolve_project(_home: &Home, project: Option<&str>) -> anyhow::Result<String> {
@@ -269,4 +360,132 @@ async fn resolve_project(_home: &Home, project: Option<&str>) -> anyhow::Result<
         }
     }
     anyhow::bail!("could not determine project; use --project")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{env_guard, RecordingDaemon, ScopedEnv};
+
+    /// Mock `GET /api/artifacts/:id`: ART-TESTA exists (one open comment with
+    /// a QuestionForm answer anchor, one consumed comment), anything else 404s
+    /// with the daemon's real not-found body.
+    fn respond(path: &str) -> Option<(u16, String)> {
+        if path.starts_with("/api/artifacts/ART-TESTA") {
+            Some((
+                200,
+                r#"{
+                    "art_id": "ART-TESTA",
+                    "prompt": "",
+                    "content": "",
+                    "comments": [
+                        {
+                            "cid": "CID-open0001",
+                            "author": "aspirational",
+                            "version": 1,
+                            "anchor": "{\"questionKey\":\"q1\",\"answer\":\"yes\"}",
+                            "resolution_target": "",
+                            "reply_to": "",
+                            "resolved": false,
+                            "consumed": false,
+                            "message": "yes"
+                        },
+                        {
+                            "cid": "CID-done0002",
+                            "author": "aspirational",
+                            "version": 1,
+                            "anchor": "{}",
+                            "resolution_target": "",
+                            "reply_to": "",
+                            "resolved": true,
+                            "consumed": true,
+                            "message": "already handled"
+                        }
+                    ]
+                }"#
+                .to_string(),
+            ))
+        } else if path.starts_with("/api/artifacts/") {
+            Some((404, r#"{"error":"artifact not found"}"#.to_string()))
+        } else {
+            None
+        }
+    }
+
+    /// Client pointed at `daemon` via the env override; the returned guards
+    /// must stay alive for the duration of the test.
+    fn client_for(daemon: &RecordingDaemon) -> (DaemonClient, ScopedEnv, ScopedEnv) {
+        let url = format!("http://127.0.0.1:{}", daemon.port());
+        let set = ScopedEnv::set(&[
+            ("ORGASMIC_DAEMON_URL", url.as_str()),
+            ("ORGASMIC_DAEMON_TOKEN", "test-token"),
+        ]);
+        let clear = ScopedEnv::clear(&["ORGASMIC_DAEMON_TOKEN_FILE"]);
+        let client = DaemonClient::from_home(&Home::at(std::env::temp_dir())).unwrap();
+        (client, set, clear)
+    }
+
+    #[test]
+    fn comments_prints_cid_author_time_message_anchor_consumed() {
+        let _env = env_guard();
+        let daemon = RecordingDaemon::start(respond);
+        let (client, _set, _clear) = client_for(&daemon);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let out = rt
+            .block_on(fetch_comments(&client, "ART-TESTA", "proj-1", false))
+            .unwrap();
+
+        assert_eq!(
+            daemon.paths(),
+            vec!["/api/artifacts/ART-TESTA?project=proj-1&include_consumed=false".to_string()],
+            "default must ask the daemon with include_consumed=false"
+        );
+        let entries = out.as_array().expect("JSON array");
+        assert_eq!(entries.len(), 2);
+        let first = &entries[0];
+        assert_eq!(first["cid"], "CID-open0001");
+        assert_eq!(first["author"], "aspirational");
+        assert!(first["time"].is_null());
+        assert_eq!(first["message"], "yes");
+        assert_eq!(first["anchor"]["questionKey"], "q1");
+        assert_eq!(first["anchor"]["answer"], "yes");
+        assert_eq!(first["consumed"], false);
+        assert_eq!(entries[1]["consumed"], true);
+    }
+
+    /// The consumed/unconsumed split is enforced by the daemon (its own tests
+    /// cover the filtering); the CLI's contract is passing the flag through.
+    #[test]
+    fn include_consumed_flag_is_forwarded_to_the_daemon() {
+        let _env = env_guard();
+        let daemon = RecordingDaemon::start(respond);
+        let (client, _set, _clear) = client_for(&daemon);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(fetch_comments(&client, "ART-TESTA", "proj-1", true))
+            .unwrap();
+
+        assert_eq!(
+            daemon.paths(),
+            vec!["/api/artifacts/ART-TESTA?project=proj-1&include_consumed=true".to_string()],
+        );
+    }
+
+    #[test]
+    fn unknown_artifact_error_names_the_id() {
+        let _env = env_guard();
+        let daemon = RecordingDaemon::start(respond);
+        let (client, _set, _clear) = client_for(&daemon);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let err = rt
+            .block_on(fetch_comments(&client, "ART-GONE1", "proj-1", false))
+            .expect_err("404 must surface as an error");
+
+        assert!(
+            err.to_string().contains("ART-GONE1"),
+            "error must name the artifact id, got: {err}"
+        );
+    }
 }
