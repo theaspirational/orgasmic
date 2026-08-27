@@ -1,0 +1,10 @@
+#+title: orgasmic task TASK-ZZ2S4
+#+orgasmic_version: 2
+
+* BACKLOG TASK-ZZ2S4 Re-mint 3 hand-created task IDs with non-Crockford letters (CLM6W, IXPD4, LBRX7)
+:PROPERTIES:
+:ID: TASK-ZZ2S4
+:PRIORITY: P3
+:END:
+
+TASK-CLM6W, TASK-IXPD4, TASK-LBRX7 (added in ledger commit 22b951f2, 2026-08-27) contain I/L, which the Crockford stem alphabet forbids — they were hand-minted, not daemon-minted. They are the whole remaining parse_errors=3 ("malformed identity id"). Referenced from TASK-AP971, TASK-AS0FS, TASK-D2DM3, TASK-MSYN4, TASK-TFXR2. Fix = re-mint each through the daemon and rewrite the references; needs a daemon-side rename path or a careful one-off migration, NOT hand edits.

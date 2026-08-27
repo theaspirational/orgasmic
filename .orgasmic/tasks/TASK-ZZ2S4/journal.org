@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-ZZ2S4
+#+orgasmic_version: 2
+
+* tx-20260827-orgasmic-6487 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6487
+:TIME:    [2026-08-27 Thu 23:53:13]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: .orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: created task TASK-ZZ2S4
+:EVENT_ID: c0327734-ddec-4817-a4ba-888f42e91be0
+:END:
