@@ -1,8 +1,0 @@
-#+title: orgasmic entry
-#+orgasmic_version: 1
-
-* Entry
-
-Run `orgasmic entry` and follow its output.
-
-If the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.
