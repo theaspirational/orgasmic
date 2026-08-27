@@ -2412,6 +2412,23 @@ TWCP9 decision, step 4 (deferred until multi-machine is actually deployed). Low-
 - [ ] peer unreachable → no error surfaced to the worker; ledger append still happens
 - [ ] no authoritative state transition depends on live delivery (audit)
 
+* BACKLOG TASK-DG80G Chain-hold follow-ups from TASK-JHWNP.1 re-review: pending-round asymmetry + comment/parse hardening
+:PROPERTIES:
+:ID: TASK-DG80G
+:PRIORITY: P2
+:RELATES_TO: TASK-JHWNP
+:END:
+
+Re-review of TASK-JHWNP.1 (APPROVE, tx-20260827-orgasmic-a374583b) surfaced 1 MEDIUM + 2 LOW in the NEW release-path code. Not ship-blocking; must land before multi-task chain dispatches are relied on.
+
+- MEDIUM-A — multi-task hold born expired. `chain_hold_has_pending_round` (manager.rs:7234-7243) requires EVERY task to still be implementer-dispatchable, while `release_chain_worktree_holds` (manager.rs:7317) releases on ANY intersection. A multi-task hold can be born already expired: the next prune deletes the checkout the close just promised to hold (prune salvages, so no data loss). Fix: seed `pending = false` and OR across the lock reason's tasks, matching the `any` at :7317. Also add `restore_task_lifecycle_stages` to the lifecycle-failure arm at manager.rs:965. Test: dispatch `A B`, partial-close A done, close B `aborted --no-worktree-remove`, assert `worktree-prune` prints SKIP and the tree survives.
+
+- LOW-B — comment at manager.rs:9349-9352 justifies the MEDIUM-3 arm with the wrong evidence. Real reason: the close commit writes no second append (api.rs:18076), so the pending entry outlives a healthy close, and `dispatch-status` mid-round-2 would otherwise replay `in_progress -> todo` onto a live task. Rewrite the comment; consider promoting the unit case to that scenario.
+
+- LOW-C — `git worktree list --porcelain -z` needs a minimum git version. Document it, or fall back to the non-`-z` parse when it errors.
+
+Full verdict: .orgasmic/tmp/dispatch/task-jhwnp.1-review/ (ledger tmp).
+
 * BACKLOG TASK-DTCBP orgasmic verify: --all, the verify_artifact drawer property, and the dispatch-close gating decision    :cli:verification:mechanism:
 :PROPERTIES:
 :ID: TASK-DTCBP
@@ -5070,32 +5087,6 @@ TASK-SRBGS removed the aggregate-file readers but ported only 2 of the daemon in
 ** Acceptance
 - [ ] `cargo test -p orgasmic-daemon --lib index::` fully green
 - [ ] no test deleted, no assertion weakened
-
-* IN_REVIEW TASK-JHWNP worktree-per-task-chain: implementer and fix rounds share one worktree; only review gets a fresh checkout :dispatch:worktree:
-:PROPERTIES:
-:ID: TASK-JHWNP
-:PRIORITY: P2
-:TEST_CMD: scripts/run-tests.sh -p orgasmic-cli --test dispatch
-:WRITE_SCOPE: crates/**
-:FIX_SUBTASK: TASK-JHWNP.1
-:END:
-
-** Description
-Today every dispatch creates a fresh worktree (~create_worktree~, manager.rs), so a task chain of implement -> review -> fix -> review pays full ecosystem setup per round. Rounds are serial in practice. Design goal: one worktree per task CHAIN for same-kind implementer rounds — round 2+ reuses round 1's worktree (warm caches, populated submodules) — while every reviewer dispatch keeps getting a fresh checkout, because a fresh checkout at the worker commit is the only thing that proves the COMMIT rather than the implementer's directory (missing ~git add~, ignored-local-state bugs).
-
-** Mechanics to build
-- ~manager dispatch~ same-task same-kind implementer reuse: when the task's previous implementer worktree still exists and its dispatch is closed, reuse it instead of ~create_worktree~. The reused tree must be CLEAN (previous round committed); a dirty or wedged tree refuses with an actionable message, never silently falls back. Explicit ~--fresh-worktree~ opts out.
-- Round branches: the new round's branch is created inside the reused worktree from ~--from~; derived-branch collision handling (dispatch.md already requires explicit ~--branch~ on round 2) stays coherent.
-- Close keeps a chain worktree: closing a non-final implementer round must be able to leave the worktree for the next round without the operator remembering ~--no-worktree-remove~. Final close (implementer.done with merge evidence) removes it as today.
-- Between-rounds protection: a kept chain worktree is not held by any open dispatch, so ~worktree-prune~ would salvage and reclaim it mid-chain. Design a hold the prune classifier respects (and releases at final close). Do NOT weaken any RMA18 refusal to do it.
-- Cross-kind reuse stays refused (TASK-096.1). Reviewer worktrees unchanged. Submodule settle/cleanup at chain end unchanged.
-
-** Acceptance
-- Test: round-2 implementer dispatch reuses round-1's worktree path and an untracked warm-cache marker file survives.
-- Test: dirty leftover tree -> reuse refused, message names the tree state and the escape.
-- Test: worktree-prune keeps a mid-chain worktree, reclaims it after final close.
-- Test: reviewer dispatch for the same task still creates a fresh worktree.
-- Existing dispatch/cleanup suites stay green; no RMA18 refusal weakened.
 
 * IN_REVIEW TASK-JHWNP.1 fix round: chain-hold release paths (review REJECT on cd43bf91) :dispatch:worktree:
 :PROPERTIES:
@@ -20070,6 +20061,32 @@ Acceptance Criteria:
 ** Evidence
 Merged 31c950d (worker commit 60f260f, implementer-claude-rmux/opus-4-7). New GraphView.tsx (579 lines): fetches /graph/nodes + /graph/edges + /graph/layout + tasks/decisions/architecture/glossary; deterministic band layout (sort-by-id localeCompare, no Math.random/Date) - superseded(gray) -> current decisions -> architecture(subsystem cards, leaves nested via React Flow parentNode+extent) -> tasks -> artifacts; glossary left column when enabled; applies /graph/layout overlay x/y per id when present. Curation toggles: Glossary off, Artifacts off, Backbone(motivated_by/implements) on, depends_on/dataflow off. Click -> NodeModal drawer-stack (dec/arch/term); tasks -> /tasks; read-only topology (drag-persist is CKRYB). NodeGraph.tsx generalized (NodeRole decision|task|glossary, superseded/taskStage data, NodeGraphCanvas extracted, ArchitectureView preserved). router graphRoute (path graph); AppShell graph nav (Network icon). Gates (manager-verified post-merge): ui typecheck exit 0; npm run build exit 0. Handled both flagged gaps: supersedes edge absent -> gray band from superseded flag; active-task filter via fetchProjectTasks. Residual: NO live visual verification (running :4848 daemon predates the graph endpoints - needs operator restart/rebuild); band width may need tuning at scale; arch-view saved viewport resets once. Reviewer-claude-rmux pass pending.
 Reviewer pass: reviewer-claude-rmux (opus-4-8), run ...99a0d3. ArchitectureView regression traced (buildGraph byte-identical; only edge-anchor delta). Findings fixed in 63a0bde: F2 (MED) /graph/layout error blanked the page -> now fail-soft to {} + default band layout (also lets the page render against a daemon that predates the endpoint); F1 arch leaf edges anchor Right->Left explicitly; F3 artifacts toggle relabeled + comment corrected. F4 (buildFlowGraph determinism/done-exclusion/default-edge unit test) folded into TASK-CKRYB which modifies the same function. typecheck + npm build green. TASK-JH9DD DONE.
+
+* DONE TASK-JHWNP worktree-per-task-chain: implementer and fix rounds share one worktree; only review gets a fresh checkout :dispatch:worktree:
+:PROPERTIES:
+:ID: TASK-JHWNP
+:PRIORITY: P2
+:TEST_CMD: scripts/run-tests.sh -p orgasmic-cli --test dispatch
+:WRITE_SCOPE: crates/**
+:FIX_SUBTASK: TASK-JHWNP.1
+:END:
+
+** Description
+Today every dispatch creates a fresh worktree (~create_worktree~, manager.rs), so a task chain of implement -> review -> fix -> review pays full ecosystem setup per round. Rounds are serial in practice. Design goal: one worktree per task CHAIN for same-kind implementer rounds — round 2+ reuses round 1's worktree (warm caches, populated submodules) — while every reviewer dispatch keeps getting a fresh checkout, because a fresh checkout at the worker commit is the only thing that proves the COMMIT rather than the implementer's directory (missing ~git add~, ignored-local-state bugs).
+
+** Mechanics to build
+- ~manager dispatch~ same-task same-kind implementer reuse: when the task's previous implementer worktree still exists and its dispatch is closed, reuse it instead of ~create_worktree~. The reused tree must be CLEAN (previous round committed); a dirty or wedged tree refuses with an actionable message, never silently falls back. Explicit ~--fresh-worktree~ opts out.
+- Round branches: the new round's branch is created inside the reused worktree from ~--from~; derived-branch collision handling (dispatch.md already requires explicit ~--branch~ on round 2) stays coherent.
+- Close keeps a chain worktree: closing a non-final implementer round must be able to leave the worktree for the next round without the operator remembering ~--no-worktree-remove~. Final close (implementer.done with merge evidence) removes it as today.
+- Between-rounds protection: a kept chain worktree is not held by any open dispatch, so ~worktree-prune~ would salvage and reclaim it mid-chain. Design a hold the prune classifier respects (and releases at final close). Do NOT weaken any RMA18 refusal to do it.
+- Cross-kind reuse stays refused (TASK-096.1). Reviewer worktrees unchanged. Submodule settle/cleanup at chain end unchanged.
+
+** Acceptance
+- Test: round-2 implementer dispatch reuses round-1's worktree path and an untracked warm-cache marker file survives.
+- Test: dirty leftover tree -> reuse refused, message names the tree state and the escape.
+- Test: worktree-prune keeps a mid-chain worktree, reclaims it after final close.
+- Test: reviewer dispatch for the same task still creates a fresh worktree.
+- Existing dispatch/cleanup suites stay green; no RMA18 refusal weakened.
 
 * DONE TASK-JJ9RD Config node write path + kind registry single-source (silent wrong-file write) :daemon:cli:hardening:
 :PROPERTIES:
