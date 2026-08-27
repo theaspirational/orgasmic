@@ -14,6 +14,18 @@ Decision: shipped worker templates must not declare :BABYSITTER_WORKER:. The bab
 
 Consequences: operators should not expect companion babysitter JSONL runs from default dispatches. Future babysitter work requires a new explicit decision that justifies the runtime/auth cost and defines the Evidence-writing and UI verification contract before re-adding :BABYSITTER_WORKER: to templates.
 
+* dec_0Q614 Certification gates releases, not pushes: main branch protection reduced to force-push/deletion guard
+:PROPERTIES:
+:ID: dec_0Q614
+:RELATES_TO: dec_M251B
+:END:
+
+**Decision (2026-08-27).** GitHub main protection no longer requires the `local/release-certified` status or PRs; only force-pushes and deletion stay blocked. Certification remains mandatory, but only where it already had an enforcing gate: release time — `publish-runtime.sh` / `certify-runtime-fast.sh` assert the status on the exact commit being shipped and refuse without it.
+
+**Why.** The push-time copy of the gate demanded the full-workspace suite, which is banned on the operator laptop (reboot hazard). The effect was not safety but paralysis: origin/main went 81 commits stale while the ledger branch synced every 2s — the tracker was backed up, the code was not. A duplicate gate that cannot be satisfied where pushes happen only stops the pushes.
+
+**What still protects releases.** Unchanged: `certify-pr.sh` earns the receipt (off-laptop per TASK-R7AGF), `assert-ci-certified.sh` enforces it at publish. Shipping an uncertified commit is as impossible as before.
+
 * dec_1EEYE Must an artifact have subject nodes?
 :PROPERTIES:
 :ID: dec_1EEYE
