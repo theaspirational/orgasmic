@@ -262,7 +262,7 @@ fn write(path: &Path, contents: impl AsRef<str>) {
 fn repo_root() -> PathBuf {
     let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
-        if here.join(".orgasmic").is_dir() && here.join("shipped").is_dir() {
+        if here.join("shipped/entry/router.org").is_file() {
             return here;
         }
         if !here.pop() {
@@ -9111,6 +9111,198 @@ async fn worktree_prune_refuses_a_worktree_containing_an_initialized_submodule()
     assert!(
         !stdout.contains(&format!("SALVAGED PATH={}", worktree.display())),
         "nothing was salvageable, so nothing must claim to have been salvaged, got:\n{stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// A dispatched worktree must carry the repo's submodules populated —
+/// `git worktree add` alone leaves empty placeholders, so a worker could
+/// neither read nor build sub-repo code (the vscode-orsl → orsl-language-server
+/// shape).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_worktree_populates_submodules() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+    // Local-path submodule origin; the shared repo config allows the file
+    // transport so the worktree's `submodule update --init` can clone it.
+    let sub_origin = tmp.path().join("subrepo");
+    std::fs::create_dir_all(&sub_origin).unwrap();
+    write(&sub_origin.join("lib.txt"), "library source");
+    run_git(&sub_origin, &["init", "-b", "main"]);
+    run_git(&sub_origin, &["config", "user.email", "tester@example.com"]);
+    run_git(&sub_origin, &["config", "user.name", "Test User"]);
+    run_git(&sub_origin, &["add", "."]);
+    run_git(&sub_origin, &["commit", "-m", "sub init"]);
+    run_git(
+        &project_root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_origin.to_str().unwrap(),
+            "vendor/sub",
+        ],
+    );
+    run_git(&project_root, &["add", "-A"]);
+    run_git(&project_root, &["commit", "-m", "add submodule"]);
+    let head = run_git(&project_root, &["rev-parse", "HEAD"]);
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "submodule population brief");
+
+    let running = boot(home.clone()).await;
+    // The submodule clone inside dispatch's `submodule update --init` spawns
+    // with its own config context, so the file-transport allowance has to
+    // arrive via git's env-config — repo config does not reach it.
+    let output = run_orgasmic_output_with_env(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "submodule population",
+        ],
+        &[
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "protocol.file.allow"),
+            ("GIT_CONFIG_VALUE_0", "always"),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "dispatch failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
+    assert!(worktree.is_dir(), "worktree at {}", worktree.display());
+    assert!(
+        worktree.join("vendor/sub/lib.txt").is_file(),
+        "the submodule must be populated in the dispatched worktree"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// The counterpart to `dispatch_worktree_populates_submodules`: a submodule
+/// left exactly AS-INITIALIZED — HEAD on the recorded gitlink, clean, no local
+/// branches, no stash — holds nothing of the worker's, so prune settles it
+/// (deinit + private store removal) and reclaims the worktree instead of
+/// keeping it forever under the categorical refusal. The DIRTY variant right
+/// above proves the refusal itself still stands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_settles_and_reclaims_an_as_initialized_submodule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+
+    let sub_origin = tmp.path().join("subrepo");
+    std::fs::create_dir_all(&sub_origin).unwrap();
+    write(&sub_origin.join("lib.txt"), "library source");
+    run_git(&sub_origin, &["init", "-b", "main"]);
+    run_git(&sub_origin, &["config", "user.email", "tester@example.com"]);
+    run_git(&sub_origin, &["config", "user.name", "Test User"]);
+    run_git(&sub_origin, &["add", "."]);
+    run_git(&sub_origin, &["commit", "-m", "sub init"]);
+    run_git(
+        &project_root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_origin.to_str().unwrap(),
+            "vendor/sub",
+        ],
+    );
+    run_git(&project_root, &["add", "-A"]);
+    run_git(&project_root, &["commit", "-m", "add submodule"]);
+    let head = run_git(&project_root, &["rev-parse", "HEAD"]);
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-cleansub",
+        "task-cleansub-impl",
+        &head,
+    );
+    run_git(
+        &worktree,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ],
+    );
+    assert!(
+        worktree.join("vendor/sub/lib.txt").is_file(),
+        "fixture premise: the submodule is populated"
+    );
+
+    let running = boot(home.clone()).await;
+    let stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+
+    assert!(
+        !worktree.exists(),
+        "an as-initialized submodule worktree must be reclaimed, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("RECLAIMED PATH={}", worktree.display())),
+        "the report must count the reclaim, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains(&format!("KEPT PATH={}", worktree.display())),
+        "nothing must be kept, got:\n{stdout}"
+    );
+    // Settling touches only the worktree's private store: the origin the
+    // submodule was cloned from is untouched.
+    assert!(
+        sub_origin.join("lib.txt").is_file(),
+        "the submodule origin must survive"
     );
 
     let _ = running.shutdown.send(());

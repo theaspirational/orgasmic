@@ -1,7 +1,10 @@
 # AGENTS.md
-new instructions:
-work without orgasmic orchestration and without overhead. 
-plan your works as such to maximise speed and minimise framework overhead
 
-paused instructions:
-This repo is coordinated with **orgasmic**: before you answer, search, edit, or run any tool here, you MUST run `orgasmic entry` and follow its output; if the CLI is missing, read [`.orgasmic/entry.org`](.orgasmic/entry.org); install missing root pointers with `orgasmic project init`.
+Work normally — no mandatory orchestration overhead.
+
+Task/decision tracking for this repo lives in **orgasmic**, opt-in via the
+`/orgasmic` skill. Load it only when the user invokes `/orgasmic` (or clearly
+asks for an orgasmic feature: tracking tasks, recording decisions, dispatching
+workers). Never hand-edit `.orgasmic/` ledger state — it goes through the
+`orgasmic` CLI, and the live ledger lives at `~/.orgasmic/ledgers/orgasmic`,
+not in this tree.

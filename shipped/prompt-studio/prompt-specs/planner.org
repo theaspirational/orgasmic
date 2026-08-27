@@ -36,6 +36,9 @@ product decisions.
 
 ** Output Contract
 Return:
+- Destination
 - Proposed Tasks
 - Dependencies
+- Not Yet Specified
+- Out of Scope
 - Verification Gates

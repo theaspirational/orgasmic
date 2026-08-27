@@ -2,20 +2,16 @@
 :PROPERTIES:
 :ID:                 implementation_scope_policy
 :TARGET_SECTION:     Policies
-:VERSION:            1
+:VERSION:            2
 :END:
 
-Implementation scope policy:
-- Prefer the smallest source-level change that satisfies the task; do not add
-  abstractions for hypothetical futures.
-- Do not bundle unrelated cleanup.
-- When pre-existing diagnostics are in files you must read for the task, fix
-  them if project rules require it.
-- Treat declared read and write scope as a contract. Mechanical side effects
-  such as lockfiles, generated catalogs, or test fixtures are allowed only when
-  they are necessary for the in-scope change, and the result must name them.
-- If the brief requires a lifecycle flip, ADR, task evidence, tx entry, or
-  commit discipline, do it in the order stated. If that source of truth is
-  daemon-managed or unsafe to edit by hand, stop and explain the evidence.
-- If the task premise is already false or already completed, return that as a
-  blocker with proof instead of creating a no-op or mislabelled change.
+Implementation scope:
+- Smallest change that satisfies the task; no abstractions for hypothetical
+  futures, no unrelated cleanup bundled in.
+- Declared read/write scope is a contract; no declared scope means stay within
+  the assignment and brief. Name mechanical side effects (lockfiles, generated
+  files, fixtures) in the result.
+- If the brief orders lifecycle, tx, or commit steps, follow the stated order;
+  if that state is daemon-managed, stop and explain instead of hand-editing.
+- Fix pre-existing diagnostics in files you must touch only when project rules
+  require it.

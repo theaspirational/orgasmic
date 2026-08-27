@@ -3,6 +3,6 @@
 
 * Entry
 
-Run `orgasmic entry` and follow its output.
+Orgasmic is opt-in: use it through the `/orgasmic` skill when invoked; a session that never touches orgasmic state needs nothing from it.
 
-If the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.
+Never hand-edit `.orgasmic/` state — write through the `orgasmic` CLI. If the CLI is missing, offer to install it with `/orgasmic install`; if the user declines, keep `.orgasmic/` read-only.

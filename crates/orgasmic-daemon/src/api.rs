@@ -14993,16 +14993,27 @@ pub fn accepted_node_kinds() -> &'static [orgasmic_core::NodeKind] {
     &ACCEPTED_NODE_KINDS
 }
 
-/// The known node id universe for a project, mirroring the id set
-/// `lint_dangling_graph_edges` (index.rs) resolves edges against. Used by the
-/// write-time reference-property guard below so a token either resolves here
-/// or would also dangle at index time — the two never disagree.
-async fn known_reference_ids(
-    state: &ApiState,
-    project_id: &str,
-) -> Result<BTreeSet<String>, ApiError> {
+/// Write-time reference-property guard (dec_HJENQ vocabulary), front-running
+/// the index-time dangling-reference lint that previously only surfaced this
+/// as an opaque global parse-error count (TASK-4T80X battle-test F4: prose
+/// accepted as `--relates-to` at write time poisoned the whole index).
+///
+/// Local tokens resolve against the project's graph nodes — mirroring the id
+/// set `lint_dangling_graph_edges` (index.rs) resolves edges against, so a
+/// token either resolves here or would also dangle at index time.
+/// `<project>:<id>` tokens resolve against the board via
+/// [`crate::index::cross_reference_status`]; write time is the one door that
+/// rejects an unknown project name (index time skips it, since a ledger the
+/// machine doesn't carry is unverifiable there).
+struct ReferenceGuard {
+    known_ids: BTreeSet<String>,
+    snap: IndexSnapshot,
+    cache: crate::index::CrossRefCache,
+}
+
+async fn reference_guard(state: &ApiState, project_id: &str) -> Result<ReferenceGuard, ApiError> {
     let (_, snap) = ensure_loaded_snapshot(state, Some(project_id)).await?;
-    Ok(snap
+    let known_ids = snap
         .project(project_id)
         .map(|project| {
             project
@@ -15012,26 +15023,38 @@ async fn known_reference_ids(
                 .map(|node| node.id.clone())
                 .collect()
         })
-        .unwrap_or_default())
+        .unwrap_or_default();
+    Ok(ReferenceGuard {
+        known_ids,
+        snap,
+        cache: crate::index::CrossRefCache::new(),
+    })
 }
 
-/// Reject a reference-valued property (dec_HJENQ vocabulary) whose value
-/// names a token that isn't a known node id — front-running the index-time
-/// dangling-reference lint that previously only surfaced this as an opaque
-/// global parse-error count (TASK-4T80X battle-test F4: prose accepted as
-/// `--relates-to` at write time poisoned the whole index).
-fn reject_unresolved_reference_token(
-    known_ids: &BTreeSet<String>,
-    key: &str,
-    value: &str,
-) -> Result<(), ApiError> {
-    let unresolved = orgasmic_core::unresolved_reference_tokens(key, value, known_ids);
-    if let Some(token) = unresolved.first() {
-        return Err(ApiError::bad_request(format!(
-            "{key} references unresolvable id `{token}`; expected space-separated node ids (use --force to write anyway)"
-        )));
+impl ReferenceGuard {
+    fn check(&mut self, key: &str, value: &str) -> Result<(), ApiError> {
+        for token in orgasmic_core::unresolved_reference_tokens(key, value, &self.known_ids) {
+            let Some((project, id)) = orgasmic_core::split_cross_project_reference(&token) else {
+                return Err(ApiError::bad_request(format!(
+                    "{key} references unresolvable id `{token}`; expected space-separated node ids (use --force to write anyway)"
+                )));
+            };
+            match crate::index::cross_reference_status(&self.snap, &mut self.cache, project, id) {
+                crate::index::CrossRefStatus::Resolved => {}
+                crate::index::CrossRefStatus::MissingId => {
+                    return Err(ApiError::bad_request(format!(
+                        "{key} references `{token}` but project `{project}` has no node `{id}` (use --force to write anyway)"
+                    )));
+                }
+                crate::index::CrossRefStatus::UnknownProject => {
+                    return Err(ApiError::bad_request(format!(
+                        "{key} references `{token}` but project `{project}` is not on this machine's board (use --force to write anyway)"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 async fn create_graph_heading(
@@ -15064,7 +15087,7 @@ async fn create_graph_heading(
         }
     }
     if !req.force {
-        let known_ids = known_reference_ids(state, &project_id).await?;
+        let mut guard = reference_guard(state, &project_id).await?;
         for (key, value) in &req.properties {
             // Decision PARENT already has dedicated existence/class/cycle
             // validation below (validate_decision_create_parent); don't
@@ -15072,7 +15095,7 @@ async fn create_graph_heading(
             if layer == GraphLayer::Decision && key == "PARENT" {
                 continue;
             }
-            reject_unresolved_reference_token(&known_ids, key, value)?;
+            guard.check(key, value)?;
         }
     }
     // orgasmic:task_ZKZBF
@@ -15264,7 +15287,7 @@ async fn mutate_graph_heading(
     let path = orgasmic_core::node_kernel::node_dir(&project_root, layer.collection(), &id)
         .join(orgasmic_core::node_kernel::NODE_FILE);
     if !req.force {
-        let known_ids = known_reference_ids(state, &project_id).await?;
+        let mut guard = reference_guard(state, &project_id).await?;
         for (key, value) in &req.properties {
             // Decision PARENT already has dedicated existence/class/cycle
             // validation below (validate_decision_parent_property_update);
@@ -15272,7 +15295,7 @@ async fn mutate_graph_heading(
             if layer == GraphLayer::Decision && key == "PARENT" {
                 continue;
             }
-            reject_unresolved_reference_token(&known_ids, key, value)?;
+            guard.check(key, value)?;
         }
     }
     // orgasmic:task_ZKZBF — same canonical-spelling rule as create: refusing a
@@ -16059,7 +16082,7 @@ async fn post_org_node_edit(
     let (project_id, path, source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
     if !req.force {
-        let known_ids = known_reference_ids(&state, &project_id).await?;
+        let mut guard = reference_guard(&state, &project_id).await?;
         for op in &req.ops {
             if let NodeEditOp::SetProperty { key, value } = op {
                 // Decision PARENT already has dedicated existence/class/cycle
@@ -16068,7 +16091,7 @@ async fn post_org_node_edit(
                 if layer == NodeLayer::Decision && key == "PARENT" {
                     continue;
                 }
-                reject_unresolved_reference_token(&known_ids, key, value)?;
+                guard.check(key, value)?;
             }
         }
     }
@@ -16891,6 +16914,7 @@ const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
     "PROVIDER",
     "READ_SCOPE",
     "REASONING_EFFORT",
+    "RELATES_TO",
     "SANDBOX_PERMISSIONS",
     "TEST_CMD",
     "WRITE_SCOPE",
@@ -17393,9 +17417,9 @@ async fn post_task_create(
         }
     }
     if !req.force {
-        let known_ids = known_reference_ids(&state, &project_id).await?;
+        let mut guard = reference_guard(&state, &project_id).await?;
         for (key, value) in &req.properties {
-            reject_unresolved_reference_token(&known_ids, key, value)?;
+            guard.check(key, value)?;
         }
     }
     let task_id = resolve_task_create_id(&state, &req)?;
@@ -21569,18 +21593,18 @@ pub(crate) mod tests {
                 .unwrap();
 
                 assert_eq!(
-                    count_occurrences(&compiled, "Command-session polling policy:"),
+                    count_occurrences(&compiled, "Long-running commands:"),
                     1,
                     "{} {renderer} bundle must render the policy exactly once",
                     kind.as_str()
                 );
                 assert!(
-                    compiled.contains("After two consecutive empty results"),
+                    compiled.contains("After two polls with no progress"),
                     "{} {renderer} bundle must bound stale polling",
                     kind.as_str()
                 );
                 assert!(
-                    compiled.contains("Retry at most once"),
+                    compiled.contains("retry at most once"),
                     "{} {renderer} bundle must bound retries",
                     kind.as_str()
                 );
@@ -21689,7 +21713,7 @@ pub(crate) mod tests {
     fn repo_root() -> PathBuf {
         let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         loop {
-            if here.join(".orgasmic").is_dir() && here.join("shipped").is_dir() {
+            if here.join("shipped/entry/router.org").is_file() {
                 return here;
             }
             if !here.pop() {
@@ -31148,6 +31172,108 @@ pub(crate) mod tests {
 
         let after = std::fs::read_to_string(&decisions_path).unwrap();
         assert_eq!(after, original, "write-nothing on reject");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn node_prop_set_resolves_cross_project_references_against_the_board() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        // A second board project with its own ledger and one task.
+        let other_root = tmp.path().join("other");
+        write(
+            other_root.join(".orgasmic/project.org"),
+            "#+title: other\n#+orgasmic_version: 1\n\n* PROJECT other\n:PROPERTIES:\n:ID:               other\n:END:\n",
+        );
+        write(
+            task_node_file_path(&other_root, "TASK-XREF1"),
+            "#+title: orgasmic task TASK-XREF1\n#+orgasmic_version: 2\n\n* BACKLOG TASK-XREF1 Foreign task :work:\n:PROPERTIES:\n:ID:               TASK-XREF1\n:END:\n",
+        );
+        let board = std::fs::read_to_string(home.board()).unwrap();
+        write(
+            home.board(),
+            &format!(
+                "{board}\n* PROJECT other\n:PROPERTIES:\n:ID:               other\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+                other_root.display()
+            ),
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let doc: Value = client
+            .get(format!("{base}/api/org/node"))
+            .bearer_auth(&token)
+            .query(&[("project", "orgasmic"), ("id", "TASK-PRE")])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let base_version = doc["source"]["base_version"].as_str().unwrap();
+        let edit = |value: &str| {
+            serde_json::json!({
+                "project": "orgasmic",
+                "base_version": base_version,
+                "ops": [{ "op": "set_property", "key": "RELATES_TO", "value": value }]
+            })
+        };
+
+        // Known project, missing id: rejected naming both halves.
+        let resp = client
+            .post(format!("{base}/api/org/node/TASK-PRE/edit"))
+            .bearer_auth(&token)
+            .json(&edit("other:TASK-GONE0"))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
+        let message = body["error"].as_str().unwrap_or_default();
+        assert!(message.contains("project `other` has no node `TASK-GONE0`"), "{message}");
+
+        // Project absent from this machine's board: rejected.
+        let resp = client
+            .post(format!("{base}/api/org/node/TASK-PRE/edit"))
+            .bearer_auth(&token)
+            .json(&edit("ghost:TASK-XREF1"))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
+        let message = body["error"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("project `ghost` is not on this machine's board"),
+            "{message}"
+        );
+
+        // Known project, existing id: accepted.
+        let resp = client
+            .post(format!("{base}/api/org/node/TASK-PRE/edit"))
+            .bearer_auth(&token)
+            .json(&edit("other:TASK-XREF1"))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::OK, "{body}");
+        let after =
+            std::fs::read_to_string(task_node_file_path(&project_root, "TASK-PRE")).unwrap();
+        assert!(after.contains("other:TASK-XREF1"), "{after}");
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;

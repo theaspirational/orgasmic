@@ -1251,7 +1251,7 @@ mod tests {
     fn repo_root() -> PathBuf {
         let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         loop {
-            if here.join(".orgasmic").is_dir() && here.join("shipped").is_dir() {
+            if here.join("shipped/entry/router.org").is_file() {
                 return here;
             }
             if !here.pop() {
@@ -1456,7 +1456,7 @@ mod tests {
             assert_eq!(
                 compiled
                     .text
-                    .matches("Command-session polling policy:")
+                    .matches("Long-running commands:")
                     .count(),
                 1,
                 "{spec_id} must render the command-session policy exactly once"
@@ -1464,11 +1464,11 @@ mod tests {
             assert!(
                 compiled
                     .text
-                    .contains("After two consecutive empty results"),
+                    .contains("After two polls with no progress"),
                 "{spec_id} must render the bounded polling rule"
             );
             assert!(
-                compiled.text.contains("Retry at most once"),
+                compiled.text.contains("retry at most once"),
                 "{spec_id} must render the one-retry rule"
             );
         }

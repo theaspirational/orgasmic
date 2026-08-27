@@ -762,6 +762,9 @@ enum RefreshSeed {
     Project {
         project_id: String,
         board_entry: BoardEntry,
+        /// The full board, so cross-project references lint against every
+        /// registered ledger, not just the project being scanned.
+        board: Vec<BoardEntry>,
         prior_project: Option<Box<ProjectIndex>>,
         prior_repo_url: Option<String>,
         rebuilt_at: Option<DateTime<Utc>>,
@@ -1168,10 +1171,14 @@ impl Index {
                                 task.lifecycle_stage,
                                 LifecycleStage::Done | LifecycleStage::Cancelled
                             ) && task.depends_on.iter().any(|dependency| {
-                                !dependency_is_resolved
-                                    .get(dependency.as_str())
-                                    .copied()
-                                    .unwrap_or(false)
+                                // Cross-project deps are pointers, not gates:
+                                // another project's lifecycle never blocks
+                                // this project's stats.
+                                orgasmic_core::split_cross_project_reference(dependency).is_none()
+                                    && !dependency_is_resolved
+                                        .get(dependency.as_str())
+                                        .copied()
+                                        .unwrap_or(false)
                             })
                         })
                         .count();
@@ -2204,6 +2211,7 @@ impl Index {
                     RefreshSeed::Project {
                         project_id: project_id.clone(),
                         board_entry,
+                        board: seed.board.clone(),
                         prior_project,
                         prior_repo_url,
                         rebuilt_at: seed.rebuilt_at,
@@ -2236,6 +2244,7 @@ impl Index {
             RefreshSeed::Project {
                 project_id,
                 board_entry,
+                board,
                 prior_project,
                 prior_repo_url,
                 rebuilt_at,
@@ -2248,7 +2257,7 @@ impl Index {
                     ));
                 }
                 let mut next = IndexSnapshot {
-                    board: vec![board_entry.clone()],
+                    board,
                     projects: prior_project
                         .map(|project| HashMap::from([(project_id.clone(), *project)]))
                         .unwrap_or_default(),
@@ -2872,6 +2881,7 @@ impl Index {
         // Identity lint (duplicate ids, malformed mints, dangling .orgasmic
         // references) lives inside ordinary project loading.
         lint_project_identity_state(&board_entry.path, snap);
+        lint_cross_project_references(&board_entry.path, snap);
         // goal.org carries no tasks, so it is not in the task-file iteration;
         // read it just for the thin-goal lint (stale liveness vestiges).
         let goal_path = orgasmic_core::goal_file_path(&board_entry.path);
@@ -3293,6 +3303,11 @@ fn load_task_graph(project: &mut ProjectIndex) {
     // after the loop so a shared artifact never appears multiple times in
     // graph.nodes (VJXXC reviewer HIGH).
     let mut artifacts: BTreeMap<String, PathBuf> = BTreeMap::new();
+    // Cross-project `<project>:<id>` targets materialize as "external" ghost
+    // nodes (same dedup-then-push shape as artifacts) so the graph always has
+    // a node to draw the edge to; lint_dangling_graph_edges resolves them
+    // against the board, never against these ghosts.
+    let mut externals: BTreeMap<String, PathBuf> = BTreeMap::new();
     for task in &project.tasks {
         let mut outgoing = task.depends_on.clone();
         outgoing.extend(task.implements.clone());
@@ -3310,6 +3325,11 @@ fn load_task_graph(project: &mut ProjectIndex) {
                 from: task.id.clone(),
                 to: target.clone(),
             });
+            if orgasmic_core::split_cross_project_reference(target).is_some() {
+                externals
+                    .entry(target.clone())
+                    .or_insert_with(|| task.source_file.clone());
+            }
         }
         for target in &task.implements {
             project.graph.edges.push(GraphEdgeSummary {
@@ -3317,6 +3337,11 @@ fn load_task_graph(project: &mut ProjectIndex) {
                 from: task.id.clone(),
                 to: target.clone(),
             });
+            if orgasmic_core::split_cross_project_reference(target).is_some() {
+                externals
+                    .entry(target.clone())
+                    .or_insert_with(|| task.source_file.clone());
+            }
         }
         for target in &task.produces {
             project.graph.edges.push(GraphEdgeSummary {
@@ -3324,7 +3349,11 @@ fn load_task_graph(project: &mut ProjectIndex) {
                 from: task.id.clone(),
                 to: target.clone(),
             });
-            if !looks_like_structured_node_id(target) {
+            if orgasmic_core::split_cross_project_reference(target).is_some() {
+                externals
+                    .entry(target.clone())
+                    .or_insert_with(|| task.source_file.clone());
+            } else if !looks_like_structured_node_id(target) {
                 artifacts
                     .entry(target.clone())
                     .or_insert_with(|| task.source_file.clone());
@@ -3349,6 +3378,91 @@ fn load_task_graph(project: &mut ProjectIndex) {
             superseded: false,
         });
     }
+    for (id, source_file) in externals {
+        if existing.contains(&id) {
+            continue;
+        }
+        project.graph.nodes.push(GraphNodeSummary {
+            id,
+            layer: "external".to_string(),
+            outgoing: Vec::new(),
+            source_file,
+            superseded: false,
+        });
+    }
+}
+
+/// Outcome of resolving a `<project>:<id>` cross-project reference against
+/// this machine's board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CrossRefStatus {
+    Resolved,
+    /// The board knows the project but its ledger has no such id.
+    MissingId,
+    /// The project isn't on this machine's board (ledgers sync per machine),
+    /// so the reference cannot be checked here. Callers skip, never error.
+    UnknownProject,
+}
+
+/// Cache: foreign project id -> its known node id set (`None` = not checkable
+/// on this machine). One ledger scan per foreign project per lint pass.
+pub(crate) type CrossRefCache = HashMap<String, Option<BTreeSet<String>>>;
+
+pub(crate) fn cross_reference_status(
+    snap: &IndexSnapshot,
+    cache: &mut CrossRefCache,
+    project: &str,
+    id: &str,
+) -> CrossRefStatus {
+    // A loaded project's graph is authoritative (same universe the local
+    // write-time guard resolves against).
+    if let Some(loaded) = snap.projects.get(project) {
+        return if loaded.graph.nodes.iter().any(|node| node.id == id) {
+            CrossRefStatus::Resolved
+        } else {
+            CrossRefStatus::MissingId
+        };
+    }
+    let ids = cache.entry(project.to_string()).or_insert_with(|| {
+        snap.board
+            .iter()
+            .find(|entry| entry.id == project)
+            .filter(|entry| entry.path.join(".orgasmic").is_dir())
+            .map(|entry| {
+                orgasmic_core::known_ids_from_occurrences(
+                    &orgasmic_core::collect_identity_occurrences(&entry.path),
+                )
+            })
+    });
+    match ids {
+        None => CrossRefStatus::UnknownProject,
+        Some(ids) if ids.contains(id) => CrossRefStatus::Resolved,
+        Some(_) => CrossRefStatus::MissingId,
+    }
+}
+
+/// The board-aware half of the dangling-reference lint: `<project>:<id>`
+/// tokens the per-project core lint deliberately skips. A known project whose
+/// ledger lacks the id is a real dangle; a project this machine doesn't carry
+/// is unverifiable and stays silent (the write-time guard is the door that
+/// rejects typo'd project names).
+fn lint_cross_project_references(project_root: &Path, snap: &mut IndexSnapshot) {
+    let mut cache = CrossRefCache::new();
+    let mut findings = Vec::new();
+    for (token, path, _, context) in orgasmic_core::collect_reference_occurrences(project_root) {
+        let Some((project, id)) = orgasmic_core::split_cross_project_reference(&token) else {
+            continue;
+        };
+        if cross_reference_status(snap, &mut cache, project, id) == CrossRefStatus::MissingId {
+            findings.push((
+                path,
+                format!("dangling cross-project reference `{token}` ({context}): project `{project}` has no node `{id}`"),
+            ));
+        }
+    }
+    for (path, message) in findings {
+        push_parse_error(snap, path, message);
+    }
 }
 
 fn lint_dangling_graph_edges(project: &ProjectIndex, snap: &mut IndexSnapshot) {
@@ -3364,7 +3478,31 @@ fn lint_dangling_graph_edges(project: &ProjectIndex, snap: &mut IndexSnapshot) {
         .iter()
         .map(|node| (node.id.as_str(), node.source_file.clone()))
         .collect::<BTreeMap<_, _>>();
+    let mut cache = CrossRefCache::new();
+    let mut findings = Vec::new();
     for edge in &project.graph.edges {
+        // Cross-project targets resolve against the board, never against this
+        // project's nodes (the ghost node materialized for the edge must not
+        // shadow the check).
+        if let Some((target_project, target_id)) =
+            orgasmic_core::split_cross_project_reference(&edge.to)
+        {
+            if cross_reference_status(snap, &mut cache, target_project, target_id)
+                == CrossRefStatus::MissingId
+            {
+                findings.push((
+                    source_files
+                        .get(edge.from.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| project.root.join(".orgasmic")),
+                    format!(
+                        "graph edge {} {} -> {} has dangling cross-project target: project `{target_project}` has no node `{target_id}`",
+                        edge.kind, edge.from, edge.to
+                    ),
+                ));
+            }
+            continue;
+        }
         // Only structured-id targets are linted (a PRODUCES file-path artifact
         // is always materialized as a node above, so it never dangles). dec_/
         // term_ included so a motivated_by/implements edge to a missing
@@ -3379,8 +3517,7 @@ fn lint_dangling_graph_edges(project: &ProjectIndex, snap: &mut IndexSnapshot) {
         if node_ids.contains(edge.to.as_str()) {
             continue;
         }
-        push_parse_error(
-            snap,
+        findings.push((
             source_files
                 .get(edge.from.as_str())
                 .cloned()
@@ -3389,7 +3526,10 @@ fn lint_dangling_graph_edges(project: &ProjectIndex, snap: &mut IndexSnapshot) {
                 "graph edge {} {} -> {} has dangling target {}",
                 edge.kind, edge.from, edge.to, edge.to
             ),
-        );
+        ));
+    }
+    for (path, message) in findings {
+        push_parse_error(snap, path, message);
     }
 }
 
@@ -4261,6 +4401,79 @@ mod tests {
             &sprint,
             "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 Do a thing :work:\n:PROPERTIES:\n:ID:               TASK-001\n:PRIORITY:         P1\n:END:\n\n** Description\nSeeded detail.\n\n** Acceptance Criteria\n- [ ] Body fields load.\n",
         );
+    }
+
+    #[tokio::test]
+    async fn cross_project_references_lint_against_the_board() {
+        let (tmp, home) = make_home();
+        let alpha = tmp.path().join("alpha");
+        let beta = tmp.path().join("beta");
+        seed_project(&alpha);
+        seed_project(&beta);
+        // beta:TASK-001 exists (seeded); beta:TASK-MISSN / beta:TASK-GONE0
+        // dangle in a known project; gamma is not on the board (unverifiable
+        // here, write time owns that refusal).
+        write_node(
+            &alpha,
+            "tasks",
+            "TASK-002",
+            "task",
+            "* BACKLOG TASK-002 Cross refs :work:\n:PROPERTIES:\n:ID:               TASK-002\n:DEPENDS_ON:       beta:TASK-001 beta:TASK-MISSN gamma:TASK-001\n:RELATES_TO:       beta:TASK-001 beta:TASK-GONE0 gamma:TASK-001\n:END:\n",
+        );
+        write(
+            &home.board(),
+            &format!(
+                "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT alpha\n:PROPERTIES:\n:ID:               alpha\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n\n* PROJECT beta\n:PROPERTIES:\n:ID:               beta\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+                alpha.display(),
+                beta.display(),
+            ),
+        );
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+        index.ensure_project_loaded("alpha").await.unwrap();
+        let snap = index.snapshot().await;
+        let messages: Vec<&str> = snap
+            .parse_errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("dangling cross-project reference `beta:TASK-GONE0`")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("project `beta` has no node `TASK-MISSN`")),
+            "{messages:?}"
+        );
+        assert!(
+            !messages.iter().any(|m| m.contains("gamma")),
+            "unknown project must stay silent at index time: {messages:?}"
+        );
+        assert!(
+            !messages.iter().any(|m| m.contains("beta:TASK-001")),
+            "resolvable cross-project ref flagged: {messages:?}"
+        );
+        let project = snap.project("alpha").unwrap();
+        assert!(
+            project
+                .graph
+                .nodes
+                .iter()
+                .any(|node| node.id == "beta:TASK-001" && node.layer == "external"),
+            "cross-project dep must materialize an external ghost node"
+        );
+        // Cross-project deps are pointers, not gates: TASK-002 must not count
+        // as blocked in catalog stats.
+        let catalog = index.catalog().await;
+        let entry = catalog
+            .iter()
+            .find(|entry| entry.project_id == "alpha")
+            .unwrap();
+        assert_eq!(entry.task_stats.as_ref().unwrap().blocked, 0);
     }
 
     #[tokio::test]

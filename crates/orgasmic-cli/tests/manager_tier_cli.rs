@@ -56,7 +56,7 @@ fn write(path: &Path, contents: impl AsRef<str>) {
 fn repo_root() -> PathBuf {
     let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
-        if here.join(".orgasmic").is_dir() && here.join("shipped").is_dir() {
+        if here.join("shipped/entry/router.org").is_file() {
             return here;
         }
         if !here.pop() {

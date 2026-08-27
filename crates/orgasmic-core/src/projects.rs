@@ -141,21 +141,6 @@ const LOCAL_INSTRUCTIONS_PLACEHOLDER: &str = concat!(
     "notes here so future agents do not rediscover them.\n",
 );
 
-/// Root instruction files harnesses auto-read: `AGENTS.md`
-/// (codex/opencode/cursor) and `CLAUDE.md` (Claude). After init both must exist
-/// and route to `orgasmic entry`, with `.orgasmic/entry.org` retained as the
-/// fallback breadcrumb; the first entry is canonical (carries the real pointer)
-/// and the second defers to it — same invariant as the `/orgasmic init` skill.
-const ROOT_POINTER_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
-const ROOT_POINTER_TARGET: &str = ".orgasmic/entry.org";
-const ROOT_POINTER_LINE: &str = concat!(
-    "This repo is coordinated with **orgasmic**: before you answer, search, ",
-    "edit, or run any tool here, you MUST run `orgasmic entry` and follow its ",
-    "output; if the CLI is missing, read ",
-    "[`.orgasmic/entry.org`](.orgasmic/entry.org); install missing root ",
-    "pointers with `orgasmic project init`.\n",
-);
-
 /// Initialize `<project_root>/.orgasmic/` from the shipped scaffold templates.
 /// Refuses to overwrite an existing `.orgasmic/` directory unless `force`.
 pub fn init_project(
@@ -220,87 +205,13 @@ pub fn init_project(
             .with_context(|| format!("write {}", local_instructions.display()))?;
         written.push(local_instructions);
     }
-    ensure_root_agent_pointers(project_root)?;
+    // Root instruction files (AGENTS.md, CLAUDE.md) are the user's: init never
+    // creates or edits them. The bootstrap task TASK-C9V29.3
+    // (migrate-instructions) offers the thin opt-in pointer with operator
+    // approval instead.
     Ok(written)
 }
 
-/// Make both root instruction files route to `.orgasmic/entry.org`. Existing
-/// files are only ever appended to; missing ones are created (a file that
-/// already references its counterpart counts as routing through it).
-fn ensure_root_agent_pointers(project_root: &Path) -> Result<()> {
-    let paths = ROOT_POINTER_FILES.map(|name| project_root.join(name));
-    let mut contents: Vec<Option<String>> = Vec::with_capacity(2);
-    for path in &paths {
-        contents.push(if path.exists() {
-            Some(
-                std::fs::read_to_string(path)
-                    .with_context(|| format!("read {}", path.display()))?,
-            )
-        } else {
-            None
-        });
-    }
-
-    if contents.iter().all(Option::is_none) {
-        std::fs::write(
-            &paths[0],
-            format!("# {}\n\n{ROOT_POINTER_LINE}", ROOT_POINTER_FILES[0]),
-        )
-        .with_context(|| format!("write {}", paths[0].display()))?;
-        std::fs::write(&paths[1], format!("Read `{}`.\n", ROOT_POINTER_FILES[0]))
-            .with_context(|| format!("write {}", paths[1].display()))?;
-        return Ok(());
-    }
-
-    // Append the pointer to existing files that neither route directly nor
-    // defer to the counterpart file.
-    for i in 0..2 {
-        let Some(content) = contents[i].as_ref() else {
-            continue;
-        };
-        if content.contains(ROOT_POINTER_TARGET) || content.contains(ROOT_POINTER_FILES[1 - i]) {
-            continue;
-        }
-        append_pointer(&paths[i], &mut contents[i])?;
-    }
-
-    // Two files deferring to each other with no direct route anywhere would
-    // loop forever; anchor the first existing file with the real pointer.
-    if !contents
-        .iter()
-        .flatten()
-        .any(|c| c.contains(ROOT_POINTER_TARGET))
-    {
-        let i = contents.iter().position(Option::is_some).unwrap_or(0);
-        append_pointer(&paths[i], &mut contents[i])?;
-    }
-
-    // Create whichever file is missing as a defer to the routing counterpart.
-    for i in 0..2 {
-        if contents[i].is_none() {
-            std::fs::write(
-                &paths[i],
-                format!("Read `{}`.\n", ROOT_POINTER_FILES[1 - i]),
-            )
-            .with_context(|| format!("write {}", paths[i].display()))?;
-        }
-    }
-    Ok(())
-}
-
-fn append_pointer(path: &Path, content: &mut Option<String>) -> Result<()> {
-    let mut updated = content.clone().unwrap_or_default();
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-    if !updated.is_empty() {
-        updated.push('\n');
-    }
-    updated.push_str(ROOT_POINTER_LINE);
-    std::fs::write(path, &updated).with_context(|| format!("write {}", path.display()))?;
-    *content = Some(updated);
-    Ok(())
-}
 
 fn render(template: &str, inputs: &ScaffoldInputs) -> String {
     template
@@ -489,7 +400,7 @@ mod tests {
         std::fs::write(dst.join(".gitignore"), "tmp/\nviews/\n").unwrap();
         std::fs::write(
             dst.join("entry.org"),
-            "#+title: orgasmic entry\n#+orgasmic_version: 2\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
+            "#+title: orgasmic entry\n#+orgasmic_version: 2\n\n* Entry\n\nOrgasmic is opt-in: use it through the `/orgasmic` skill when invoked; a session that never touches orgasmic state needs nothing from it.\n\nNever hand-edit `.orgasmic/` state — write through the `orgasmic` CLI. If the CLI is missing, offer to install it with `/orgasmic install`; if the user declines, keep `.orgasmic/` read-only.\n",
         )
         .unwrap();
         std::fs::write(
@@ -549,15 +460,12 @@ mod tests {
         let entry = std::fs::read_to_string(proj.join(".orgasmic/entry.org")).unwrap();
         assert!(entry.contains("* Entry"));
         assert!(entry.contains("#+orgasmic_version: 2"));
-        assert!(entry.contains("Run `orgasmic entry` and follow its output."));
+        assert!(entry.contains("opt-in: use it through the `/orgasmic` skill"));
         assert!(entry.contains("keep `.orgasmic/` read-only"));
-        assert!(entry.contains("source edits will drift from orgasmic state"));
-        let root_pointer = std::fs::read_to_string(proj.join("AGENTS.md")).unwrap();
-        assert!(root_pointer.contains(".orgasmic/entry.org"));
-        assert!(root_pointer.contains("orgasmic entry"));
-        assert!(root_pointer.contains("orgasmic project init"));
-        let claude_pointer = std::fs::read_to_string(proj.join("CLAUDE.md")).unwrap();
-        assert_eq!(claude_pointer, "Read `AGENTS.md`.\n");
+        assert!(entry.contains("write through the `orgasmic` CLI"));
+        // Root instruction files belong to the user; init never creates them.
+        assert!(!proj.join("AGENTS.md").exists());
+        assert!(!proj.join("CLAUDE.md").exists());
         let conventions = proj.join(".orgasmic/conventions");
         assert!(
             !conventions.exists() || std::fs::read_dir(&conventions).unwrap().next().is_none(),
@@ -598,76 +506,20 @@ mod tests {
     }
 
     #[test]
-    fn init_appends_pointer_to_existing_claude_md() {
+    fn init_never_touches_root_instruction_files() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         fake_shipped(&home);
         let proj = tmp.path().join("repo");
         std::fs::create_dir_all(&proj).unwrap();
-        std::fs::write(proj.join("CLAUDE.md"), "custom instructions\n").unwrap();
-        let inputs = ScaffoldInputs::derive(&proj, None);
-        init_project(&home, &proj, &inputs, false).unwrap();
-        let claude = std::fs::read_to_string(proj.join("CLAUDE.md")).unwrap();
-        assert!(claude.starts_with("custom instructions\n"));
-        assert!(claude.contains(ROOT_POINTER_TARGET));
-        let agents = std::fs::read_to_string(proj.join("AGENTS.md")).unwrap();
-        assert_eq!(agents, "Read `CLAUDE.md`.\n");
-    }
-
-    #[test]
-    fn init_leaves_already_routing_claude_md_untouched() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        fake_shipped(&home);
-        let proj = tmp.path().join("repo");
-        std::fs::create_dir_all(&proj).unwrap();
-        let existing = "custom instructions\n\nStart at .orgasmic/entry.org for state.\n";
+        let existing = "custom instructions\n";
         std::fs::write(proj.join("CLAUDE.md"), existing).unwrap();
         let inputs = ScaffoldInputs::derive(&proj, None);
         init_project(&home, &proj, &inputs, false).unwrap();
         let claude = std::fs::read_to_string(proj.join("CLAUDE.md")).unwrap();
         assert_eq!(claude, existing);
-        let agents = std::fs::read_to_string(proj.join("AGENTS.md")).unwrap();
-        assert_eq!(agents, "Read `CLAUDE.md`.\n");
-    }
-
-    #[test]
-    fn init_routes_agents_md_only_repo() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        fake_shipped(&home);
-        let proj = tmp.path().join("repo");
-        std::fs::create_dir_all(&proj).unwrap();
-        std::fs::write(proj.join("AGENTS.md"), "agents-only instructions\n").unwrap();
-        let inputs = ScaffoldInputs::derive(&proj, None);
-        init_project(&home, &proj, &inputs, false).unwrap();
-        let agents = std::fs::read_to_string(proj.join("AGENTS.md")).unwrap();
-        assert!(agents.starts_with("agents-only instructions\n"));
-        assert!(agents.contains(ROOT_POINTER_TARGET));
-        let claude = std::fs::read_to_string(proj.join("CLAUDE.md")).unwrap();
-        assert_eq!(claude, "Read `AGENTS.md`.\n");
-    }
-
-    #[test]
-    fn init_anchors_mutual_defer_cycle() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        fake_shipped(&home);
-        let proj = tmp.path().join("repo");
-        std::fs::create_dir_all(&proj).unwrap();
-        std::fs::write(proj.join("CLAUDE.md"), "see AGENTS.md\n").unwrap();
-        std::fs::write(proj.join("AGENTS.md"), "see CLAUDE.md\n").unwrap();
-        let inputs = ScaffoldInputs::derive(&proj, None);
-        init_project(&home, &proj, &inputs, false).unwrap();
-        let claude = std::fs::read_to_string(proj.join("CLAUDE.md")).unwrap();
-        let agents = std::fs::read_to_string(proj.join("AGENTS.md")).unwrap();
-        assert!(agents.contains(ROOT_POINTER_TARGET));
-        assert!(agents.starts_with("see CLAUDE.md\n"));
-        assert_eq!(claude, "see AGENTS.md\n");
+        assert!(!proj.join("AGENTS.md").exists());
     }
 
     #[test]

@@ -2,18 +2,14 @@
 :PROPERTIES:
 :ID:                 verification_policy
 :TARGET_SECTION:     Policies
-:VERSION:            1
+:VERSION:            2
 :END:
 
-Verification policy:
-- State exactly what was checked.
-- Prefer real commands, browser evidence, transcript evidence, or file
-  references over inference.
-- If verification could not run, say why and identify the remaining risk.
-- Separate implementer self-checks from independent verification. A verifier or
-  lander reruns gates from scratch and treats implementer summaries as claims,
-  not proof.
-- For behavioral claims, include at least one production-path probe when a unit
-  test cannot prove the real user or runtime path.
-- Classify failures as regression, pre-existing, flaky, environment-blocked, or
-  out-of-scope, and record the evidence used for that classification.
+Verification:
+- State exactly what was checked; real command, file, or transcript evidence
+  over inference.
+- If verification could not run, say why and name the remaining risk.
+- For behavioral claims, include one production-path probe when a unit test
+  cannot prove the real path.
+- Classify failures (regression, pre-existing, flaky, environment-blocked,
+  out-of-scope) and record the evidence for the classification.

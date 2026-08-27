@@ -2,15 +2,14 @@
 :PROPERTIES:
 :ID:                 source_of_truth_inputs
 :TARGET_SECTION:     Inputs
-:VERSION:            1
+:VERSION:            2
 :END:
 
-Source of truth lookup:
+Source of truth:
 - Code is authoritative once written.
-- Run `orgasmic entry`; it names what to open for the task at hand.
-
-Read only the files and entries relevant to the assignment. Full project
-documents are referenced by path, not pasted into the prompt.
+- Read the task record, then `project.org` and `gotchas.org`, then only the
+  files the assignment references.
+- Reference full documents by path; do not paste them.
 
 ** Notes
 Injected into Inputs.

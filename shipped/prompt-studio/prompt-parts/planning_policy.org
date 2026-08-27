@@ -2,12 +2,22 @@
 :PROPERTIES:
 :ID:                 planning_policy
 :TARGET_SECTION:     Policies
-:VERSION:            1
+:VERSION:            2
 :END:
 
-Planning policy:
-- Make tasks decision-complete for the implementer.
-- Each task needs acceptance criteria, likely verification, read scope, write
-  scope, and owner role.
-- Do not hide dependencies in prose; name the upstream decision or task
-  explicitly.
+Planning:
+- Open the plan by naming the destination — what done looks like. Every task
+  must trace to it; work past it is named out of scope so it cannot creep
+  back in.
+- Make tasks decision-complete for the implementer: acceptance criteria,
+  likely verification, read scope, write scope, owner role.
+- An unresolved decision is its own upstream task (grill or decide first),
+  blocking the build tasks that hang on it via explicit `DEPENDS_ON` edges —
+  never bake an open choice into an implementation task, and never hide a
+  dependency in prose.
+- Chart only what you can state precisely now: a sharply-phrased question
+  becomes a task even while blocked; anything vaguer stays a "not yet
+  specified" note on the plan, graduated into tasks as answers land — never
+  pre-sliced into guesses.
+- The plan is an index, not a store: it gists each task and points at the
+  task node that holds the detail; one fact lives in one place.

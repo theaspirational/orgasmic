@@ -23,11 +23,8 @@ commands or acceptance criteria provided.
   unclear ownership, or changes outside the declared scope.
 
 ** Completion
-Same contract as `base_worker`: your assignment ends with `orgasmic dispatch
-finalize --summary-file <path> [--commit]`, not a guessed end-of-turn marker.
-A small known-scope fix is exactly the case where `--commit` matters most —
-finalize commits your change as part of the same call, so a fast fix can
-never stall on an uncommitted worktree.
+Same contract as `base_worker`; for a small known-scope fix pass `--commit` so
+the change lands in the same finalize call.
 
 ** Notes
 General worker spec for small known-scope fixes.

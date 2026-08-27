@@ -303,6 +303,13 @@ pub fn lint_dangling_references(
         if known_ids.contains(token) || is_retired_architecture_id(token) {
             continue;
         }
+        // Cross-project reference (`<project>:<id>`): resolvable only against
+        // another project's ledger, which this per-project lint cannot see.
+        // The daemon's board-aware pass (index.rs lint_cross_project_references)
+        // owns that check.
+        if crate::id::split_cross_project_reference(token).is_some() {
+            continue;
+        }
         findings.push(IdentityLintFinding {
             kind: IdentityLintKind::DanglingReference,
             message: format!("dangling reference `{token}` ({context})"),
@@ -564,6 +571,26 @@ mod tests {
                 .any(|f| matches!(f.kind, IdentityLintKind::DanglingReference)
                     && f.message.contains("missing-slug")),
             "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn cross_project_reference_is_not_locally_dangling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = mint_node_id(NodeIdClass::Term);
+        write(
+            &root.join(".orgasmic/glossary").join(&id).join("node.org"),
+            &format!(
+                "#+title: orgasmic glossary term {id}\n#+orgasmic_version: 2\n\n* {id} Example\n:PROPERTIES:\n:ID: {id}\n:RELATES_TO: other-project:TASK-AB2DE\n:END:\n"
+            ),
+        );
+        let findings = lint_project_identities(root);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| matches!(f.kind, IdentityLintKind::DanglingReference)),
+            "cross-project token must be left to the board-aware lint: {findings:?}"
         );
     }
 

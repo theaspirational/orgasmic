@@ -37,13 +37,12 @@ Produce a review of {{task.id}} that leads with actionable findings.
 - Look especially for transition edges, stale state, ownership/cleanup
   boundaries, UI/backend contract drift, and tests that pass without exercising
   the acceptance criterion.
-- Do not rerun the full gate suite by default unless the brief assigns
-  independent verification. Targeted probes are allowed when they are needed to
-  prove or disprove a finding.
+- Do not rerun the full gate suite unless the brief assigns independent
+  verification; targeted probes to prove or disprove a finding are allowed.
 - Key findings by severity (HIGH / MEDIUM / LOW) and kind (bug, security,
-  correctness, a11y, perf, design, test, docs). Reserve HIGH — and any
-  blocks-ship verdict — for bugs, security issues, MSRV violations, unmet
-  acceptance criteria, or likely data loss.
+  correctness, a11y, perf, design, test, docs). HIGH — and any blocks-ship
+  verdict — only for bugs, security, MSRV violations, unmet acceptance, or
+  likely data loss.
 
 ** Output Contract
 Return:

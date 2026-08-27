@@ -59,6 +59,30 @@ pub fn node_id_class_by_prefix(id: &str) -> Option<NodeIdClass> {
     }
 }
 
+/// Split a cross-project reference token `<project-id>:<node-id>` into
+/// `(project, id)`. `None` for anything else — in particular a legacy glossary
+/// id `term:slug` stays whole, because the part after the colon must itself
+/// start with a resolvable node prefix (`TASK-`, `dec_`, `term_`). `ART-` is
+/// deliberately excluded: artifact ids resolve only through a loaded project's
+/// graph, so a cross-project artifact ref could not be checked consistently.
+pub fn split_cross_project_reference(token: &str) -> Option<(&str, &str)> {
+    let (project, id) = token.split_once(':')?;
+    // Same character set `validate_project_id` accepts at registration.
+    if project.is_empty()
+        || project.len() > 64
+        || !project
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return None;
+    }
+    if id.starts_with("TASK-") || id.starts_with("dec_") || id.starts_with("term_") {
+        Some((project, id))
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParentTreeError {
     MalformedParent {
@@ -510,6 +534,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn split_cross_project_reference_shapes() {
+        assert_eq!(
+            split_cross_project_reference("vscode-orsl:TASK-79PER"),
+            Some(("vscode-orsl", "TASK-79PER"))
+        );
+        assert_eq!(
+            split_cross_project_reference("proj:dec_AB2DE"),
+            Some(("proj", "dec_AB2DE"))
+        );
+        assert_eq!(
+            split_cross_project_reference("proj:term_AB2DE"),
+            Some(("proj", "term_AB2DE"))
+        );
+        assert_eq!(
+            split_cross_project_reference("proj:TASK-C9V29.1"),
+            Some(("proj", "TASK-C9V29.1"))
+        );
+        // A legacy glossary id stays whole: the suffix is no node prefix.
+        assert_eq!(split_cross_project_reference("term:venue-order"), None);
+        // Bare ids, artifact refs, malformed project parts.
+        assert_eq!(split_cross_project_reference("TASK-79PER"), None);
+        assert_eq!(split_cross_project_reference("proj:ART-AB2DE"), None);
+        assert_eq!(split_cross_project_reference(":TASK-79PER"), None);
+        assert_eq!(split_cross_project_reference("bad space:TASK-79PER"), None);
     }
 
     #[test]

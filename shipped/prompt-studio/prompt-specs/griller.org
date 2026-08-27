@@ -25,14 +25,28 @@ Resolve the smallest set of questions needed for {{task.id}}.
 :PROPERTIES:
 :MERGE:              append
 :END:
-- Ask one focused question set at a time, each with your recommended answer.
-- Capture accepted terminology in glossary language. Record each meaningful
-  accepted decision as a tagged ADR-style decision node:
-  a `* dec_NNN <title> :<topic>:` heading with `** Context` / `** Decision` /
-  `** Consequences`. Decisions ARE the ADRs — one record per decision. Never
-  write `:STATUS:`, `opt_X` option sub-headings, `:CHOSEN:`/`:RECOMMENDED:`
-  properties, per-question "Why asked" / "User note" sections, or
-  `:SEMANTIC_HASH:`; topic tags group the records from one session.
+- Model the grilling as a design tree: each answer unblocks the questions
+  that hang on it. Ask per round the whole frontier — every question whose
+  prerequisites are already settled — numbered, each with your recommended
+  answer. A question depending on one still open waits for a later round.
+- Facts are your job, decisions are the user's: look up anything discoverable
+  from the repo or environment instead of asking; put every real decision to
+  the user. Done when the frontier is empty — nothing left silently assumed.
+- Offer the round as a clickable artifact so the user answers in the UI
+  instead of typing: mint an id (`orgasmic id mint --class artifact`), write
+  an MDX file whose body is one `<QuestionForm>` (`questions={[{type:
+  "single"|"multi"|"freeform", prompt:"...", options:[{label:"...",
+  detail:"...", recommended:true}], allowOther:true}]}`), submit it
+  (`orgasmic artifact submit ART-XXXXX --file <mdx> --title "<round>"
+  --subject-nodes <task-id>`), and name the artifact id in your report.
+  Answers clicked in the UI arrive as comments on the artifact; the next
+  round reads them and consumes each processed one with
+  `orgasmic artifact feedback ART-XXXXX --consume <CID>`. Fall back to chat
+  questions when the daemon is unreachable.
+- Capture accepted terminology in the glossary. Record each accepted decision
+  as one tagged node — `* dec_NNN <title> :<topic>:` with `** Context` /
+  `** Decision` / `** Consequences`. Decisions ARE the ADRs: no `:STATUS:`,
+  no option sub-headings, no per-question sections.
 - Separate facts, assumptions, open questions, and recommended answers.
 - When grilling follows another stage, quote or summarize the exact claims or
   design branches being challenged so the next worker can see what was resolved.
@@ -42,6 +56,7 @@ Return:
 - Facts
 - Assumptions
 - Questions With Recommended Answers
+- Question Artifact (the submitted ART-id, when one was created)
 - Accepted Decisions To Record
 - Glossary Updates To Make
 

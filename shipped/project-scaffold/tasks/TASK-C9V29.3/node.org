@@ -16,8 +16,8 @@
 
 ** Description
 Move tacit knowledge out of pre-existing instruction files so every rule has
-exactly one canonical `.orgasmic/` home. If the repo has no instruction files
-beyond the scaffolded root pointers, record a no-op and close.
+exactly one canonical `.orgasmic/` home. If the repo has no instruction files,
+record a no-op and close.
 
 Audit: pre-existing agent instructions (`CLAUDE.md`, `AGENTS.md`,
 `.cursorrules`, `.github/copilot-instructions.md`) and contributor docs or
@@ -30,9 +30,13 @@ constraints -> `project.org`; machine-specific setup ->
 `tmp/local_instructions.org` (local, ignored). Drop rules the operator calls
 dead.
 
-Write: with operator approval, shrink each migrated instruction file down to
-the `.orgasmic/entry.org` pointer plus whatever the operator keeps for human
-readers. A rule must not survive in two homes.
+Write: with operator approval, shrink each migrated instruction file down to a
+thin pointer — orgasmic is opt-in via the `/orgasmic` skill; never hand-edit
+`.orgasmic/` state; see `.orgasmic/entry.org` — plus whatever the operator
+keeps for human readers. `orgasmic project init` never creates or edits
+`AGENTS.md`/`CLAUDE.md`; offer to create the pointer here if neither file
+exists, and skip if the operator declines. A rule must not survive in two
+homes.
 
 ** Acceptance Criteria
 - [ ] Every live rule from pre-existing instruction files has exactly one
@@ -40,7 +44,7 @@ readers. A rule must not survive in two homes.
       files existed.
 - [ ] Machine-specific notes live in `tmp/local_instructions.org`, not in
       committed files.
-- [ ] Migrated instruction files route to `.orgasmic/entry.org` and no longer
+- [ ] Migrated instruction files carry the thin opt-in pointer and no longer
       restate migrated rules.
 
 ** Worklog

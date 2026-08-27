@@ -14,9 +14,9 @@ set|append`, `orgasmic decision create`, `orgasmic glossary create`,
 1. **Never clobber existing state.** If `<repo>/.orgasmic/` already exists,
    STOP. Report that the project is already initialized and suggest
    `/orgasmic recall` instead. Only ever write files that are missing; never
-   overwrite a file the user already has. (Sole exception: scaffold may APPEND
-   a pointer line to an existing `AGENTS.md` — append only, never
-   rewrite.)
+   overwrite a file the user already has. Init never creates or edits the root
+   `AGENTS.md`/`CLAUDE.md` — the thin opt-in pointer is offered during
+   bootstrap (`TASK-C9V29.3`) with operator approval.
 2. **Target the repo root.** Scaffold into the root of the repository you are
    working in (the git toplevel, or the current working directory if this is
    not a git repo). Confirm the path in your summary.
@@ -41,9 +41,8 @@ set|append`, `orgasmic decision create`, `orgasmic glossary create`,
    Optional: `--name`, `--default-branch`, `--path`. The CLI copies templates
    from `shipped/project-scaffold/` (with per-file user overrides under
    `user/project-scaffold/`), substitutes `{{PROJECT_NAME}}` /
-   `{{PROJECT_ID}}` / `{{DEFAULT_BRANCH}}`, seeds
-   `tmp/local_instructions.org`, and ensures the root `AGENTS.md` pointer to
-   `.orgasmic/entry.org`.
+   `{{PROJECT_ID}}` / `{{DEFAULT_BRANCH}}`, and seeds
+   `tmp/local_instructions.org`. Root `AGENTS.md`/`CLAUDE.md` are not touched.
 
 3. **Summarize.** List files and empty collection directories written and the
    resolved `PROJECT_NAME` / `PROJECT_ID` / `DEFAULT_BRANCH`. Point at

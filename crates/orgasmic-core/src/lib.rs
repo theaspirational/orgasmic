@@ -36,14 +36,16 @@ pub use id::{
     is_valid_greenfield_artifact_id, is_valid_greenfield_dec_id, is_valid_greenfield_identity,
     is_valid_greenfield_task_id, is_valid_greenfield_term_id, is_valid_task_path_id,
     looks_like_legacy_numeric_task, mint_node_id as mint_node_id_for_class,
-    node_id_class_by_prefix, parse_parent_value, validate_parent_exists, validate_parent_pointer,
+    node_id_class_by_prefix, parse_parent_value, split_cross_project_reference,
+    validate_parent_exists, validate_parent_pointer,
     validate_parent_tree, NodeIdClass, ParentTree, ParentTreeError, ParentTreeNode, CROCKFORD,
 };
 pub use id_repair::{repair_id_collisions, repair_id_collisions_with_incoming, IdRepairError};
 pub use identity_lint::{
-    collect_identity_occurrences, duplicate_id_groups, lint_decision_heading_id_token,
-    lint_project_identities, lint_task_heading_id_token, unresolved_reference_tokens,
-    IdentityLintFinding, IdentityLintKind, REFERENCE_PROPERTY_KEYS,
+    collect_identity_occurrences, collect_reference_occurrences, duplicate_id_groups,
+    known_ids_from_occurrences, lint_decision_heading_id_token, lint_project_identities,
+    lint_task_heading_id_token, unresolved_reference_tokens, IdentityLintFinding, IdentityLintKind,
+    REFERENCE_PROPERTY_KEYS,
 };
 pub use members::{
     add_member, find_member_by_name, find_member_by_token, read_members, revoke_member, sha256_hex,

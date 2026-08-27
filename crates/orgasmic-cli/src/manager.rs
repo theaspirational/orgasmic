@@ -93,7 +93,8 @@ pub struct DispatchArgs {
     #[arg(long = "harness-args-json")]
     pub harness_args_json: Option<String>,
     /// GIT REF the worker's worktree branches from (a branch name, tag or sha)
-    /// — not a path. Omitted → the current branch HEAD.
+    /// — not a path. Omitted → HEAD of the checkout you dispatch from
+    /// (refused if that is the `orgasmic` ledger branch).
     #[arg(long = "from")]
     pub from: Option<String>,
     /// Model id passed to the harness; the accepted values are the harness's
@@ -5240,6 +5241,23 @@ fn reclaim_managed_worktree(
         }
     };
 
+    // Dispatch worktrees carry initialized submodules (`create_worktree` runs
+    // `git submodule update --init --recursive`), and the categorical refusal
+    // below would keep every one of them forever. Settle them first: a
+    // submodule that provably holds nothing of the worker's is deinited and
+    // the worktree's private object store cleared, returning the tree to the
+    // shape a non-forced `git worktree remove` accepts. ANY doubt leaves the
+    // tree untouched and the refusal below reports it. Skipped on `RepoGone`
+    // (no repository, no git to ask) and fenced like every other subprocess
+    // step, because settle hands the pathname to `git`.
+    if !matches!(worktree.disposition, WorktreeDisposition::RepoGone { .. })
+        && root
+            .assert_path_names(&worktree.path, worktree.identity)
+            .is_ok()
+    {
+        settle_as_initialized_submodules(&worktree.path);
+    }
+
     // The submodule refusal is CATEGORICAL, and it runs ABOVE EVERY DESTRUCTIVE
     // BRANCH — including `RepoGone`, which returns straight through
     // `remove_child` below and is the ONE branch that deletes with no salvage at
@@ -5385,6 +5403,91 @@ fn reclaim_managed_worktree(
         root.remove_child(&worktree.name, worktree.identity),
         salvage,
     )
+}
+
+/// Deinit every submodule that is verifiably still AS-INITIALIZED and, when
+/// they all are, delete the worktree's private submodule object store
+/// (`<gitdir>/modules/`) — the two things `git worktree remove`'s submodule
+/// refusal fires on. "As-initialized" is proven per submodule, and ALL FOUR
+/// proofs must hold for EVERY listed submodule or nothing at all is touched:
+///   1. `git submodule status` flag ` ` — checked-out HEAD equals the gitlink
+///      the parent's index records (`+`/`U` refuse; `-` is an uninitialized
+///      placeholder with nothing to settle);
+///   2. empty `status --porcelain --ignore-submodules=none` inside it — no
+///      modified, untracked, or staged files;
+///   3. no local-only history — every local ref is reachable from the origin's
+///      refs (`log --all --not --remotes` empty). The clone `--init` makes
+///      always carries the origin's default branch, so "no branches" would
+///      never hold; what must not exist is a COMMIT the origin doesn't have;
+///   4. no stash (stashes live outside `--all`).
+/// Only then is the store discardable: it holds nothing beyond what `--init`
+/// fetched from the origin. UNKNOWN MEANS KEEP, same as the refusal this
+/// feeds: any git failure, parse surprise, or failed proof returns without
+/// touching anything, and `worktree_submodule_refusal` then reports the tree
+/// exactly as before. A gitlink recorded only in the index (no `.gitmodules`)
+/// makes `git submodule status` fail, so that shape is untouched here too.
+#[cfg(unix)]
+fn settle_as_initialized_submodules(worktree: &Path) {
+    let Ok(status) = git_capture(worktree, ["submodule", "status"]) else {
+        return;
+    };
+    let mut initialized = Vec::new();
+    for line in status.lines() {
+        // `<flag><oid> <path>[ (<ref>)]`. The in-sync flag is a SPACE, and
+        // `git_capture` trims the output, so a line that opens with an oid
+        // character IS the in-sync case; only `-`/`+`/`U` survive the trim.
+        let (flag, rest) = match line.chars().next() {
+            None => continue,
+            Some(flag @ ('-' | '+' | 'U')) => (flag, &line[1..]),
+            Some(_) => (' ', line),
+        };
+        let Some(path) = rest.split_whitespace().nth(1) else {
+            return;
+        };
+        match flag {
+            '-' => {}
+            ' ' => initialized.push(path.to_string()),
+            _ => return,
+        }
+    }
+    if initialized.is_empty() {
+        return;
+    }
+    for sub in &initialized {
+        let dir = worktree.join(sub);
+        match git_capture(&dir, ["status", "--porcelain", "--ignore-submodules=none"]) {
+            Ok(out) if out.is_empty() => {}
+            _ => return,
+        }
+        match git_capture(&dir, ["log", "--oneline", "--all", "--not", "--remotes"]) {
+            Ok(out) if out.is_empty() => {}
+            _ => return,
+        }
+        match git_capture(&dir, ["stash", "list"]) {
+            Ok(out) if out.is_empty() => {}
+            _ => return,
+        }
+    }
+    for sub in &initialized {
+        // Un-forced on purpose: git re-checks for local modifications, so a
+        // change racing in since the proofs above still refuses here.
+        if git_capture(worktree, ["submodule", "deinit", "--", sub]).is_err() {
+            return;
+        }
+    }
+    let Ok(gitdir) = git_capture(worktree, ["rev-parse", "--absolute-git-dir"]) else {
+        return;
+    };
+    let gitdir = PathBuf::from(gitdir);
+    // Only ever the LINKED-worktree admin shape `.../worktrees/<id>/modules`;
+    // a main checkout's `modules/` holds the primary clone's stores and is
+    // not this verb's to delete.
+    if gitdir.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("worktrees")) {
+        let modules = gitdir.join("modules");
+        if modules.is_dir() {
+            let _ = std::fs::remove_dir_all(&modules);
+        }
+    }
 }
 
 /// Turn an anchored removal into the outcome the report reads, PRESERVING
@@ -5796,8 +5899,26 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .with_context(|| format!("parse --harness-args-json: {json}"))?;
         harness_args.extend(parsed);
     }
-    let from_ref = args.from.as_deref().unwrap_or("HEAD");
-    let from_sha = resolve_commit(&project_root, from_ref)?;
+    let from_sha = match args.from.as_deref() {
+        Some(named) => resolve_commit(&project_root, named)?,
+        None => {
+            // Post-cutover the registered root is the ledger worktree, whose
+            // HEAD is the `orgasmic` tracker branch — a worktree built from it
+            // holds tracker files and no source. Default to the HEAD of the
+            // checkout the manager is dispatching from, and refuse when that
+            // is itself the ledger.
+            let cwd = std::env::current_dir().context("cwd")?;
+            let head_branch = git_capture(&cwd, ["symbolic-ref", "-q", "--short", "HEAD"])
+                .unwrap_or_default();
+            if head_branch.trim() == "orgasmic" {
+                bail!(
+                    "refusing to dispatch from the `orgasmic` ledger branch; \
+                     run from a source checkout or pass --from <ref>"
+                );
+            }
+            resolve_commit(&cwd, "HEAD")?
+        }
+    };
     let worktree_path = normalize_path(&match args.worktree {
         Some(path) => absolutize(&path)?,
         None => default_worktree(home, &project_id, first_task(&tasks), args.kind)?,
@@ -6979,6 +7100,41 @@ fn create_worktree(project_root: &Path, path: &Path, branch: &str, from_sha: &st
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout)
         );
+    }
+    // `git worktree add` leaves submodules as empty placeholders, so a worker
+    // in a submodule-bearing repo (vscode-orsl → orsl-language-server) could
+    // neither read nor build the sub-repo. Populate them; the objects land in
+    // the worktree's PRIVATE store (`.git/worktrees/<id>/modules/`), which
+    // cleanup settles back out of existence when the submodules are left
+    // as-initialized (see `settle_as_initialized_submodules`).
+    //
+    // A failure (offline, unreachable URL) warns instead of failing the
+    // dispatch: an empty placeholder is exactly what every worktree had
+    // before this ran, and many tasks never touch the sub-repo.
+    if path.join(".gitmodules").is_file() {
+        // `alternateLocation=superproject` borrows objects from the main
+        // checkout's existing submodule store instead of re-cloning from the
+        // origin — read-only at init time, so worktree-side submodule commits
+        // never touch the main store. `alternateErrorStrategy=info` falls back
+        // to a plain clone when the main checkout never initialized the
+        // submodule.
+        if let Err(err) = git_capture(
+            path,
+            [
+                "-c",
+                "submodule.alternateLocation=superproject",
+                "-c",
+                "submodule.alternateErrorStrategy=info",
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+            ],
+        ) {
+            eprintln!(
+                "warning: worktree submodule init failed (sub-repo dirs stay empty): {err}"
+            );
+        }
     }
     // Note: a dispatched `claude` in this fresh worktree shows the "Is this a
     // project you trust?" dialog (`--dangerously-skip-permissions` does NOT
@@ -8906,13 +9062,14 @@ fn verify_merge_evidence(
             String::from_utf8_lossy(&parents.stdout)
         );
     }
-    if String::from_utf8_lossy(&parents.stdout)
+    let parent_oids: Vec<String> = String::from_utf8_lossy(&parents.stdout)
         .split_whitespace()
-        .count()
-        < 3
-    {
+        .map(str::to_string)
+        .collect();
+    if parent_oids.len() < 3 {
         bail!("--merge-sha `{merge_sha}` is not a merge commit");
     }
+    verify_merged_gitlinks_reach_their_origin(project_root, &merge_sha, &parent_oids[1])?;
 
     let worker_commit = worker_commit
         .map(|worker_commit| {
@@ -8947,6 +9104,77 @@ fn verify_merge_evidence(
         sha: merge_sha,
         worker_commit,
     })
+}
+
+/// A merged gitlink bump must point at a commit the submodule's ORIGIN already
+/// has. The dispatch worktree's submodule store is private and settled away at
+/// cleanup (`settle_as_initialized_submodules`), so a commit that exists only
+/// there would leave the default branch pointing at an oid no other machine —
+/// or CI — can fetch. Reachability is read from the MAIN checkout's submodule:
+/// a remote-tracking ref containing the oid means the sub-repo's own
+/// merge-and-push already happened, which is the ordered two-step this model
+/// prescribes (the sub-repo project merges first, the parent bumps second).
+/// Unverifiable states — submodule not initialized in the main checkout, or an
+/// oid the local clone has never fetched — refuse with the step that fixes
+/// them rather than pass.
+fn verify_merged_gitlinks_reach_their_origin(
+    project_root: &Path,
+    merge_sha: &str,
+    first_parent: &str,
+) -> Result<()> {
+    let raw = Command::new("git")
+        .args(["diff", "--raw", first_parent, merge_sha])
+        .current_dir(project_root)
+        .output()
+        .context("git diff --raw for gitlink verification")?;
+    if !raw.status.success() {
+        bail!(
+            "cannot diff --merge-sha `{merge_sha}` against its first parent for gitlink \
+             verification: {}{}",
+            String::from_utf8_lossy(&raw.stderr),
+            String::from_utf8_lossy(&raw.stdout)
+        );
+    }
+    for line in String::from_utf8_lossy(&raw.stdout).lines() {
+        // `:<old_mode> <new_mode> <old_oid> <new_oid> <status>\t<path>`
+        let Some((meta, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let fields: Vec<&str> = meta.split_whitespace().collect();
+        if fields.len() < 5 || fields[1] != "160000" {
+            continue;
+        }
+        let new_oid = fields[3];
+        let sub = project_root.join(path);
+        if !sub.join(".git").exists() {
+            bail!(
+                "--merge-sha `{merge_sha}` bumps submodule `{path}` to `{new_oid}`, but the \
+                 submodule is not initialized in the main checkout, so the bump cannot be \
+                 verified against its origin. `git submodule update --init -- {path}`, then \
+                 re-run"
+            );
+        }
+        let reachable = Command::new("git")
+            .args(["branch", "-r", "--contains", new_oid])
+            .current_dir(&sub)
+            .output()
+            .with_context(|| format!("git branch -r --contains in submodule {path}"))?;
+        if !reachable.status.success()
+            || String::from_utf8_lossy(&reachable.stdout).trim().is_empty()
+        {
+            bail!(
+                "--merge-sha `{merge_sha}` bumps submodule `{path}` to `{new_oid}`, which is not \
+                 reachable from any remote-tracking ref of the submodule checkout at {} — a \
+                 commit that exists only in a dispatch worktree's private store would leave the \
+                 default branch pointing at an oid no other machine can fetch. Land it in the \
+                 submodule's own repository first (its own task, merged and pushed), then \
+                 `git -C {} fetch` and re-run",
+                sub.display(),
+                sub.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn merge_lands_on_default_branch(
@@ -11962,6 +12190,92 @@ mod tests {
             String::from_utf8_lossy(&merge.stderr),
             String::from_utf8_lossy(&merge.stdout)
         );
+    }
+
+    /// Fixture for the gitlink merge guard: a submodule origin at v1 and a
+    /// main repo with it added at `vendor/sub`, both committed.
+    fn gitlink_fixture(tmp: &Path) -> (PathBuf, PathBuf) {
+        let sub_origin = tmp.join("sub");
+        std::fs::create_dir_all(&sub_origin).unwrap();
+        git_ok(&sub_origin, &["init", "-qb", "main"]);
+        git_ok(&sub_origin, &["config", "user.email", "t@example.com"]);
+        git_ok(&sub_origin, &["config", "user.name", "T"]);
+        std::fs::write(sub_origin.join("lib.txt"), "v1\n").unwrap();
+        git_ok(&sub_origin, &["add", "."]);
+        git_ok(&sub_origin, &["commit", "-qm", "sub v1"]);
+
+        let root = tmp.join("main");
+        std::fs::create_dir_all(&root).unwrap();
+        git_ok(&root, &["init", "-qb", "main"]);
+        git_ok(&root, &["config", "user.email", "t@example.com"]);
+        git_ok(&root, &["config", "user.name", "T"]);
+        std::fs::write(root.join("x.txt"), "x\n").unwrap();
+        git_ok(&root, &["add", "."]);
+        git_ok(&root, &["commit", "-qm", "init"]);
+        git_ok(
+            &root,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                sub_origin.to_str().unwrap(),
+                "vendor/sub",
+            ],
+        );
+        git_ok(&root, &["commit", "-qm", "add sub"]);
+        (root, sub_origin)
+    }
+
+    fn bump_gitlink_and_merge(root: &Path) {
+        git_ok(root, &["checkout", "-qb", "task-side"]);
+        git_ok(root, &["add", "vendor/sub"]);
+        git_ok(root, &["commit", "-qm", "bump gitlink"]);
+        git_ok(root, &["checkout", "-q", "main"]);
+        git_ok(root, &["merge", "--no-ff", "-qm", "merge side", "task-side"]);
+    }
+
+    /// The worker-shaped mistake: a commit made only inside the checkout,
+    /// gitlink bumped to it, merged. The oid exists nowhere the submodule's
+    /// origin can serve it from, so close must refuse the evidence.
+    #[test]
+    fn merge_evidence_refuses_a_gitlink_bump_the_submodule_origin_lacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, _sub_origin) = gitlink_fixture(tmp.path());
+        let sub = root.join("vendor/sub");
+        git_ok(&sub, &["config", "user.email", "t@example.com"]);
+        git_ok(&sub, &["config", "user.name", "T"]);
+        std::fs::write(sub.join("lib.txt"), "local only\n").unwrap();
+        git_ok(&sub, &["commit", "-qam", "local-only"]);
+        bump_gitlink_and_merge(&root);
+
+        let err = verify_merge_evidence(&root, "HEAD", None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("vendor/sub"), "{err}");
+        assert!(
+            err.contains("not reachable from any remote-tracking ref"),
+            "{err}"
+        );
+    }
+
+    /// The prescribed order: the sub-repo lands the change first, the parent
+    /// fetches and bumps second. That evidence passes.
+    #[test]
+    fn merge_evidence_accepts_a_gitlink_bump_the_submodule_origin_has() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, sub_origin) = gitlink_fixture(tmp.path());
+        std::fs::write(sub_origin.join("lib.txt"), "v2\n").unwrap();
+        git_ok(&sub_origin, &["commit", "-qam", "sub v2"]);
+        let sub = root.join("vendor/sub");
+        git_ok(
+            &sub,
+            &["-c", "protocol.file.allow=always", "fetch", "-q", "origin"],
+        );
+        git_ok(&sub, &["checkout", "-q", "origin/main"]);
+        bump_gitlink_and_merge(&root);
+
+        verify_merge_evidence(&root, "HEAD", None).expect("origin-reachable bump must pass");
     }
 
     /// TASK-QGWK7.1.1 M-1. A `git add` that loses to a concurrent state chore

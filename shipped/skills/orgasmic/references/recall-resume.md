@@ -1,7 +1,9 @@
 # /orgasmic recall & resume — manager session bootstrap
 
-Both run inside an existing orgasmic project (a `.orgasmic/` directory at the
-repo root) from on-disk state alone. They share one bootstrap and differ only
+Both run inside an existing orgasmic project from on-disk state alone. The
+project root is what `orgasmic entry` prints — post-cutover usually a ledger
+checkout at `~/.orgasmic/ledgers/<id>`, not the repo tree; read `.orgasmic/`
+there. They share one bootstrap and differ only
 after the briefing: `recall` stops and waits; `resume` executes the next
 planned action.
 

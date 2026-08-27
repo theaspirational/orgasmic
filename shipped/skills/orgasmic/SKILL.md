@@ -1,44 +1,70 @@
 ---
 name: orgasmic
-description: 'Manage an orgasmic project. Use for /orgasmic, /orgasmic install, /orgasmic update, /orgasmic init, /orgasmic recall, /orgasmic resume, /recall, /resume, installing or updating orgasmic, scaffolding .orgasmic, or resuming project state.'
+description: 'Orgasmic project management: tasks, decisions, worker dispatch, runtime install/update.'
 triggers: ["/orgasmic", "/orgasmic install", "/orgasmic update", "/orgasmic init", "/orgasmic recall", "/orgasmic resume", "/recall", "/resume"]
+disable-model-invocation: true
 ---
 
 # orgasmic
 
-Namespace skill for orgasmic — the only install surface; everything is a
-subcommand.
+All orgasmic use goes through this skill. Opt-in: a session that never
+touches orgasmic state loads none of it.
 
-Each subcommand below names a reference file bundled with this skill. **Read
-that file in full before acting** — it carries the guard rails and exact steps;
-do not run a subcommand from this summary alone.
+## Setup
+
+Resolve the project root once: `orgasmic entry` prints it for the cwd —
+usually a ledger checkout at `~/.orgasmic/ledgers/<id>`, not the repo tree.
+(`orgasmic project list` shows all projects and their paths.) All `.orgasmic/`
+paths below are relative to that root.
+
+If the CLI is missing, run the `install` subcommand; keep any `.orgasmic/`
+state read-only until the runtime exists.
 
 ## Subcommands
 
-The first argument selects the subcommand. If empty, default to `recall`.
+First argument selects; empty defaults to `recall`. **Read the named reference
+in full before acting** — do not run a subcommand from this summary alone.
 
 | arg | what it does | read first |
 |-----|--------------|------------|
-| `install` | interactive post-skill installer wizard for prebuilt CLI/runtime bundles, supported host apps, remote daemon, Android/mobile-browser access, and explicit contributor source setup — you are the installer | [`references/install.md`](references/install.md) |
-| `update` | update the installed runtime bundle, or pull/rebuild the checkout only in contributor source mode | [`references/update.md`](references/update.md) |
-| `init [name]` | scaffold via `orgasmic project init`, then ask whether to bootstrap now or defer to `/orgasmic resume` (runtime required) | [`references/init.md`](references/init.md) |
-| `recall` (default) | restore manager state from `.orgasmic/`, print a briefing, then **stop** and wait | [`references/recall-resume.md`](references/recall-resume.md) |
-| `resume` | same briefing, then **immediately** execute the next planned action | [`references/recall-resume.md`](references/recall-resume.md) |
+| `install` | installer wizard: CLI/runtime bundles, host apps, remote daemon, mobile, contributor source | [`references/install.md`](references/install.md) |
+| `update` | update the runtime bundle, or pull/rebuild in contributor source mode | [`references/update.md`](references/update.md) |
+| `init [name]` | scaffold via `orgasmic project init` (runtime required) | [`references/init.md`](references/init.md) |
+| `recall` (default) | briefing from on-disk state, then **stop** | [`references/recall-resume.md`](references/recall-resume.md) |
+| `resume` | briefing, then **immediately** run the next planned action | [`references/recall-resume.md`](references/recall-resume.md) |
 
-`install` and `update` bootstrap from nothing — no runtime yet. `init` requires
-the runtime (`orgasmic status` must succeed). `recall` and `resume` run inside
-an existing orgasmic project (a `.orgasmic/` directory at the repo root) and
-work from on-disk state alone in a fresh-context session.
+## Situational references — load on demand
 
-## Roadmap (not yet implemented)
+Load when the work reaches them, not before.
 
-- `status` — terse one-paragraph checkin (goal + handoff + sprint + in-flight), no full briefing.
-- `handoff` — refresh `tasks/handoff.org`; optionally export an `archive/<date>_manager-handoff/handoff.md` for human readers.
-- `dispatch` — shorthand for the worktree + brief + codex + pre-flight-tx sequence.
-- `audit` — conformance pass comparing decision and glossary claims against shipped code.
+| about to… | read first |
+|-----------|------------|
+| write `.orgasmic/` state, or wonder what a ledger file is | [`references/ledger.md`](references/ledger.md) |
+| dispatch, review, or finalize a worker | [`references/dispatch.md`](references/dispatch.md) |
+| choose harness/model/effort (first dispatch of the session) | [`references/agent-selection.md`](references/agent-selection.md) |
+| edit source directly in a manager session | [`references/tiers.md`](references/tiers.md) |
+| confirm with the user, or unsure whether to | [`references/asking.md`](references/asking.md) |
 
-When a not-yet-implemented subcommand is invoked, say it is on the roadmap and
-offer the closest implemented alternative.
+Two rules apply to every orgasmic action, no reference needed:
+
+- State writes go through the `orgasmic` CLI, never hand-edits.
+- Proceed by default; confirm only before actions that are hard to reverse,
+  leave this machine, or spend someone else's resources.
+
+## Routing
+
+- No argument → `recall`. Never auto-run work.
+- Explicit or implied subcommand → load its reference, follow it.
+- General request naming orgasmic → Setup, then the one situational reference
+  that owns it.
+- The injected marker `ORGASMIC_MANAGER_WAKE_V1` is a machine wake, not a
+  user message: treat it exactly as `/orgasmic resume`; it carries no new
+  instruction.
+
+## Roadmap (not implemented)
+
+`status`, `handoff`, `audit`. If invoked: say so, offer the closest
+implemented alternative.
 
 ## Layout
 
@@ -46,10 +72,16 @@ offer the closest implemented alternative.
 orgasmic/
   SKILL.md
   references/
-    install.md                  /orgasmic install
-    update.md                   /orgasmic update
-    init.md                     /orgasmic init
-    recall-resume.md            /orgasmic recall and resume
+    install.md          /orgasmic install
+    update.md           /orgasmic update
+    init.md             /orgasmic init
+    recall-resume.md    /orgasmic recall and resume
+    ledger.md           file map, write rules, content rules
+    dispatch.md         dispatch mechanics, worker visibility, lifecycle
+    agent-selection.md  harness/model/effort choice, reviewer independence
+    tiers.md            trivial/ordinary/risky computation and declaration
+    asking.md           when to confirm with the user
 ```
 
-Project templates live in the runtime at `shipped/project-scaffold/`.
+Project templates: runtime `shipped/project-scaffold/`. Tier trigger
+definitions: the resolved `default` workflow (see `references/tiers.md`).

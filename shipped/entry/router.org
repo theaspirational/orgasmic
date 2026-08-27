@@ -3,218 +3,36 @@
 
 * Entry
 
-** Agent router
+Orgasmic rules live in the `/orgasmic` skill (`shipped/skills/orgasmic/`:
+`SKILL.md` plus `references/`). Managers: invoke the skill; orgasmic is
+opt-in, not an ambient discipline. This output remains for dispatched workers
+and CLI-only agents.
+
+** Wake marker
 The exact injected marker =: 'ORGASMIC_MANAGER_WAKE_V1'= is a machine wake,
 not shell input or user prose. Treat it exactly as =/orgasmic resume=: read the
 same brief and immediately continue the next clear action. It carries no task,
 project, or instruction text and must not be interpreted as a new command.
 
-Worker route when the prompt is a strict orgasmic worker dispatch with all of:
-- worker role: implementer, planner, reviewer, or griller
-- task ID or task heading
-- read/write scope
-- acceptance, reporting, or evidence expectations
-
-Worker startup:
-1. Read the task heading.
-2. Read `project.org` and `gotchas.org`.
-3. Read only referenced conventions and source files.
-
-Manager route for every other prompt, including arbitrary requests,
-pickup/status requests, and prompts beginning with `/orgasmic`.
-
-Manager startup:
-1. Check `~/.agents/skills/orgasmic/SKILL.md` or the visible skill registry.
-2. If installed, read the skill and follow the selected `/orgasmic` subcommand.
-3. If absent, offer `/orgasmic install`; keep `.orgasmic/` read-only until the
-   runtime is available.
-4. Run `orgasmic manager register`.
-
-Manager-implementer: the manager may edit source directly in this session
-(single-worker setups) only for a task whose tier it has declared, and only when
-that tier is trivial. Compute the tier from the resolved `default` workflow's
-triggers, then record it before the first source edit with `orgasmic manager
-tier --task TASK-XXXXX --tier trivial`. Nothing on the ledger means
-unclassified, not trivial: with no declaration the edit is out of policy and
-dispatching is the route. Declaring is a statement, not a request - it blocks on
-nothing and asks nobody - and it is what makes a skipped tier findable
-afterwards, because the same verb without `--tier` reads back what was recorded
-and exits non-zero when nothing was.
-
-** Human checkpoints
-Proceed by default. Asking is the exception and needs a reason that names which
-property of the action triggers it.
-
-Confirm before an action that is hard to reverse, leaves this machine, or spends
-someone else's resources: pushing to a remote, publishing a release or artifact,
-force-pushing or rewriting history, deleting or rewriting operator session or
-run history, touching the LaunchAgent or a live production daemon, or mutating
-any shared or external service.
-
-Proceed without asking on everything else, explicitly including: committing to a
-local branch, creating and removing worktrees, running gates and test suites,
-reading anything, and `.orgasmic/` state writes through the CLI.
-
-Classify an unlisted action by those same three properties - reversibility,
-reach, whose resources - not by how large it feels.
-
-One question is sanctioned on top of that class, and it is an elicitation rather
-than a confirmation: the first dispatch of a session asks the operator once for
-agent selection. It earns its place by buying silence - one answer replaces a
-per-dispatch guess about harness and effort, and every dispatch after it
-proceeds without asking. The agent selection section below carries the rule.
-Read this as a lower question count, not a higher one: if it has left you asking
-more often, you have read it backwards.
-
-Once the user has approved a plan, the mechanical steps that plan obviously
-entails are approved with it; re-asking inside an approved plan is itself the
-defect. Standing authorization has a scope and an expiry: "you may restart the
-daemon" covers a restart, not installing unreviewed code under it.
-
-When unsure and the action is in the proceed class, act, then report what was
-done plainly enough that the user can reverse it.
-
-** Project map
-- `project.org`: baseline, mission, operating constraints.
-- `tasks/<ID>/node.org`: one directory-backed task per id.
-- `tasks/goal.org`: manager focus only.
-- `tasks/handoff.org`: manager continuity only.
-- `decisions/<ID>/node.org`: durable rationale.
-- `glossary/<ID>/node.org`: domain language.
-- `views/board.org`, `views/decisions.org`, `views/glossary.org`: derived,
-  gitignored read views over the collections.
-- `gotchas.org`: repeated traps; read before source edits.
-- `conventions/`: repo-local working agreements.
-- `tx/`: agent activity log.
-
-** Retired content
-Some paths under the runtime home hold content a decision retired. The runtime
-stopped reading them; the files stayed. They therefore look exactly like live
-configuration, and reading one produces a confident wrong conclusion rather than
-a lookup failure - which is worse, because nothing signals the mistake.
-
-Known-retired paths, and the decision that retired each:
-- `~/.orgasmic/user/workers/` - worker templates, retired by `dec_WDR5K`. Inert.
-  Anything a file in there appears to configure, including `:DEFAULT_MODEL:` and
-  `:DEFAULT_EFFORT:`, configures nothing. Transport comes from the driver
-  registry in code and model/effort are per-dispatch flags; there is no file
-  anywhere that sets a default model.
-
-Treat that list as the whole of it: a path not named here is live. If you find
-content under `~/.orgasmic/` that looks configured but stale, run `orgasmic
-doctor` - it names every retired path with its deciding node, and it is the
-answer to "is this file still read?". Read the rationale with `orgasmic decision
-get <id>` before concluding the runtime lost a capability; a retired concept was
-removed on purpose, so proposing to restore it is arguing against a decision you
-have not read yet.
-
-The files belong to the operator. `orgasmic doctor --remove-retired` deletes
-them on request and nothing deletes them otherwise - so residue you find may
-have outlived several releases, and its age is not evidence that it is live.
+** Worker route
+A strict dispatched-worker brief names role (implementer, planner, reviewer,
+or griller), task id, read/write scope, and acceptance or evidence
+expectations. Startup: read the task heading, then `project.org` and
+`gotchas.org`, then only the referenced conventions and source files. Verify
+graph state through the daemon CLI, naming the project
+(`orgasmic task get --project <name> <ID>`), not through the worktree's frozen
+`.orgasmic/` snapshot. Finish with `orgasmic dispatch finalize`.
 
 ** Write rules
-- Before `.orgasmic/` state writes: run
-  `command -v orgasmic >/dev/null 2>&1 && orgasmic status >/dev/null 2>&1`.
-- If it succeeds: write through `orgasmic ...` CLI commands.
-- If it fails: stop - install or start the runtime (`/orgasmic install`,
-  `orgasmic daemon start`); do not hand-edit.
-- Add repo-specific conventions as separate files under `conventions/`.
+`.orgasmic/` state writes go through the `orgasmic` CLI, never hand-edits. If
+the CLI or daemon is unavailable, stop and keep `.orgasmic/` read-only.
 
-** Contributing discipline
-- Follow the constraints in `project.org`.
-- Keep personal data out of durable state: `tx/`, decisions, task evidence, and
-  worklogs may be committed or published. Use stable handles instead of personal
-  email, prefer repo-relative paths, and keep machine-specific notes in
-  gitignored `tmp/local_instructions.org`.
-- Record durable rationale through `orgasmic decision`; do not create stray
-  decision docs or edit derived views.
-- While the project is greenfield, treat decisions and glossary as a living
-  model: create genuinely new rationale through the CLI, and revise existing
-  nodes through `orgasmic node body set|append` or `orgasmic node prop set`.
-- If something about the project surprises you, add or ask for a `gotchas.org`
-  entry. When task scope changes, keep `tasks/` current through the CLI.
-
-** Tooling usage
-- Use `orgasmic ...` as the agent and human surface; treat the daemon as the CLI
-  backend and write authority for `tx/` and sessions.
-- `/orgasmic recall` means brief and stop.
-- `/orgasmic resume` means brief, then continue the next clear action.
-- Use `orgasmic --help` and `orgasmic manager drivers` to discover installed
-  transport pairs (`mode` + `harness`).
-
-** Dispatch rule
-- Implement and review work through orgasmic workers, never by shelling out to a
-  raw provider CLI such as `codex`, `claude`, or `cursor-agent` for project
-  work. Raw provider CLIs bypass daemon write authority, tx recording, worktree
-  isolation, dispatch leases, and reattach/recovery.
-- A request naming provider, model, or effort maps to
-  `orgasmic manager dispatch --kind <kind> --mode <mode> --harness <harness>
-  [--model <model>] [--effort <effort>] --brief <path>`. Omit model and effort
-  to use harness defaults; explicit values pass through unvalidated.
-- A worker sees only committed history. `--from` takes a git ref (default: the
-  current branch HEAD) and the worktree is built from it, so every uncommitted
-  edit in the manager's tree is invisible to the worker. This is one constraint
-  with two halves: your source edits, and the live daemon's uncommitted writes
-  to `.orgasmic/` tx, tasks, and decisions. Commit both halves to a branch and
-  pass that ref as `--from` before dispatching anyone who must see your work.
-- The reviewer case is the costly one: a review dispatched against an
-  uncommitted diff does not fail, it returns a confident verdict on code it
-  never read. Before a review dispatch, confirm the diff you want reviewed is
-  reachable from the `--from` ref.
-- Inside a worktree, `.orgasmic/` is a frozen snapshot. Verify graph state
-  through the daemon CLI, naming the project explicitly
-  (`orgasmic task get --project <name> <ID>`), rather than by reading the
-  worktree's files or letting a command resolve the project from the cwd.
-- A continuation or a second review round cannot reuse the derived branch name;
-  the first run still holds `task-xxxxx-<kind>` and dispatch refuses with
-  `a branch named ... already exists`. Pass an explicit `--branch`.
-
-** Agent selection
-Four values decide who runs a dispatch: kind, mode, harness, and the harness's
-own model and effort. Mode and harness are discoverable - `orgasmic manager
-drivers` prints the supported pairs and, for a harness that exposes a protocol
-catalog, its runtime option values. Model and effort belong to the harness
-vocabulary and orgasmic keeps none of it: they are chosen per dispatch, passed
-through unvalidated, and never written into config, the graph, or this text.
-
-Ask the operator once, at the first dispatch of the session rather than at
-session start, so a session that only reads and answers never asks anything. The
-later trigger is also the better-informed one: by then the task is in hand and
-`orgasmic manager drivers` has said which harnesses this host actually has, so
-the question offers real choices instead of a menu the machine may not support.
-Two of them, in one turn: which harness family to implement with, and what
-effort posture review and risky stages should carry. Carry both answers for the
-rest of the session and stop asking.
-
-The answers are session-scoped and are not stored. A pinned model identifier is
-model knowledge and stays per-dispatch; a harness family preference is not model
-knowledge, but no verb stores one, and adding a place to keep it would rebuild
-the configuration surface that keeping zero model knowledge exists to remove.
-A later manager asks its own operator once. Reporting is not storage: keep
-echoing kind, mode, harness, model and effort after every dispatch, into the
-launch message, the task evidence, and the handoff. That record says what ran;
-nothing reads it back as a setting.
-
-If no operator is there to answer, dispatch anyway and put the reason for the
-selection you chose in `--reason`, where it lands on the dispatch tx. The rule
-is not that an unasked dispatch is forbidden - it is that the first dispatch of
-a session leaves behind either an operator's answer or a stated reason, never a
-silent default. A pair taken because it was first in a list is the failure this
-replaces.
-
-Reviewer independence is runtime policy, not manager taste. A reviewer runs on a
-different harness family than the run under review. A reviewer that shares the
-author's family shares its priors and its blind spots, which is most of what an
-independent pass buys. Same-family review is still allowed, and it states its
-reason on the dispatch. Where the author's harness is unknown - a hand-written
-change, an inherited branch, a run whose record does not say - ask which family
-wrote it rather than defaulting to your own; your own is the answer most likely
-to collide with it.
-
-Review and risky-stage dispatches carry an explicit `--effort`. Omitting it does
-not mean a sensible default, it means the harness chose silently: a live run
-record reports driver and harness and has no model or effort field, so the value
-is unrecoverable afterwards (checked 2026-08-03). Leaving effort unset is
-permitted as a stated choice and not as an oversight.
+** Retired content
+Paths under `~/.orgasmic/` that a decision retired: still on disk, read by
+nothing, and they look exactly like live configuration.
+- `user/workers/` — retired by `dec_WDR5K`. Worker templates there, including
+  `:DEFAULT_MODEL:` and `:DEFAULT_EFFORT:`, configure nothing.
+`orgasmic doctor` prints the authoritative list; read the rationale with
+`orgasmic decision get <id>` before proposing to restore anything.
 
 ** Default workflow
