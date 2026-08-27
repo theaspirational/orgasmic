@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_P94BF
+#+orgasmic_version: 2
+
+* term_P94BF Decision graph
+:PROPERTIES:
+:ID:                 term_P94BF
+:CANONICAL:          decision graph
+:AVOID:              design notes, free-form rationale
+:RELATES_TO:         term_H5YHC term_J5X55
+:DEFINITION:         The set of scoped question nodes, options, chosen answers, and edges that anchor later architecture and planning.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

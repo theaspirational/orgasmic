@@ -1,0 +1,39 @@
+#+title: orgasmic task TASK-VJ633
+#+orgasmic_version: 2
+
+* BACKLOG TASK-VJ633 Promote the strict tmux rule to one public copy in orgasmic_drivers; drivers and cli gates still accept the shim (K4G1D artifact re-authoring required)
+:PROPERTIES:
+:ID: TASK-VJ633
+:PRIORITY: P2
+:END:
+
+From TASK-JGHNC (2026-07-29): after JGHNC fixed the daemon test gates, two
+surfaces still accept the rmux shim as tmux:
+
+1. `crates/orgasmic-drivers/src/modes/tmux.rs` — `ToolRequirement("tmux", 9,
+   tmux_spawn_usable())` plus a `tmux_available` gate.
+2. `crates/orgasmic-cli/tests/dispatch.rs` — `ToolRequirement("tmux", 1, …)`.
+
+The clean fix is ONE public strict rule in `orgasmic_drivers::modes::tmux`
+(promote `tmux_mode_availability_for` from its current home in
+orgasmic-daemon's api.rs tests), consumed by daemon, drivers, and cli gates so
+the rule cannot drift per-crate.
+
+THE CONSTRAINT THAT MAKES THIS A DECISION, NOT A CHORE (JGHNC's stated reason
+for leaving it): TASK-K4G1D's shipped injection patch pins the current BODY of
+`tmux_mode_availability_for` in api.rs — promoting/moving the canonical copy
+means RE-AUTHORING verify/TASK-K4G1D (and re-measuring its red) as part of the
+change. A move that silently breaks a shipped proof is a stale-artifact
+failure; the artifact update must ship in the same change with its own
+red-then-green evidence. verify/TASK-JGHNC pins the gate WIRING in api.rs tests
+and may need the same treatment — check both with `orgasmic verify` before and
+after.
+
+=== Acceptance
+
+- One canonical strict rule, public in orgasmic_drivers; all three crates' tmux
+  gates consume it; a shimmed tmux is ABSENT everywhere, loudly.
+- verify/TASK-K4G1D and verify/TASK-JGHNC both PASS after the move (re-authored
+  if needed, with the re-measurement shown).
+- Injection per TCTTD standard for the new wiring surface.
+

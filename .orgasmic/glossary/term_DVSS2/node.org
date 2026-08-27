@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_DVSS2
+#+orgasmic_version: 2
+
+* term_DVSS2 Desktop distribution
+:PROPERTIES:
+:ID:                 term_DVSS2
+:CANONICAL:          desktop distribution
+:AVOID:              source install, dev server, clone-to-try
+:RELATES_TO:         term_CJ2R4 term_WQMJJ term_5SV2N term_TDNG3
+:DEFINITION:         The optional host app package, currently macOS Tauri, that launches an already installed orgasmic CLI/runtime and opens the daemon-served UI. For v0.0.1 free/dev distribution this means an Apple Silicon-only, ad-hoc-signed tester DMG; a frictionless public installer requires future Developer ID signing and notarization.
+:DECIDED_AT:         [2026-05-29 Fri 00:00]
+:END:
+

@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-FNZN8
+#+orgasmic_version: 2
+
+* BACKLOG TASK-FNZN8 Nudge instead of stall: on agent_turn_complete without worker finalize, inject one reminder turn before the watchdog window    :drivers:dispatch:
+:PROPERTIES:
+:ID: TASK-FNZN8
+:PRIORITY: P2
+:END:
+
+** Description
+Observed 2026-08-26 (codex-chat stdio, gpt-5.6-sol, runs run-01M0YPJZ9ME6S9Z4S193H0AT35 / run-01M0YPK385CAN7M934Q18AVZYV vs the healthy run-01M0YPK1JD9CKDSBAGVJ5VKX3N): the model finishes the work, ends its turn with a prose summary, and never executes the worker finalize/report step. The daemon keeps waiting, codex idles at 0% CPU, and stall_timeout_exceeded (600s) SIGTERMs the run as failed with `finalized_by_worker: false` — even though the work is complete and committed. 2 of 3 runs in one wave hit this.
+** Expected
+When the driver sees `agent_turn_complete` (state completed) on a dispatch run whose worker has NOT finalized, inject ONE nudge turn ("you have not reported; your last action must be the finalize/report command") instead of idling into the watchdog. One nudge only; if the model still does not finalize, let the existing stall watchdog fire as today. This closes the failure class for every chatty model without loosening the watchdog.
+** Acceptance
+- [ ] test: turn-complete-without-finalize triggers exactly one nudge; finalize after nudge → clean worker finalize release
+- [ ] test: turn-complete-without-finalize, nudge ignored → stall watchdog still fires
+- [ ] nudge recorded as a driver/lifecycle event so run history shows it
+

@@ -1,0 +1,193 @@
+# TASK-QGWK7.1.1.1.1 — REVERT_HEAD closed, plus the three small things
+
+Commit `84fca69`. All four items done. No mechanism from the parent round was
+redesigned; `commit_promoted_dispatch_record`'s body is byte-unchanged.
+
+## Changed
+
+### B-1 — the guard now covers `revert` (BLOCK SHIP)
+
+`crates/orgasmic-cli/src/manager.rs` — `sequencer_operation_in_progress` gains
+`("REVERT_HEAD", "revert")` and, last so the specific marker names the
+operation, `("sequencer", "revert or cherry-pick sequence")`. Doc comment
+records why, with the measured `--abort` symptom.
+
+I re-measured the sequencer marker lifecycle myself rather than trusting the
+`sequencer` half of the fix direction (8 scratch repos, verbatim):
+
+| state | markers present |
+| --- | --- |
+| clean worktree | none |
+| single conflicted `git revert HEAD~1` | `REVERT_HEAD` |
+| clean `git revert -n --no-edit HEAD` | `REVERT_HEAD` (no `CHERRY_PICK_HEAD`) |
+| `git revert` after committing the revert | none |
+| multi-pick range stopped on conflict | `REVERT_HEAD` **and** `sequencer/` (todo, head, opts, abort-safety) |
+| `git revert --quit` | none |
+| multi-pick range that **completes** | none |
+
+The last row is the one that mattered: the `sequencer` entry cannot latch on
+after a normal multi-commit revert, so it adds cover without turning every
+later close into a refusal.
+
+Convention `shipped/prompt-studio/conventions/manager-dispatch.org:340` now
+reads "(rebase, am, merge, cherry-pick, revert, bisect, or an interrupted
+revert/cherry-pick sequence)", states the `revert --abort` symptom, and states
+that a staged `git revert -n` counts.
+
+Tests (`manager::tests`, three new):
+- `a_close_inside_a_conflicted_revert_keeps_the_record_and_leaves_the_abort_working`
+  — the twin of the conflicted-merge test, plus the part the finding is
+  actually about: `git revert --abort` afterwards exits 0 and the promoted
+  record is still on disk.
+- `a_close_with_a_cleanly_staged_revert_persists_nothing` — the `-n` case,
+  which is the wider half of the exposure.
+- `an_interrupted_pick_sequence_is_refused_and_a_finished_one_is_not` — a real
+  interrupted range is refused (naming `revert`, not the generic sequence),
+  `--quit` releases it, a **completed** range is not refused, and a todo list
+  with no `*_HEAD` marker is still refused. That last state is fabricated (git
+  always pairs the two in practice) and the test says so.
+
+All three proved red under the injection before I moved on: `Ok` vs `Partial`
+for the two close tests, `None` vs `Some("revert")` for the sequencer one.
+
+### B-2 — measured, then documented (not refused)
+
+**Measured through the binary first**, as the brief required (the scratch test
+is not in the commit; the pin that replaced it is). Close on `feature-x` with
+`.git/index.lock` held → `partial`, record promoted untracked. `git checkout
+main` → record survives. Re-run → `re-persisted: … committed`, `main` advances
+by the record commit, `feature-x` does not move. Then `git checkout feature-x`
+→ the now-tracked record **leaves the working tree**, and a further re-run
+there is a silent no-op.
+
+**Choice: document, don't refuse.** Refusing would trade a record that *is* in
+history for one that is in no history at all until the manager remembers which
+branch they were standing on — and nothing downstream reads a record's home
+branch. The parent round's F-2 was about a concurrent checkout moving HEAD
+underneath a close mid-flight; this is a manager deliberately re-running a
+close from another branch, which is a different act. So: the convention now
+states it (`*The repair lands on the branch you are standing on when you
+re-run*`), and the `re-persisted:` line names the ref it landed on —
+`re-persisted: dispatch record <tx> committed onto refs/heads/main (…)`.
+
+Pinned by `a_re_persist_lands_on_the_branch_the_re_run_is_standing_on`
+(`tests/dispatch.rs`), which asserts all three: the named ref in the line,
+`main` advancing, `feature-x` untouched — plus the tail I measured (files leave
+the tree on the way back, further re-runs silent).
+
+### B-3 — the `re-persisted: … committed` line is gated on the record being in HEAD
+
+`repersist_dispatch_record_best_effort` now matches
+`Ok(()) if dispatch_record_is_in_history(...)` for the success print, and an
+empty-directory `Ok(())` takes a new `warning:` arm naming the directory and
+the torn promote that produced it.
+
+Pinned by `an_empty_promoted_record_directory_is_never_reported_as_committed`
+(`tests/dispatch.rs`). Proved red against parent behaviour: with the gate
+removed the re-run prints `re-persisted: dispatch record <tx> committed onto
+refs/heads/main` having committed nothing, verbatim.
+
+### B-4 — both arms of the `git restore` rollback are now reached
+
+`write_failing_git_shim(bin_dir, &["update-ref", …])` (new helper,
+`tests/dispatch.rs`) fails the named subcommands with the index lock **free**,
+which is the only way past the real-index `git add` and into the rollback.
+`a_record_commit_rollback_reports_both_the_clean_and_the_failed_arm` takes the
+`Ok(_) => Err(err)` arm on the first close (asserting the index really comes
+back clean) and the `Err(restore_err)` arm on the re-run with the shim also
+failing `restore` (asserting the message names both failures, hands over the
+exact `git restore --staged --` command, and that the record really is left
+staged — the claim has to be true).
+
+The reviewer's F-4 is confirmed exactly: I re-ran the two arms against the
+pre-F-1 shape (`let _ = git_capture(restore …); Err(err)`) and the second arm
+fails there, so the test discriminates the reported rollback. **Precision note:
+the first arm's assertions do not discriminate `let _ =`** — the restore still
+runs, just unreported — they discriminate a broken pathspec or a restore that
+does not unstage, which is the risk the reviewer named.
+
+### Code comment, no behaviour change
+
+`repersist_dispatch_record_best_effort` now records that its reachability is
+load-bearing on `close_tx_ran_cleanup` setting `cleanup_already_run` for
+`ok`/`worktree_missing` only.
+
+## Verification Gates
+
+All run in this worktree, output redirected to files, never piped. No
+`cargo test --workspace`, no `scripts/run-tests.sh`,
+`legacy_drivers_and_explicit_pairs_emit_equivalent_start_events` never ran,
+`ORGASMIC_HOME` never set.
+
+| gate | result |
+| --- | --- |
+| `cargo test -p orgasmic-cli --bin orgasmic -- manager::tests` | **57 passed** / 0 failed (54 + 3 new) |
+| `cargo test -p orgasmic-cli --test dispatch` | **70 passed** / 0 failed / 9 ignored, 51.07s (67 + 3 new; the ignored count is unchanged from the 9 the brief names as the pre-existing TASK-M47E5.3 prune gates — I did not re-derive which they are) |
+| `cargo test -p orgasmic-cli --test shipped_conventions` | 4 passed / 0 failed |
+| `cargo test -p orgasmic-core --lib` | 165 passed / 0 failed / 2 ignored |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo fmt --all --check` | exit 0 |
+| `orgasmic verify TASK-QGWK7.1` | **PASS** |
+| `orgasmic verify TASK-QGWK7.1.1` | **PASS** |
+| `orgasmic verify TASK-QGWK7.1.1.1` | **PASS** |
+| `orgasmic verify TASK-QGWK7.1.1.1.1` | **PASS** (new) |
+
+Budget: **one** full `--test dispatch` run (the row above). Everything else
+against that binary was a single-test `--exact` run — six of them, ~3–5s each,
+including the B-2 measurement and the two red-against-parent proofs — plus the
+red/green pairs the four `orgasmic verify` replays run themselves.
+
+**No verify artifact was re-authored.** `git diff HEAD~1 HEAD` touches zero
+bytes under `verify/TASK-QGWK7.1{,.1{,.1}}/` — the three injections target
+`commit_promoted_dispatch_record`'s body and the already-closed call site, and
+neither moved. The new artifact injects the five-marker array back into
+`sequencer_operation_in_progress`.
+
+**I read the new artifact's red log**, not just the PASS line. The run has
+exactly one failure and it is the pinned one: `panicked at manager.rs:9920 …
+a close inside a revert must stand down instead of committing: left: Ok, right:
+Partial`. That is the FIRST failure and the right one — the close committed
+inside the revert and reported `ok`. `expect-red` states plainly that the
+`git revert --abort` assertion sits one step behind it and is unreachable under
+the injection by construction: a close that stands down never gets the chance
+to wedge the abort.
+
+## Unmet Criteria
+
+None. Every acceptance item is done.
+
+## Where I disagreed with the heading
+
+**"`shipped_conventions.rs` PINS that prose, so the prose is pinned WRONG" is
+false.** I grepped `crates/orgasmic-cli/tests/shipped_conventions.rs` (and the
+rest of `crates/`) for `sequencer`, `rebase`, `cherry-pick`, `bisect`, `in
+progress`, `detached`: **zero hits**. The sequencer list was prose with nothing
+holding it — which is *how* it drifted from the code. The heading's remedy
+("update the pinning assertion") therefore had nothing to update, so I wrote
+the assertion it assumed existed: `manager_convention_names_post_close_report_path`
+now pins the verbatim list `rebase, am, merge, cherry-pick, revert, bisect`,
+the `revert/cherry-pick sequence` clause, the staged-`-n` sentence, and the B-2
+branch sentence. The claim was inherited from the review's F-1, which asserted
+the same thing.
+
+Everything else in the heading reproduced exactly as written, including the
+clean `git revert -n` widening.
+
+## Residual Risk
+
+- The `sequencer` entry is measured never to survive a completed or aborted
+  sequence, so a permanent false refusal would need git to leave the directory
+  behind — and even then the cost is a refusal plus a repairable re-run, not
+  loss.
+- The B-2 trade is now documented, not enforced: a manager who re-runs a close
+  from an unrelated branch still lands the record there. The convention and the
+  `re-persisted: … onto <ref>` line are what make it a known move; nothing
+  refuses it.
+- The B-3 warning fires once per re-run and never self-heals — the promoted
+  directory is empty and nothing re-promotes into it (tmp is unlinked). That is
+  the pre-existing torn-promote class; this round only stops the false
+  `committed` claim about it.
+- `a_close_inside_a_conflicted_revert_…` pins the `git revert --abort` exit
+  behind the refusal assertion, so the verify replay never exercises the abort
+  under the injection. The wedge itself (exit 128) is the reviewer's
+  measurement, reproduced by me only in scratch repos, not in a test.

@@ -1,0 +1,14 @@
+#+title: orgasmic glossary term term_DN08P
+#+orgasmic_version: 2
+
+* term_DN08P Run lease
+:PROPERTIES:
+:ID:                 term_DN08P
+:CANONICAL:          run lease
+:AVOID:              global mutex, file lock, queue slot
+:RELATES_TO:         term_GMTWY term_3YTBK term_N400W term_E0TAB
+:DEFINITION:         The supervisor's claim that grants at most one active run per (task_id, kind) tuple; it is taken on acquire and surrendered on release, with state changes guarded by (run_id, runtime_id, boot_id) ownership so stale cleanup cannot clobber a replacement runtime.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:PRIMARY_LEAF:       arch_A53QX.1
+:END:
+

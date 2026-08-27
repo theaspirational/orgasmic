@@ -1,0 +1,30 @@
+#+title: orgasmic task TASK-AVGNA
+#+orgasmic_version: 2
+
+* DONE TASK-AVGNA RunDock button = open-or-launch manager + /orgasmic resume composer prefill :ui-manager:run-dock:ui:dec_WTM5Y:
+:PROPERTIES:
+:ID:               TASK-AVGNA
+:PRIORITY:         P1
+:WORKER:           implementer-cursor
+:WRITE_SCOPE:      ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/manager/RunDock.tsx ui/src/components/manager/ManagerWorkbench.tsx
+:READ_SCOPE:       ui/src/lib/runDock.tsx ui/src/hooks/useActiveProject.ts ui/src/components/manager/ManagerComposer.tsx
+:TEST_CMD:         npm --prefix ui run build
+:DEPENDS_ON:       dec_WTM5Y TASK-KMWZ6
+:END:
+
+** Description
+Rewire the RunDock manager surface to the new launch model, per dec_WTM5Y. Endpoint contract (from TASK-KMWZ6): =POST /manager/launch { project_id, mode, harness } → { run_id }=.
+
+1. Replace =postManagerTick= with =postManagerLaunch({ project_id, mode, harness })= → ={ run_id }= hitting =POST /manager/launch=; drop =ManagerTickRequest/Response= and =send_prompt=.
+2. RunDock manager button (=handleManagerTick=): if a live manager run exists for the ACTIVE project, open/focus its Manager tab (no second spawn); else launch via the last-used =(mode, harness)= from =localStorage['orgasmic.manager.driver']= (fall back to first installed driver) and prefill the composer with the literal editable draft =/orgasmic resume= (human presses send — NEVER auto-sent).
+3. =DriverChooser= + =DriverSwitcher= keep working but their prefilled draft becomes =/orgasmic resume= (set client-side; server no longer returns =draft_prompt=). Remove the "Tick default driver" link (=handleEmptyTick=).
+4. One manager per project; managers for other projects coexist, filtered by the active project tab.
+
+** Acceptance Criteria
+- [ ] Button opens the active project's live manager if present; else launches via last-used driver with =/orgasmic resume= prefilled as an editable, UNSENT composer draft.
+- [ ] No =postManagerTick=, =send_prompt=, or "Tick default driver" remain; launcher + switcher prefill =/orgasmic resume=.
+- [X] =npm --prefix ui run build= + =tsc --noEmit= pass; integration verified against the live endpoint (browser click pending — no browser-automation tool this session).
+
+** Evidence
+Landed to main in merge =63216e1= (impl =4c7bec6=). =handleOpenOrLaunchManager=: opens =activeManagerRun= (=managerRuns= filtered by =run.project_id === activeProjectId=, =managerRuns[0]=) when a live manager exists; else =postManagerLaunch({project_id,mode,harness})= via =resolveLaunchDriver= (last-used =localStorage['orgasmic.manager.driver']=, fallback first installed) then =openRun({draftPrompt: '/orgasmic resume'})= — editable, never auto-sent. "Tick default driver" link removed. Gates: =npm run build= + =tsc --noEmit= green. Live integration: a real =POST /manager/launch= run surfaced in =GET /manager/state= (the source for =activeManagerRun=), confirming the open-vs-launch branch fires on real data; run released afterward. NOTE: the actual in-browser button click is unverified this session (no browser-automation tool available) — pending a manual claude-in-chrome pass.
+

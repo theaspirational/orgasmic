@@ -1,0 +1,97 @@
+#+title: orgasmic task TASK-BCYMM
+#+orgasmic_version: 2
+
+* DONE TASK-BCYMM Test fixtures leak whole process trees on the panic path; the Z3093 guard reaps sessions, not processes :testing:leak:daemon:production:
+:PROPERTIES:
+:ID: TASK-BCYMM
+:PRIORITY: P1
+:END:
+
+A second leak class, measured 2026-07-28 11:35Z and **not** covered by
+TASK-Z3093. That task made `LiveSessionGuard` reap rmux *sessions* on the panic
+path. It does not own *spawned child processes*, so tests whose fixture forks a
+process tree still leak it exactly as before.
+
+SIGHTING [2026-07-29, TASK-TZKAC harness round 8]: after ~50 minutes of 4x64-thread daemon-suite load, the machine held 31 leaked /bin/bash driver-shim children accumulating zero CPU, and the round wedged at 552-560 of 566 tests per copy with no further output (killed by hand). Distinct from the tmux sentinel gate; makes long loaded rounds unreliable as evidence. Same class as this task's premise: fixtures leak process trees the session-level guard does not reap.
+
+SIGHTING [2026-07-29 ~07:40 local]: orphan session orgasmic-rmux-run-20260729T030752-0e4f153badef4e93b93350da8b8ce35e on the LIVE rmux default server — no dispatch record, not in /runs/live, created 06:07 local during a worker's test window. A test created a real orgasmic-rmux-run-* session on the default endpoint and never reaped it. Manager reaped by exact name after confirming non-liveness. Same class as this task's premise, now on the live server rather than an owned one — whichever test binary did this needs the owned-endpoint treatment (the KPMFK/QRTT8 rmux stage tests are the recent suspects; their sessions are supposed to ride LiveSessionGuard).
+
+** Measured
+
+Three orphaned `cursor-worker-sibling` fixture trees, all reparented to PPID 1,
+each holding a `/bin/sleep 3600` child:
+
+| fixture pid | child pid | age    | executes from |
+|-------------|-----------|--------|---------------|
+| 5770        | 8260      | 10 min | `target/debug/deps/` (main checkout) |
+| 13734       | 14957     | 42 min | `.orgasmic/tmp/dispatch/task-z3093/worktree/target/debug/deps/` |
+| 24454       | 26030     | 39 min | `.orgasmic/tmp/dispatch/task-z3093/worktree/target/debug/deps/` |
+
+Two of the three run from a worktree `dispatch-close` had **already removed** —
+the binary keeps executing from an unlinked path, which is the same signature the
+rmux leak showed (tx-20260728-orgasmic-3117) and is why neither is visible to a
+`git worktree list` audit. Reaped by hand; recorded in
+tx-20260728-orgasmic-3182.
+
+** Mechanism
+
+`crates/orgasmic-daemon/src/test_fixtures.rs`, the `cursor-worker-sibling` arm:
+
+```
+cursor-worker-sibling)
+    ready=$2
+    /bin/sleep 300 &
+    (exec -a worker-server /bin/sleep 300) &
+    /usr/bin/touch "$ready"
+    /bin/sleep 3600
+    ;;
+```
+
+It backgrounds two sleeps and then sleeps an hour in the foreground, so it never
+exits on its own. The owning test,
+`supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling`,
+kills it as a **trailing statement** — the same shape TASK-Z3093 fixed for
+sessions, unfixed for processes.
+
+And, once again, **the flake and the leak are the same event**: that test
+panicked with `fake cursor-agent did not start children` in the manager's own
+gate at 11:35Z, and the TASK-QSSQH worker independently recorded it failing on
+the pristine tree under load. Every load-induced failure of this test leaks a
+process tree that survives for an hour.
+
+** Fix
+
+Extend the same ownership idea from sessions to processes, in the one shared
+guard TASK-Z3093 established (`orgasmic_drivers::modes::rmux::test_tooling`).
+
+- A registration surface for spawned pids — `guard.owns_process(pid)` or a
+  fixture handle that registers itself — reaped on `Drop`, before the flock
+  releases, exactly as sessions are.
+- Kill the **process group**, not the pid. The fixture's children are backgrounded
+  subshells; killing only the parent orphans `sleep 3600` to init, which is
+  precisely what two of the three observed cases show. Spawn the fixture in its
+  own group so the group id is knowable.
+- Audit every fixture arm that outlives its foreground command:
+  `cursor-worker-sibling` (`sleep 3600`), `artifact-busy` (`sleep 120`),
+  `claude-capture` (`exec sleep 600`), and `config` (`exec sleep 30`). Each is a
+  candidate leak on its own test's panic path; say which ones are already covered
+  by an existing kill and which are not.
+
+** Acceptance
+
+- A test that registers a fixture process and panics mid-body leaves no process
+  behind — proven by injection the way TASK-Z3093 was: remove the reap, watch the
+  new test fail naming the survivor, restore it, watch it pass.
+- After a full `cargo test -p orgasmic-daemon`, no `fixture.sh` process and no
+  `sleep` child of one remains.
+- The fixture arms listed above are each classified as covered or fixed.
+
+** Non-goals
+
+- Do not change the rmux session reap; it is merged, verified and orthogonal.
+- Do not fix `poll_direct_child_pid_prefers_worker_server_over_generic_sibling`'s
+  flakiness itself. That belongs to TASK-STWVB. This task makes its cost bounded.
+- This is **not** TASK-Z9C73. That one is a zombie harness child under the rmux
+  daemon on the production release path; this is a test fixture's own process
+  tree and involves no rmux at all.
+

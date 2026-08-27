@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-636D8
+#+orgasmic_version: 2
+
+* DONE TASK-636D8 Resolve semantic-progress design review findings :design:fix:
+:PROPERTIES:
+:ID: TASK-636D8
+:END:
+
+Revise the TASK-41B0T implementation-ready design to resolve every Claude Opus 4.8 SHIP WITH FIXES finding: positive provider-neutral progress evidence instead of varying-byte novelty; complete shared reason migration; explicit bounded interactive wait; one authoritative deadline/state machine; backward-clock-safe recovery; adapter-equivalence and terminal-scrape coverage boundaries; concrete delay-only probe semantics; and progress_* naming. Report-only, no source changes.
+** Evidence
+Codex GPT-5.6 Terra/high revised the stable TASK-41B0T report against all eight Claude Opus 4.8 findings. Manager acceptance added exact fresh-acquire initialization and no-checkpoint recovery semantics. The accepted contract is persisted as arch_EAVPP.
+

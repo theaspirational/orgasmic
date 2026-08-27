@@ -1,0 +1,12 @@
+#+title: orgasmic glossary term term_9B3V8
+#+orgasmic_version: 2
+
+* term_9B3V8 Task state machine
+:PROPERTIES:
+:AVOID: workflow, kanban (the board renders it; the schema defines it)
+:CANONICAL: task state machine
+:DEFINITION: The per-kind lifecycle allowlist in shipped/schema/state-machine.org: BACKLOG, TODO, IN_PROGRESS, IN_REVIEW, DONE, CANCELLED for tasks, with file-per-state membership (dec_QQYXM) and daemon-executed cross-file transitions.
+:ID: term_9B3V8
+:RELATES_TO: term_RG690
+:END:
+

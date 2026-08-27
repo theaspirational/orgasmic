@@ -1,0 +1,34 @@
+# Changed
+
+- Replaced the fixed first-load waiter deadline with a production-derived coordinator budget: `ceil(active lane depth / lane permits) * (effective scan timeout + 200 ms coalescing) + 3 s`. With the default five-second scan timeout and two core permits, one wave is 8.2 s and five queued targets receive 18.6 s. Queue-delay diagnostics now state that the request is queued behind slow scans and explicitly avoid path or macOS permission claims.
+- Added a per-`RefreshTarget` blocking-scan registry. A timed-out `spawn_blocking` scan remains guarded until the OS work really exits, retries do not create another blocking scan, late results cannot publish, and `/daemon/status.index_refresh` exposes `stale_blocking_scans` plus the effective `scan_timeout_ms`.
+- Added the supported daemon environment override `ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS`. Default is 5 seconds; accepted values are whole seconds from 1 through 300; zero, invalid, and out-of-range values are ignored with the bounded default retained. `orgasmic serve --help` documents it, and coordinator budgets derive from the effective value.
+- Made full marker coverage attempt every authorized project. `GET /graph/markers/{node}` now returns aggregate `files`, successful per-project match counts in `projects`, and per-project error strings in `failures`. Scoped requests retain fail-fast behavior. CLI `status --errors` and Status/Notification UI retain successful parse errors and name skipped projects.
+- Made unscoped `GET /tx` continue across project load failures while retaining successful project and admin home rows. The JSON array body is unchanged; `x-orgasmic-project-coverage` reports `complete|partial; loaded=[...]; failed=[...]`. Scoped filtering and failure behavior are unchanged. CLI and notification consumers surface partial coverage.
+- Corrected project-local blocked-task counts: an active task is blocked only when a dependency is missing or not Done/Cancelled. Done and Cancelled dependencies are resolved without loading another project.
+- Made `orgasmic reindex` print its useful partial JSON response and then exit non-zero whenever whole-board `failures` is non-empty.
+- Changed only the 11 in-scope daemon, CLI, and UI source/test files shown by `git diff --name-only`; no supervisor, flake-registry, manager-owned ledger, live daemon, or LaunchAgent changes were made.
+
+# Verification Gates
+
+- Focused Rust/API contracts: all passed individually, including production coordinator math/diagnostics; bounded healthy-project capacity; timeout parsing; stale blocking scan timeout/immediate retry/eventual release/subsequent success; blocked active/satisfied/cancelled/missing dependencies; partial marker coverage; partial unscoped transactions; and whole-board reindex continuation.
+- CLI contract: `partial_full_board_commands_keep_json_and_errors_but_exit_honestly` passed (1/1), proving `status --errors` retains later-project errors and `reindex` retains JSON while exiting non-zero.
+- Focused UI/API tests: 2 files, 8/8 tests passed.
+- `cargo fmt --all -- --check`: passed. `git diff --check`: passed.
+- `npm --prefix ui run typecheck`: passed.
+- `npm --prefix ui run build`: passed (existing CSS optimizer and bundle-size warnings only).
+- Final full Vitest: 42/42 files, 280/280 tests passed. An earlier run reproduced the known Mermaid timeout at 279/280; it passed alone at 1.0 s and passed in the final full run.
+- `cargo build`: passed.
+- `cargo clippy --workspace --all-targets`: passed without warnings.
+- Final `ORGASMIC_ALLOW_MISSING_TOOLS=tmux scripts/run-tests.sh`: ran to classifier completion on a calm host. Primary totals were 1,892 passed / 3 failed / 15 ignored / 1 filtered. All three failures passed in isolation. `api::tests::recovery_reattaches_tmux_session_when_handle_exists` matched registered TASK-X0PV1. The two unregistered supervisor pidfile races were classified REAL exactly as the dispatch brief predicted: `a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed` and `a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline`. Durable classifier log: `/tmp/task-ajp4a-aggregate-final.log`; cargo log: `/var/folders/9p/823z6j817xj9ts2xpvnx1q_40000gn/T/orgasmic-run-tests.ChavW5/suite.log`.
+
+# Unmet Criteria
+
+- No declared implementation criterion remains unmet.
+- The aggregate gate is not green: it exits 1 for the two unregistered supervisor fixture races above. Both are outside the declared read/write scope, both passed in isolation, and the task explicitly forbids editing `supervisor.rs` or the flake registry. The registered tmux failure is classified as a flake and also passed in isolation.
+
+# Residual Risk
+
+- `spawn_blocking` filesystem work is still intrinsically uncancellable; the bounded behavior is now that one stale thread per target is observable and prevents same-target retry fan-out until it exits. A permanently stuck OS call therefore keeps that target guarded, intentionally, rather than consuming unbounded threads.
+- Partial transaction failure reasons are retained server-side while the compatibility-preserving array response exposes failed project IDs in the coverage header; consumers can identify skipped projects without a breaking body-shape change.
+- Final commit SHA is produced and recorded by the atomic `orgasmic dispatch finalize --commit` call; see its terminal response.

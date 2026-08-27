@@ -1,0 +1,87 @@
+#+title: orgasmic task TASK-M47E5.3
+#+orgasmic_version: 2
+
+* DONE TASK-M47E5.3 make worktree-prune refuse to run until it is provably safe, so the runtime reinstall stops being the thing holding the line :cli:
+:PROPERTIES:
+:ID: TASK-M47E5.3
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-cli/**
+:FIX_SUBTASK: t
+:END:
+
+** READ THIS FIRST — WHAT THIS TASK IS AND IS NOT
+This task does NOT fix the prune. It makes the prune UNREACHABLE, so that manager
+discipline stops being the only thing standing between this machine and a delete
+path that has now failed two independent reviews with data-loss findings.
+
+The redesign is TASK-RMA18. Do not do it here.
+
+** Why this exists — a manager ruling
+=orgasmic manager worktree-prune= has been reviewed twice and rejected twice, six
+BLOCK SHIP findings between them, every one on the destructive path. It is
+currently harmless for exactly ONE reason: the installed runtime predates the verb.
+
+That coupling is now actively harmful, and that is the point of this task. THE
+REINSTALL IS BLOCKED BY IT — and two GOOD changes are waiting on that reinstall
+(the TASK-YN5FJ review gate, the TASK-M47E5 relocation), so the pressure to
+reinstall keeps rising while the thing preventing it is a sentence in a handoff.
+A protection that lives in a document is not a protection.
+
+Make the verb refuse by CONSTRUCTION. Then the reinstall can happen, the two good
+changes go live, and TASK-RMA18 can take the time a delete path deserves.
+
+** What to do
+1. =orgasmic manager worktree-prune= exits with a clear refusal naming this task
+   and TASK-RMA18, and reclaims NOTHING — no salvage, no removal, no
+   =git worktree prune=. Including =--dry-run=: a dry run of a scanner that
+   follows an ancestor symlink still walks and sizes directories it has no
+   business touching.
+2. The AUTOMATIC DETECTION appended to =dispatch-status= goes with it. It shares
+   the same unsafe scan: =scan_managed_worktrees= follows an ancestor symlink and
+   would report a victim directory as reclaimable, and =directory_bytes= would
+   walk it. Detection is read-only, so this is lower risk than the verb — but it is
+   the same defect and it should not be advertising reclaimable trees it cannot
+   correctly identify.
+3. Do NOT delete the implementation. TASK-RMA18 starts from it, and the two review
+   reports are the most valuable thing about it. Gate at the entry points.
+4. The RELOCATION half is untouched and must stay green, including
+   =dispatch_close_still_salvages_and_removes_an_old_path_worktree= and the
+   dry-run path assertions.
+
+** Tests
+- =worktree-prune= (with and without =--dry-run=) removes nothing and creates no
+  salvage refs, proven with a fixture that WOULD have been reclaimed before.
+- =dispatch-status= no longer advertises reclaimable worktrees.
+- Existing prune tests that assert reclamation must be adapted, NOT deleted —
+  =#[ignore]= with a pointer to TASK-RMA18 is right, so the coverage TASK-RMA18
+  needs is still there to un-ignore. Say in the report which tests you ignored.
+
+** Acceptance
+- After a runtime reinstall, an operator running =worktree-prune= gets a refusal,
+  not a deletion.
+- No path through =dispatch-status= or =worktree-prune= calls =unlinkat=,
+  =remove_dir_all=, =git worktree remove= or =git worktree prune=.
+- The relocation half is unchanged and green.
+- =scripts/run-tests.sh -p orgasmic-cli= green; =cli_parity= green.
+** Evidence
+Landed =a1cd738= (merge) on main, base =5b8d84a=. Implementer: =implementer-claude-tmux= (tmux / claude / claude-opus-5 / high), run =run-20260805T181115-fbb11f71dd194b81aecc69096c80b6bd=, started_tx =tx-20260805-orgasmic-4504=.
+
+MANAGER PROBE ON THE REAL BINARY, merged tree:
+- =manager worktree-prune= — exit 1, refusal naming both TASK-M47E5.3 and TASK-RMA18 and stating "Nothing was scanned, salvaged, removed or pruned."
+- =manager worktree-prune --dry-run= — exit 1, same refusal.
+- =manager dispatch-status= — zero occurrences of =RECLAIMABLE=/=HELD_WORKTREE=/=KEPT_WORKTREE=.
+
+THE RETAINED IMPLEMENTATION IS UNCHANGED, verified by the manager rather than taken on report: undoing the two renames (=worktree_prune_ungated= -> =cmd_worktree_prune=, =report_managed_worktrees_ungated= -> =report_managed_worktrees=) and diffing against =5b8d84a= leaves only the added empty stub, the =WORKTREE_PRUNE_REFUSAL= constant and =#[allow(dead_code)]=. No finding from either review round was fixed, which was the instruction.
+
+THE GATE IS OBVIOUSLY CORRECT ON INSPECTION, which was the design requirement for a change standing between a twice-rejected delete path and a pending reinstall: =cmd_worktree_prune= is a one-line =bail!= that returns BEFORE the project root is resolved, before the daemon is contacted and before =scan_managed_worktrees= runs; =report_managed_worktrees= is an empty function, so both =dispatch-status= call sites are covered from one place.
+
+THE IMPLEMENTER SUPPLIED A NEGATIVE CONTROL, which is what makes the new tests mean anything: with the two gates temporarily routed back to the ungated impls and nothing else changed, both new tests FAIL and the fixtures are demonstrably reclaimable (=RECLAIMABLE_WORKTREE … BYTES=1855=, =WOULD_RECLAIM … BYTES=1878=). A gate test that passes because the fixture was never reclaimable proves nothing; this one is pinned against a fixture proven reclaimable.
+
+A TRANSITIVE REACHABILITY AUDIT over the call graph for =unlinkat=/=remove_dir_all=/=remove_file=/=remove_child=/=git worktree remove=/=git worktree prune=: =cmd_dispatch_status= reaches 44 functions and NO destructive call; =cmd_worktree_prune= reaches 1 function and none. Shown non-vacuous by running the same audit from the retained impls, which reach 80 functions including every destructive call.
+
+NINE TESTS WERE =#[ignore]=d, NOT DELETED, each pointing at TASK-RMA18 — including the four hard-won regressions from the fix round (ancestor-symlink sentinel, torn live-run ledger, recovery-in-the-gap, unreadable =.git=). That coverage is what RMA18 un-ignores; re-deriving it later is how a redesign ships thinner than the thing it replaced.
+
+Gates, re-run by the manager on the MERGED tree: =scripts/run-tests.sh -p orgasmic-cli= GREEN, 0 failures, 10 ignored; =cli_parity= 3 passed; =cargo clippy --workspace --all-targets -- -D warnings= exit 0; =cargo fmt --all --check= exit 0.
+
+CONSEQUENCE: THE RUNTIME REINSTALL IS NO LONGER BLOCKED. The verb refuses by construction rather than by manager discipline, so reinstalling now makes the TASK-YN5FJ review gate and the TASK-M47E5 relocation live without arming the prune.
+

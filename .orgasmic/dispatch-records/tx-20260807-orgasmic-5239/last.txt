@@ -1,0 +1,340 @@
+# TASK-QGWK7.1.1.1.1.1 review — the replacement claim is true; the *removal's* justification is not
+
+# Verdict
+
+**REJECT — BLOCK SHIP on F-1.**
+
+The C-1 correction is right. I re-measured the production shape myself and the
+new prose's *conclusion* holds: `revert --abort`, `cherry-pick --abort`,
+`merge --abort` and `am --abort` all exit 0 with the record alive on disk and in
+`HEAD`; `rebase --abort` is genuinely the only destroyer, and it genuinely
+detaches HEAD. C-3 and C-4 are correct and accurate. `expect-red` is
+byte-unchanged (I checked independently), and the re-authored injection restores
+the identical five-marker set.
+
+But this round removed a guard entry on the strength of a universal — *"a
+revert/cherry-pick range stopped between picks ALWAYS carries its own `*_HEAD`
+marker"* — and that universal is **false**. I built the counterexample by an
+ordinary route (resolve the conflict, `git commit` instead of
+`git revert --continue`): `.git/sequencer` with a two-entry pending todo and **no
+`*_HEAD` marker at all**. Before this round the guard refused that state. Now it
+persists into it. Your dispatch brief set exactly this test — *"if such a state
+exists and is harmful, the removal was wrong"* — so I am returning the answer
+rather than waving it through.
+
+Worse, the shipped convention still promises coverage of *"an interrupted
+revert/cherry-pick sequence"*, and `shipped_conventions.rs:444` still pins that
+phrase while the entry that implemented it is gone. That is the **exact
+prose/code drift TASK-QGWK7.1.1.1.1 B-2 existed to kill**, recreated in the round
+whose purpose was prose accuracy. The pin did not catch it because it only reads
+the prose (F-2).
+
+Second-order: the *mechanism* the new prose gives — "git declines to rewind a
+HEAD that moved" — is false for three of the four operations it is asserted over
+(F-3), and it is stamped "(measured)". A false explanation for a true conclusion
+is the same defect class this round was convened to fix, one layer down.
+
+I agree with your ruling on the test name; see Open Questions.
+
+---
+
+# Findings
+
+## F-1 — BLOCK SHIP — correctness/regression — a stopped pick range with NO `*_HEAD` marker is reachable, and the guard no longer refuses it
+
+`crates/orgasmic-cli/src/manager.rs:5793-5801` (the array), doc comment
+`:5808-5816`, `verify/TASK-QGWK7.1.1.1.1/README.md:98-102`, test doc
+`:10047-10059`.
+
+The removal rests on a universal asserted in three shipped places:
+
+> "a revert/cherry-pick range stopped between picks **always** carries its own
+> `*_HEAD` marker alongside the todo list, so the marker above already refuses
+> it" — `manager.rs:5810-5812`
+
+**Measured, git 2.52.0, counterexample by an ordinary route:**
+
+```sh
+git init -q -b main . && git config user.email t@t && git config user.name t
+echo base > f.txt && git add f.txt && git commit -qm base
+for i in 1 2 3; do echo v$i > f.txt; git commit -qam v$i; done
+git revert --no-edit HEAD~1 HEAD~2          # stops between picks
+#   .git markers -> [REVERT_HEAD sequencer]     <- refused, correctly
+echo resolved > f.txt && git add f.txt && git commit -qm "resolved by hand"
+#   .git markers -> [sequencer]                 <- NO *_HEAD marker
+#   .git/sequencer/todo -> "revert bdc0857 v2" ; "revert 6b57078 v1"
+```
+
+`git commit` clears `REVERT_HEAD` and leaves the todo list. The range is *not*
+abandoned — I confirmed it resumes: `git revert --continue` from this state picks
+the remaining reverts on top of the manual resolution commit (it stopped again on
+the next conflict, re-creating `REVERT_HEAD`, with `resolved by hand` in the log).
+This is a documented git workflow, not a fabricated state.
+
+In that state `sequencer_operation_in_progress` sees none of `rebase-merge`,
+`rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`, so
+it returns `None` and the close commits the record. The manager's next
+`git revert --continue` then stacks the rest of the range on top of it.
+
+**Why that is the harm this guard exists to prevent**, in the corrected
+convention's own words: the record "would otherwise land in the middle of an
+operation you have not finished, on a branch whose shape you are still deciding."
+Here it lands mid-range, at a point the manager did not choose — and if they later
+abandon the range with `git reset --hard <pre-range>`, the record dies with it.
+**Before this round, this state was refused.** So the round is a coverage
+regression, and the acceptance item *"a stopped range is still refused via its
+`*_HEAD` marker"* is falsified.
+
+**I am not arguing the entry must come back as it was.** Your latch measurement
+is correct and I reproduced it: after `git reset --hard`, `.git/sequencer`
+survives, `git status` says nothing, an ordinary commit does not clear it, and
+only `git revert --quit` does — a permanent, unexplained refusal. That is a real
+trap and worth removing. What cannot ship is the *reason given*: "it adds no
+coverage" is measurably wrong, in the same document set this round exists to make
+truthful. Fix directions below offer both exits.
+
+## F-2 — MEDIUM — test — the convention pin is unidirectional, so the drift it was written to catch went through it
+
+`crates/orgasmic-cli/tests/shipped_conventions.rs:436-457`.
+
+The comment states the contract:
+
+> "the whole set the code refuses on, so dropping one from **either side** fails
+> here."
+
+It does not. The assertions are `text.contains(phrase)` over the `.org` prose
+only. This round dropped `("sequencer", "revert or cherry-pick sequence")` from
+the code array and the pinned phrase `"revert/cherry-pick sequence"` (`:444`)
+still passes, because
+`shipped/prompt-studio/conventions/manager-dispatch.org:341-342` still reads
+"…revert, bisect, **or an interrupted revert/cherry-pick sequence**". Verified:
+all four `shipped_conventions` tests pass on the merged tree with the code entry
+gone.
+
+So the shipped convention now promises managers a refusal the code does not
+provide for the F-1 state — which is verbatim the B-2 defect ("it promised a
+guarantee for `revert` the code did not provide", `:437-438`), and the guard
+against it is inert.
+
+## F-3 — MEDIUM — docs — the corrected prose asserts a MECHANISM, "(measured)", that is false for three of the four operations
+
+Three sites: `shipped/prompt-studio/conventions/manager-dispatch.org:346-349`;
+`crates/orgasmic-cli/src/manager.rs:5765-5767`;
+`verify/TASK-QGWK7.1.1.1.1/README.md:75-78`.
+
+> "git declines to rewind a HEAD that moved, so `git revert --abort` and
+> `git cherry-pick --abort` exit 0 and the record survives in `HEAD` and on disk
+> (measured)" … "`merge --abort`, `cherry-pick --abort` and `am --abort` behave
+> the same way: git declines to rewind a HEAD that moved."
+
+Measured in the production shape (real-index `git add`, throwaway index,
+`commit-tree`, `update-ref`), git 2.52.0 — **the conclusion is right in every
+row, the mechanism is right in exactly one**:
+
+| operation | abort exit | record on disk / in HEAD | git printed |
+|---|---|---|---|
+| single-commit conflicted `revert` | 0 | YES / YES | *(nothing)* |
+| single-commit conflicted `cherry-pick` | 0 | YES / YES | *(nothing)* |
+| conflicted `merge` | 0 | YES / YES | *(nothing)* |
+| conflicted `am` | 0 | YES / YES | `warning: You seem to have moved HEAD since the last 'am' failure. Not rewinding to ORIG_HEAD` |
+| conflicted `rebase` | 0 | **NO / NO** | *(nothing)* — and HEAD was detached |
+
+Only `am` declines. For a single-commit revert/cherry-pick, git's
+`rollback_single_pick` path does `reset --merge` **to the current HEAD** — it
+rewinds, silently, and the record survives only because it is already *at* HEAD.
+I confirmed the rewind happened: `f.txt` after `git revert --abort` was `two`,
+the pre-revert tip content, so the conflicted state was discarded. `merge --abort`
+is likewise `git reset --merge` to HEAD.
+
+The "declines to rewind" wording is the *multi*-pick path: with a stopped range
+plus a record commit, `git revert --abort` did print
+`warning: You seem to have moved HEAD. Not rewinding, check your HEAD!` — a
+different code path from the one the correction actually measured.
+
+Impact is bounded (no behaviour rests on it) but it is an explanation stamped
+"(measured)" that the measurement does not support, shipped to managers, in the
+round convened because that happened last time. A manager reasoning forward from
+"git declines to rewind a moved HEAD" will predict wrongly about their own
+conflict resolution surviving an abort — it does not.
+
+**The rest of the C-1 correction is sound.** The two rows the implementer
+inherited without re-measuring (`merge --abort`, `am --abort`) I measured myself:
+both hold. `rebase --abort` destroying the record and detaching HEAD: measured,
+holds.
+
+## F-4 — MEDIUM — docs/usability — the runtime `CLEANUP_ERROR`, the one string a manager actually reads, still carries the disproven claim
+
+`crates/orgasmic-cli/src/manager.rs:5696`:
+
+> `committed (an --abort would discard the commit and the promoted file with it)`
+
+Per F-3's table this is true for `rebase` only and false for `revert`,
+`cherry-pick`, `merge` and `am` — five of the six operations the guard names emit
+this string, and for four of them it is false. Note the ordering at `:5694` vs
+`:5710`: the sequencer check runs *first*, so a rebase gets this message rather
+than the detached-HEAD one — the false rows are the ones a manager will actually
+hit, since rebase is the one the sentence is true of.
+
+**Judging the trade you asked me to judge:** the coupling is real — I confirmed
+the string appears as deleted-context in `verify/TASK-QGWK7.1/injection.patch:23`
+and `verify/TASK-QGWK7.1.1/injection.patch:24`, so editing it staleness-breaks two
+other tasks' artifacts. But I think leaving it is the wrong call, for the round's
+own reason: this is the **only** site of the five that a manager encounters at
+runtime, with no README beside it to correct it, and the acceptance bar you set
+was "no site in `crates/`, `shipped/` or `verify/` claims a `git revert --abort`
+wedge." This is a weaker claim than a wedge — "discard" rather than "wedge" — so
+it passes by the letter while failing the intent. Two artifacts needing a
+context-line refresh is a mechanical cost; a false operator-facing error is the
+cost this whole chain has been paying down. Re-author the two patches.
+
+## F-5 — LOW — harness — the implementer's report is unrecoverable
+
+`.orgasmic/tx/2026-08.org:20484` — tx `tx-20260807-orgasmic-5236`
+(`implementer.reported`) records
+`:REPORT_PATH: .orgasmic/dispatch-records/tx-20260807-orgasmic-5232/last.txt`.
+That file does not exist on disk in the project root, and
+`git log --all -- .orgasmic/dispatch-records/tx-20260807-orgasmic-5232` is empty —
+it was never committed. Every neighbouring tx (`…-5212`, `-5218`, `-5190`, `-5199`)
+has its `last.txt`.
+
+Consequence for this review: your brief told me to read that report first, and I
+could not. Everything above is derived from the diff and from my own
+measurements, which is the stronger basis anyway — but the escalation you ruled
+on, and the implementer's separation of measured from inherited, I know only from
+your brief. This matches the known orphaned-`hermes acp` reversion class; worth a
+`5232`-specific check rather than a general one.
+
+---
+
+# Open Questions
+
+1. **The test name.** You asked whether I judge the overclaim worse than you did.
+   I do not — I agree with the ruling. `…_and_leaves_the_abort_working` is still
+   *literally true* (the abort does work, and the test does assert it); it merely
+   implies the assertion discriminates, and the doc comment at `:10056-10058` now
+   says plainly that it does not, with the reason. A reader who reaches the name
+   reaches the doc. Byte-stability of `expect-red` is worth more. No finding
+   filed.
+
+2. **F-1's exit is yours to pick, but the status quo is not one of them.** Either
+   (a) restore a non-latching `sequencer` entry — see Fix Directions — or (b) keep
+   the removal and correct all four claim sites plus the convention parenthetical
+   and its pin. (b) is cheap and honest; (a) is more coverage. I lean (a) because
+   the latch has a one-line fix and the gap does not.
+
+# Verification Notes
+
+**Independently measured by me** (scratch repos in my own temp dir, git 2.52.0,
+production shape reproduced: real-index `git add` → throwaway index →
+`commit-tree` → `update-ref`):
+
+- `revert --abort`, `cherry-pick --abort`, `merge --abort`, `am --abort` after a
+  record commit → all **exit 0**, record on disk and in `HEAD`, markers cleared.
+  Confirms the C-1 conclusion, including the two rows the implementer inherited.
+- `rebase --abort` → record **destroyed** on disk and in `HEAD`; HEAD confirmed
+  detached during the rebase. Confirms "the one destroyer" and the ordering claim.
+- Single-pick abort prints nothing and rewinds to current HEAD (worktree reverted
+  to pre-revert tip content); multi-pick abort prints "Not rewinding". Basis of
+  F-3.
+- The `reset --hard` latch (your C-2 premise): reproduced. `.git/sequencer`
+  survives `reset --hard`, survives an ordinary commit, survives a subsequent
+  successful single revert, is invisible to `git status`, and is cleared only by
+  `git revert --quit`. Your premise is correct.
+- The F-1 counterexample state, and that the range resumes from it.
+
+**Independently checked on the merged tree:**
+
+- `verify/TASK-QGWK7.1.1.1.1/expect-red`: `git diff 9f2489a HEAD --` → **0 lines**.
+  Byte-unchanged.
+- `verify/TASK-QGWK7.1.1.1.1/injection.patch`: `git apply --check` → clean. The
+  injected array is `rebase-merge, rebase-apply, MERGE_HEAD, CHERRY_PICK_HEAD,
+  BISECT_LOG` — **identical** to the state the old patch produced (the old patch
+  deleted the `sequencer` line as well; now there is none to delete). Same defect,
+  same missing marker, so the same red. Re-authoring discipline: satisfied.
+- Targeted tests, `cargo test -p orgasmic-cli --bin orgasmic -- --exact` on the
+  three affected tests → **3 passed, 0 failed**
+  (`a_close_after_an_abandoned_pick_range_persists_the_record`,
+  `an_interrupted_pick_sequence_is_refused_and_a_finished_one_is_not`,
+  `a_close_inside_a_conflicted_revert_keeps_the_record_and_leaves_the_abort_working`).
+- Brief item 3, production path: `a_close_after_an_abandoned_pick_range_persists_the_record`
+  calls `cleanup_dispatch` (`manager.rs:5455`) →
+  `promote_and_persist_dispatch_record` (`:5639`) →
+  `commit_promoted_dispatch_record` (`:5648`) → `sequencer_operation_in_progress`.
+  Real production entry, not the predicate. The **first** discriminator is the
+  `CleanupStatus::Ok` assertion (the old entry returns `Partial`); the
+  `git cat-file -e HEAD:…` assertion is a genuine strengthener, not incidental —
+  it is the only thing standing between "unrefused" and "actually in history",
+  which is the B-3 failure class. Good as written.
+- Brief item 6, C-4: the pinned substring at `dispatch.rs:10548`
+  (`"had nothing to commit and is still not in git history"`) survives the
+  rewrite — the Rust `\`-continuations collapse to exactly that text. The remedy
+  claim is accurate: `rmdir` succeeds only on an empty directory, and
+  `repersist_dispatch_record_best_effort` returns at `:5847` once `dest_dir.is_dir()`
+  is false, so the warning stops permanently. The new wording ("normally an EMPTY
+  directory … if it is empty") no longer asserts what `unwrap_or(false)` cannot
+  know. Correct.
+- Brief item 4 coupling: confirmed, two artifacts quote the string as deleted
+  context.
+
+**Not checked, and why:**
+
+- `--test dispatch`, `fmt`, `clippy`, full `manager::tests`, `orgasmic verify` — you
+  ran all of them on the merged tree and told me not to re-derive. None of my
+  findings touch those surfaces, so I spent the one allowed `--test dispatch` run
+  on nothing. **Residual risk:** F-1 and F-2 are not covered by any existing test,
+  so a green suite does not speak to them.
+- The implementer's report (F-5) — file absent.
+- `verify/TASK-QGWK7` chain-root staleness — TASK-8Q92K, out of scope per brief.
+- I did not attempt the other F-1 routes you listed (killed git mid-pick, a
+  failing `--continue`, an interrupted `rebase -i exec`). One ordinary reachable
+  route settles the question; if you take exit (a) they stop mattering, and if you
+  take exit (b) they are worth a sweep before the claim is rewritten.
+
+# Fix Directions
+
+1. **F-1, exit (a) — restore the entry without the latch.** The failure mode was
+   never the entry, it was the *message*: it told the manager to wait for a
+   sequence that cannot finish. Restore
+   `("sequencer", "revert or cherry-pick sequence")` and special-case the advice —
+   when the marker that fired is `sequencer` with no `*_HEAD` beside it, say
+   *"finish it with `git revert --continue`, or — if you already abandoned this
+   range with `git reset --hard` — clear the leftover todo list with
+   `git revert --quit`"*. That converts a permanent unexplained refusal into a
+   one-command self-serve fix and keeps the F-1 state covered. Pin both: the
+   abandoned-range close must name `--quit`, and the manual-commit state must be
+   refused.
+
+2. **F-1, exit (b) — keep the removal, correct the claim.** Strike "adds no
+   coverage" and "always carries its own `*_HEAD` marker" from
+   `manager.rs:5808-5816`, `README.md:98-102` and the test doc at `:10047-10059`;
+   say instead that the entry was dropped because its latch outweighed the one
+   unmarked state it covered, and *name that state*. Then drop "or an interrupted
+   revert/cherry-pick sequence" from `manager-dispatch.org:341-342` and the
+   `"revert/cherry-pick sequence"` phrase from `shipped_conventions.rs:444` —
+   leaving them is F-2.
+
+3. **F-2 — make the pin bidirectional.** Have `shipped_conventions` read the
+   operation names out of `sequencer_operation_in_progress` (export the array as a
+   `const`) and assert each is nameable off the prose, instead of hard-coding the
+   phrase list. Then dropping an entry from either side really does fail there.
+   Until that exists, the comment at `:436-438` should not claim it does.
+
+4. **F-3 — say what was measured, not why.** Replace "git declines to rewind a
+   HEAD that moved" with the outcome alone: *"the abort exits 0 and the record
+   survives in `HEAD` and on disk — for `revert` and `cherry-pick` because the
+   abort rewinds to the current HEAD, which is the record commit; for `am` because
+   git refuses to rewind past a moved HEAD."* Or drop the mechanism clause
+   entirely; the conclusion stands without it. Also worth a line: the abort
+   discards the manager's conflict resolution either way.
+
+5. **F-4 — fix the string and re-author the two patches.**
+   `manager.rs:5695-5697` should not promise a discard that only `rebase` performs.
+   Something like *"the record was promoted to disk but not committed, so it does
+   not land mid-{operation}"*, and refresh the deleted-context lines in
+   `verify/TASK-QGWK7.1/injection.patch:23` and
+   `verify/TASK-QGWK7.1.1/injection.patch:24` in the same commit. If you overrule
+   me and leave it, put the reason in a comment at the site — the next reader will
+   otherwise file it as a sixth site.
+
+6. **F-5 — recover or re-request `tx-20260807-orgasmic-5232/last.txt`** before it
+   is needed for the next round's provenance.

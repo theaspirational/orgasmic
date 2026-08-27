@@ -1,0 +1,43 @@
+#+title: orgasmic task TASK-SJNNA
+#+orgasmic_version: 2
+
+* BACKLOG TASK-SJNNA Daemon should scrub TMUX from its environment before spawning tmux (latent: $TMUX selects the socket)
+:PROPERTIES:
+:ID: TASK-SJNNA
+:PRIORITY: P2
+:END:
+
+From TASK-0RCRY (2026-07-29), latent-exposure hardening, NOT a live bug report.
+
+Measured mechanism (gotchas.org has the entry): tmux takes its socket path from
+$TMUX (up to the first comma) whenever neither -L nor -S is given — $TMUX is
+not merely a nesting marker. A daemon that ever inherited TMUX would therefore
+aim every unpinned tmux call at the enclosing server; inside a worker's
+environment that is an rmux socket, which does not speak tmux's protocol and
+fails deterministically with `server exited unexpectedly`:
+
+  TMUX=/private/tmp/rmux-501/default,… tmux new-session -d -s x -- sleep 5
+  → exit 1, "server exited unexpectedly" (100% of attempts)
+
+Not live today: the daemon carries no TMUX (measured on the real daemon,
+recorded in TASK-0RCRY's premise history). 0RCRY also decided — deliberately,
+stated at TMUX_SOCKET_ENV in tmux.rs — that production must NOT pin -L, because
+a daemon-created session must remain reachable by the operator's own tmux
+client. So the correct hardening is scrubbing, not pinning.
+
+=== Ask
+
+The daemon scrubs TMUX from its own environment (and from child environments
+it constructs for tmux invocations) before spawning tmux, so an operator
+launching the daemon from inside a tmux/rmux session cannot aim daemon tmux
+calls at the enclosing server. Keep the operator-visibility property: no -L/-S
+pinning in production.
+
+=== Acceptance
+
+- A daemon started with TMUX set behaves identically to one started without:
+  proven by test (spawn path receives a scrubbed env).
+- Sessions the daemon creates remain reachable by an unpinned operator client.
+- Injection per TCTTD standard, git apply-clean, self-tested with
+  `orgasmic verify --artifact` before reporting.
+

@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-6ZTFM
+#+orgasmic_version: 2
+
+* CANCELLED TASK-6ZTFM TASK-QPKCD fix round 3: early-exit ownership and daemon recovery authority
+:PROPERTIES:
+:ID: TASK-6ZTFM
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Resolve final review findings after e8df69f: close no-PID/drain-before-insert early-exit races; move claims to daemon-owned project-scoped authority; make Pending/Committed crash-atomic and reconcilable; pin trusted Claude binary with structured resume mode; clear delta clippy.
+

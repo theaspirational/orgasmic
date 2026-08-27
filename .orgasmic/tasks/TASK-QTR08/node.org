@@ -1,0 +1,39 @@
+#+title: orgasmic task TASK-QTR08
+#+orgasmic_version: 2
+
+* DONE TASK-QTR08 Close glossary gaps from convention-bundle audit :glossary:
+:PROPERTIES:
+:ID:               TASK-QTR08
+:PRIORITY:         P2
+:WORKER:   glossarist
+:IMPLEMENTS:       arch_MPAQT arch_QXS5W
+:PRODUCES:         .orgasmic/glossary.org
+:WRITE_SCOPE:      .orgasmic/glossary.org
+:READ_SCOPE:       .orgasmic/glossary.org .orgasmic/architecture.org .orgasmic/decisions.org archive/2026-05-21_convention-bundle-gap/findings.md archive/21_05_26_init/spec.org
+:TEST_CMD:         cargo build
+:END:
+
+** Description
+Architector's convention-bundle audit (=archive/2026-05-21_convention-bundle-gap/findings.md=, "Glossary gaps" section) flagged three terms referenced in arch_QXS5W and the spec but missing from =.orgasmic/glossary.org=:
+
+1. =convention bundle= — agent-facing behavioral rule document under =conventions/= addressable from prompts via the =conventions.*= slot namespace.
+2. =slot registry= — fixed registry of slot namespaces (=task.*=, =project.*=, =worker.*=, =skills.*=, =skill_path.*=, =conventions.*=, etc.) consumed by the template/skill/prompt/convention compiler.
+3. =prompt bundle= — the final agent-spawn payload: persona + operating rules + skill manifest + applicable convention bundles + selected prompt injection.
+
+Glossarist adds the three terms in the existing glossary style (=:CANONICAL:=, =:AVOID:=, =:RELATES_TO:=, =:DEFINITION:=, =:DECIDED_AT:=). Definitions must contain no implementation details (no code paths, type signatures, function names) per arch_MPAQT constraints.
+
+** Acceptance Criteria
+- [X] Three new =term:= headings exist in =.orgasmic/glossary.org=: =term_Z5XDF=, =term_K06Z5=, =term_VQ3F1=.
+- [X] Each carries =:CANONICAL:=, =:AVOID:=, =:RELATES_TO:=, =:DEFINITION:=, =:DECIDED_AT:= matching the existing style.
+- [X] Definitions are abstract per arch_MPAQT constraint (no code references, no type signatures).
+- [X] arch_QXS5W's =:GLOSSARY_REFS:= line includes the three new terms — but the architector owns that edit; flag it for the manager to route to architector after glossary terms land.
+
+** Evidence
+- [2026-05-21 Thu 21:13] Appended =term_Z5XDF=, =term_K06Z5=, =term_VQ3F1= to =.orgasmic/glossary.org=, matching the existing entry style exactly (all five properties present, abstract definitions with no code paths or type signatures, cross-linked via =:RELATES_TO:= to existing terms loader-rule / advisory-code-marker / worker-driver / manager-agent and to each other).
+- [2026-05-21 Thu 21:13] Verification: =cargo test -p orgasmic-core= green (25 unit + 12 integration tests, including =parses_real_glossary=); =git diff --check= clean on touched files.
+- [2026-05-21 Thu 21:13] Flagged to manager: arch_QXS5W's =:GLOSSARY_REFS:= currently lists =term_WQMJJ term_KH8TX term_X4JGJ term_HQJWT= and should be extended with the three new term IDs by architector in a small follow-up revision.
+
+** Worklog
+- [2026-05-21 Thu 21:13] Read existing glossary entries, arch_QXS5W (revised), arch_MPAQT constraints, and the convention-bundle-gap findings to confirm canonical phrasing and abstraction level.
+- [2026-05-21 Thu 21:13] Authored the three entries, ran =cargo test -p orgasmic-core= to confirm the round-trip glossary parser still accepts the file, and closed the task.
+

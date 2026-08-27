@@ -1,0 +1,72 @@
+#+title: orgasmic task TASK-T6AV7
+#+orgasmic_version: 2
+
+* DONE TASK-T6AV7 Run recovery semantics: reattach tmux, native runtime metadata, and explicit recover actions :run-recovery:daemon:cli:ui:bug:dogfood:
+:PROPERTIES:
+:ID:               TASK-T6AV7
+:PRIORITY:         P1
+:WORKER:           implementer-claude-tmux
+:IMPLEMENTS:       arch_Z3Z3V arch_A53QX arch_C87Z9 dec_CSKBD
+:PRODUCES:         .orgasmic/decisions.org crates/orgasmic-core/src/session.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/ws.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-cli/src/main.rs ui/src/components/notifications/NotificationBell.tsx ui/src/components/notifications/NotificationPopover.tsx ui/src/lib/api.ts ui/src/lib/types.ts README.md ui/README.md
+:WRITE_SCOPE:      .orgasmic/decisions.org crates/orgasmic-core/src/session.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/ws.rs crates/orgasmic-daemon/tests/** crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/trait.rs crates/orgasmic-drivers/src/** crates/orgasmic-cli/src/main.rs crates/orgasmic-cli/src/daemon_client.rs ui/src/components/notifications/** ui/src/lib/api.ts ui/src/lib/types.ts README.md ui/README.md
+:READ_SCOPE:       archive/2026-06-04-run-recovery-run-dock-grill.md .orgasmic/decisions.org .orgasmic/architecture.org .orgasmic/glossary.org crates/orgasmic-core/src/session.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/ws.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-cli/src/main.rs ui/src/components/notifications/** ui/src/lib/**
+:TEST_CMD:         cargo test -p orgasmic-daemon && cargo test -p orgasmic-drivers && cargo test -p orgasmic-cli && npm --prefix ui run build
+:END:
+
+** Description
+Fix the recovery flow that surfaced when an older-daemon tmux Claude manager run was shown as interrupted and the UI's =Continue= button opened a placeholder shell. Recovery must be explicit, harness-aware, and auditable: reattach live tmux sessions first, resume/fork native sessions only when deterministic native metadata exists, and otherwise start a real recovery run with a staged prompt.
+
+Before implementation, add one ADR-style decision to =.orgasmic/decisions.org= for recovery semantics. Use =archive/2026-06-04-run-recovery-run-dock-grill.md= as the accepted-answer source.
+
+** Acceptance Criteria
+- [X] Add a concise recovery-semantics decision to =.orgasmic/decisions.org= tagged =:run-recovery:=.
+- [X] Recovery classification attempts tmux attach proof for older-boot tmux sessions before marking them interrupted; a still-live tmux session exposes =reattach_tmux= as the first recovery action.
+- [X] Reattach rehydrates the original run into supervisor state with the original =run_id= and =runtime_id=, appends =reattach= lifecycle metadata to the original orgasmic session JSONL, and resumes event drain into that same file.
+- [X] Lease conflicts block automatic reattach and return a structured conflict with enough data for UI actions such as open active run / stop active run / start recovery run anyway.
+- [X] Add typed session lifecycle events for native runtime metadata, prompt drafts, and composer sends.
+- [X] All future tmux launches record harness-aware native runtime metadata. Claude gets deterministic native session id/path and exact launch/resume argv; other harnesses store only real launch metadata until their native session semantics are known.
+- [X] Recovery action resolution is backend-owned, ordered, harness-aware, and embedded in recovered run responses from =/recovery/status= and =/runs=.
+- [X] Replace =POST /runs/:id/continue= with =POST /runs/:id/recover= using an explicit =action=; remove the old endpoint instead of aliasing it.
+- [X] Rename CLI =orgasmic run continue <id>= to =orgasmic run recover <id> --action <action>=.
+- [X] =resume_native_fork= is exposed only when recorded native metadata supports it; Claude recovery uses =claude --resume <old-session-id> --fork-session=.
+- [X] =start_recovery_run= uses the original harness when possible; provider-choice recovery is deferred.
+- [X] =start_recovery_run= and =resume_native_fork= launch idle with a persisted recovery prompt draft and require the user to send it manually from the UI.
+- [X] Recovery prompts include prior run id, absolute previous orgasmic session JSONL path, a mechanical summary from session JSONL, current diff stat, and concrete instructions to inspect before acting.
+- [X] The notification bell renders concrete backend action labels instead of generic =Continue= and executes through =/recover=.
+- [X] Successful recovery removes the blocker from "Needs you" while preserving history in Activity/Runs.
+- [X] Regression tests cover: older-boot tmux session still live prefers =reattach_tmux=; =start_recovery_run= never launches the placeholder =sh -lc "echo orgasmic run continuation; exec sh"=; no complex best-effort discovery is attempted for older runs without native metadata.
+- [X] Verification passes: =cargo test -p orgasmic-daemon=, =cargo test -p orgasmic-drivers=, =cargo test -p orgasmic-cli=, =npm --prefix ui run build=, =cargo clippy --workspace --all-targets -- -D warnings=, =cargo fmt --check=, =git diff --check=.
+
+** Notes
+- The original bug was not just missing Claude JSONL tracking. A live tmux session from a previous daemon boot can still exist and should be reattached before any continuation/fork path is offered.
+- Do not add complex discovery over =~/.claude/projects= for legacy runs in this task. If no live tmux and no recorded native metadata exist, offer =start_recovery_run=.
+- Recovery summaries in this task are mechanical only. Model-generated summaries are deferred.
+- Provider-choice recovery from a right-click menu is deferred.
+
+** Evidence
+- *Live reattach dogfood*: [2026-06-05 Fri 13:03] after rebuilding + restarting
+  the daemon on today's main, boot reconciliation classified the June-3
+  older-boot tmux manager run as =reattached= ("driver tmux-tui proved live
+  runtime handle") with =reattach_tmux= as the FIRST recovery action — the
+  exact bug scenario from this task's Description, now resolving correctly
+  (the old daemon showed it interrupted with a placeholder =Continue=). The
+  two codex-appserver runs without native metadata correctly offered only
+  =start_recovery_run=; terminal runs got zero actions. =POST
+  /runs/:id/recover {"action":"reattach_tmux"}= returned 200 preserving the
+  original =run_id=/=runtime_id= (daemon tx-20260605-orgasmic-0042), the run
+  moved out of "Needs you" into =live_runs=, and fresh driver events resumed
+  draining into the ORIGINAL session JSONL. Full contract verified live.
+- Date: [2026-06-05 Fri]
+- Gates (land-agent re-run, not trusted from prior agents):
+  - =cargo test -p orgasmic-daemon=: PASS (lib 119, dispatch_endpoint 22 [3 ignored], api/integration suite 56 [1 ignored]; 0 failed).
+  - =cargo test -p orgasmic-drivers=: PASS (5 + 22; 0 failed).
+  - =cargo test -p orgasmic-cli=: PASS (all suites; 0 failed).
+  - =npm --prefix ui run build=: PASS (vite build clean).
+  - =cargo clippy --workspace --all-targets -- -D warnings=: PASS (exit 0, no warnings).
+  - =cargo fmt --check=: PASS.
+  - =git diff --check=: PASS (no whitespace errors).
+- Source verification: =/runs/:id/continue= route removed (no alias); =/runs/:id/recover= present; CLI =run recover --action=; placeholder =echo orgasmic run continuation; exec sh= absent from src; lifecycle variants Reattach/NativeRuntime/PromptDraft/ComposerSend present; recovery action ordering reattach_tmux -> resume_native_fork -> start_recovery_run present; integration regression test drives =/recover= with start_recovery_run + prior-run prompt assertion.
+- Reviewer verdict: SHIP. Findings: High 0 / Medium 0 / Low 4 (all non-blocking cosmetic/greenfield-cleanup: dead supervisor.acquire_continuation path now test-only; recovery_target_for duplicate match arms; driver_modes.rs test edit outside literal WRITE_SCOPE but forced by new native_runtime field; PRODUCES listed ws.rs + NotificationPopover.tsx which were not touched). No fix pass required; none promoted to follow-up.
+- Deferred (per task Notes, intentional): model-generated recovery summaries; provider-choice recovery menu; ~/.claude/projects discovery for legacy runs without native metadata.
+- Merge commit recorded post-commit (commit subject "TASK-T6AV7: run recovery semantics — tmux reattach, native runtime metadata, explicit /recover actions").
+

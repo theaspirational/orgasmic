@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_K1DR7
+#+orgasmic_version: 2
+
+* dec_K1DR7 Is orgasmic a standalone product, a HAR migration, or a hosted SaaS?    :product-scope:
+:PROPERTIES:
+:ID:            dec_K1DR7
+:GLOSSARY_REFS: term_XJM14 term_X4JGJ term_CEQFS
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Mission
+:END:
+** Context
+The first design question is whether orgasmic is a standalone product, a HAR migration, or a hosted collaboration system. The answer shapes whether product concerns mix with generic agent coordination and whether identity and hosting requirements dominate the first version.
+** Decision
+Orgasmic is a standalone local developer coordination app. It owns its own app model while borrowing selected HAR execution patterns and Org-style file primitives. It is not a HAR migration, not an Emacs workflow, and not a hosted team SaaS.
+** Consequences
+The daemon, CLI, UI, home layout, and graph model are all owned by orgasmic. HAR remains a source of implementation patterns, not a product boundary.
+

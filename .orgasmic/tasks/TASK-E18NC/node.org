@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-E18NC
+#+orgasmic_version: 2
+
+* DONE TASK-E18NC Harden daemon state restoration across restart (persist + recover the supervisor run table) :daemon:reliability:recovery:restart:
+:PROPERTIES:
+:ID: TASK-E18NC
+:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/runtime.rs
+:END:
+
+Description: A daemon restart currently clears the supervisor in-memory run table (crates/orgasmic-daemon/src/supervisor.rs), so live runs / dispatch records are lost and a manager session that triggers the restart loses its own run record. This is why the "never restart the daemon from a manager session" convention existed; the operator lifted that restriction on 2026-06-16, and this task makes restarts actually safe so the lifted restriction is backed by real restoration.
+
+Acceptance Criteria:
+- The supervisor persists enough run/dispatch state durably (run records + sub-states, dispatch leases, worktree/brief/last/stdout paths, owner pids) that after `orgasmic restart` the prior run table is RESTORED or CLEANLY RECONCILED, never silently dropped.
+- A live manager run survives a restart (its run record is recovered) or is cleanly handed to the existing recovery flow (run list ambiguous / start_recovery_run) rather than orphaned.
+- Orphan dispatches remain detectable via `orgasmic manager dispatch-status` after a restart; pre-flight manager.dispatch_started tx without a matching close are surfaced.
+- Once restoration is reliable, `orgasmic restart` without `--force` no longer needs to refuse over a manager run — or it documents precisely what is restored vs reconciled.
+- Test: boot a daemon, register a run/dispatch, restart the daemon, assert the run/dispatch state is restored or correctly classified (not lost).
+- Cross-check: the lifted restart restriction in conventions/orgasmic-tooling.org is satisfied by this restoration.
+** Evidence
+Implemented recovery-aware controlled restart: daemon API now proceeds over live manager runs, pauses acquisition, emits live_manager_recovery warnings, and tests recovery classification through session-log replay. CLI restart now bypasses the plain-stop live-manager guard while plain stop still protects live manager sessions. Added temporary daemon runtime override support for local source rebuild/restart, with bundle update clearing the override so vendor updates regain control. Added shipped daemon-rebuild-restart-policy convention and linked it from the manager prompt; updated README and shipped install/update references with the correct local-source restart path.
+
+
+Verification: cargo fmt; cargo clippy -p orgasmic-cli -p orgasmic-daemon --all-targets -- -D warnings; cargo test -p orgasmic-daemon restart; cargo test -p orgasmic-daemon manager_session_after_restart_is_recovered_not_lost; cargo test -p orgasmic-cli. Full cargo test -p orgasmic-daemon still has the pre-existing skill_routes_include_shipped_and_user_markdown_skills failure recorded in handoff.
+

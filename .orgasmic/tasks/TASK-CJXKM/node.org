@@ -1,0 +1,57 @@
+#+title: orgasmic task TASK-CJXKM
+#+orgasmic_version: 2
+
+* DONE TASK-CJXKM Root-cause main-checkout-only parallel flake of cli dispatch stub-codex test :cli:tests:flake:reliability:
+:PROPERTIES:
+:ID:               TASK-CJXKM
+:PRIORITY:         P4
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      crates/orgasmic-cli/tests/dispatch.rs
+:READ_SCOPE:       crates/orgasmic-cli/tests/dispatch.rs crates/orgasmic-cli/src/manager.rs .orgasmic/gotchas.org
+:TEST_CMD:         cargo test -p orgasmic-cli
+:DEPENDS_ON:       TASK-K5RG2
+:END:
+
+** Description
+Documented in TASK-VXB0T.1 Evidence: =manager_dispatch_status_close_done_with_stub_codex=
+(crates/orgasmic-cli/tests/dispatch.rs) fails when run in the parallel test
+harness from THIS main checkout only; passes single-threaded, passes in fresh
+worktrees, both code versions. Suspects: PATH/stub-binary collision between
+parallel boots, shared tmp/home state keyed off the checkout path, port
+contention. Root-cause it, fix the isolation, and document the mechanism (one
+line in .orgasmic/gotchas.org is in scope if it generalizes). Blocked behind
+TASK-K5RG2 (same files).
+
+** Acceptance Criteria
+- [ ] Mechanism identified and written into the test as a comment (or gotchas
+  entry if it generalizes beyond this test).
+- [ ] =cargo test -p orgasmic-cli= green in parallel mode from this checkout,
+  10/10 consecutive runs (redirect output to a file, never pipe).
+- [ ] Gates: clippy -D warnings, fmt --check, MSRV 1.78.
+
+** Evidence
+- Worker: implementer-claude-rmux run-20260610T210146 (model claude-haiku-4-5,
+  dispatch tx-0105, implementer.done tx-0107). Worker commit =a022fd0=, merged
+  --no-ff as =27e05ea= on main.
+- Mechanism identified: parallel tests from the main checkout lose
+  =ORGASMIC_DAEMON_URL= when sub-processes inherit the environment. Without it,
+  the CLI falls back to =home.config()= which previously lacked a port override,
+  causing silent connection to the real daemon on port 4848. From a worktree the
+  real daemon is unreachable on 4848, so the fallback cleanly errors; from main
+  it silently succeeds against the wrong daemon, corrupting the test.
+- Fix: =boot()= in tests/dispatch.rs now writes =bind_port: 65533= to the test
+  home config before starting the test daemon. Env-var loss now fails obviously
+  (can't reach 65533) rather than silently hitting prod. Mechanism documented in
+  =.orgasmic/gotchas.org=. 2 files, 26 insertions.
+- Gates (from worktree): cargo test -p orgasmic-cli green, 13 dispatch tests
+  pass 10/10 parallel. Clippy workspace blocked by pre-existing daemon
+  =type_complexity= error (operator's =ab7bb93= surface, handoff-documented, not
+  TASK-CJXKM scope); clippy on changed file/crate clean. fmt on changed file clean.
+- Reviewer: reviewer-claude-rmux run-20260610T213649 (model claude-haiku-4-5,
+  tx-0108). Verdict =has-issues, no-blocks-ship=. F-1 (MEDIUM): review range
+  includes manager housekeeping commits — not TASK-CJXKM code, no fix needed.
+  F-2 (MEDIUM): port 65533 not guaranteed free — documented tradeoff, no fix
+  needed. F-7 (HIGH, pre-existing): UI build failure blocks test execution
+  (ab7bb93 surface, not in scope). No actionable implementer items →
+  closed DONE. Reviewer.done tx-0109.
+

@@ -1,0 +1,35 @@
+# Changed
+
+- Removed `MAX_CONSECUTIVE_STALE_DISCARDS`, `stale_batch`, and the five-discard committed-503 path from the refresh coordinator.
+- Every successful publication now settles the pre-scan captured batch. Later duplicates of a captured tx settle with it; distinct later tx ids, explicit waiters, and watcher waiters remain queued for a follow-up generation. `remember_completed` and detached convergence remain intact.
+- Retained `discarded_total` as the superseded-generation metric and made slow logging identify whether the just-published captured generation requires a follow-up without labeling it failed.
+- Replaced the sustained-503 regression with a deterministic file-backed covered-batch test and updated both TASK-K9WWM verification documents.
+- Source commit: created atomically by `orgasmic dispatch finalize --commit`; exact hash is reported by that command.
+
+# Verification Gates
+
+- Pre-probe on the inherited tree reproduced the rejected contract: the former sustained test passed with `older_error="index refresh remained stale for 5 consecutive scans"`, `requests_total=6`, `scans_total=6`, `coalesced_total=5`, `discarded_total=5`.
+- Corrected focused generation test: 1 passed; `requests_total=5`, `scans_total=2`, `coalesced_total=4`, `discarded_total=1`, `pending_targets=0`. It proves first-publish visibility for TASK-002 while TASK-003 and distinct later waiters remain pending, then follow-up convergence.
+- Full `index::tests::` module: 53 passed, 0 failed.
+- Immediate visibility: 2 passed (project-tx and home-tx routing).
+- Committed refresh failure injection and durable release failure: 2 focused tests passed.
+- Cached task/graph retry: 2 focused tests passed.
+- Git failure retry, duplicate-probe dedup, and publication merge: 3 focused tests passed.
+- Writer cached-transaction replay/liveness: 1 passed.
+- 16-write production HTTP coalescing: 1 passed in 138 ms with `requests_total=16`, `scans_total=1`, `coalesced_total=15`, `discarded_total=0`, `last_scan_duration_ms=3`.
+- `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed with zero warnings.
+- `cargo build`: passed.
+- `required_test_tooling_is_present`: 1 passed; no missing-tool waiver.
+- Three `reviewer_close_*` repetitions at `--test-threads=4`: 5/5 passed each (15/15 total), in 6.69 s, 6.63 s, and 7.09 s.
+- `git diff --check`: passed.
+
+# Unmet Criteria
+
+- None in the implementer scope.
+- Per dispatch instruction, full `scripts/run-tests.sh` and independent review are manager-owned and were not run here.
+
+# Residual Risk
+
+- The retained field name `discarded_total` is historical: it now counts a successfully published generation superseded by a newer required mutation, not a failed publication. The verification docs state that semantic explicitly.
+- No live daemon was installed, restarted, replaced, or exercised. Installation remains gated on independent review.

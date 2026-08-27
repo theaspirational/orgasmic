@@ -1,0 +1,46 @@
+#+title: orgasmic task TASK-BJHKN
+#+orgasmic_version: 2
+
+* DONE TASK-BJHKN Phase 2: drift comparator CLI + // arch: marker bootstrap sweep :daemon:cli:drift:architecture:phase-2:
+:PROPERTIES:
+:ID:               TASK-BJHKN
+:PRIORITY:         P2
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_C87Z9 arch_MPAQT
+:PRODUCES:         crates/orgasmic-cli/src/architecture_drift.rs crates/orgasmic-daemon/src/api.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/** crates/orgasmic-daemon/src/** crates/orgasmic-core/src/** crates/orgasmic-drivers/src/** ui/src/**
+:READ_SCOPE:       .orgasmic/architecture.org crates/** ui/src/** shipped/**
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-ENXWA TASK-YWRG5
+:END:
+
+** Description
+Implement the two-way drift comparator from dec_BP4NH refinement [2026-05-27]:
+1. Walk the repo, find all =// arch: arch_NNN.M= (and =// @arch arch_NNN.M= for TypeScript) markers at file top. Build a map: file → leaf IDs (comma-list allowed for multi-component files).
+2. Parse =.orgasmic/architecture.org= via the TASK-YWRG5 parser. For each implementation-backed leaf with =:SOURCE_PATHS:=, read its source paths.
+3. Drift report categories: (a) paths in =:SOURCE_PATHS:= missing on disk; (b) paths existing but missing the matching marker; (c) markers in code with no matching leaf path enumerated; (d) markers referencing a leaf ID that doesn't exist.
+4. CLI surface: =orgasmic architecture drift= → human-readable report + non-zero exit on drift. =--json= flag for CI consumption.
+5. *Bootstrap sweep* (part of this task): add =// arch:= markers to all files referenced from the new =:SOURCE_PATHS:= in TASK-ENXWA's architecture.org. One-time large-touch sweep across =crates/**= and =ui/src/**=.
+
+Grilling context: dec_BP4NH refinement [2026-05-27].
+
+** Acceptance Criteria
+- [ ] =orgasmic architecture drift= runs against the repo and reports the four drift categories above. Exit code: 0 if clean, non-zero if any drift exists.
+- [ ] =--json= flag produces machine-readable output suitable for CI.
+- [ ] All files enumerated in =.orgasmic/architecture.org= shipped-leaf =:SOURCE_PATHS:= carry a top-of-file =// arch: arch_NNN.M= marker (or comma-list for multi-component files).
+- [ ] Files NOT in any leaf's =:SOURCE_PATHS:= and without a marker do not flag drift (only shipped leaves are enforced).
+- [ ] Target / planned leaves (=:STATUS: planned=) are skipped by the comparator.
+- [ ] Marker bootstrap sweep is committed in a SEPARATE commit from the comparator implementation so review can isolate the two changes.
+- [ ] =cargo test --workspace= green; clippy clean; MSRV 1.78.
+
+** Notes
+- *Big-touch sweep* across all paths enumerated in TASK-ENXWA's architecture.org. Implementer should run the sweep last (after the comparator works against a tiny fixture) so the first marker round is comparator-validated.
+- *Out of scope*: in-app drift surface (TASK-MW5BX); automatic drift detection on file-watch (defer).
+
+** Evidence
+- Worker branch merged as c9ee999 (no-ff). Worker commits kept review split: 923819f comparator implementation; 41dd162 marker bootstrap sweep.
+- Implemented `orgasmic architecture drift` with human output and `--json`; non-zero exit is verified when drift exists.
+- Manager verified drift output after sweep: only missing source paths remain (`arch_MK2Q2.4 -> ui/src/components/ProjectSelector.tsx`, `arch_MK2Q2.5 -> ui/src/components/manager/ManagerPopover.tsx`). Existing shipped source files have matching top-of-file markers; no marker-without-leaf-path or unknown-leaf drift remained.
+- Manager gates green: `cargo fmt --check`; `cargo test -p orgasmic-cli architecture_drift`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `git diff --check`.
+- Residual drift is intentionally reported, not masked, because the two architecture paths do not exist on disk and architecture rewrite / placeholder file creation was outside this marker bootstrap task.
+

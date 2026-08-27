@@ -1,0 +1,27 @@
+#+title: orgasmic task TASK-J3JB0
+#+orgasmic_version: 2
+
+* DONE TASK-J3JB0 Render task subtasks as an expandable nested hierarchy
+:PROPERTIES:
+:ID: TASK-J3JB0
+:PRIORITY: P2
+:TEST_CMD: npm --prefix ui run typecheck && npm --prefix ui test -- TasksPage.test.tsx && npm --prefix ui run build
+:WRITE_SCOPE: ui/src/components/TasksPage.tsx,ui/src/components/taskTree.ts,ui/src/components/__tests__/TasksPage.test.tsx
+:END:
+
+** Description
+Render task parent-child relationships as a nested list inspired by ClickUp while preserving lifecycle grouping, mobile scanability, task selection, and complete parent clusters across pagination.
+
+** Acceptance Criteria
+- [X] Parent tasks render children recursively with clear indentation and connector/disclosure affordances.
+- [X] Parent rows expand and collapse without opening the task, and task IDs remain copyable.
+- [X] Children whose lifecycle differs from the root section retain a visible lifecycle badge.
+- [X] Pagination never separates a parent from its descendants.
+- [X] Hierarchy construction has focused tests and UI typecheck/build pass.
+** Evidence
+- UI hierarchy: recursive nesting, persisted disclosure state, immediate-subtask counts, mixed-stage badges, and root-cluster pagination implemented in TasksPage/taskTree.
+- Focused: TasksPage.test.tsx 2/2 passed; TypeScript passed.
+- UI gate: 39 files / 269 tests passed; production Vite build passed; Impeccable layout detector returned no findings.
+- Rendered: desktop hierarchy and disclosure verified against live orgasmic data; 390x844 view had no horizontal overflow; mixed Backlog child rendered under a Done parent with its own badge.
+- Repo gates: cargo build passed; cargo clippy --workspace --all-targets passed; scripts/run-tests.sh GREEN with 0 failures, no crashes, no waived tooling, billed test not run, host calm.
+

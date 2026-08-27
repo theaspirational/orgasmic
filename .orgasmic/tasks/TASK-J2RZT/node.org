@@ -1,0 +1,38 @@
+#+title: orgasmic task TASK-J2RZT
+#+orgasmic_version: 2
+
+* DONE TASK-J2RZT Expose handoff and goal nodes through the org-node read/edit surface :daemon:cli:write-authority:
+:PROPERTIES:
+:ID: TASK-J2RZT
+:PRIORITY: P2
+:TEST_CMD: cargo test -p orgasmic-daemon
+:WORKER: implementer-codex-acp
+:WRITE_SCOPE: crates/orgasmic-daemon/src/ crates/orgasmic-core/src/paths.rs crates/orgasmic-daemon/tests/ shipped/prompt-studio/conventions/manager-handoff.org shipped/skills/orgasmic/references/recall-resume.md
+:END:
+
+** Description
+Found at TASK-BP5VB integration: the runtime-first doctrine
+(manager-handoff.org) prescribes handoff updates via =orgasmic node body
+set --section ... handoff-current=, but GET /org/node returns 404 for
+handoff-current — tasks/handoff.org (and goal.org) are not in the
+node-indexed file set (TASK_FILE_NAMES covers sprint/backlog/archive
+only; goal verbs are bespoke endpoints). The manager's
+highest-frequency write therefore remains a direct-edit exception,
+re-creating the dec_ZQJPA phasing gap the doctrine was meant to close.
+Make the HANDOFF heading (and the goal headings, read-only at minimum)
+resolvable through /org/node + /org/node/:id/edit so section/property
+verbs work on them; keep the HC7PW structural guard and OCC semantics.
+Coordinate with TASK-2C3WZ task-file renames (file set changes).
+
+** Acceptance Criteria
+- [ ] =orgasmic node body set|append --section "Done so far"
+  handoff-current= and =orgasmic node prop set handoff-current LIVENESS
+  <sha>= work end-to-end against a live daemon.
+- [ ] manager-handoff.org + recall-resume.md drop their interim
+  direct-edit exception wording.
+- [ ] Regression test: handoff node GET + section edit + property edit
+  round-trip.
+
+** Evidence
+implementer-codex-acp (gpt-5.5 medium) one round, worker commit =9c49798=, merged =9c49798= into main, close tx-0395. NodeLayer gained Goal + Handoff: handoff-current resolves without --kind, goal-* ids resolve read-only (writes rejected with a pointer to goal set/clear/supersede — thin-goal doctrine preserved); neither file joined TASK_FILE_NAMES so task-shape lints stay silent; HC7PW guard + OCC ride the existing edit path. Regression test org_node_handoff_get_section_and_property_round_trip covers GET (kind/todo/tags/source), section edit, property edit, base_version progression, parse-errors 0. Doctrine: manager-handoff.org + recall-resume.md direct-edit exception wording REMOVED — node verbs are now the canonical handoff flow (the installed skill updated via symlink). Manager gates on main post-merge: workspace 0 failures, clippy --all-targets -D warnings clean, fmt clean. Daemon rebuilt+restarted (pid 85027), parse-errors 0. Manager review direct (small surgical diff — no reviewer stage per session process). FIRST DISPATCH WITH A REAL last.txt (TASK-YHA6V fix live-proven: 1906-byte report, not the 20-byte marker). Residual: non-prefixed historical goal ids need --kind goal (noted by worker; acceptable — all live goal ids carry the goal- prefix).
+

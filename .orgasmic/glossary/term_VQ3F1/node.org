@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_VQ3F1
+#+orgasmic_version: 2
+
+* term_VQ3F1 Prompt bundle
+:PROPERTIES:
+:ID:                 term_VQ3F1
+:CANONICAL:          prompt bundle
+:AVOID:              raw prompt string, single template, agent transcript
+:RELATES_TO:         term_Z5XDF term_K06Z5 term_KH8TX term_X4JGJ
+:DEFINITION:         The final agent-spawn payload combining persona, operating rules, skill manifest, applicable convention bundles, and the selected spawn-time or continuation prompt injection handed to a driver.
+:DECIDED_AT:         [2026-05-21 Thu 21:13]
+:END:
+

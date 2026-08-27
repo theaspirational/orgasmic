@@ -1,0 +1,48 @@
+#+title: orgasmic task TASK-3RTM0
+#+orgasmic_version: 2
+
+* BACKLOG TASK-3RTM0 spawn_detached's stdout target and the drifted meaning of dropped_log_writes    :daemon:ops:
+:PROPERTIES:
+:ID: TASK-3RTM0
+:PRIORITY: P3
+:WRITE_SCOPE: crates/**
+:END:
+
+** READ THIS FIRST — STATUS
+Filed from the TASK-G64ZH.1.1 review, F-4 and F-5, both LOW and non-blocking. The
+review's full text for these two was LOST to the defect described in TASK-QGWK7
+(=dispatch-close= deletes the worker report), so what survives is the finding
+TITLES plus their anchors, recovered from the close tx. A worker should re-derive
+the detail from the code — both are small and the anchors are exact.
+
+** F-4 — =spawn_detached= points process stdout at the durable path itself
+=crates/orgasmic-cli/src/daemon_lifecycle.rs= (the detached fallback, ~=:435-461=).
+PRE-EXISTING SHAPE, not introduced by the G64ZH chain. The detached spawn
+redirects the child's stdout at the same durable log the daemon opens, which is
+the original TASK-ZBYH3 shape — two writers on one inode — surviving in the one
+launch path that is not a service definition. The reviewer noted the tail case
+involves =spawn_detached= after =keep= rotations.
+
+Note this path is now mirror-suppressed via =ORGASMIC_LOG_MIRROR=off= (TASK-G64ZH.1),
+so the daemon's own tracing does not double-write; what remains is where stray
+=println!=/panic output goes, which is exactly what the service definitions were
+changed to send to =daemon.stdout.log= instead.
+
+** F-5 — =dropped_log_writes= now counts PRESERVED lines, and =--no-log-mirror='s help text has an undocumented exception
+Two small consequences of TASK-G64ZH.1.1's write-time fallback:
+- The counter's meaning drifted. The G64ZH chain settled it as "one per line that
+  never landed in the durable file", but a line that falls back to stdout is
+  PRESERVED, not lost — so the counter now conflates "lost" with "written
+  somewhere else". Decide the meaning and document it, or split the two.
+- =serve --no-log-mirror='s help text says the mirror is suppressed, without the
+  exception that it is now restored whenever the durable handle is missing. The
+  flag no longer means "never write to stdout". Correct the text.
+
+** Acceptance
+- =spawn_detached='s stdout target is a deliberate choice with a stated reason,
+  not an inherited default — either changed to match the service definitions or
+  documented as intentionally different.
+- =dropped_log_writes= has ONE documented meaning, and if the fallback should not
+  count toward it, it does not.
+- =--no-log-mirror='s help states the durable-handle exception.
+

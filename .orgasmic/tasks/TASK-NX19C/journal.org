@@ -1,0 +1,2 @@
+#+title: orgasmic journal TASK-NX19C
+#+orgasmic_version: 2

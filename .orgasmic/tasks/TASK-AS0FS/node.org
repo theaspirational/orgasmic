@@ -1,0 +1,29 @@
+#+title: orgasmic task TASK-AS0FS
+#+orgasmic_version: 2
+
+* BACKLOG TASK-AS0FS Decide who owns the ledger's singleton files across machines    :work:
+:PROPERTIES:
+:ID: TASK-AS0FS
+:PRIORITY: P2
+:END:
+** Description
+TASK-CLM6W claim-gates node directories, so two machines never write the same
+node. It does not cover the files that are not nodes: `.orgasmic/project.org`,
+`tasks/goal.org`, `tasks/handoff.org`, `gotchas.org`, and the generated
+`views/`. Any machine may write those at any time.
+
+Until now that was invisible because ledger sync never staged them at all, so
+they never left the machine that wrote them. Fixing the staging (they are
+pushed now, commit c18b3a11) makes the real question live: two machines editing
+`goal.org` between syncs produce a genuine rebase conflict in the ledger
+worktree, and the sync loop has no conflict path — `pull --rebase` fails,
+`sync_once` bails, and the loop retries the same failure every two seconds.
+
+Decide the ownership rule and implement it. Options on the table: claim these
+files the way node dirs are claimed; make them append-only so a rebase merges
+cleanly; or designate a single owning machine per project and refuse writes
+elsewhere. Whatever is chosen, the sync loop needs a defined behaviour when a
+rebase does conflict, rather than looping on the failure.
+** Acceptance Criteria
+- [ ] two machines editing a singleton project file converge without operator intervention, or the loser is refused with a clear error (test)
+- [ ] a rebase conflict in the ledger worktree has a defined, tested outcome instead of a 2-second retry loop

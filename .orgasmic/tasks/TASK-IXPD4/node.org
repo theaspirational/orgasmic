@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-IXPD4
+#+orgasmic_version: 2
+
+* IN_REVIEW TASK-IXPD4 Port orgasmic-daemon index tests to node-dir fixtures (left unported by TASK-SRBGS) :e01mc:node_kernel:
+:PROPERTIES:
+:ID: TASK-IXPD4
+:PRIORITY: P1
+:END:
+
+** Description
+TASK-SRBGS removed the aggregate-file readers but ported only 2 of the daemon index test fixtures; 21 tests in `crates/orgasmic-daemon/src/index.rs` still write `.orgasmic/tasks/backlog.org` / `decisions.org` / `glossary.org` aggregate fixtures the indexer no longer reads, so they fail. Port each red test's fixture to the node-dir layout: `.orgasmic/<collection>/<id>/node.org` with the `#+title: orgasmic <label> <id>` + `#+orgasmic_version: 2` header (see the already-ported tests at index.rs ~3728 and ~4935, and the ported core tests in crates/orgasmic-core/tests/fixtures.rs / identity_lint.rs for the recipe). Preserve each test's intent — port the fixture, do not weaken the assertions. Red list = `cargo test -p orgasmic-daemon --lib index::` failures at base.
+** Acceptance
+- [ ] `cargo test -p orgasmic-daemon --lib index::` fully green
+- [ ] no test deleted, no assertion weakened
+

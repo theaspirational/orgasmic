@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-756WX
+#+orgasmic_version: 2
+
+* DONE TASK-756WX TASK-AFE5Q fix round 2: owned Cursor trust state and attempt-scoped artifacts
+:PROPERTIES:
+:ID: TASK-756WX
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve confirmation findings after 9e88848. Replace trust substring/history polling with an owned one-shot startup state machine; keep cancellation artifact-free but not orphaned; make report paths attempt-identity-qualified to prevent stale waiter completion; delete AFE5Q dead symbols/warning suppressions; remove committed operational summary.
+

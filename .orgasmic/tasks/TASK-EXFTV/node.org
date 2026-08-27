@@ -1,0 +1,45 @@
+#+title: orgasmic task TASK-EXFTV
+#+orgasmic_version: 2
+
+* DONE TASK-EXFTV claude-acp adapter simulated-mode gate fires on empty endpoint even when stdio spawn is available :drivers:acp:stdio:claude:bug:dispatch:dogfood:
+:PROPERTIES:
+:ID:               TASK-EXFTV
+:PRIORITY:         P5
+:WORKER:           implementer-codex-acp
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/src/adapters/claude.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/**
+:READ_SCOPE:       crates/orgasmic-drivers/src/** shipped/workers/implementer-claude-acp.org
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+Surfaced live during TASK-KSFG0 dispatch [2026-05-27 Wed 18:03]: =implementer-claude-acp= worker dispatches always land in simulated mode even when the =claude= binary (Claude Code CLI) is on PATH. Root cause at =crates/orgasmic-drivers/src/adapters/claude.rs:155-162=:
+
+#+begin_src rust
+let endpoint_empty = cfg.endpoint.as_deref().map(str::is_empty).unwrap_or(true);
+let simulated = endpoint_empty || !claude_available();
+if simulated { return Ok(HarnessRequest::Simulated { ... }); }
+#+end_src
+
+The gate requires =endpoint= to be non-empty for real-wire mode. For ACP-WS that makes sense (endpoint = WS URL). For ACP-stdio it does not — the adapter already declares =stdio_spawn= at lines 130-145 (=claude --bare -p --input-format stream-json ...=) but the gate short-circuits to simulated when =endpoint= is empty, which is the default for the stdio worker spec.
+
+Net effect: =implementer-claude-acp= has NEVER had its real-wire stdio path validated end-to-end. The codex acp-stdio path (TASK-HY0QT → TASK-KFGDS.1) got the live-dogfood treatment; the claude acp-stdio path silently degrades.
+
+Symptom under TASK-KSFG0 dispatch (=run-20260527T150326-b794fd856b8f4b489f05e79acacd12aa=): seq=0 acquire → seq=1 =Ready{simulated:true}= → seq=2 babysitter_spawned → silence. No work, no completion, no failure. Manager aborted via =dispatch-close --status aborted= (=tx-20260527-org-0400=) and switched TASK-KSFG0 to =implementer-codex-stdio=.
+
+** Acceptance Criteria
+- [ ] =simulated= flag flips to false when =cfg.endpoint= is empty AND =claude_available()= returns true AND the worker's =:DRIVER:= is =acp-stdio= (stdio spawn path). The endpoint-empty short-circuit must NOT apply to stdio mode.
+- [ ] Existing ACP-WS behavior preserved: empty endpoint + WS driver still simulated (endpoint is required for WS).
+- [ ] Real-wire dogfood: dispatch a tiny task (e.g., a doc-comment-only edit) via =--worker implementer-claude-acp= and confirm the session JSONL shows: seq=0 acquire → seq=1 =Ready{simulated:false}= → seq=2+ TextChunk / ToolCall envelopes from a real =claude --bare= subprocess → terminal RunComplete. Pattern matches TASK-YFM6X dogfood for codex acp-stdio.
+- [ ] Mock-peer fixture covers the gate logic (endpoint-empty + stdio + claude_available → real; endpoint-empty + WS + claude_available → simulated; endpoint-empty + stdio + !claude_available → simulated).
+- [ ] No new clippy warnings; MSRV 1.78; cargo test --workspace green.
+
+** Notes
+- *Out of scope*: redesigning the adapter; this is a one-condition gate fix.
+- *Related dogfood missing*: =implementer-claude-tmux= is also unproven for live dispatches; that may surface as a separate task later. =implementer-codex-stdio=, =implementer-cursor=, =reviewer-codex-stdio=, =reviewer-cursor= are all fully dogfooded.
+- *Filed in TASK-KSFG0 follow-up commit* alongside switching TASK-KSFG0 :WORKER: → =implementer-codex-stdio=.
+
+** Evidence
+codex gpt-5.5 medium, worker commit =94d3b3a=, merged, close tx-0473. Gate fix: claude.rs implements upgrades_simulated_to_subprocess() + stdio_initial_payload so empty endpoint + claude_available + ACP-stdio upgrades the simulated request into a real =claude --bare= subprocess (mirrors the proven codex-acp mechanism); ACP-WS stays simulated; ORGASMIC_DRIVER_SIMULATE=1 still forces simulated. Fixture tests (stub claude binary) cover all three gate cases. Gates: workspace green, clippy -D warnings clean, fmt clean. LIVE DdOGFOOD PASSED [2026-06-13 ~14:17, manager]: dispatched throwaway probe TASK-E29XC via --worker implementer-claude-acp against the REAL claude binary; session JSONL showed acquire -> Ready{simulated:false, kind:worker} -> text_chunk(system) -> text_chunk(assistant) — real-wire stdio with live assistant output, exactly the AC pattern (pre-fix this was simulated:true then silence). Probe aborted post-capabilities-check (tx-0508), worktree+branch removed, TASK-E29XC cancelled. implementer-claude-acp real-wire stdio is now validated end-to-end for the first time.
+

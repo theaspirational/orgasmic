@@ -1,0 +1,25 @@
+#+title: orgasmic decision dec_N9HW0
+#+orgasmic_version: 2
+
+* dec_N9HW0 How do team members get identity on the single-token daemon?
+:PROPERTIES:
+:GLOSSARY_REFS: term_8CJ8G
+:ID: dec_N9HW0
+:PARENT: dec_GPV4G
+:END:
+
+** Context
+The daemon has exactly one bearer token, minted at first boot and stored under $ORGASMIC_HOME/user/auth/token; browser sign-in exists only as the CLI-driven one-time ticket that becomes a 12h HttpOnly cookie. Artifact review needs several named people in browsers, with comments attributable by name and generation rights not equal for everyone. Separately, how a teammate's browser reaches the daemon at all (shared host, LAN, cloudflared/tailscale tunnel) is a deployment question.
+
+** Decision
+Build an in-daemon member layer on the existing auth middleware; leave transport explicitly out of scope (ops chooses shared host or tunnel).
+- Exactly one *admin* — the daemon owner — mints and revokes named member tokens. Roles: admin (everything), *editor* (generate, regenerate, comment, resolve), *viewer* (view, comment, resolve).
+- Members sign in at a new /login page by pasting their durable token once, receiving a long-lived named session cookie; the existing session middleware is extended to carry member identity, and every comment is stamped with the member's name.
+- Member records — name, role, token *hash* — live host-local in $ORGASMIC_HOME/user/auth/members.org, never in the repo-shared .orgasmic/. Repo files carry member names only; secrets never touch git.
+- CLI surface: orgasmic member add <name> --role editor|viewer, orgasmic member revoke <name>, orgasmic member list. Revocation invalidates the token's sessions.
+
+** Consequences
+- Generation and regeneration are role-gated to admin+editor, which is also the spend gate for agent runs.
+- The single-admin assumption is baked in; promoting a second admin is a future decision, not a config flag.
+- Token distribution to members happens out-of-band; losing a token means revoke + re-mint under the same name (comment attribution is by name, so history survives re-minting).
+

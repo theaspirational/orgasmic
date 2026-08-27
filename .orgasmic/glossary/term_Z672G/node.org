@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_Z672G
+#+orgasmic_version: 2
+
+* term_Z672G Boot reconciliation
+:PROPERTIES:
+:ID:                 term_Z672G
+:CANONICAL:          boot reconciliation
+:AVOID:              automatic restore, startup replay, hidden resume
+:RELATES_TO:         term_N5SJT term_N400W term_A8GT3 term_X4JGJ
+:DEFINITION:         A non-destructive daemon startup pass that rebuilds current truth from disk, classifies active runtimes, and emits recovery events without rolling graph state back.
+:DECIDED_AT:         [2026-05-21 Thu 19:26]
+:END:
+

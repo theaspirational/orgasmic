@@ -1,0 +1,36 @@
+#+title: orgasmic task TASK-V460X
+#+orgasmic_version: 2
+
+* BACKLOG TASK-V460X Goal titles have no write path: a typo fix requires a false SUPERSEDED record — decide edit-vs-amend semantics, then implement
+:PROPERTIES:
+:ID: TASK-V460X
+:PRIORITY: P2
+:END:
+
+From TASK-XPYRR's ask-3 sweep: goal nodes have NO title-write path anywhere —
+`/org/node/{id}/edit` rejects goal nodes outright (api.rs:12119), and
+`goal set` always supersedes (stamps the active goal SUPERSEDED and prepends a
+new heading, api.rs:13440-13447). Correcting a typo in a goal title is
+impossible; the nearest available act CHANGES THE RECORD'S MEANING (a
+supersession where none happened). This is the TASK-XPYRR complaint, unfixed,
+for the node kind where wording arguably matters most — the goal is the
+standing instruction every agent reads.
+
+=== Ask
+
+1. Decide the semantics first, then implement: is a goal title correction an
+   EDIT (heading rewrite, history in the tx) or an amendment record? The
+   supersede-only design was presumably deliberate (goals as append-only
+   record); a correction surface must not quietly break that property. Record
+   the decision as a dec_ node.
+2. Whatever the decision, the operation must preserve the goal's state keyword
+   and any metadata, per the edit_heading_line guard pattern.
+
+=== Acceptance
+
+- A typo'd goal title is correctable without a false SUPERSEDED record, proven
+  end-to-end.
+- The append-only/history property that goal set's supersede flow protects is
+  explicitly preserved or explicitly amended, with the dec_ node recorded.
+- Verify artifact per TCTTD standard.
+

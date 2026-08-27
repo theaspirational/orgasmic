@@ -1,0 +1,29 @@
+#+title: orgasmic task TASK-ZKZBF.2
+#+orgasmic_version: 2
+
+* DONE TASK-ZKZBF.2 Close the ZKZBF.1 review follow-ups: UI Parent Task guaranteed-400 + unsettable dead keys, task-create ID message split, drawer/tx pattern mismatch 500, --extra help and lowercase finding habit :daemon:cli:ui:
+:PROPERTIES:
+:ID: TASK-ZKZBF.2
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs,crates/orgasmic-core/src/tx.rs,crates/orgasmic-cli/src/main.rs,crates/orgasmic-cli/src/manager.rs,ui/src/components/orgdoc/descriptor.ts,ui/src/components/orgdoc/NodeDocEditor.tsx,crates/orgasmic-cli/tests
+:END:
+
+** Description
+Follow-ups from the TASK-ZKZBF.1 review (report promoted at .orgasmic/dispatch-records/tx-20260819-orgasmic-6167/last.txt). No regression to undo — build forward on merged =8f6e9c8=.
+
+*MEDIUM (ui/daemon contract, chain-introduced by round 1 =928d3e0=):* the UI ships an editable =Parent Task= field bound to =PARENT_TASK= (=ui/src/components/orgdoc/descriptor.ts:103=; =hideWhenEmpty= only hides it when NOT editing, =NodeDocEditor.tsx:291=), and saving emits =set_property PARENT_TASK= into =post_org_node_edit=, whose Task arm routes through the refusal table (=api.rs:16392=) — *a guaranteed 400*. The unset half inherits the same table, so legacy =:PARENT_TASK:= lines (done.org:12371, 12541, 12984) have NO supported removal verb (=node prop unset= is the only door; =POST /org/file= has no CLI verb). Same for =LAST_UPDATED=. FIX per reviewer direction: split the refusal table into "owned by another door" (STATE — refuse both directions) and "dead key" (PARENT_TASK, LAST_UPDATED — refuse set, ALLOW unset); drop the Parent Task field from TASK_DESCRIPTOR or make it read-only/derived (parentage derives from id grammar, =post_task_subtask= api.rs:2390).
+
+*LOW-1:* =post_task_create= (=api.rs:16749=) still carries its own byte-exact =ID= check whose message never says "immutable" — =task create --property ID=x= and =--property id=x= get two different sentences decided by case. FIX: delete the special case (shared guard at :16761 covers it). Also delete unreachable =update_task_properties= hand-checks for STATE/ID (:17991/:17998) below the shared validation.
+
+*LOW-2:* =validate_drawer_property_key_case= accepts any self-uppercase key (=FOO-BAR= passes) but the tx pattern =[^A-Z][A-Z0-9_]*= rejects it inside the writer, so =task update --property FOO-BAR=1= surfaces as 500 "failed to apply changes" instead of a 400 naming the flag (=prepare_api_tx= never validates; rollback is clean, no data loss). FIX: enforce the same pattern in the drawer check so the refusal is a 400.
+
+*LOW-3:* =--extra= help still says only "single-line only" while the flag now enforces uppercase-snake; the flag-honesty test asserts only that; nothing in =shipped/= documents the rule; 40+ historical lowercase =reviewer.finding= extras in tx/2026-08.org (agent-authored, nothing reads them) would now hard-fail. FIX: help + test + a shipped doc line naming the rule; dedupe =is_uppercase_snake_key= (verbatim in manager.rs:9958 and core/tx.rs:298 — call the core one).
+
+** Acceptance
+- Editing a task in the UI never offers a save that is a guaranteed 400; =node prop unset <task> PARENT_TASK= works (removes the dead key) while =set= still refuses by name; STATE stays refused both directions.
+- =task create --property ID=x= and =--property id=x= yield the SAME immutable refusal; the dead special case and unreachable arms are gone.
+- =task update --property FOO-BAR=1= is a 400 naming the flag and the canonical spelling, not a writer 500; a production-path test pins it.
+- =--extra= help states the uppercase-snake rule and the flag-honesty test pins it; a shipped doc names the rule; one =is_uppercase_snake_key= in core.
+- Existing 19 ZKZBF+HXSW0 tests stay green; fmt, clippy -D, focused run-tests.sh gate green; extend an injection artifact or add a sibling for the unset-split contract.
+- Independent review pass.
+

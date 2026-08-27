@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_PA23Y
+#+orgasmic_version: 2
+
+* dec_PA23Y How should the Decisions and Architecture pages present their graph-shaped data?    :ui-graph:
+:PROPERTIES:
+:ID:            dec_PA23Y
+:GLOSSARY_REFS: term_P94BF term_H5YHC
+:DECIDED_AT:    [2026-05-23 Sat 15:21]
+:SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:END:
+** Context
+Decisions and Architecture both have graph-shaped data and need both dense list scanning and visual traversal without fragmenting the page patterns. A decoupled list-plus-read-only graph (no graph-click modal) gives less powerful traversal.
+** Decision
+Give Decisions and Architecture mirrored list, modal, and React-Flow graph views using a shared node component family (NodeListView, NodeGraphView, NodeModal) parameterized by node-kind. List rows sort numerically (mono ID + title + first sentence + relevant relation chips). The modal exposes DECIDES/DEPENDS_ON chips that swap content with a back-stack, plus glossary, source, and code-ref links. The Architecture graph uses React-Flow auto-dagre left-to-right layout; single-click = 1-hop highlight, double-click = open modal, right-click = context menu; positions persist to localStorage per project.
+** Consequences
+Design-graph review becomes navigable from either list or graph mode, with graph positions kept local to the client rather than treated as durable state. The Architecture page graph later adopted semantic zoom (3 LOD levels) with a right-side detail panel surfacing leaf source paths, typed edges, realized decisions, producing tasks, and drift status, while the Decisions graph kept its single-level dagre layout. The design-graph's auto-consistency machinery (semantic-hash, stale propagation, finalize-validate gate, generated ADRs, snapshots) was later removed; the architecture graph survives as an authored, materialized, React-Flow-visualized graph, the glossary as a plain authored doc, and decisions as ADR records. The React-Flow graph is now Architecture-only (Decisions is de-graphed).
+

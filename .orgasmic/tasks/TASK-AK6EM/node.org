@@ -1,0 +1,128 @@
+#+title: orgasmic task TASK-AK6EM
+#+orgasmic_version: 2
+
+* DONE TASK-AK6EM close reservation must fence every live-run admission path and survive daemon replacement
+:PROPERTIES:
+:ID: TASK-AK6EM
+:PRIORITY: P0
+:TAGS: daemon,dispatch,destructive,race,fix
+:END:
+** Description
+Fix round for the TASK-1T3FZ reviewer BLOCK SHIP
+(run-20260728T171859-a064356ed7d14d9b98433c644d9c17d3, reviewed at `4c6682a`,
+which is an ancestor of main). Two P0s, each independently blocking.
+
+This is the **destructive** path: `dispatch-close` removes a worktree and a
+branch. Both findings mean a live worker can still have its worktree removed
+underneath it.
+
+=== P0 HIGH — Supervisor::reattach bypasses the cleanup reservation
+
+`supervisor.rs:1647-1690` is a **second live-run admission path**. Under the
+supervisor lock it checks `acquisition_paused`, the run map and the task lease,
+then inserts the lease — but unlike `acquire_impl` (`supervisor.rs:943-970`) it
+never calls `drop_abandoned_cleanup_reservations` and never consults
+`cleanup_reservations`.
+
+Reachable from all three reattach shapes:
+- explicit recovery action `reattach_tmux` (`api.rs:8328-8360`)
+- pending-plan / crash replay `reattach_existing` (`api.rs:8621-8664`), which can
+  carry a replacement id different from the origin the close releases
+- boot rehydration (`api.rs:9188-9204`)
+
+So after `reserve_dispatch_close` returns `Reserved`, a crash-replay reattach can
+still install a live replacement; the close then releases the recorded origin
+(404 accepted) and removes the replacement's worktree. For same-id
+`reattach_tmux`, the lease-to-`RunRecord` gap (`supervisor.rs:1666-1690,1838-1842`)
+also lets release observe 404 while attach continues.
+
+**The monotone-verdict claim is therefore false as shipped** — it holds for
+`acquire_impl` only. The acceptance test sends `--action start_recovery_run`
+(`dispatch.rs:3190-3204`), which reaches `acquire_impl` and sees the reservation.
+
+Note the reviewer's own confirmation that the unguarded path really rehydrates:
+`api::tests::boot_reattach_respawns_dispatch_completion_watcher_without_artifacts`
+passes with `TMUX` unset.
+
+=== P0 HIGH — the TASK-ATAXN handoff drops an in-flight close guard
+
+**This one was created today by TASK-ATAXN landing** (`688fd7b`), and it is the
+interaction the review was asked to look for.
+
+The guard lives only in `Inner.cleanup_reservations`, and every fresh
+`Supervisor` initializes that map **empty** (`supervisor.rs:727-735`). The
+destructive work is done by the **CLI**, not the daemon: salvage,
+`git worktree remove` and branch deletion all happen after the guard response
+(`manager.rs:724-792`), and the finish request is best effort
+(`manager.rs:2226-2247`).
+
+ATAXN publishes `daemon.shutdown`, drains, drops the instance lock and clears the
+marker (`lib.rs:918-962`). That path neither waits for externally held close
+guards nor persists or transfers them. A replacement waits only for the instance
+lock, then builds the empty map above and can admit a recovery while the original
+CLI is still doing slow salvage.
+
+So a daemon restart between the guard response and the end of filesystem cleanup
+reopens exactly the race TASK-1T3FZ was filed to close.
+
+=== P1 MEDIUM — abandoned guards are unreclaimable on Windows
+
+`DispatchCloseGuardRequest.owner_pid` is optional (`api.rs:4664-4683`) and
+`drop_abandoned_cleanup_reservations` retains `None` forever
+(`supervisor.rs:3985-3998`). The production CLI does send its pid, but
+`subprocess_exited` unconditionally returns `false` on non-Unix
+(`supervisor.rs:3455-3460`), and Windows is a shipped runtime target
+(`README.md:164-177`, `.github/workflows/runtime-bundles.yml:83-90`). A Windows
+CLI that dies after reserving can never be swept: the daemon then returns
+`reservation_held` and refuses acquires for that worktree until restart, and
+`manager lease-release` clears a task lease, not a cleanup reservation, so it is
+not an escape.
+
+The reviewer cleared two things I had flagged, and they should not be re-litigated:
+- **PID reuse on Unix is safe in the conservative direction.** `kill(pid, 0)`
+  sees a recycled unrelated process and *retains* the stale reservation — it can
+  prolong a denial of service but cannot free a reservation whose owner is alive.
+- **Stale `close_guard_id` cannot release someone else's reservation.** Ids are
+  UUIDv4 (`supervisor.rs:3096-3111`) and finish removes only an exact value
+  (`supervisor.rs:3138-3141`).
+
+=== Ask
+
+1. Make `Supervisor::reattach` observe the same normalized-worktree reservation
+   under the same lock before inserting a lease. Cover explicit `reattach_tmux`,
+   pending-plan `reattach_existing` and boot rehydration with deterministic
+   close-guard interleavings.
+2. Do not let close return `Reserved` while a provably live external mux runtime
+   for that worktree is waiting to be rehydrated. Either serialize boot reattach
+   ahead of destructive close, or fold that recovery authority into the verdict.
+3. Extend the ATAXN handoff so a replacement cannot admit work for a guarded
+   worktree until the CLI holder has finished or is proven dead. **Choose and
+   record which boundary owns this** — refuse/delay shutdown while a live holder
+   exists, persist and restore the guard with a process-identity check, or move
+   the destructive mutation behind the daemon's own cleanup authority. The
+   reviewer deliberately did not pick; the decision belongs in this round and
+   must be recorded as a decision node, not just in code.
+4. Require a reclaimable holder identity and implement it on Windows. Say which
+   stable identity you chose (process handle plus start time, holder token plus
+   heartbeat, or an existing project primitive) and why. Keep release-by-UUID so
+   a disappearing path cannot affect release.
+
+=== Acceptance
+
+- A test that pauses close **after** the guard response, replaces the daemon,
+  attempts recovery, and proves recovery stays refused until cleanup/finish.
+- Deterministic interleavings for each of the three reattach shapes, each failing
+  if the reservation check is removed from `reattach`. Prove by injection, with
+  output.
+- Injected dead-holder, PID-reuse and missing-owner regressions for reclamation.
+- State explicitly what is now true of *every* live-run admission path, and how a
+  future fourth path would be caught — a per-call-site fix that the next
+  constructor can forget is how this defect arrived.
+
+=== Non-goals
+
+- Do not revisit the parts the reviewer cleared: normal-process release handling,
+  the deleted CLI second opinion (no remaining caller), the UUID release
+  identity, or Unix PID-reuse conservatism.
+- Do not change the ATAXN shutdown budgets themselves.
+

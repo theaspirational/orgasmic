@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_P24WF
+#+orgasmic_version: 2
+
+* dec_P24WF How should work items be represented so workers can claim and humans review them?    :task-model:
+:PROPERTIES:
+:ID:            dec_P24WF
+:GLOSSARY_REFS: term_RG690 term_CEQFS term_3YTBK
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Project task files
+:END:
+** Context
+Orgasmic needs a work-item representation that workers can claim and humans can review in Git. An external-tracker-only model gives less local state but weaker self-contained coordination; tx-only tasks give good auditability but poor editable task bodies.
+** Decision
+Work is organized as Org task headings across sprint, backlog, and archive files, carrying state, owner, scope hints, acceptance criteria, evidence, and worklog sections. Workers may write evidence and worklog only for their own claimed task, with state transitions mediated by orgasmic.
+** Consequences
+Tasks are reviewable in Git and claimable by workers while staying editable as plain Org.
+

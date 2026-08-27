@@ -1,0 +1,51 @@
+# Changed
+
+- Native Codex session: `019ff283-06dc-7ea1-8f83-d0ad9f3e47e1`.
+- Commit SHA: produced and recorded atomically by the terminal `orgasmic dispatch finalize --commit` call; the SHA is not available until that call consumes this report.
+- Threaded the raw optional `ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS` value through `ServiceSpec`, launchd, and systemd rendering. Persistent service definitions capture the installing/starting process value when written; hand-run `serve` and detached auto-start inherit at process launch. The daemon remains the single bounded 1..300 validator. No live service was installed, restarted, or otherwise mutated.
+- Reworked refresh seed capture so every refresh arm clones owned memory state inside a lexical index-read scope. The guard is gone before `.orgasmic.is_dir()` or any other filesystem/OS operation can run.
+- Preserved the manager-corrected load-waiter contract: first-load waiters arriving after capture drain with the same in-flight publication, while explicit and watcher generations remain captured-only. The production-path test proves two first-load requests settle at generation 1 with one scan. No unnecessary second project scan was introduced.
+- Added a bounded 30-second negative cache for genuinely failed first loads. Routine unscoped `/tx` polling honors it; explicit project access and reindex bypass it. Status exposes the cooldown deadline and successful retries clear it.
+- Added a distinct additive `Delayed` project-load state for coordinator-only queue timeout, with status/UI diagnostics and no failed-path cooldown. Empty delayed coverage preserves the established header text; an actual delayed set is additive.
+- Made partial activity coverage dismissible by the normalized failed-project set. The same set stays dismissed and a changed set reappears.
+- Preserved `/tx` as a JSON array with the CORS-exposed coverage header. All response changes are additive.
+- Files changed:
+  - `crates/orgasmic-cli/src/daemon_lifecycle.rs`
+  - `crates/orgasmic-cli/src/daemon_service.rs`
+  - `crates/orgasmic-cli/src/main.rs`
+  - `crates/orgasmic-cli/tests/daemon_lifecycle.rs`
+  - `crates/orgasmic-daemon/src/api.rs`
+  - `crates/orgasmic-daemon/src/index.rs`
+  - `ui/src/components/StatusView.tsx`
+  - `ui/src/components/__tests__/ParseErrorCoverage.test.tsx`
+  - `ui/src/components/notifications/NotificationBell.tsx`
+  - `ui/src/lib/types.ts`
+
+# Verification Gates
+
+- `cargo fmt --all -- --check`: passed on the final revision.
+- `git diff --check`: passed; final worktree contains exactly the 10 authorized files above.
+- Daemon index focus: `cargo test -p orgasmic-daemon index::tests::` passed 71/71. This includes cooldown, expired cooldown, explicit retry, queue-only delay, and structural refresh behavior.
+- Corrected production waiter wiring: `late_waiter_after_batch_capture_joins_the_in_flight_scan` passed 1/1 and asserts 2 requests, 1 scan, generation 1 for both waiters.
+- Daemon API focus: the unscoped `/tx` cooldown/reindex test passed 1/1; daemon status delayed-field test passed 1/1; `api::tests::reindex_` passed 3/3; parse-error coverage/reindex passed 1/1; the lazy catalog integration assertion passed 1/1.
+- CLI renderer/config focus: `cargo test -p orgasmic-cli daemon_service::tests::` passed 26/26. The real detached auto-start timeout inheritance test passed 1/1 and also passed in the aggregate lifecycle target (7/7).
+- UI focus: notification/API focus passed 2 files and 10/10 tests; `npm --prefix ui run typecheck` passed.
+- Full UI: 42/42 files and 282/282 tests passed on the permitted retry. The first attempt had one Mermaid 5-second timing timeout; the exact test passed 1/1 in isolation before the full green retry.
+- `npm --prefix ui run build`: passed (5,696 modules, 11.39 seconds). Existing CSS optimizer and large-chunk warnings remain non-fatal.
+- Impeccable changed-UI detector: zero findings (`[]`); the implementation reused existing accessible notification/button and status primitives.
+- `cargo build`: passed on the final revision.
+- `cargo clippy --workspace --all-targets`: passed cleanly on the final revision. An intermediate large-enum warning was removed by boxing the owned prior-project seed.
+- Aggregate final attempt: `ORGASMIC_ALLOW_MISSING_TOOLS=tmux scripts/run-tests.sh` completed with exit 1 and the known baseline only. The primary suite recorded 1,897 passed, 3 failed, 15 ignored, 0 measured, and 1 billed test filtered; the debug-assertions-off leg passed 1/1 (241 filtered). Environment was complete and no requirement was waived. Durable evidence: `/tmp/task-ajp4a-aggregate-retry-20260812T0013.log`, suite log `/var/folders/9p/823z6j817xj9ts2xpvnx1q_40000gn/T/orgasmic-run-tests.XjEmKh/suite.log`.
+  - Two unregistered out-of-scope supervisor process-probe/pidfile races failed in-suite and passed in isolation: `a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed` and `a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline`.
+  - One registered tmux reattach flake, `explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds`, failed in-suite and passed in isolation. The current registry attributes it to `TASK-QCG6J`; the dispatch brief called the registered baseline `TASK-X0PV1`.
+  - The initial aggregate exposed two exact coverage-header compatibility regressions caused by emitting empty `delayed=[]`. The implementation was corrected to emit delayed coverage only when non-empty; both tests passed in isolation and in the final aggregate. No changed-area failure remains.
+
+# Unmet Criteria
+
+- None. All task acceptance criteria are implemented and self-checked. The aggregate remains red only for the explicitly out-of-scope baseline failures listed above.
+
+# Residual Risk
+
+- Persistent launchd/systemd behavior is proven by pure renderer/config tests, not by installing or restarting a live service, because live service mutation was explicitly prohibited.
+- The two unregistered supervisor races and the registered tmux reattach flake remain outside this task; `supervisor.rs` and the flake registry were not edited.
+- These are implementer self-checks. Independent verification and landing remain separate stages.

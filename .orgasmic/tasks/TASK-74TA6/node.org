@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-74TA6
+#+orgasmic_version: 2
+
+* DONE TASK-74TA6 orgasmic entry command + stub entry.org + root-pointer line :entry:
+:PROPERTIES:
+:DEPENDS_ON: dec_YTJ0G
+:ID: TASK-74TA6
+:PRIORITY: P1
+:WRITE_SCOPE: crates/** shipped/project-scaffold/** shipped/prompt-studio/**
+:END:
+
+** Description
+Implement dec_YTJ0G. New CLI command =orgasmic entry= printing the live router: manager route, project map, write rules, and the resolved =default= workflow body (resolution lands in the workflows subtask; print a placeholder section until it merges). Rewrite the scaffold =entry.org= template as the ~6-line stub: =#+orgasmic_version= marker, run-=orgasmic entry= instruction, detached protocol (offer install; declined → read-only for =.orgasmic/=, source edits only on explicit user confirmation with drift warning, reconcile later). Update =ROOT_POINTER_LINE= in =orgasmic-core/src/projects.rs= to the new one-liner (run =orgasmic entry=; install pointer if missing). Repoint =shipped/prompt-studio/prompt-parts/source_of_truth_inputs.org= from "Read =.orgasmic/entry.org=" to the command.
+
+** Acceptance Criteria
+- [ ] =orgasmic entry= prints router content sourced from the current runtime (no per-repo prescriptive text).
+- [ ] Scaffolded =entry.org= is the stub; parses as app-owned Org; carries the version marker and detached protocol.
+- [ ] Root pointer tests updated; =cargo test= green.
+

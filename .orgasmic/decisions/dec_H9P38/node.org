@@ -1,0 +1,16 @@
+#+title: orgasmic decision dec_H9P38
+#+orgasmic_version: 2
+
+* dec_H9P38 What should the top header contain?    :ui-ia:
+:PROPERTIES:
+:ID:            dec_H9P38
+:DECIDED_AT:    [2026-05-23 Sat 14:34]
+:SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:END:
+** Context
+The current top header has only a "WS live" badge plus theme toggle. The user wanted a richer ambient surface that moves Status and Settings into the header and adds a notifications bell, without introducing an avatar/user-menu concept yet.
+** Decision
+The right side of the header carries four icons: a connection LED (replacing the "WS live" badge; click opens the Status page), a notification bell (click opens the grouped popover per dec_JZDKT), a theme toggle (light/dark/system), and a gear (click opens Settings). On mobile (≤768px) theme and gear collapse into a ⋯ overflow.
+** Consequences
+Status and Settings become ambient header affordances and the LED doubles as the Status entry point.
+

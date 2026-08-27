@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_A8Z8H
+#+orgasmic_version: 2
+
+* dec_A8Z8H Should collaboration run through orgasmic's own service or through git?    :collaboration:
+:PROPERTIES:
+:ID:            dec_A8Z8H
+:GLOSSARY_REFS: term_CEQFS term_FM60Y term_YC32J
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Collaboration model (Q16)
+:END:
+** Context
+Orgasmic must decide whether collaboration runs through its own multi-user service or through existing Git workflows. A shared daemon brings real-time team state but multi-tenant identity and conflict policy dominate; a cloud relay eases cross-machine views but violates the local-first scope.
+** Decision
+Collaboration is per-developer and Git-native. Each developer runs their own instance, commits project =.orgasmic/= state, and resolves conflicts as ordinary Git conflicts. Orgasmic never invokes git automatically.
+** Consequences
+There is no multi-tenant identity model and no team manager in v0.0.1. Pull, commit, push, and merge-conflict resolution are operator responsibilities.
+

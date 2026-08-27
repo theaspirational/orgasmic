@@ -1,0 +1,32 @@
+# Changed
+
+- Moved task create, subtask create, lifecycle mutation, stage/manager targets, and dispatch-close rewrites onto `.orgasmic/tasks/<ID>/node.org`; retained the existing decision/glossary collection-node and generic node-body paths, and ported their focused fixtures to node directories.
+- Added `orgasmic task comment edit|delete` with OCC-guarded daemon journal mutations and tombstone deletion.
+- Fresh project scaffolding now writes v2 prose singletons plus `tasks/`, `decisions/`, `glossary/`, `artifacts/`, and `conventions/` collection directories with no starter nodes; removed shipped aggregate task/decision templates and updated doctor checks.
+- New dispatch evidence now uses `.orgasmic/tasks/<ID>/dispatches/<started-tx>/`: `brief.md`, `compiled-prompt.md`, `report.md`, and bounded `stdout.log`.
+- Updated conventions, prompt-studio/schema prose, entry/hub references, and bootstrap guidance for the node-directory layout.
+
+# Verification Gates
+
+- `cargo check -p orgasmic-core -p orgasmic-daemon -p orgasmic-cli` — PASS.
+- `cargo test -p orgasmic-core projects::tests::init_writes_and_validates_scaffold` — PASS (1 test).
+- `cargo test -p orgasmic-core projects::tests::user_override_supersedes_shipped_template` — PASS (1 test).
+- `cargo test -p orgasmic-daemon task_create_lands_in_node_dir_and_mints_id -- --nocapture` — PASS (1 test; create plus lifecycle rewrite, no aggregate destination).
+- `cargo test -p orgasmic-daemon --lib task_comments_use_member_session_attribution_and_refresh_activity -- --nocapture` — PASS (1 test; edit plus tombstone).
+- `cargo test -p orgasmic-daemon decision_parent_contract_and_reparent_tx_are_enforced -- --nocapture` — PASS after porting the stale aggregate fixture to node dirs.
+- `cargo test -p orgasmic-daemon org_node_read_and_edit_round_trip -- --nocapture` — PASS.
+- `cargo test -p orgasmic-daemon task_state_flip_regression -- --nocapture` — PASS.
+- `cargo test -p orgasmic-cli dispatch_close_promotes_report_readable_from_path_tx_names -- --nocapture` — PASS (report path under task dispatches).
+- `target/debug/orgasmic task comment --help` — exposes `edit` and `delete`.
+- Fresh-init production probe with isolated `ORGASMIC_HOME` and this checkout mounted as its installed source — PASS: v2 headers, required collection directories present, old aggregate files absent, `gotchas.org` remains a file and `conventions/` remains a directory. The first isolated-home attempt was environment-blocked because it intentionally had no shipped source; the installed-source rerun passed.
+- `cargo fmt --all -- --check` and `git diff --check` — PASS.
+
+# Unmet Criteria
+
+- None.
+
+# Residual Risk
+
+- Full workspace/daemon suites and smoke/Docker gates were not run, per the strict test budget.
+- Comment creation/event routing remains assigned to TASK-EPG6H; this task adds only the requested journal edit/delete verbs.
+- Prompt-studio context-pack repointing to derived views remains assigned to TASK-JWHXH; old context-pack paths were intentionally not changed here.

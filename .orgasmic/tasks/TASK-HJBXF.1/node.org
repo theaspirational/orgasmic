@@ -1,0 +1,38 @@
+#+title: orgasmic task TASK-HJBXF.1
+#+orgasmic_version: 2
+
+* DONE TASK-HJBXF.1 fix-subtask: claude-tmux paste-before-input-ready bug (prompt lost) :drivers:tmux:claude:fix:wire-up:high:
+:PROPERTIES:
+:ID:               TASK-HJBXF.1
+:PRIORITY:         P1
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/src/modes/tmux.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/modes/tmux.rs
+:READ_SCOPE:       crates/orgasmic-drivers/src/modes/tmux.rs ../har/**
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+TASK-HJBXF live-dogfood found: =claude= TUI takes ~2-5s to render its banner + input field after =tmux new-session= spawns it. The driver's current code calls =paste_text_into_pane= immediately after =spawn_tmux_session= returns, which races claude's startup → prompt enters the void → claude sits at empty cursor forever.
+
+Two viable fixes:
+1. *Wait-for-input-prompt heuristic*: capture-pane periodically (~250ms) after spawn; detect claude's prompt indicator (=❯ = at the start of a line, or => = for older claude versions) → only then paste. Add ~10s timeout fallback (if no prompt detected, log warning + paste anyway).
+2. *Sleep-after-spawn*: simpler but less robust — =sleep 3-5s= after spawn before paste. Works for claude today but brittle if claude TUI startup gets slower or faster.
+
+Reference HAR app (=../har/=) likely solves this — read =../har/crates/har-drivers/src/modes/tmux.rs= or equivalent for the proven pattern.
+
+** Acceptance Criteria
+- [ ] Driver waits for claude's input field to be ready before pasting prompt.
+- [ ] If no input field detected after timeout (~10s default), log warning + paste anyway (don't block forever).
+- [ ] Inline test: mock-peer that takes >1s to render its prompt; driver still successfully pastes.
+- [ ] Real-wire smoke test (gated on =which tmux && which claude=) confirms the fix.
+- [ ] All gates green.
+
+** Evidence
+- *Implementer pass merged as =823be91= (codex =dae58c3=, ~18 min wall, clean codex dispatch — no rescue needed for the codex side).* +164/-1 LOC across 2 files. New helper =wait_for_input_ready(session, timeout)= polls =capture_pane= every 250ms until prompt indicator (line starting with =❯= or => = followed by whitespace) appears OR =DriverError::InputNotReady(timeout)= fires. Acquire path calls it ONLY when =spawn_plan.command == "claude"=. On timeout, logs warning + pastes anyway. Real-world detail caught by codex: claude v2.1.153 uses NBSP (U+00A0) after =❯=, not ASCII space → detection uses generic =char::is_whitespace=. Inline tests: =wait_for_input_ready_returns_ok_when_mock_pane_has_prompt= + =wait_for_input_ready_returns_input_not_ready_on_timeout= + =pane_has_input_prompt_detects_claude_indicators= + =real_claude_input_ready_smoke= (gated on which tmux + claude). Configurable knob =TmuxTuiConfig.input_ready_timeout= default 10s.
+- *Manager 2-line follow-up patch (this commit) restores 800ms settle-sleep for NON-claude commands.* Codex's diff inadvertently dropped the existing =tokio::time::sleep(Duration::from_millis(800)).await= that gated the paste path for the entire acquire loop, replacing it with a claude-only =wait_for_input_ready= branch. =real_tmux_prompt_bundle_is_consumed= (which uses =cat= as a mock TUI without a =❯= prompt) became flaky → race-dependent ordering between Ready emission and TextChunk emission from cat's instant stdout echo. Fix: when =command != "claude"=, sleep 800ms before paste (mirrors pre-TASK-HJBXF.1 behavior). 57/57 driver lib tests pass post-patch.
+- *Gates on merged main =823be91= + manager patch:* cargo test -p orgasmic-drivers --lib (57 passed) ✓; cargo test --workspace ✓ (1 failure pre-patch — see manager note); cargo clippy --workspace --all-targets -- -D warnings ✓; cargo fmt --check ✓; git diff --check ✓.
+- *Lesson learned*: =cargo test 2>&1 | tail -30; echo "exit: $?"= captures tail's exit code, NOT cargo's. Use =set -o pipefail= or check =${PIPESTATUS[0]}= for the leftmost-pipe exit code in future gate runs. Logged for housekeeping.
+- *Unblocks TASK-HJBXF.2* (second live-dogfood); next manager action.
+

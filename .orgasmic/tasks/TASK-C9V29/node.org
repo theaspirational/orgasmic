@@ -1,0 +1,32 @@
+#+title: orgasmic task TASK-C9V29
+#+orgasmic_version: 2
+
+* DONE TASK-C9V29 Draft architecture from accepted decision graph :architecture:
+:PROPERTIES:
+:ID:               TASK-C9V29
+:PRIORITY:         P1
+:WORKER:   architector
+:WRITE_SCOPE:      .orgasmic/architecture.org docs/adr/*.org .orgasmic/decisions.org
+:READ_SCOPE:       .orgasmic/decisions.org .orgasmic/glossary.org docs/adr/*.org
+:TEST_CMD:         cargo build
+:DEPENDS_ON:       dec_K1DR7 dec_XSV21 dec_G38EC dec_QWZB2 dec_WH9PD dec_R75SW dec_GRDFB dec_P24WF dec_W58VM dec_ASB1A dec_DK7AZ dec_MMW2R dec_XV9AK dec_A8Z8H dec_KH07K dec_X6Q0S dec_TEKEB dec_BP4NH dec_N17XX dec_YYMSK dec_XQ3F8 dec_CSKBD
+:END:
+
+** Description
+Read the decided project graph and draft the first architecture nodes for orgasmic. Consolidate related decisions into components instead of creating one component per decision.
+
+** Acceptance Criteria
+- [X] .orgasmic/architecture.org contains decided architecture nodes with interfaces and constraints.
+- [X] Every architecture node has DECIDES back-edges to motivating decisions.
+- [X] ADR-worthy decision hints are triaged and docs/adr/*.org is regenerated where appropriate.
+
+** Evidence
+- [2026-05-21 Thu 19:35] Wrote 10 decided architecture nodes to .orgasmic/architecture.org: arch_WZFAX through arch_Z3Z3V.
+- [2026-05-21 Thu 19:35] Triaged all ADR-worthy hints in .orgasmic/decisions.org; no :ADR_WORTHY: proposed values remain.
+- [2026-05-21 Thu 19:35] Regenerated 14 project ADR files under docs/adr/.
+- [2026-05-21 Thu 19:35] Verification passed: graph structure checks, git diff --check, cargo build.
+
+** Worklog
+- [2026-05-21 Thu 19:32] Architector read decided decisions, glossary, and architecture guidance.
+- [2026-05-21 Thu 19:35] Completed architecture graph, ADR triage, generated ADRs, and task closure.
+

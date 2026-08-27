@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-3TEDA
+#+orgasmic_version: 2
+
+* CANCELLED TASK-3TEDA TASK-QPKCD fix round 6: single-authority recovery and proven native fork
+:PROPERTIES:
+:ID: TASK-3TEDA
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Resolve all five HIGH findings from TASK-Y8HCP review of f80d971: receiver-only quiescence including timeout drain; complete immutable pre-spawn plan and lifecycle backfill; handle-bound claim authority; explicit symlink-capable pinned Claude install identity with PATH-shim proof; unique fail-closed fork discovery and two-recovery chain.
+

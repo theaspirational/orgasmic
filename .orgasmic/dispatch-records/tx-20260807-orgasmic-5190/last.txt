@@ -1,0 +1,190 @@
+# TASK-QGWK7.1.1.1 — a failed record persist is now recoverable, and the CAS names a ref
+
+All seven findings addressed. Commit `2b4c3cf`, branch `task-qgwk7.1.1.1-impl`.
+Every acceptance item is met; two carry a stated limit (below).
+
+## Changed
+
+**`crates/orgasmic-cli/src/manager.rs`**
+
+- **F-1 (recovery).** `cmd_dispatch_close`'s `AlreadyClosed` no-op now calls a new
+  `repersist_dispatch_record_best_effort`. It reads the close tx's recorded
+  `CLEANUP_STATUS` (`closed_dispatch_cleanup_status`), and when that is non-`ok`,
+  the promoted directory exists on disk, and `dispatch_record_is_in_history` says
+  it is NOT in `HEAD`'s tree, it takes the cleanup lock and re-runs
+  `commit_promoted_dispatch_record` — which needed only `dest_dir` all along;
+  only its caller was gated on the unlinked tmp. Success prints
+  `re-persisted: dispatch record <tx> committed (…)`; failure warns and names
+  both the on-disk path and the cause. Cleanup itself is still a strict no-op.
+- **F-1 (rollback).** The `git restore --staged` after a failed commit is no
+  longer discarded behind `let _ =`. If the restore ALSO fails, the error says
+  the record is left STAGED and prints the exact command to clear it — that
+  state is M-0's symptom verbatim and would otherwise block the next merge with
+  no clue why.
+- **F-2.** `commit_promoted_dispatch_record` resolves `git symbolic-ref -q HEAD`
+  alongside the OID and `write_dispatch_record_commit` compare-and-swaps THAT
+  ref instead of `HEAD`. The CAS still refuses when the branch moved underneath
+  (unchanged: same old-value argument, now on a named ref).
+- **F-3.** New `sequencer_operation_in_progress` checks `rebase-merge`,
+  `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `BISECT_LOG` under the
+  per-worktree git dir, BEFORE the real `git add`, and returns an error naming
+  the operation. Promotion still happens; only the commit stands down.
+- **F-5.** A detached HEAD is refused by the same early gate (the
+  `symbolic-ref` resolution above), before anything is staged — symmetric with
+  the unborn-HEAD shape, which was already safe.
+- **F-6.** `normalize_report_path_property` moved BELOW
+  `reconcile_torn_closes_best_effort`.
+
+**`shipped/prompt-studio/conventions/manager-dispatch.org`** (F-7, F-4) — four
+additions to the close paragraph: a non-zero `stdout.log.bytes` with no
+`stdout.log` means a promote that failed between the two renames (the `0` case
+still means "printed nothing"); record commits are UNSIGNED because
+`commit-tree` ignores `commit.gpgsign`; promote-only `--no-worktree-remove`
+closes advance the branch too; the excerpt is `64 KiB` plus ~180 bytes of
+banner. Also states the sequencer/detached refusals and that a re-run repairs.
+
+**Tests** — 5 new, all proven red on parent behaviour (see below):
+`crates/orgasmic-cli/tests/dispatch.rs` (3 integration, through the real binary
+and `cmd_dispatch_close`) and `crates/orgasmic-cli/src/manager.rs` (2 unit,
+through `cleanup_dispatch`). Plus 4 assertions in `tests/shipped_conventions.rs`
+pinning the new convention prose.
+
+## What state a failed persist now leaves, and how it recovers
+
+Unchanged, and deliberately: the close still SUCCEEDS, the promoted files stay
+on disk, `CLEANUP_STATUS=partial`, `CLEANUP_ERROR` carries `report: commit
+promoted dispatch record …`, and nothing is left staged (and if the rollback
+that guarantees that fails, the error now says so and hands over the fix).
+
+What changed is the way out. Re-running the same `dispatch-close --started-tx`
+— the only command a manager has, and the one they already re-run — repairs it:
+the no-op prints `already-closed`, then `re-persisted: dispatch record <tx>
+committed`, and the record is in history on the branch the close resolved. A
+third run finds it in `HEAD` and says nothing. No hand repair, no new verb.
+
+## Verification Gates
+
+| gate | result |
+| --- | --- |
+| `cargo test -p orgasmic-cli --bin orgasmic -- manager::tests` | **54 passed**, 0 failed (52 baseline + 2 new) |
+| `cargo test -p orgasmic-cli --test dispatch` | **67 passed**, 0 failed, 9 ignored (64 + 3 new; the 9 are the pre-existing TASK-M47E5.3 prune gates) — one full run, 56.9 s |
+| `cargo test -p orgasmic-core --lib` | 165 passed, 0 failed, 2 ignored |
+| `cargo test -p orgasmic-cli --test shipped_conventions` | 4 passed |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo fmt --all --check` | exit 0 |
+| `orgasmic verify TASK-QGWK7.1` | **PASS** |
+| `orgasmic verify TASK-QGWK7.1.1` | **PASS** |
+| `orgasmic verify TASK-QGWK7.1.1.1` | **PASS** |
+
+No `cargo test --workspace`, no `scripts/run-tests.sh`, and
+`legacy_drivers_and_explicit_pairs_emit_equivalent_start_events` was never run.
+No output was piped; every run went to a file that was then read.
+
+### Every new test proven red on parent behaviour
+
+The brief's trap — "a test that could not have failed before your change pins
+nothing" — checked by injecting the parent's behaviour (guards disabled, CAS
+back to `HEAD`, re-persist call removed, `normalize_report_path_property` moved
+back above the reconcile) and re-running all five. **All five FAILED, each on
+its own pinned assertion:**
+
+- `a_record_persist_that_failed_is_recovered_by_re_running_the_close` → `the
+  re-run must repair the record it could not persist, and say so:
+  already-closed: TASK-DISPATCH started_tx=… (no-op)`
+- `a_record_commit_cannot_land_on_a_branch_the_close_never_resolved` → `the
+  record must never land on a branch the close did not resolve`
+- `a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused` → `the
+  torn transition must be reconciled BEFORE the refusal: stdout=` (empty)
+- `a_close_inside_a_conflicted_merge_keeps_the_record_and_persists_nothing`
+- `a_close_on_a_detached_head_refuses_to_persist_rather_than_orphan_the_record`
+
+All three integration tests enter production through the real `orgasmic` binary
+(`cmd_dispatch_close`); the two unit tests enter through `cleanup_dispatch`.
+None asserts on a helper in isolation.
+
+### The F-2 test needs a real race, so it puts one on real git
+
+`refs/heads/other` at the same OID is only reachable by a checkout landing
+between the close's `rev-parse` and its `update-ref` — milliseconds, and a sleep
+cannot hit it. The test installs a `git` shim on the child's `PATH` (the
+`write_git_proxy` pattern already in this file) that, the first time the close
+reaches `commit-tree`, runs `git branch -f sibling HEAD` +
+`git symbolic-ref HEAD refs/heads/sibling` and then forwards to real git. That
+is the reviewer's `p16` probe, deterministic, inside `cmd_dispatch_close`. The
+record then lands on `main` (the ref the close resolved) and `sibling` is
+byte-identical to its pre-close OID. With `update-ref HEAD` it is the reverse.
+
+## Re-authored verify artifacts (said loudly)
+
+`commit_promoted_dispatch_record` grew three guards and a reported rollback, so
+the injection patches for **TASK-QGWK7.1** and **TASK-QGWK7.1.1** — both of
+which replace that function's whole body — no longer applied. **Both were
+re-authored, context only.** Each still injects exactly what it injected before
+(QGWK7.1: persistence no-oped; QGWK7.1.1: stage-and-stop). **`cmd` and
+`expect-red` are byte-unchanged in both** (`git diff` on those four files is
+empty), and both replays still match their pinned signature at exit 101. The
+property did not move; only the mechanism it is injected into did. Each README
+records the re-authoring.
+
+### The new artifact's red is the RIGHT red
+
+I read `red.log`. It contains exactly one panic, and it is my pinned assertion
+at `tests/dispatch.rs:9837`. Every assertion ahead of it PASSED under the
+injection — the close still exited 0, `warning: dispatch cleanup status=partial`
++ `commit promoted dispatch record` were still on stderr, the promoted `last.txt`
+was still on disk, tmp was still unlinked, and the record was still absent from
+`HEAD`. That is F-1's unrecoverable state reproduced in full, with only the
+repair missing.
+
+## Unmet Criteria
+
+Every acceptance item is done. Two carry a limit worth a reviewer's attention:
+
+1. **The `git restore` FAILURE branch is implemented but not pinned by a test.**
+   Reporting it is done (and the brief asked for it "regardless"). Reaching it
+   needs the commit to fail AND the index lock to be taken between the `git add`
+   and the restore — a second, narrower injection point than the shim gives me.
+   The `Ok(_) => Err(err)` half is exercised by every commit-failure test.
+2. **F-3 is closed by refusal, not by making a close inside a rebase safe.** A
+   close during a sequencer operation now leaves the record promoted-but-
+   untracked and says so; putting it in history takes one re-run. `rebase
+   --abort` losing an already-written record is pre-existing (the staged-only
+   baseline loses it identically, measured by the reviewer) and is not made
+   worse here.
+
+## Residual Risk
+
+- **A re-run of a close can now move the branch.** That is the point, and it
+  prints `re-persisted:` when it does — but a manager who re-runs a close
+  expecting a pure no-op gets one commit. It fires only when the close recorded
+  a non-`ok` cleanup status AND the record is on disk AND it is not already in
+  `HEAD`.
+- **The re-persist reads the ledger** (`read_tx_entries`) on every already-closed
+  re-run. Cheap, and already done several times on that path.
+- **A refused persist leaves an untracked directory** under
+  `.orgasmic/dispatch-records/`. A manager who runs `git add .` before re-running
+  the close will sweep it into their own commit — the record is not lost, but it
+  lands in the wrong commit. Naming it rather than weighting it.
+- **Record commits remain unsigned.** F-4's mechanism is unchanged; only the
+  convention now says so. Passing `-S` when `commit.gpgsign` is set would put a
+  signing prompt inside every close, which invariant 3 forbids.
+- **`BISECT_LOG` is checked but is close to unreachable on its own** — a bisect
+  detaches HEAD, so the detached-HEAD refusal fires first.
+
+## Where I disagreed with the heading
+
+Nowhere on substance. One correction to carry forward: the heading's F-4 says
+the implementer's `user.name`/`user.email` residual is false and must be
+"removed, not carried forward". I grepped `crates/`, `shipped/` and `verify/`:
+**that claim exists nowhere in the tree** — it lived only in the previous
+worker's report (immutable dispatch-record history) and in the finding text
+itself. There was nothing to delete; I have simply not restated it, and the
+convention says nothing about it.
+
+## Boundaries
+
+Write scope honoured: `crates/**`, `shipped/**`, `verify/**` only. No lockfile,
+no generated catalog, no `.orgasmic/` edit. `ORGASMIC_HOME` was never set for any
+`orgasmic` invocation. Committed manually with the brief's exact message so the
+tree was clean for the three `orgasmic verify` replays, which refuse to run
+dirty — so this finalize does not need `--commit`.

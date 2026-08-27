@@ -1,0 +1,29 @@
+#+title: orgasmic task TASK-WGXKD
+#+orgasmic_version: 2
+
+* DONE TASK-WGXKD a worker finalize can lose its terminal tx because releasing the lease kills the process that writes it :dispatch:cli:defect:race:
+:PROPERTIES:
+:ID: TASK-WGXKD
+:PRIORITY: P0
+:BLOCKED_BY: TASK-R74E8
+:END:
+
+MEASURED 2026-07-27 on run run-20260727T131952-9138610466c24c469819ac27e3f6c504 (TASK-RWCRN, implementer-claude-acp-stdio, rebuilt runtime 4d1369a). A worker called `orgasmic dispatch finalize --summary-file ... --commit` and it half-applied: the commit landed (2a69f66 at 13:51:57Z), last.txt was written (16566 bytes), the lease release succeeded and the daemon emitted run_complete with summary "worker finalize for TASK-RWCRN" (session seq 984) — but NO terminal tx was ever written, to either the project or the home ledger. dispatch-status reported [pid-gone] [run-live] [unreported]. The very next session event, seq 985, is a fatal driver_error: "claude exited with status signal: 9 (SIGKILL)".
+
+THE MECHANISM. cmd_dispatch_finalize (crates/orgasmic-cli/src/manager.rs:1213-1218) deliberately orders the terminal tx LAST, after commit, last.txt and lease release, and the comment states the intent: "If any earlier step fails or the process dies, no completion tx is on record — the run stalls and is flagged orphan (rescuable), never a done claim with no report + a held lease." The ordering is sound in isolation but is self-cancelling in production: step 2 (release_dispatch_run_with_reason, manager.rs:1246) tears down the driver, which SIGKILLs the harness process — and the `orgasmic dispatch finalize` CLI is a descendant of that same harness shell. Release kills the process that still has to perform step 3. The wider the gap between release and the tx POST, the more likely the loss.
+
+WHY IT IS NOT MERELY COSMETIC. The stated fallback did not occur either: the run was not flagged orphan, and the daemon log has no "release without worker finalize, flagging orphan" line for this run — because from the daemon side the release WAS a worker finalize. So the run lands in a fourth state the design did not anticipate: work durable, report durable, lease released, no terminal tx, no orphan flag. It is invisible to both the success path and the rescue path. The manager only noticed because dispatch-status printed [unreported], which exists solely because of TASK-6AYEJ.
+
+NOT a TASK-6AYEJ regression: 6AYEJ changed WHICH tx type finalize emits (implementer.reported instead of implementer.done), not when it is emitted. The ordering predates it. 6AYEJ is what made the failure visible rather than silent.
+
+FREQUENCY. Timing-dependent, not deterministic. The daemon log shows many successful "worker finalized via orgasmic dispatch finalize, skipping scrape" lines on 07-26, so the tx usually wins the race.
+
+CANDIDATE FIXES, to be argued rather than assumed:
+1. Move the terminal tx BEFORE the release, accepting the risk the design comment was avoiding (a done claim with a held lease) and mitigating it with the release immediately after.
+2. Have the daemon emit the terminal tx as part of the release-with-finalization call, so it is server-side and cannot be lost to client death. This looks strongest: the daemon already knows finalized_by_worker=true and the tx content is derivable from the run record.
+3. Keep the client-side tx but make the release non-fatal to the caller (defer harness teardown until the client disconnects or a grace period elapses).
+
+ACCEPTANCE. A worker finalize whose harness is killed the instant the lease is released still produces its terminal tx; proven by a test that kills the finalizing client between release and tx, plus one live dispatch. dispatch-status must never again show a released run as [unreported] after a successful finalize.
+
+CORRECTION [2026-07-29, TASK-37TAF]: this task's record carried "Old CLI + new daemon is compatible: absent terminal_tx defaults to None and the old client does its existing POST /tx" under do-not-re-litigate. DISPROVEN and closed: on acp-stdio the release kills the old client's process group before its POST /tx (the same argument this task's own finding 1 made for the other direction). TASK-37TAF (merged 2026-07-29) closed it by refusing finalized_by_worker releases with no terminal_tx at post_run_release. Both skew directions are now fail-closed: new CLI/old daemon by the client-side capability probe, old CLI/new daemon by the server-side payload guard. Also noted: this task reached DONE before 37TAF resolved, despite 37TAF's body requiring otherwise — the both-directions claim is only true as of 37TAF's merge.
+

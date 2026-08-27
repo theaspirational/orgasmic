@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_WQMJJ
+#+orgasmic_version: 2
+
+* term_WQMJJ Loader rule
+:PROPERTIES:
+:ID:                 term_WQMJJ
+:CANONICAL:          loader rule
+:AVOID:              monkey patch, in-place customization
+:RELATES_TO:         term_W0T9S term_5SV2N
+:DEFINITION:         The rule that user-authored overrides are read before shipped defaults without modifying shipped content.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

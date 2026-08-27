@@ -1,0 +1,21 @@
+#+title: orgasmic task TASK-SPBTA
+#+orgasmic_version: 2
+
+* DONE TASK-SPBTA Contract discoverability: artifact blocks --full + node schema examples :cli:hardening:
+:PROPERTIES:
+:ID: TASK-SPBTA
+:PRIORITY: low
+:END:
+
+** Description
+Battle-test F9+F10: the contracts agents must satisfy are undiscoverable from the CLI. =artifact blocks= prints 22 tag names with no shapes; the load-bearing MDX conventions (opposite raw-text rules for Code vs Mermaid/Wireframe, per-block attribute shapes, QuestionForm schema) live in shipped/prompt-studio/prompt-specs/artifact-generator.org — found in the battle-test only by grepping the shipped tree. Architecture/decision/glossary property vocabulary (:SOURCE_PATHS:, :MOTIVATED_BY:, :GLOSSARY_REFS:, typed edges, :TESTS:) is likewise invisible from =architecture create --help=; the tester read another project's architecture.org as the de-facto schema.
+
+Fix:
+- =artifact blocks --full=: per-block shapes + raw-text conventions from the =BLOCK_TYPES= registry (crates/orgasmic-daemon/src/artifacts.rs:28), or print the prompt-spec + all-blocks.mdx fixture paths; one pointer line in =artifact submit --help=.
+- =architecture schema= / =--example= (and decision/glossary siblings) printing one canonical node with the property vocabulary — the pattern =artifact blocks= already establishes, extended to org-graph node types.
+
+** Acceptance Criteria
+- [ ] An agent can author a conformant artifact and architecture/decision/glossary node from CLI output alone (no shipped-tree grep).
+- [ ] =artifact submit --help= points at the block contract.
+- [ ] Examples stay in sync with the real registries (derived or parity-tested, not hand-copied).
+

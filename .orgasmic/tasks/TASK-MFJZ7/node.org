@@ -1,0 +1,71 @@
+#+title: orgasmic task TASK-MFJZ7
+#+orgasmic_version: 2
+
+* DONE TASK-MFJZ7 the billed harness test is guarded only by a flag people must remember, and it already fired
+:PROPERTIES:
+:ID: TASK-MFJZ7
+:PRIORITY: P1
+:TAGS: drivers,tests,cost,safety
+:END:
+** Description
+`legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+(`crates/orgasmic-drivers/tests/driver_modes.rs:1662`) spawns the real `claude`
+binary and can submit a real, billed turn. It is declared as a plain
+`#[tokio::test]` with **no `#[ignore]` and no environment gate**, so a bare
+`cargo test -p orgasmic-drivers` runs it.
+
+The only thing standing between a contributor and a charge is remembering to
+pass `-- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+on every invocation. That is prose in briefs and one entry in `gotchas.org`
+("Asking a harness to prove it can work costs real money"), enforced by nothing.
+
+=== It already fired
+
+2026-07-28, the TASK-QRB8S worker. Its brief carried the constraint in bold and
+it still ran `cargo test -p orgasmic-drivers` without the skip, twice — once on
+its branch and once on a stashed baseline to classify the failure. It reported
+the result honestly, which is how this was caught.
+
+Cost was probably nil that time: the run failed with the real binary answering
+`Error: Session ID … is already in use`, which is a pre-turn rejection. **That is
+luck, not a control.** A clean session id would have submitted the turn.
+
+This is the same shape as the defects this project keeps finding: a guarantee
+that lives in a document rather than in the code. A worker who is told the rule
+and breaks it anyway is evidence the rule needs a mechanism, not a louder brief.
+
+=== Ask
+
+1. Gate the test so the **default is safe**. `#[ignore]` plus an explicit
+   opt-in env (e.g. `ORGASMIC_ALLOW_BILLED_TESTS=1`) is the obvious shape: a
+   bare `cargo test` then skips it and says so, and `--include-ignored` alone is
+   not enough to run it.
+2. Make the skip unnecessary rather than mandatory. Once gated, briefs and
+   `gotchas.org` should stop telling people to pass `--skip`; update both, and
+   say what the new instruction is.
+3. Audit for any other test that can spend money or quota — any test that
+   spawns a real harness and submits a turn. Report the full list and gate each,
+   or state why it cannot bill. `real_claude_stream_json_bridge_reports_auth_error`
+   and the `live_rmux_*` family are the obvious places to start; several are
+   already availability-gated but availability is not the same as billing.
+4. Make the sentinel account for it. The `required_test_tooling_is_present`
+   contract counts gated tests; a billed test that is skipped by default must not
+   silently change that count in a way that hides it.
+
+=== Acceptance
+
+- `cargo test -p orgasmic-drivers` with no extra flags does not run the billed
+  test, and prints something that names why it was skipped.
+- Prove it by injection: remove the gate, show the test being collected and
+  attempted, restore it, show it skipped — with output. Do **not** let the
+  injected run actually submit a turn; assert on collection, not on execution.
+- The opt-in path works: with the env set, the test runs.
+- `gotchas.org` and every brief template no longer instruct `--skip`, and the
+  audit list from ask 3 is recorded on this task.
+
+=== Non-goals
+
+- Do not delete the test. It is the parity check between legacy drivers and
+  explicit pairs and it has real value when someone deliberately opts in.
+- Do not change what the test asserts.
+

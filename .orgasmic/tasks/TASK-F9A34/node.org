@@ -1,0 +1,25 @@
+#+title: orgasmic task TASK-F9A34
+#+orgasmic_version: 2
+
+* CANCELLED TASK-F9A34 App crashes with "undefined is not an object (evaluating 't.sections.map')" error boundary
+:PROPERTIES:
+:ID: TASK-F9A34
+:PRIORITY: P2
+:READ_SCOPE: ui/src/**
+:TEST_CMD: cd ui && npm test
+:WRITE_SCOPE: ui/src/**
+:END:
+
+Reported by the user 2026-07-29 from a running app build: the desktop window renders the top-level error boundary ("Something went wrong!") with the minified message `undefined is not an object (evaluating 't.sections.map')`, blank behind the banner — so a top-level view crashes during render, not an isolated panel. `t` is a bundler-renamed local; the real signal is `.sections.map` on undefined. Unguarded call sites of that shape: NodeDocEditor.tsx:41 (`toDraft`, `doc.sections.map`) and :63 (`effectiveFields`), and PromptStudioView.tsx:423 (`layered.sections.map`); the same pass should check `doc.properties.map` (NodeDocEditor.tsx:42) and `parseOrgSourceNodes(...).sections.find` (node-views/orgNodes.ts:89,111). Wanted: which payload actually produces the undefined and why (daemon response shape, render-before-load, or version skew), a fix at that source rather than a `?.` at the call site, a regression test for the payload shape that crashed, and enough context in the error boundary (view/component name) that the next minified crash is diagnosable without guessing.
+
+** Description
+See the task body above.
+
+** Evidence
+
+
+** Suspects
+
+
+** Acceptance
+

@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-3J1YB
+#+orgasmic_version: 2
+
+* BACKLOG TASK-3J1YB NativeRuntimeMeta.credential_mode agrees across the recovery-claim round trip by coincidence of matching None literals
+:PROPERTIES:
+:ID: TASK-3J1YB
+:PRIORITY: P3
+:END:
+
+From TASK-QRTT8's audit (2026-07-29): Lifecycle::NativeRuntime has no credential_mode field (session.rs:422-431), so recovery_claim.rs:1730 and :2043 hard-code None when rebuilding NativeRuntimeMeta from a session, and api.rs:8303 hard-codes the same None into planned_native_runtime. The two sides of the claim-verification != agree BY COINCIDENCE of matching literals, with no test pinning that they must. If either side ever starts carrying the real mode (the claude adapter already writes Some into the meta at launch), claim verification silently starts rejecting valid claims. Ask: either persist the mode in Lifecycle::NativeRuntime so both sides carry the truth, or pin the current both-None normalization with a test naming the invariant and a comment at each literal pointing at the other. Small; the value is that the coincidence stops being silent.
+

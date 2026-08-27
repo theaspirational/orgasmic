@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-MSYN4
+#+orgasmic_version: 2
+
+* IN_REVIEW TASK-MSYN4 Machine identity + ledger sync loop over the git remote :twcp9:distributed:
+:PROPERTIES:
+:ID: TASK-MSYN4
+:PRIORITY: P1
+:DEPENDS_ON: TASK-LBRX7 TASK-EPG6H
+:END:
+
+** Description
+TWCP9 decision, step 2. Mint a stable machine-id per daemon. Project tx/ files become per-machine (`machines/<machine-id>/tx/YYYY-MM.org`); the activity fold reads the union (it is file-order independent). Daemon sync loop on the ledger worktree: coalesced auto-commit, `pull --rebase`, push, retry on race — all machine writes stay inside `machines/<machine-id>/` plus claim-gated node dirs, so rebases can never hit content conflicts. Event hygiene: every event carries a globally unique id + actor + machine-id + timestamp; ingest deduplicates retries; rejected events are preserved for inspection, never silently dropped.
+** Acceptance
+- [ ] two daemons (test harness) sync through a bare remote with zero conflicts under concurrent writes
+- [ ] push race resolves by rebase+retry (test forces a non-fast-forward)
+- [ ] duplicate event submission is deduplicated by event id (test)
+- [ ] rejected events land in an inspectable location with a reason
+- [ ] single-machine projects behave unchanged (no remote configured → sync loop idles)
+

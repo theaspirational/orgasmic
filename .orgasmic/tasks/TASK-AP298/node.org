@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-AP298
+#+orgasmic_version: 2
+
+* BACKLOG TASK-AP298 An admitted-but-unchecked preflight leaves no trace in the dispatch's own evidence (RunMeta/tx)
+:PROPERTIES:
+:ID: TASK-AP298
+:PRIORITY: P2
+:END:
+
+From TASK-GEZHQ (2026-07-29): when the credential probe cannot answer (timeout/spawn failure), the dispatch is admitted per dec_7P79C and GEZHQ's WARNs reach the daemon log — but RunMeta and the tx record still say only that the plan was pinned, not that the probe never answered. A run that dies at startup should be able to say 'admitted without a credential check' from its own record, without the operator correlating daemon-log timestamps. Add the unchecked-admission fact to the dispatch's own evidence surface (RunMeta field or tx annotation), so post-mortems read it where they already look. Keep dec_7P79C intact: this is observability, not a new rejection path. Injection per TCTTD standard: natural red = a probe-timeout dispatch whose run record contains no trace of the unchecked admission.
+

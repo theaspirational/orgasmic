@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-AQMTA
+#+orgasmic_version: 2
+
+* DONE TASK-AQMTA Daemon: /graph/layout endpoint over graph_layout.org overlay :daemon:graph:
+:PROPERTIES:
+:DEPENDS_ON: TASK-Z30V0
+:ID: TASK-AQMTA
+:IMPLEMENTS: arch_M8JQT
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-core/src/schema.rs
+:END:
+
+Description: Persist and serve the layout overlay (term_5N4M6) decided in dec_WWAHT. Overlay-only: never persists topology.
+
+Acceptance Criteria:
+- On-disk format .orgasmic/graph_layout.org: one heading per intentionally-placed node id, geometry/curation in the property drawer (:X: :Y: :W: :H: :HIDDEN: :PINNED:). Parsed by the core org engine; missing file = empty overlay.
+- GET /graph/layout?project= returns the overlay as JSON (map node id -> {x,y,w,h,hidden,pinned}).
+- PATCH /graph/layout upserts one node's entry through the flocked org writer (reuse upsert_property / the direct-edit writer); concurrent writes safe.
+- Pruning of entries for nonexistent node ids is optional cleanup, not required for correctness.
+- Tests: PATCH then GET round-trips one node; two PATCHes to different nodes do not conflict. cargo test -p orgasmic-daemon.
+** Evidence
+Merged as 0e5b21e (worker commit 65036ce, implementer-claude-rmux/sonnet-4-6). core: GraphLayoutEntry (x/y/w/h Option<i64>, hidden/pinned Option<bool>) + parse_graph_layout_overlay(&OrgFile)->HashMap keyed by :ID:, re-exported from lib.rs. api.rs: /graph/layout GET (missing file -> {}) + PATCH (partial upsert via OrgRewriter::upsert_property for existing nodes; render_layout_heading + layout_file_append for new; re-parse validation; flocked writer.rewrite_file). On-disk: "* LAYOUT <id>" with :X:/:Y:/:W:/:H:/:HIDDEN:/:PINNED:. New tests tests/graph_layout.rs: patch_then_get_roundtrips_one_node + two_patches_to_different_nodes_do_not_conflict, both pass. Gates (manager-verified post-merge): cargo test -p orgasmic-daemon green except the pre-existing skill_routes failure; clippy -p orgasmic-daemon -p orgasmic-core -D warnings clean. Scope note: touched core/lib.rs (re-export, a necessary consequence) beyond the declared schema.rs; index.rs not needed. Worker-disclosed limitation: concurrent (not sequential) PATCH read-modify-write could lose a concurrent update to a different node - matches the existing daemon org-write pattern; sequential PATCH (the AC) is safe. Reviewer-claude-rmux pass pending.
+Reviewer pass: reviewer-claude-rmux (opus-4-8), run ...f1b60a, REQUESTED_CHANGES. Confirmed good: overlay-only invariant, project scoping (matches get_graph_nodes), missing-file behavior, parser edge cases, no path-traversal. Findings: (MED) patch_graph_layout read-modify-write is OUTSIDE the writer flock so concurrent PATCHes to different nodes can lose an update - AC says "concurrent writes safe", existing tests only cover sequential; (LOW) node_id interpolated into org unvalidated (contained: bearer-auth, fixed path, overlay-only); (LOW) create writes HIDDEN/PINNED f vs partial-update leaving them None. Manager decision: fix (AC requires it; clean atomic-RMW fix exists; daemon-only so parallelizable with JH9DD). Tracked as TASK-3VEM8 (:PARENT_TASK: TASK-AQMTA, :FIX_SUBTASK: t), in flight. AQMTA -> DONE once TASK-3VEM8 lands.
+Concurrency hardening TASK-3VEM8 merged 4334bbf (atomic RMW in writer + node_id validation + curation symmetry, with an 8-round concurrent-PATCH test). AQMTA AC "concurrent writes safe" now satisfied. TASK-AQMTA DONE.
+

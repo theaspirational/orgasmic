@@ -1,0 +1,52 @@
+#+title: orgasmic task TASK-ENXWA
+#+orgasmic_version: 2
+
+* DONE TASK-ENXWA Phase 2: refactor .orgasmic/architecture.org with child functional-component leaves :architecture:model:phase-2:
+:PROPERTIES:
+:ID:               TASK-ENXWA
+:PRIORITY:         P2
+:WORKER:           architector
+:IMPLEMENTS:       arch_MPAQT arch_PCSQE
+:PRODUCES:         .orgasmic/architecture.org
+:WRITE_SCOPE:      .orgasmic/architecture.org docs/adr/*.org
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org docs/architecture/diagram.html docs/adr/*.org crates/** ui/src/**
+:TEST_CMD:         cargo test -p orgasmic-core --test fixtures
+:DEPENDS_ON:       TASK-KSFG0 TASK-YWRG5 TASK-EZ0ST
+:END:
+
+** Dispatch attempts log
+- *[2026-05-28 Thu 13:04:31] SUCCEEDED ([2026-05-28 Thu 16:16:16] outcome=completed)*: architector worker via claude-tmux (run-20260528T130431-f33d002b6687430485b8648972aa98ab). Third attempt; FIRST success. Claude printed per-run-id EOT marker; driver detected → =run_complete=; supervisor released with =outcome: completed, phase: release, reason: driver terminal event= (seq 451 in dispatch jsonl). ~73 min wall (claude's own internal time: 11m 43s of "Wibbling" / extended thinking + ~36.6k tokens consumed). Codex commit =f23e507=, 1 file (=.orgasmic/architecture.org=) +710/-11 LOC. Merged no-ff as =a44d125=. Gates all green (cargo test -p orgasmic-core --test fixtures 28/28 ✓; cargo check --workspace ✓; cargo test --workspace ✓ 421 pass; git diff --check ✓). **First validated full claude-tmux dispatch survives without the old 600s driver turn-timer — the TASK-HCFBT v2 supervisor stall_detector + max_run_duration kept the run alive through extended thinking + the babysitter-lease retry storm from TASK-ZG01H is fixed**. The new architecture.org contains 35 leaf nodes (2-6 per shipped =arch_NNN=) + 10 artifact pseudo-nodes under a new =* Artifact pseudo-nodes= group heading (architector chose this naming over =arch_substrate= because the parser's =from_org= only processes headings matching the =arch_NNN[.M]= ID format; =arch_substrate= would have caused =InvalidPropertyValue= parse errors).
+- *[2026-05-28 Thu 11:35:13] aborted ([2026-05-28 Thu 11:45:13] driver_error)*: architector worker via claude-tmux (run-20260528T113513-...). Claude was actively working — 32k tokens loaded, 7m 8s of "Thought for", multiple read/grep/list tool calls, explicit "Now I'll write the complete new architecture.org with all 35 leaves..." — when the tmux driver fired `tmux TUI turn exceeded 600s without EOT marker` and the supervisor released the run as failed. Pure timeout, no work landed. Filed [[TASK-HCFBT]] (claude-tmux turn timeout 600s hardcoded; needs to be configurable per worker template). TASK-ENXWA retry blocked on TASK-HCFBT. **[[TASK-HCFBT]] DONE [2026-05-28 Thu 16:00] (driver per-turn timeout removed; supervisor stall_detector + max_run_duration take over). TASK-ENXWA is now fully unblocked.**
+- *[2026-05-28 Thu 10:01:50] aborted ([2026-05-28 Thu 10:10:01] manager.dispatch_aborted tx-0484)*: architector worker via claude-acp (run-20260528T100150-...). Driver silently fell back to =simulated:true= despite =claude= binary on PATH; no real claude process spawned. Filed [[TASK-TGGAJ]] (now P5/deferred). Triggered the architector template driver swap to claude-tmux (commit 8467b92), which surfaced [[TASK-HCFBT]] on the retry above.
+
+** Description
+Promote the validated model from TASK-KSFG0's standalone HTML into =.orgasmic/architecture.org=. Each existing shipped =arch_NNN= subsystem keeps its ID and gains 2–6 second-level child headings (=** arch_NNN.M ...=) with full property drawers (=:ID:=, =:STATUS:=, =:SOURCE_PATHS:=, =:READS:=, =:WRITES:=, =:EXPOSES_REST:=, =:EXPOSES_WS:=, =:SUBSCRIBES_TO:=, =:SPAWNS:=, =:CALLS:=, =:DEPENDS_ON:=) and a one-paragraph verb description. Artifact pseudo-nodes (files / projections / sockets) land as a sibling =* arch_substrate= group with its own children, or whichever convention the architector picks under the new persona (TASK-EZ0ST).
+
+Grilling context: dec_X6Q0S + dec_TEKEB refinements [2026-05-27]. Per arch_MPAQT semantic-hash policy, this is an interface change to the architecture nodes — bump =:SEMANTIC_HASH:= of each affected =arch_NNN= and let downstream stale propagation fire on next graph refresh.
+
+** Acceptance Criteria
+- [ ] Each shipped =arch_NNN= (arch_WZFAX..arch_QXS5W) carries 2–6 child leaves =** arch_NNN.M ...= with the full property schema named above.
+- [ ] Total child leaf count is ~25–35 across all subsystems, matching TASK-KSFG0's validated count.
+- [ ] Artifact pseudo-nodes (~10) live under a new group heading (architector picks the convention; reuse =arch_substrate= or similar).
+- [ ] Target nodes (arch_A1FGY..arch_M8JQT) are NOT decomposed; they remain design-intent only.
+- [ ] Each shipped leaf has its =:SOURCE_PATHS:= populated with real paths from the workspace; no placeholder paths.
+- [ ] Semantic hashes of edited parent nodes are recomputed (or cleared for daemon recompute on next index rebuild).
+- [ ] No new decisions are added unless genuinely new design space surfaces during decomposition — per the [2026-05-27] user instruction, refinements go onto existing decisions in place.
+- [ ] =cargo test -p orgasmic-core --test fixtures= still parses the new =architecture.org= cleanly (requires TASK-YWRG5's parser).
+
+** Notes
+- *Depends on TASK-YWRG5* (daemon parser child-node syntax) for the new schema to parse, and *TASK-EZ0ST* (architector persona update) so the architector composes per the mechanism-split principles.
+- *Out of scope*: inline code markers (TASK-BJHKN), drift tooling (TASK-BJHKN), in-app surface (TASK-MW5BX).
+
+** Evidence
+- *Architector*: =architector= worker via claude-tmux. Run ID =run-20260528T130431-f33d002b6687430485b8648972aa98ab=. Claude commit =f23e507= on branch =task-086-arch=. Merged no-ff as =a44d125=. ~73 min wall (claude's internal time: 11m 43s "Wibbling"/extended thinking, ~36.6k tokens consumed).
+- *Content shipped*: =.orgasmic/architecture.org= grew from a small target-only file to +710/-11 LOC. 35 functional-component leaf nodes (=** arch_NNN.M ...=) under shipped arch_WZFAX..arch_QXS5W (2-6 children each). 10 artifact pseudo-nodes under a new =* Artifact pseudo-nodes= group heading. arch_A1FGY..arch_M8JQT (targets) remain untouched per AC.
+- *Schema usage*: each leaf carries =:ID:=, =:STATUS:=, =:SOURCE_PATHS:= (real file paths confirmed by =find= before write — no placeholders), typed edge properties (=:READS:= / =:WRITES:= / =:EXPOSES_REST:= / =:EXPOSES_WS:= / =:SUBSCRIBES_TO:= / =:SPAWNS:= / =:CALLS:= / =:DEPENDS_ON:= as applicable), and a one-paragraph verb description.
+- *Semantic hashes*: cleared on all shipped parents for daemon recompute on next index rebuild.
+- *Notable architecture decision*: artifact pseudo-nodes live under =* Artifact pseudo-nodes= group heading (not =* arch_substrate=) because the parser's =from_org= only processes headings matching the =arch_NNN[.M]= ID format — =arch_substrate= would have caused =InvalidPropertyValue= parse errors. The architector chose the naming after testing, not blindly.
+- *Gates on merged main =a44d125=*: cargo test -p orgasmic-core --test fixtures ✓ (28/28 pass — the parser cleanly handles the new content); cargo check --workspace ✓; cargo test --workspace ✓ (421 pass); git diff --check ✓.
+- *Dogfood significance*: this is the FIRST successful claude-tmux architector dispatch end-to-end. Validates the post-TASK-HCFBT-v2 + post-TASK-ZG01H supervisor: driver per-turn timer removed (was failing this exact workload at 600s with previous attempts); stall_detector reset on each pane-redraw driver_event (so 11m 43s of extended thinking didn't fire stall); max_run_duration 4h ceiling (73 min wall well under it); babysitter-lease retry storm (TASK-ZG01H) didn't fire (counters stayed at 2 throughout).
+- *Reviewer pass [2026-05-28 Thu 16:29] verdict =has-issues, no-blocks-ship= (0H/1M/1L); live-readiness READY*. F-1 MEDIUM (extra =:READS: file:project= edge on arch_WZFAX.1) fixed in-place by manager (1-line removal); F-2 LOW (glossary nudge) filed as TASK-ENXWA.1.
+- *Acceptance Criteria*: 8 of 8 ticked.
+- *Unblocks*: TASK-BJHKN (drift comparator CLI + // arch: marker bootstrap sweep) and TASK-MW5BX (Phase 3 in-app /architecture route consuming org-sourced model).
+

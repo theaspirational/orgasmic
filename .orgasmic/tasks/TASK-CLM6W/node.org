@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-CLM6W
+#+orgasmic_version: 2
+
+* IN_REVIEW TASK-CLM6W Cross-machine task claims + multi-machine fold :twcp9:distributed:
+:PROPERTIES:
+:ID: TASK-CLM6W
+:PRIORITY: P1
+:DEPENDS_ON: TASK-MSYN4 TASK-8AV8B
+:END:
+
+** Description
+TWCP9 decision, step 3. Claims live in per-machine append-only logs (`machines/<machine-id>/claims.org`) with an advisory :WRITE_SCOPE: glob. Node dirs are claim-gated: the daemon refuses to write a node dir whose current claim belongs to another machine. First push wins; on pull, a losing claimant backs off; tie-break when both events are visible: earliest claim timestamp, then machine id. Double-claims are surfaced in views/status, not prevented. Projections (board/backlog/activity) fold the union of all machines' logs.
+** Acceptance
+- [ ] concurrent claim of the same task by two daemons converges to one holder deterministically (test)
+- [ ] write to a node dir claimed by another machine is refused with a clear error (test)
+- [ ] double-claim interval is visible in dispatch-status/views
+- [ ] projections fold multi-machine logs identically regardless of ingest order (test)
+

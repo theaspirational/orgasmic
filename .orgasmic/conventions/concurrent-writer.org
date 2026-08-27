@@ -1,0 +1,87 @@
+#+title: concurrent-writer
+#+orgasmic_version: 1
+
+* Convention: concurrent writers (operator + manager + second manager)
+
+How the manager keeps `.orgasmic/` and `git` coherent when it is not the only
+writer. The operator commits directly to main — code, task headings, daemon
+binaries, their `shipped/` working area — while the manager is live and also
+writing state; and a second manager session may be running. Collisions are not
+prevented by locking out a human; they are detected and reconciled. This sits on
+top of the mechanical layer in [[file:../decisions.org][dec_SSJVD]] (leases before
+tokens, WRITE_SCOPE rejection, daemon-sequenced IDs).
+
+** Stance: detect and reconcile, never prevent
+The manager cannot stop a human from moving HEAD or the working tree. Assume it
+can happen at any moment. The contract is detection + clean reconciliation, not
+exclusion. This stance covers the HUMAN lane only — agent writes are
+daemon-mandatory per dec_ZQJPA; detection lints back both.
+
+** Liveness is the reconciliation anchor
+- `tasks/handoff.org` `:LIVENESS:` records the SHA the manager last reconciled
+  to. Re-check `git log <LIVENESS>..HEAD` at every `recall`/`resume` AND before
+  any state-mutating burst — not just at session start.
+- Drift (HEAD past `:LIVENESS:` on commits the manager didn't make) means the
+  operator or another session committed. Reconcile IN PLACE: read the diff, fold
+  it into `** Done so far`, bump `:LIVENESS:` to HEAD. Never replay, duplicate,
+  or rewrite an operator commit — fold it in and move on.
+
+** Ownership lanes
+Write your own lane freely; coordinate on shared surfaces.
+- *Operator owns*: source code, the `shipped/` working area, daemon binaries,
+  and may add or edit task headings via their own commits.
+- *Manager owns*: `tasks/handoff.org` (continuity), the tx log (through the
+  daemon), lifecycle stage flips, and dispatch.
+- *Shared — coordinate*: `tasks/sprint.org` task content, `decisions.org`,
+  `tasks/goal.org` (operator sets intent; manager keeps it thin).
+
+** Manager rules
+- *Explicit-path staging only.* Never `git add -A` / `git add .` / `git commit
+  -a`. Stage the exact paths you authored. This is the single most important
+  rule: it stops a manager commit from sweeping in the operator's concurrent
+  WIP.
+- *Verify-then-attribute.* Before committing or calling a change yours, confirm
+  the diff is actually yours (`git diff --stat`, scope it to files you touched).
+  A change in a file you didn't edit is the operator's — leave it unstaged,
+  surface it, do not attribute it.
+- *Stand down on collision.* If the operator is editing or has committed a file
+  in your active scope (uncommitted changes you didn't make, a branch switch, a
+  force-moved HEAD), stop, surface it, and do not overwrite. Operator edits win.
+- *Hold daemon restarts/rebuilds while the operator's tree or HEAD is moving.*
+  A restart drops in-flight runs and can interrupt the operator's own daemon
+  work. A stale daemon binary is usually fine for dispatch (workers review/edit
+  in worktrees, not via the daemon binary); confirm before restarting, and say
+  what the stale binary lacks.
+- *Allocate IDs through the daemon when reachable* (dec_SSJVD): CLI/daemon
+  sequencing closes the two-writers-pick-`TASK-W43NY` class; `max+1`-by-eye is the
+  single-writer fallback only. Subtask IDs (`parent.N`) are deterministic and
+  collision-free.
+- *All code work is worktree-isolated.* Workers branch from HEAD into
+  `/tmp/orgasmic-worktrees/<task>` and merge back `--no-ff` with explicit-path
+  staging; they never touch the operator's checkout. Keep parallel WRITE_SCOPEs
+  disjoint.
+
+** Two live managers
+- At most one ACTIVE dispatching manager. A second session runs observer-mode —
+  no `.orgasmic/` state writes, no daemon restarts — until the first stands
+  down, then splits ownership explicitly in handoff `** Divergence`.
+- *Branch-switch-under-the-manager*: if the operator branches and leaves the
+  checkout on the new branch, manager state commits ride that branch; do not
+  rewrite the operator's branch or duplicate merges onto main.
+
+** Operator hygiene (the human half)
+Minimise collisions from the human side:
+- Land WIP as coherent commits rather than leaving a large uncommitted tree the
+  manager must tiptoe around — a commit reads as clean drift, mid-write does not.
+- When taking over a file the manager is actively working, say so (or expect the
+  manager to stand down on the next check).
+- Add tasks through the CLI/daemon when possible; if hand-editing `sprint.org`,
+  do it in a commit so the manager sees drift, not a half-written heading.
+
+** What already enforces this (pointers, not duplication)
+- Liveness SHA + drift check: `recall`/`resume` bootstrap.
+- `(task, kind)` leases + WRITE_SCOPE overlap rejection at dispatch: dec_SSJVD.
+- Daemon as sole write authority for tx/state: dec_WH9PD / project.org.
+- Daemon-sequenced ID allocation: dec_SSJVD, TASK-GBT5W.
+- Read-time structural lint catching hand-written org drift: TASK-HC7PW/.1.
+- Worktree isolation: `manager-dispatch` convention.

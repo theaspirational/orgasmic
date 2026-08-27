@@ -1,0 +1,188 @@
+#+title: orgasmic task TASK-0RCRY
+#+orgasmic_version: 2
+
+* DONE TASK-0RCRY No tmux call site passes -L/-S, so every probe and test session shares one server — on a dev box, the operator's own :daemon:drivers:tmux:testing:
+:PROPERTIES:
+:ID: TASK-0RCRY
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-drivers/**,crates/orgasmic-daemon/**,.orgasmic/gotchas.org
+:END:
+
+**This task was filed on 2026-07-28 with a wrong diagnosis and rewritten the same
+day.** The original claim — that workers inherit the daemon's `$TMUX` and so
+reach the rmux server — is false and is recorded as such in
+tx-20260728-orgasmic-3226. What survives is a narrower, measured problem.
+
+=== What was measured, and what it ruled out
+
+Filed after a TASK-1T3FZ dispatch reported six daemon failures with
+`tmux new-session failed (exit 1): server exited unexpectedly` and
+`required test tooling is missing: tmux (gates 6 tests)`.
+
+Ruled out, each by direct measurement:
+
+- *The daemon does not carry `TMUX`.* `ps eww 32814` shows none. (The earlier
+  contrary reading came from `pgrep` matching a worker's prompt text instead of
+  the daemon; the pid was a claude worker, not the daemon.)
+- *A worker's tmux calls are not broken.* rmux creates the worker's pane, sets
+  `TMUX=/private/tmp/rmux-501/default,...`, and prepends a shim directory in
+  which `tmux` is a symlink to `rmux`. Under the exact worker `PATH` + `TMUX`,
+  `tmux new-session -d -s … -- sleep 1` exits **0**.
+- *It is not environmental at all.* `supervisor::tests::required_test_tooling_is_present`
+  passes in isolation in both the manager environment and a replicated worker
+  environment (0.04 s / 0.03 s).
+- *It is not worker-specific.* A full `cargo test -p orgasmic-daemon --lib` in
+  the **manager** environment — no shim, no `TMUX` — reproduced three of the
+  worker's six failures identically: `production_resume_native_fork_uses_pinned_claude_not_path_shim`,
+  `recovery_reattaches_tmux_session_when_handle_exists`, and
+  `two_recovery_chain_second_resume_uses_first_fork_session_id`
+  (528 passed, 5 failed, 451 s).
+
+So these are **full-suite concurrency failures — the TASK-STWVB family** — and
+this task is not about a worker/manager divergence. The RRT4T/R2HDN open question
+is still open, and is now *more* open, because the leading candidate is gone.
+
+=== The real, narrower defect
+
+No tmux call site anywhere passes `-L` or `-S`
+(`crates/orgasmic-drivers/src/modes/tmux.rs:1506`, `:2489`, `:3730`). Every
+probe, every test session, and every production call therefore shares **one tmux
+server** — whichever the environment selects. Concurrent tests create, query and
+reap sessions on that single shared server, and on a developer machine it is the
+same server the operator's own sessions live on.
+
+`server exited unexpectedly` under a full-suite run, from a server that was
+verified alive throughout (pid 32723, up since 13:32, still running at 15:1x), is
+consistent with contention on that shared server rather than with a missing or
+broken tmux.
+
+=== Ask
+
+- Give the test path an owned server: an explicit `-L <socket>` per test binary
+  (or per test), so no test can reach a server it did not create, and so a
+  developer's own tmux sessions are never touched by a test run.
+- Decide separately, and state, whether production call sites should pin a
+  socket too. An operator running the daemon inside tmux is the mirror image of
+  this and would be a product bug, not a test bug.
+- Make the diagnostic name the cause. `tmux test session should start` and
+  `required test tooling is missing: tmux` are both true and both useless when
+  tmux is installed, on PATH, and working — the message should name the server it
+  tried and how that server was selected.
+
+=== Acceptance
+
+- The tmux-gated daemon tests use a server the test run owns, and a concurrent
+  full-suite run does not produce `server exited unexpectedly`.
+- Reproduce first: show the contention on the shared server before the fix.
+  If it cannot be reproduced, say so plainly rather than shipping a speculative
+  isolation change — that is precisely the mistake this task's first version made.
+- Sessions created on the owned server are reaped. TASK-Z3093's guard covers
+  rmux sessions, not a new tmux socket; say which mechanism reaps this one.
+- The three failures that reproduce in the manager environment are re-run after
+  the change and their status reported honestly, whether or not this fixes them.
+
+=== Relationship to TASK-STWVB
+
+STWVB is "four daemon tests fail on every full-suite run and pass alone". This
+measurement says the set is at least five and includes the tmux-session-start
+failures. If the socket isolation here does not fix them, that is a genuine
+result and STWVB keeps them; do not widen this task into STWVB's investigation.
+
+=== Non-goals
+
+- Do not weaken the TASK-RRT4T sentinel to make the red go away. The red is
+  correct — the tests really did not run.
+- Do not use `ORGASMIC_ALLOW_MISSING_TOOLS` to paper over this. A contended
+  server is not a missing tool, and the waiver would recreate the silent skip.
+
+** Measured, one variable, 2026-07-28
+
+The daemon runs inside an rmux pane and therefore carries rmux's `TMUX` in its
+own environment:
+
+```
+$ ps eww 30834 | tr ' ' '\n' | grep ^TMUX=
+TMUX=/private/tmp/rmux-501/default,32723,751
+```
+
+Every dispatched worker inherits it. A tmux client with `$TMUX` set and no
+`-L`/`-S` connects to the socket named in `$TMUX` — which is the **rmux**
+server's socket, and rmux is a tmux fork with an incompatible protocol version.
+
+```
+$ TMUX=/private/tmp/rmux-501/default,32723,751 tmux new-session -d -s p -- sleep 1
+server exited unexpectedly
+EXIT=1
+
+$ env -u TMUX tmux new-session -d -s p -- sleep 1
+EXIT=0
+```
+
+Same binary (tmux 3.6a), same host, same user, same TMPDIR. The only difference
+is the inherited variable.
+
+** Scope, measured rather than assumed
+
+- `rmux` under the same inherited `TMUX` exits **0** — matching binary, matching
+  socket. So the 7 rmux-gated tests do run in workers, and the rmux half of the
+  RRT4T story was never the problem.
+- The class is **tmux-only: 6 gated tests**
+  (`crates/orgasmic-daemon/src/supervisor.rs:6941`,
+  `ToolRequirement::new("tmux", 6, tmux_spawn_usable_for_test().await)`).
+- Observed live in the TASK-1T3FZ dispatch: `required test tooling is missing:
+  tmux (gates 6 tests); gated tests did not run`, with
+  `recovery_reattaches_tmux_session_when_handle_exists`,
+  `failed_terminal_with_live_tmux_never_offers_reattach`,
+  `boot_reattach_respawns_dispatch_completion_watcher_without_artifacts`,
+  `production_resume_native_fork_uses_pinned_claude_not_path_shim` and
+  `two_recovery_chain_second_resume_uses_first_fork_session_id` all failing on
+  `tmux test session should start`. Before TASK-RRT4T's sentinel these skipped
+  **silently** — which is precisely the historical divergence.
+- No probe and no production call site passes `-L` or `-S`
+  (`crates/orgasmic-drivers/src/modes/tmux.rs:1506, 2489, 3730`), so all of them
+  inherit whatever server `$TMUX` names.
+
+** Ask
+
+1. **Isolate the tmux server the tests use.** A test that means to exercise tmux
+   should not be able to reach whatever server happens to host the daemon. Give
+   the test path an explicit `-L <socket>` (or clear `TMUX` for the spawn), so
+   the probe and the tests it gates talk to a server they own. Decide and state
+   whether production tmux calls should do the same — an operator running the
+   daemon inside tmux hits the mirror image of this, and that is a product bug,
+   not a test bug.
+2. **Make the diagnostic name the cause.** `tmux test session should start` and
+   `required test tooling is missing: tmux` are both true and both useless here:
+   tmux is installed, on PATH, and working. The failure text should say the
+   server it tried, and that `$TMUX` selected it.
+3. Reconcile `.orgasmic/gotchas.org`. R2HDN correctly demoted the PATH claim to a
+   simulation and recorded the open question. Replace the open question with this
+   measurement.
+
+** Acceptance
+
+- The 6 tmux-gated daemon tests pass inside a dispatched worker. Prove it by
+  dispatching, not by reasoning — that is the whole point of this task.
+- Reproduce first, the way it was found: set `TMUX` to a foreign server's socket,
+  show the probe failing, apply the fix, show it passing.
+- The manager path stays green; isolating the socket must not make tests reach a
+  server they then leak. Whatever sessions the tests create are still reaped —
+  TASK-Z3093's guard covers rmux sessions, not a new tmux socket.
+- State whether production call sites were changed and why.
+
+** Why this matters beyond the six tests
+
+Every dispatched worker has been reporting a green tmux lane it never ran, for
+as long as the daemon has been hosted in an rmux pane. The sentinel from
+TASK-RRT4T is what made it visible; this is the first dispatch where a worker
+reported the failure honestly instead of a silent skip. Any conclusion drawn from
+a worker's daemon-suite count before 2026-07-28 should be treated as excluding
+these six tests.
+
+** Non-goals
+
+- Do not weaken the sentinel to make the red go away. The red is correct.
+- Do not change `ORGASMIC_ALLOW_MISSING_TOOLS` semantics; a foreign tmux server
+  is not a missing tool, and papering over it with the waiver would recreate the
+  silent skip this task exists to end.
+

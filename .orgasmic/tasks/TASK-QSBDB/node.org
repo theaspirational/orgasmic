@@ -1,0 +1,53 @@
+#+title: orgasmic task TASK-QSBDB
+#+orgasmic_version: 2
+
+* DONE TASK-QSBDB cursor-agent tool-policy too restrictive for verify-style dispatches (-C flags, cross-cwd reads, kill commands blocked) :drivers:cursor:subprocess-stream-json:tool-policy:bug:dx:
+:PROPERTIES:
+:ID:               TASK-QSBDB
+:PRIORITY:         P3
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-drivers/src/adapters/cursor.rs crates/orgasmic-drivers/tests/driver_modes.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/adapters/cursor.rs crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs crates/orgasmic-drivers/tests/driver_modes.rs
+:READ_SCOPE:       crates/orgasmic-drivers/src/r#trait.rs
+:TEST_CMD:         cargo test --workspace
+:CLOSED_AT:        [2026-05-28 Thu 09:40]
+:MERGE_SHAS:       c92f024 69becf2
+:END:
+
+** Description
+TASK-C7ZG5 salvage attempt via =implementer-cursor= (run =run-20260526T080356-...=) stalled because orgasmic's cursor-agent tool-policy filter blocked operations that are perfectly reasonable for a verify-style task:
+
+- =read /tmp/orgasmic-codex/task-078-brief.md= — reading the canonical brief (outside the worker cwd) was blocked
+- =git -C /tmp/orgasmic-worktrees/task-078 diff HEAD= — git operations with absolute =-C= flags were blocked
+- =grep --glob '**/*.rs' --path /private/tmp/orgasmic-worktrees/task-078/...= — cross-cwd grep blocked
+- =kill 66894 66904 2>/dev/null= — process cleanup commands blocked (cursor's own stale cargo-test pids)
+- =await {regex: "test result", taskId: ...}= — cursor-agent's structured wait helper blocked
+
+Cursor logged ~19 "ignored by orgasmic tool policy" chunks before getting stuck on a hanging cargo-test process it couldn't kill. It eventually managed to run =cd /tmp/orgasmic-worktrees/task-078 && cargo test --workspace= (using =cd= instead of =-C=, which apparently passed the filter), and that test run did succeed — but the rest of the verify workflow (read the brief to confirm what to verify, =git diff= to see what was implemented, cleanup of stale procs) was systematically blocked.
+
+The policy filter likely lives in =crates/orgasmic-drivers/src/adapters/cursor.rs= where the cursor-agent stream-json events are parsed and routed. The intent of the filter is probably reasonable (prevent the worker from escaping its cwd), but the current heuristic is too coarse — it conflates "scary cross-cwd op" with "legitimate read of the brief that the worker was just told to read".
+
+** Acceptance Criteria
+- [ ] *F-1 narrow the filter.* Identify which tool-call patterns the cursor adapter is filtering and document the current rules in a comment block at the filter site. Then narrow as follows:
+  - Allow =read= of any path under =/tmp/orgasmic-codex/= (briefs) AND the worker's =:WORKTREE:= (= the cwd that was passed to the harness).
+  - Allow =shell= commands of the form =git -C <abspath> <...>= when =<abspath>= equals the worker's =:WORKTREE:= (i.e., the worker is operating on its own cwd via the absolute path; equivalent to =cd <cwd> && git <...>=).
+  - Allow =grep= and =find= when the search root is the worker's =:WORKTREE:= (use the same prefix-equality check).
+  - Allow =kill= / =pkill= when the target pid was previously spawned by the worker (track via the cursor adapter's bookkeeping of PIDs from prior tool_call events) OR allow blanket for now (less safe but simpler).
+  - Allow cursor-agent's structured =await= helper unconditionally (it's a wait, not an exec).
+- [ ] *F-2 regression test.* Add =crates/orgasmic-drivers/tests/driver_modes.rs::cursor_tool_policy_allows_brief_read_and_worktree_git= (or similar): synthetic stream-json event simulating a =read /tmp/orgasmic-codex/...-brief.md= + =git -C <worktree> diff HEAD= + =grep --path <worktree>= — assert all three pass the filter.
+- [ ] All gates green.
+
+** Notes
+- =:FIX_SUBTASK: NOT set= — full lifecycle, but this is small (one filter narrowed in one adapter file + one test). Could realistically ship in a single short implementer dispatch.
+- *Worker for this dispatch*: =implementer-cursor= (the worker we're fixing). Cursor can edit cursor.rs as long as the tool-policy gates aren't blocking THIS dispatch's verify steps. If they are, file a TASK-QSBDB.1 fix-subtask via codex-stdio (after TASK-KFGDS ships) — circular but solvable.
+- *Out-of-scope*: don't loosen the policy to be permissive across the board; the goal is to narrow the EXISTING heuristic, not replace it with "anything goes".
+
+** Evidence
+- *Implementer pass merged as =c92f024= (codex =e390ed3=, ~12 min wall, clean codex-stdio dispatch — worker changed from implementer-cursor to implementer-codex-stdio because cursor was the thing being fixed).* 2 files +354/-6 LOC. Cursor-local policy with path-based allowlists; kept WorkerTool::TransitionState as orgasmic control-tool gate. Allowances: read under /tmp/orgasmic-codex/ + worktree, git -C <worktree>, grep/find under worktree, kill/pkill blanket, structured await unconditional. Lexical /private/tmp → /tmp normalization.
+- *Reviewer pass verdict =has-issues, blocks-ship=* via =/tmp/orgasmic-codex/task-080-review-report.md=: 1 HIGH (security) + 1 MEDIUM (security) + 1 LOW (test). F-1 HIGH: shell redirection (=<=, =>=) bypasses the policy → `git -C <worktree> diff >/etc/leak` would have passed. F-2 MEDIUM: read_args_allowed used any-candidate matching (cwd safe + target unsafe → passes); path_is_under was lexical-only (symlink traversal under /tmp/orgasmic-codex bypassed prefix check). F-3 LOW: regression tests positive-only.
+- *Fix-cluster TASK-QSBDB.{1,2,3} merged as =69becf2= (codex =313c7f6=, ~10 min wall, clean codex dispatch).* 2 files +181/-38 LOC. F-1: command_has_shell_control now treats =<= and =>= as shell control; kill/pkill specifically permits only =2>/dev/null= (preserves the narrow pid-cleanup idiom). F-2: read policy checks schema-specific target paths only (no cwd decoys); native search policy requires ALL targets under worktree; path comparisons resolve existing paths + ancestors via std::canonicalize before prefix check; lexical normalization is fallback only. F-3: =cursor_tool_policy_blocks_dangerous_cases= regression test covers host reads, unsafe git -C, redirection, cwd decoys, symlink traversal — both top-level tool_use and nested tool_call stream-json shapes.
+- *Gates on merged main =69becf2=:* cargo test --workspace ✓; cargo clippy --workspace --all-targets -- -D warnings ✓; cargo fmt --check ✓; git diff --check ✓.
+- *Cursor promoted to hardened Fallback A* in the worker ladder. Policy is now canonical-path-validated + redirection-safe + regression-tested negative cases.
+- *Dogfood scoreboard for this cluster: 6/6 PASS* (1 implementer + 1 reviewer + 1 fix-implementer + 2 dispatch-close auto-flips + 1 manual REVIEW→DONE).
+

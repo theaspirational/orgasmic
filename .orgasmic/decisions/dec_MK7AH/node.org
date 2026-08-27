@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_MK7AH
+#+orgasmic_version: 2
+
+* dec_MK7AH How should a manager session coexist with an operator committing to the same repo?    :concurrency:manager:git:workflow:
+:PROPERTIES:
+:ID:            dec_MK7AH
+:DECIDED_AT:    [2026-06-11 Thu]
+:SOURCE:        operator question 2026-06-11 ("does orgasmic have instructions for the concurrent-writer pattern") + live operator commit 1f0cc4b landing mid-session during the TASK-ZSD0B/TASK-HC7PW/TASK-KBH4B review round
+:PARENT:        dec_SSJVD
+:END:
+** Context
+The operator commits directly to main — code, task headings, daemon binaries, their uncommitted `shipped/` working area — while a manager session is live and also writing `.orgasmic/` state; a second manager session may also be running. dec_SSJVD supplied the mechanical layer (leases before tokens, WRITE_SCOPE rejection, daemon-sequenced IDs) but only for worker-vs-worker and manager-vs-manager ID collisions. The operator-commits-to-main case had no codified protocol: the discipline lived in ad-hoc handoff `** Divergence` notes (rewritten each session — "TWO LIVE MANAGER SURFACES", "BRANCH SWITCH UNDER THE MANAGER") and in cross-session agent memory, neither of which a fresh manager reading `.orgasmic/` inherits. Live instance the same session: commit 1f0cc4b advanced HEAD past the handoff `:LIVENESS:` mid-review-round; the manager detected it via liveness drift, confirmed it was disjoint from the in-flight work, folded it in, and dispatched onto it without collision.
+** Decision
+Codify the protocol as a durable convention ([[file:conventions/concurrent-writer.org][conventions/concurrent-writer.org]]). Stance: detect and reconcile, never prevent — the manager cannot lock out a human, same posture as the CLI-absent write fallback (dec_SSJVDc). Anchors: (a) `:LIVENESS:` SHA is re-checked at every recall/resume AND before any state-mutating burst, and drift is reconciled in place (fold into Done-so-far, bump LIVENESS, never replay/duplicate/rewrite an operator commit); (b) ownership lanes — operator owns code + `shipped/` + may add task headings; manager owns handoff + tx + lifecycle + dispatch; `sprint.org`/`decisions.org`/`goal.org` are shared and coordinated; (c) explicit-path staging only (never `git add -A`/`-a`), verify-then-attribute, stand down on collision; (d) hold daemon restarts while the operator's tree/HEAD is moving; (e) daemon-sequenced ID allocation per dec_SSJVD; (f) worktree isolation for all code work. Includes an operator-hygiene half (land WIP as commits, announce takeovers, allocate tasks through the CLI).
+** Consequences
+New `conventions/concurrent-writer.org` is the canonical home; dec_SSJVD keeps the mechanical-locking rationale and this record keeps the human-writer protocol. Wired so it loads exactly when drift is detected: referenced from the manager prompt-spec policy list (`shipped/prompt-studio/prompt-specs/manager.org`) and from the recall/resume liveness-drift trigger (`shipped/skills/orgasmic/references/recall-resume.md`). Revisit trigger: the day a non-operator stranger runs a second manager against the same repo, where ownership lanes need enforcement, not just convention.
+

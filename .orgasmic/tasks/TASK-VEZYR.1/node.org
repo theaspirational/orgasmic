@@ -1,0 +1,43 @@
+#+title: orgasmic task TASK-VEZYR.1
+#+orgasmic_version: 2
+
+* DONE TASK-VEZYR.1 Project selector aria-label + MORE disclosure icon-collapsed responsive :ui:a11y:responsive:fix:
+:PROPERTIES:
+:ID:               TASK-VEZYR.1
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       dec_CGVRW dec_HYD58
+:PRODUCES:         ui/src/components/ProjectSelector.tsx ui/src/components/AppShell.tsx
+:WRITE_SCOPE:      ui/src/components/ProjectSelector.tsx ui/src/components/AppShell.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-049.1-brief.md /tmp/orgasmic-codex/task-049-review-report.md
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-VEZYR
+:END:
+
+** Description
+Two low-severity reviewer findings from TASK-VEZYR bundled as a single fix-implementer round per the one-round-of-fixes discipline.
+
+*F-1 (a11y).* =ui/src/components/ProjectSelector.tsx:46-51= trigger sets =aria-label="Active project"=. Because that explicit aria-label overrides the visible text for the accessible name, screen reader users hear only "Active project" — they don't hear which project is currently selected. The selector is now the sidebar's identity and primary multi-project control; the active value must be in the accessible name.
+
+*F-2 (design).* =ui/src/components/AppShell.tsx:272-281= MORE disclosure button renders =<button>{chevron} {literal "More" text}</button>= with no =group-data-[collapsible=icon]= adaptation. The surrounding =SidebarMenuButton= items collapse to icons via shadcn's data attribute, but this hand-rolled button sits as text-mode in the 3rem icon column when collapsed.
+
+** Acceptance Criteria
+- [ ] *F-1*: =ProjectSelector= trigger's accessible name includes the active project's identifier (e.g., =aria-label={`Active project: ${activeLabel}`}= or =aria-labelledby= pattern). Screen reader announces the selected project. No regression on icon-collapsed mode rendering.
+- [ ] *F-2*: MORE disclosure adapts to icon-collapsed mode — either (a) hide the disclosure button in icon mode while keeping spoiler items visible as icon-buttons, or (b) render an icon-only toggle with tooltip and dimensions matching =SidebarMenuButton=. Pick whichever reads cleaner.
+- [ ] =cd ui && npm run build= clean (tsc --noEmit + vite).
+- [ ] =cargo test --workspace= + clippy/fmt/diff-check unchanged (no Rust touched).
+- [ ] No new deps. Stays within the 2-file WRITE_SCOPE.
+
+** Notes
+*Fix-subtask of TASK-VEZYR* — =:FIX_SUBTASK: t= set. On close, auto-transition flips IMPLEMENT → DONE (skip-review per one-round-of-fixes discipline). Then manager hand-flips TASK-VEZYR REVIEW → DONE for cluster closure.
+
+** Evidence
+- [2026-05-24 Sun 13:06] Shipped =4131c5b= on =task-049.1-impl=; merged no-ff as =5587585= on main. Codex gpt-5.5 xhigh, 2m54s wall, 124,804 tokens, session =019e5970-fc13-7c73-8c45-afa35f80b168=. =implementer.done= =tx-20260524-org-0174= via dispatch-close. **DOGFOOD #14+#15 PASS**: BACKLOG → IMPLEMENT on dispatch; IMPLEMENT → DONE via =:FIX_SUBTASK: t= shortcut (one-round-of-fixes discipline — no reviewer-of-reviewer per persona).
+- 2 files changed, +14 / -16 (exactly within WRITE_SCOPE).
+- *F-1 (a11y)*: =ui/src/components/ProjectSelector.tsx= — =aria-label="Active project"= → =aria-label={`Active project: ${activeLabel}`}=. Visible value (project id) now part of the accessible name. Icon-collapsed mode preserved (same =activeLabel= renders in both modes).
+- *F-2 (design)*: =ui/src/components/AppShell.tsx= — MORE disclosure button gains =group-data-[collapsible=icon]:hidden=; MORE items render unconditionally via =cn(!moreOpen && 'hidden group-data-[collapsible=icon]:block')=. In expanded mode, =!moreOpen= hides the items (preserves toggle gesture); in icon-collapsed mode the disclosure button hides AND items always render as icons (no more text "More" in 3rem icon column). Clean shadcn-pattern fix.
+- Verification: =cd ui && npm run build= clean. Main =index= chunk 360.83 → 360.93 kB (+0.10 kB, well within +0.5 kB limit). No new deps. Cargo workspace untouched.
+
+** Reviewer pass
+**SKIPPED per =:FIX_SUBTASK: t= one-round-of-fixes discipline.** TASK-VEZYR had its reviewer pass; 049.1 is the fix-subtask. Manager verified the diff is in-scope (2 files only) and the build is clean.
+

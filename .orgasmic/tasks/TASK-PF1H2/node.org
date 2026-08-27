@@ -1,0 +1,40 @@
+#+title: orgasmic task TASK-PF1H2
+#+orgasmic_version: 2
+
+* DONE TASK-PF1H2 Cross-check archived spec against active orgasmic state :audit:
+:PROPERTIES:
+:ID:               TASK-PF1H2
+:PRIORITY:         P1
+:WORKER:   analyzer
+:IMPLEMENTS:       arch_QFQTD arch_MPAQT arch_PCSQE arch_QXS5W
+:PRODUCES:         archive/21_05_26_spec_crosscheck/spec_to_orgasmic_audit.md .orgasmic/architecture.org .orgasmic/sprint.org .orgasmic/tx/2026-05.org
+:WRITE_SCOPE:      archive/21_05_26_spec_crosscheck/spec_to_orgasmic_audit.md .orgasmic/architecture.org .orgasmic/sprint.org .orgasmic/tx/2026-05.org
+:READ_SCOPE:       archive/21_05_26_init/spec.org .orgasmic/project.org .orgasmic/sprint.org .orgasmic/decisions.org .orgasmic/architecture.org .orgasmic/glossary.org docs/adr/*.org shipped/** crates/** ui/**
+:DEPENDS_ON:       TASK-WNC5H
+:END:
+
+** Description
+Audit the deprecated init spec against the active `.orgasmic/` project state and patch clear omissions into the graph/tasks so future implementers do not need the archive spec.
+
+** Acceptance Criteria
+- [X] Every spec decision pivot is covered by a decided decision or an intentional provenance note.
+- [X] Every decided decision is covered by at least one architecture node.
+- [X] Every architecture node is covered by at least one implementation task or completed documentation task.
+- [X] Missing nested implementation details from the spec are promoted into architecture and task acceptance criteria.
+- [X] Audit findings are saved under `archive/21_05_26_spec_crosscheck/`.
+- [X] A tx entry records the cross-check.
+
+** Evidence
+- [2026-05-21 Thu 20:03] Added `arch_QXS5W` for template, skill, and prompt compilation.
+- [2026-05-21 Thu 20:03] Expanded architecture/task details for install/update, babysitter runtime, continuation runs, CLI/API surfaces, graph events, reconciliation gates, UI graph panels, and strict prompt compilation.
+- [2026-05-21 Thu 20:03] Saved audit report at `archive/21_05_26_spec_crosscheck/spec_to_orgasmic_audit.md`.
+- [2026-05-21 Thu 20:03] Wrote tx-20260521-org-0009 with operator-authorized manual tx append.
+- [2026-05-21 Thu 20:06] Structural checks passed: 24/24 decisions covered by architecture, 11/11 architecture nodes covered by tasks, 14/14 ADR-worthy decisions have ADR files.
+- [2026-05-21 Thu 20:06] Verification passed: cargo fmt --check, git diff --check, cargo build, cargo test.
+- [2026-05-21 Thu 23:33] Normalized terminal state from =findings_recorded= to =done=; all acceptance criteria and evidence were already complete.
+
+** Worklog
+- [2026-05-21 Thu 20:03] Parsed spec headings and decision sources, checked architecture decision coverage, checked task architecture coverage, and patched promoted details.
+- [2026-05-21 Thu 20:06] Ran final structural and Rust workspace verification.
+- [2026-05-21 Thu 23:33] Closed the nonstandard terminal state so the sprint contains only done tasks.
+

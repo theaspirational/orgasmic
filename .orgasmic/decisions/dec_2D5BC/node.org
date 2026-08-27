@@ -1,0 +1,16 @@
+#+title: orgasmic decision dec_2D5BC
+#+orgasmic_version: 2
+
+* dec_2D5BC How should the daemon find harness and driver binaries under a service manager's PATH?
+:PROPERTIES:
+:ID: dec_2D5BC
+:TAGS: daemon,install,dispatch,launchd,reliability
+:PARENT: dec_SCVKG
+:END:
+
+Context: The daemon's generated service definitions set EnvironmentVariables to only ORGASMIC_HOME (crates/orgasmic-cli/src/daemon_service.rs: render_macos_launch_agent plus the systemd-unit and windows-task siblings). select_adapter_for_host keys on host platform only, so on macOS every install - regular bundle and contributor source alike - is managed by a launchd LaunchAgent. launchd then runs the daemon with PATH=/usr/bin:/bin:/usr/sbin:/sbin, so it cannot find the worker driver (tmux/rmux) or the harness (claude), and every manager dispatch comes up inert (inert_reason tmux_missing, then binary_missing:claude). This ships broken to default macOS users whose tools live in /opt/homebrew/bin, ~/.cargo/bin, ~/.local/bin, or ~/.npm-global/bin. The same minimal-PATH class affects the Linux systemd user unit and the Windows scheduled task. Editing the plist by hand does not stick: the daemon regenerates its service definition on start, and any daemon-backed orgasmic CLI call auto-starts it through the service manager.
+
+Decision: The daemon-managed service definition must make the configured harness and driver binaries resolvable, instead of relying on the OS service manager's minimal default PATH. Acceptable mechanisms, not mutually exclusive: (a) write a PATH into the generated EnvironmentVariables/unit that prepends the user's tool directories, captured from a login shell at install/start time; and/or (b) resolve harness and driver binaries via a login shell or stored absolute paths at spawn time, so the daemon's own PATH is not a single point of failure. orgasmic doctor must gain a check that the configured harness and driver binaries resolve under the daemon's effective PATH and warn actionably when they do not, so a missing binary surfaces at install time rather than as a silent inert dispatch.
+
+Consequences: Fixes inert dispatch on default macOS installs and the analogous systemd/windows cases. Until the fix ships, the workaround is to run the daemon manually with the login PATH (bootout the LaunchAgent, then launch serve with the zsh -l PATH). A doctor check closes the gap between install success and a working first dispatch.
+

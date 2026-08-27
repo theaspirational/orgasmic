@@ -1,0 +1,43 @@
+#+title: orgasmic task TASK-CNZGR.1
+#+orgasmic_version: 2
+
+* DONE TASK-CNZGR.1 dispatch CLI watch-hint reviewer-findings fix-subtask: worker-server strict gate + test depth + doc fix :cli:dispatch:daemon:test:fix:
+:PROPERTIES:
+:ID:               TASK-CNZGR.1
+:PRIORITY:         P3
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-daemon/src/supervisor.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-CNZGR
+:END:
+
+** Description
+Closes 3 of 5 TASK-CNZGR reviewer findings (F-1, F-2, F-3). F-4 + F-5 reviewer-accepted (inherent in approach (a) / acceptable for P3 DX polish).
+
+The TASK-CNZGR reviewer dispatch ITSELF live-demonstrated F-1: printed =pid=36632= didn't correspond to any live process when I checked moments later; the real cursor-agent processes were wrapper PID 36202 and worker-server PID 37731. The 500ms fallback path latched a non-worker-server intermediate child that exited shortly after, recreating the original liveness bug class for that one dispatch.
+
+Reviewer report at =/tmp/orgasmic-codex/task-075-review-report.md=.
+
+** Acceptance Criteria
+- [ ] *F-1 — strict worker-server gate for full 5s window on cursor-agent wrappers*: In =supervisor::poll_direct_child_pid= (=crates/orgasmic-daemon/src/supervisor.rs:891-909=), when =wrapper_looks_like_cursor_agent(parent_pid)= is true, KEEP polling for =worker-server= children for the entire 5s window. Remove the 500ms accept-any-child gate for cursor-agent wrappers. The accept-any-child fallback should only apply to non-cursor wrappers (and explicit test hooks). Rationale: the original bug class was a wrapper exiting fast while worker-server kept running. Accepting any descendant defeats the fix when an intermediate launcher exists.
+- [ ] *F-2 — add test that exercises the worker-server preference path*: Both current tests use generic =sleep 300= children with no =worker-server= in the command, so they hit the accept-any-child branch, not =prefer_worker_server_child=. Add a test where a fake shim spawns a child whose =ps -o command= output contains =worker-server= (alongside a concurrent generic sibling) and assert the worker-server child is chosen. Test must FAIL on a build that removes the =worker-server= string match.
+- [ ] *F-3 — fix the resolve_dispatch_watch_pid doc comment*: The current comment at =supervisor.rs:876-878= says "may exit their CLI wrapper quickly. Poll briefly for a direct child so dispatch watch hints and early-exit watchers track the real worker PID." But the early-exit watcher (TASK-J95T2) intentionally uses the wrapper PID, NOT the resolved worker PID. Fix the comment to say "watch hints / DispatchResponse.pid only; early-exit watcher remains on the wrapper PID by design (TASK-J95T2)".
+- [ ] =cargo test --workspace + clippy + fmt + diff= all green. MSRV 1.78.
+- [ ] After this fix lands, a live cursor-agent dispatch should produce a =pid= in the CLI output that matches the actual =worker-server= PID via =ps -p $PID -o command=. Verify by dispatching TASK-CNZGR.1 itself or any subsequent dispatch and checking =ps -p <printed_pid>=.
+
+** Notes
+:FIX_SUBTASK: t — one-round fix-implementer, no reviewer pass after merge, auto IMPLEMENT → DONE on dispatch-close. Closes findings F-1, F-2, F-3. F-4 + F-5 reviewer-accepted (no action needed).
+
+** Evidence
+- Implementer: cursor-agent (implementer-cursor, composer-2.5-fast), ~7min wall (retry-2), self-commit =b2fb5c5= on =task-075.1-impl=. Merged no-ff. First retry attempt SIGKILL'd at seq 2 (cursor-agent died before any work — left stuck "active" in daemon; required daemon restart to clear); second retry succeeded.
+- Files: =supervisor.rs= +56/-4 (strict worker-server gate for cursor-agent wrappers; unit test for worker-server preference), =dispatch_endpoint.rs= +79/-1 (integration test with fake shim spawning worker-server child + generic sibling).
+- F-1: cursor-agent wrappers now poll =worker-server=-only for the full 5s window — no 500ms accept-any-child gate. Non-cursor wrappers retain the accept-any-child fallback (for test shims).
+- F-2: new test asserts =worker-server= preference over generic sibling. Test would FAIL if the =worker-server= substring match were removed.
+- F-3: doc comment amended to distinguish watch-hint PID (resolved worker) from early-exit watcher PID (wrapper, by design per TASK-J95T2).
+- Tests: 363 → 365 (+2). All gates clean. MSRV 1.78.
+- Dispatch close: =implementer.done= =tx-20260525-org-0333=. =:FIX_SUBTASK: t= auto-flipped IMPLEMENT → DONE.
+- Daemon rebuilt + restarted PID 96397.
+- *Live operational note*: the first retry's SIGKILL surfaced a real daemon-side bug — TASK-J95T2's early-exit classifier didn't auto-release the run because the =driver_error= envelope was treated as a "work envelope". Direct =/runs/.../release= returned =active run= error; required full daemon restart to clear. Candidate TASK-CF435 (early-exit classifier extension: treat =driver_error= as terminal, not work).
+

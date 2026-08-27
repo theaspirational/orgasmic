@@ -1,0 +1,426 @@
+# TASK-STWVB.1.1.1 (restore the FAIL_COUNT guard) — REVIEW
+
+## Verdict
+
+**REJECT — 1 BLOCK SHIP defect, in two forms, one root cause, one fix.**
+Mints `TASK-STWVB.1.1.1.1`.
+
+**All four assigned fixes are correct and correctly pinned.** M-1, M-2, M-3 and
+M-4 are each done, each demonstrated on the path they govern, and each pinned by
+a case that genuinely fails at `b92199a`. I attacked the rate arithmetic, the
+window floor, and the load annotation empirically and could not break any of
+them. This round is a real, substantial improvement and none of its four
+mechanisms should be re-opened.
+
+**What it did not close is the crashed-binary population**, and it is the one
+population the whole B2 arm exists for. The round restored the `FAIL_COUNT`
+guard — correctly, because dropping it was M-1 — and in doing so it handed the
+crashed-binary arm the mirror image of M-1's defect: **the arm is now dead on
+the live path whenever any failure is classified**, which on a board with seven
+registered flakes is the normal case, not the corner. I reproduced a
+`GREEN modulo 1 registered flake` / exit 0 verdict on **verbatim cargo output**
+in which a test binary died on `SIGABRT` and cargo printed
+`error: 2 targets failed`.
+
+This is not the same finding re-litigated. It is not a rate question, not a Part
+A question, and not "the guard was wrong". The guard is right. The crash signal
+is simply carried in a variable (`SUITE_EXIT`) that the guard suppresses and
+that `--classify` never sees, and it is nowhere in the log.
+
+---
+
+## Findings
+
+### R-1 — HIGH — BLOCK SHIP — a crashed test binary is swallowed whenever any failure classifies
+
+`scripts/run-tests.sh:1078`.
+
+```sh
+elif [ "$FAIL_COUNT" -eq 0 ] && [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
+```
+
+`FAIL_COUNT` counts *listed* per-test failures. A test binary that aborts or
+segfaults contributes **zero** listed failures — libtest dies with the process,
+so there is no `---- name ----` block. So a run that has both (a) a crashed
+binary and (b) any classified failure has `FAIL_COUNT > 0`, the arm is skipped,
+and the run falls through to `GREEN modulo N registered flake(s)` at **exit 0**.
+
+**Reproduction with verbatim cargo output.** I built a two-target crate — one
+`assert!` failure whose panic text matches a registry signature, one
+`std::process::abort()` — ran real `cargo test --no-fail-fast`, captured the
+log, and replayed it through the live path (the only edit was repointing the lib
+test binary at a green stub so the registered flake passes isolation, which is
+what makes it a flake rather than a REAL):
+
+```
+  failures : 1
+  host     : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
+
+FLAKE (1) — green in isolation, registered signature matched:
+verdict: GREEN modulo 1 registered flake(s). No unexplained red.      exit 0
+```
+
+What that same log says, verbatim, from cargo:
+
+```
+error: test failed, to rerun pass `--bin crashdemo`
+
+Caused by:
+  process didn't exit successfully: `…/crashdemo-0cce3376237212be` (signal: 6, SIGABRT: process abort signal)
+
+error: 2 targets failed:
+    `--lib`
+    `--bin crashdemo`
+```
+
+**Why this reaches CI.** `ci.yml:197` runs the live path and gates on the exit
+code alone. Exit 0 merges. The verdict block a human might read does not mention
+the crash at all — not in `failures :`, not in a REAL/LOAD/FLAKE section, not in
+the verdict line.
+
+**Why it matters more here than the shape suggests.** `FAIL_COUNT -eq 0` is
+exactly the condition that *fails* on this board whenever a registered flake
+fires, and this chain exists because registered flakes fire. Round 3 traded a
+live-dead `EXIT_INCONCLUSIVE` for a working one; round 4 traded a live-dead
+crash detector back. Round 3's demonstrations missed the flake path; round 4's
+demonstrations miss the crash-plus-flake path.
+
+**Classification: pre-existing, not a regression.** At `4788e1f` the arm sat
+*below* `FAIL_COUNT > 0` in the ladder, so it was equally unreachable. B2's
+reorder plus the dropped guard (round 3) accidentally closed it; restoring the
+guard reopened it. I am filing it as BLOCK SHIP anyway because it is a
+demonstrated **false green on the gate's live path**, because it is a direct
+answer to claim 6, and because the fix is small and belongs with R-2.
+
+**Fix direction — do NOT re-drop the guard.** That recreates M-1 exactly.
+Detect the crash **from the log**, independent of both `SUITE_EXIT` and
+`FAIL_COUNT`:
+
+- `error: test failed, to rerun pass \`<target>\`` is printed once per failing
+  target. Diff that target set against the set of binaries that produced a
+  parsed failure block. A target in the first set and not the second is an
+  unaccounted crash.
+- Corroborate with `process didn't exit successfully:` / `(signal: N, SIG…)`,
+  which is the crash-specific line (an ordinary red does not emit it).
+- Report it as its own section (`CRASHED (n)`) and its own RED arm, above
+  `FAIL_COUNT > 0` and above `HOST_DEGRADED` — a crashed binary is a code fact
+  whatever else the run found, the same argument F4 made for `REAL_COUNT`.
+
+Pin it with a live-path case whose stub cargo emits **a failure list AND an
+unaccounted crashed target** and exits 101 → RED, exit 1. No such case exists
+today, and its absence is why R-1 shipped.
+
+---
+
+### R-2 — HIGH — BLOCK SHIP — the "same verdict for the same log" acceptance criterion is unmet
+
+`scripts/run-tests.sh:1078` (reads `SUITE_EXIT`) vs `:604` (`SUITE_EXIT="?"`).
+
+This is claim 1, and I rule that it **is** a real invariant and this **does**
+violate it, in the dangerous direction.
+
+Reproduction, byte-identical log, both modes:
+
+| mode | verdict | exit |
+|---|---|---|
+| live | `RED — cargo exited 101 with no per-test failure list.` | 1 |
+| `--classify` on that log | `GREEN — no failures.` | 0 |
+
+The log the human is holding contains `error: test failed, to rerun pass …`.
+`--classify` prints `GREEN — no failures` over it.
+
+**Ruling on "is `--classify` inherently a weaker mode?"** No — not on this
+point. The information exists at write time and is simply not written down. That
+is the *identical* situation the chain already resolved once: TASK-STWVB.1 / F3
+found `--classify` sampling host state at reclassify time, and the answer was
+not "accept a weaker mode", it was `write_host_stamp` — stamp the fact into the
+log. The suite exit deserves the same treatment, for the same reason, using the
+same mechanism.
+
+**Answer to "can a crashed binary reach a human only through `--classify` and
+read as green?"** Yes, demonstrated above. And R-1 shows it can read as green on
+the **live** path too, so the exposure is not confined to `--classify`.
+
+**Fix direction:** append `# orgasmic-suite-exit: <n>` alongside the existing
+`# orgasmic-host-state:` stamp; under `--classify`, read it and use it instead
+of `"?"`, falling back to `"?"` only when the stamp is absent (pre-stamp logs).
+Small, mirrors machinery that already exists, and R-1's log-derived detector
+covers the un-stamped legacy logs anyway.
+
+---
+
+### R-3 — LOW — docs — `project.org` overstates the coverage this round achieved
+
+`.orgasmic/project.org:23`, added by `deffb1e`:
+
+> A non-zero cargo exit with no per-test failure list is also a code fact, not
+> an INCONCLUSIVE green; a non-zero cargo exit *with* a failure list is
+> classified as usual (REAL / FLAKE / LOAD-SENSITIVE), on the live path and
+> under `--classify` alike.
+
+Both halves overstate. The first is false under `--classify` (R-2), and the
+trailing "under `--classify` alike" invites a reader to scope it to the whole
+sentence. The second is true only of the failures that were *listed* — a crashed
+target contributes nothing to classify and is dropped (R-1). Resolves with
+R-1/R-2; otherwise the sentence needs qualifying.
+
+---
+
+### R-4 — LOW — design note, no change requested — the floor leaves the common invocation unjudged
+
+`scripts/run-tests.sh:111`. This is claim 2, and the floor itself is right.
+
+I ran the one permitted scoped run, warm cache, on this host:
+
+```
+$ scripts/run-tests.sh -p orgasmic-core --lib
+  host     : unknown (window too short to judge)
+             delta   load=3.15 syspolicyd_cpu=0.2 wall_s=3
+             rate    0.0667
+verdict: GREEN — no failures.                                          exit 0
+```
+
+**`wall_s=3`, not 11.** The brief's 11 s was a colder run; the everyday warm
+scoped invocation is well under the floor, not one second over it. So the host
+machinery is inert for scoped runs, always — not marginally.
+
+I traced what `unknown` does to the **verdict**, not just the display:
+
+- LOAD-SENSITIVE is correctly suppressed. `classify_one` (`:811`) requires
+  `HOST_DEGRADED -eq 1`; an unknown host leaves it 0, so an unregistered
+  isolation-green failure stays **REAL**, exit 1. Unknown does not mint an
+  excuse. ✅
+- The exit code for an otherwise-green short run is unchanged: 0. ✅
+- `INCONCLUSIVE` becomes unreachable below the floor. A thrashing host during a
+  3 s run now reports GREEN/exit 0 where it once reported exit 4.
+
+That last point is the accepted cost of M-3's own fix direction ("neither calm
+nor DEGRADED"), the reason is named in the output, and CI's workspace run is
+never near the floor. **I am not asking for a change.** If host judgment on
+scoped runs is ever wanted, the fix is to widen the *measurement* window — sample
+syspolicyd over a fixed ≥10 s window bracketing the run — not to lower the floor;
+lowering it walks straight back into M-3.
+
+---
+
+### R-5 — LOW — test — two selftest cases can silently not run
+
+`scripts/run-tests-selftest.sh:768,793`. Both `--classify`-agreement companion
+cases sit behind `if [ -f "$live_log" ]; then … else rm -rf "$TMP/work"; fi`. If
+the live run ever fails to write `suite.log`, the case vanishes with no failure
+and no message, and nothing asserts the expected total of 44. Low risk today
+(the runner always writes it). Fix: fail when the log is absent, or pin the case
+count.
+
+---
+
+### Recorded, not a defect — M-5's regex covers the realistic shape
+
+`scripts/run-tests-selftest.sh:396-397`. Verified against the live sampler on
+this host (`load=3.80 syspolicyd_time=504:17.07`) and against synthetic phantoms:
+
+| field value | old assertion | new assertion |
+|---|---|---|
+| `504:17.07` (real) | miss | miss ✅ |
+| `0:00.00` (macOS `ps` fresh proc) | miss | **MATCH** ✅ |
+| `0.0` (bare decimal) | MATCH ✅ | miss |
+| `0:00` | miss | MATCH ✅ |
+| `00:00.00` | miss | miss |
+
+The two together cover the shapes `ps -o time=` actually emits on macOS, which
+does not zero-pad the minutes field. `00:00.00` and `0:00:00` escape both, but
+neither is reachable from this sampler. M-5 is fixed.
+
+---
+
+## Rulings on the six claims, by number
+
+**1. Does the live/`--classify` disagreement belong in this round?** **Yes.** See
+R-2. It is a real invariant, it was written into this task's acceptance, the
+violation is in the green direction, the fix is genuinely small (one stamp line
++ one read, mirroring `write_host_stamp`), and `--classify` is not inherently
+weaker here — the fact exists at write time and is simply not recorded. And no,
+the gap does not only hide things behind `--classify`: R-1 shows the same crash
+reading green on the **live** path. Answer to the sub-question: **yes**, a
+crashed binary reaches a human as `GREEN — no failures` over a log that says
+`error: 2 targets failed`.
+
+**2. Is the 10-second floor right, and what does it do to coverage?** **The floor
+is right; do not touch it.** Unknown correctly suppresses LOAD-SENSITIVE
+(`:811` requires `HOST_DEGRADED -eq 1`), and leaves an otherwise-green short run
+at exit 0. Coverage cost: below the floor `INCONCLUSIVE` is unreachable. And the
+boundary is worse than the brief thought — my warm scoped run measured
+**`wall_s=3`**, not 11, so scoped runs are *always* sub-floor, not marginally.
+That is acceptable — you cannot judge a host from a 3-second window, the output
+names the reason, and CI is never near the floor. R-4 records the option
+(widen the measurement window) without asking for it.
+
+**3. Did removing the sub-second clamp introduce a division hazard?** **No.**
+Every `wall_s` path guards before dividing (`host_syspolicyd_rate:485` requires
+`num(wall) && wall > 0`; `host_is_degraded:505`; `host_rate_unknown_reason:521`).
+Eleven injected probes on the live path, no awk error, no shell error, no
+spurious DEGRADED:
+
+| injected | host | rate | exit |
+|---|---|---|---|
+| `wall_s=-5 cpu=250` | `unknown (window unknown)` | `?` | 0 |
+| `wall_s=abc cpu=250` | `unknown (window unknown)` | `?` | 0 |
+| `wall_s=` (empty) `cpu=250` | `unknown (window unknown)` | `?` | 0 |
+| `wall_s=10 cpu=250` | `DEGRADED` | 25.0000 | 4 |
+| `wall_s=9.9 cpu=250` | `unknown (window too short to judge)` | 25.2525 | 0 |
+| `wall_s=100 cpu=abc` | `unknown (no syspolicyd signal)` | `?` | 0 |
+| `wall_s=100 cpu=-5` | `calm` | -0.0500 | 0 |
+| `wall_s=1e9 cpu=250` | `calm` | 0.0000 | 0 |
+| `load=abc cpu=5 wall=100` | `calm` | 0.0500 | 0 |
+
+The clamp removal is also harmless in a way the comment slightly mis-describes:
+`date +%s` is integer, so a 0.3 s window yields `wall_s=0`, not a fraction — and
+`0` now reads `window unknown` instead of dividing by a fabricated 1. Right
+behaviour, and I confirmed it on a real run (`--sample-host` path,
+`wall_s=0` → `unknown (window unknown)`).
+
+**4. Do the seven new live-path cases drive the live path, and would each have
+failed before?** **Yes to both, verified independently.** All seven use
+`PATH="$TMP/bin:$PATH"` with a stub `cargo` and no `--classify` — the live route.
+I extracted `1add6fd^1:scripts/run-tests.sh` and ran the **new** selftest against
+the **old** runner: **33 passed, 11 failed.** Every new live-path case and the
+elevated-load case and both revised F-E cases fail at `b92199a`. The two
+exceptions are the `--classify`-agreement companions, which pass on the old
+runner by construction — they pin the invariant against a future `--classify`
+regression, not this change, which is legitimate.
+`orgasmic verify TASK-STWVB.1.1.1` re-run by me from a clean tree: **PASS**,
+injection red exit 1, first FAIL is `live path: registered flake on calm host`,
+exactly 3 assertions fail, tree byte-identical after revert.
+
+**5. Is `LOAD_DEGRADED_THRESHOLD` now honest?** **Yes.** It is genuinely compared
+(`:1004`) and the annotation cannot be misread as a cause: it renders as
+`load=11.41 elevated (>=8.0), corroborating only` and appears on **`calm` lines
+too** (selftest `elevated BEFORE load is annotated on the host line` → `host :
+calm` + annotation), which is itself the proof that load is not gating. I
+grepped every use — `LOAD_DEGRADED_THRESHOLD` appears at `:94`, `:1004`, `:1008`
+only, and `HOST_LOAD` at `:1002` only; all display. **No path lets load influence
+the verdict.** One cosmetic gap: on an `unknown` host the annotation is dropped
+entirely (that branch prints only the reason), so an elevated load on an
+unmeasurable host is not shown. Not worth a change.
+
+**6. Is the chain closed?** **No — one round short.** Population by population,
+on the live path:
+
+| population | returns | correct? |
+|---|---|---|
+| clean | `GREEN — no failures`, exit 0 | ✅ |
+| registered flake, calm | `GREEN modulo N registered flake(s)`, exit 0 | ✅ **fixed this round** |
+| registered flake, degraded | `INCONCLUSIVE`, exit 4 | ✅ **fixed this round** |
+| unregistered iso-green, degraded | `LOAD-SENSITIVE` + `INCONCLUSIVE`, exit 4 | ✅ **fixed this round** |
+| unregistered iso-green, calm/unknown | `REAL`, exit 1 | ✅ |
+| alone-red | `REAL`, exit 1, host stamp alongside | ✅ |
+| build broken | `RED — build failure`, exit 1 | ✅ |
+| degraded host, clean suite | `INCONCLUSIVE`, exit 4 | ✅ |
+| unmeasurable host (no syspolicyd / no `wall_s` / Linux) | `unknown (<reason>)`, no excuse minted | ✅ **fixed this round** |
+| short window (<10 s) | `unknown (window too short to judge)`, no excuse minted | ✅ **fixed this round** |
+| **crashed binary, alone** | live `RED` exit 1 · `--classify` **`GREEN` exit 0** | ❌ **R-2** |
+| **crashed binary + any classified failure** | **`GREEN modulo N`, exit 0** | ❌ **R-1** |
+
+Ten of twelve are right, and five of those ten were made right by this round.
+The last two are one defect with one fix.
+
+**Next round — `TASK-STWVB.1.1.1.1`, and it should be the last one:**
+
+1. Detect a crashed target **from the log**, independent of `SUITE_EXIT` and
+   `FAIL_COUNT`; report it in its own section and its own RED arm above both
+   `FAIL_COUNT > 0` and `HOST_DEGRADED`.
+2. Stamp the suite exit into the log alongside `# orgasmic-host-state:` and read
+   it under `--classify`.
+3. Pin with live-path cases that **cargo actually produces**: (a) crashed target
+   + a listed registered flake → RED exit 1, and (b) the same log through
+   `--classify` → the same RED exit 1. Both demonstrations in this chain's four
+   rounds have missed the branch they broke; this one must be demonstrated on
+   the crash-plus-flake input specifically.
+4. Correct `.orgasmic/project.org:23` to match whatever ships.
+
+Nothing else. Do not re-open the rate, the floor, the load annotation, or Part A.
+
+---
+
+## Open Questions
+
+- **Does any test in this workspace actually abort or segfault today?** I did not
+  audit for it, and I deliberately did not run `cargo test --workspace`. R-1's
+  severity does not depend on the answer — a gate whose crash detector is off
+  whenever a flake fires is broken regardless — but if the answer is "yes, and
+  we've seen it", the next round is urgent rather than merely correct.
+- **Is `--classify` used by anyone but reviewers?** I found no CI or script
+  consumer; `ci.yml:192` and `:197` uses `--check` and the live path only. It is
+  documented in the script header (`:25`) and used throughout this chain's own
+  reviews. R-2's exposure is therefore human-facing, which is precisely the
+  audience the verdict block is written for.
+
+---
+
+## Verification Notes
+
+Everything below is independent; the implementer's report and the manager's
+pre-verified list were treated as claims and re-derived.
+
+**Re-run from scratch**
+- `scripts/run-tests-selftest.sh` → **44 passed, 0 failed** (~8 s wall).
+- `scripts/run-tests.sh --check` → `registry: OK — 7 entries … every owner open`,
+  exit 0.
+- `orgasmic verify TASK-STWVB.1.1.1` → **PASS**; `[inject]` applied,
+  `[red] as pinned — exit 1, signature matched`, `[revert] tree byte-identical`,
+  `[green] exit 0`. Red log: exactly 3 FAILs, first at line 34 is
+  `live path: registered flake on calm host`, 41 passed / 3 failed.
+- `git diff --stat 4788e1f..1add6fd -- verify/flake-registry.toml` → empty.
+  **Byte-unchanged for the fourth round running.**
+- One scoped live run (the permitted one): `scripts/run-tests.sh -p orgasmic-core
+  --lib` → `GREEN — no failures`, exit 0, `wall_s=3`,
+  `host : unknown (window too short to judge)`.
+- I did **not** run `cargo test --workspace`, did not loop the daemon suite, and
+  never named the billed test. Clippy/fmt were not re-run: `git show --stat
+  1add6fd` shows **no Rust file changed** (only `scripts/**`, `verify/**`,
+  `.orgasmic/project.org`), so those gates cannot be affected by this diff.
+
+**Independent probes**
+- **Old-runner replay (claim 4).** Extracted `1add6fd^1:scripts/run-tests.sh`;
+  ran the new selftest against it via a `RUNNER_OVERRIDE` copy → **33 passed,
+  11 failed**, every new live-path case among the failures.
+- **Real crashed-binary log (R-1).** Built a two-target scratch crate
+  (`assert!` failure + `std::process::abort()`), ran real
+  `cargo test --no-fail-fast` (exit 101), captured verbatim output including
+  `(signal: 6, SIGABRT: process abort signal)` and `error: 2 targets failed:`.
+  Replayed through the live path via stub cargo → **`GREEN modulo 1 registered
+  flake(s)`, exit 0.**
+- **Synthetic crash, live vs `--classify` (R-2).** Stub cargo, no failure list,
+  exit 101 → live `RED … cargo exited 101`, exit 1; the resulting log through
+  `--classify` → `GREEN — no failures`, exit 0.
+- **Eleven `ORGASMIC_HOST_STATE_SAMPLE` injections (claim 3)**, table above; no
+  awk/shell error on any, checked by grepping stderr for
+  `awk:|syntax error|division|integer expression`.
+- **Live sampler (M-5).** `scripts/run-tests.sh --sample-host` twice →
+  `load=3.80 syspolicyd_time=504:17.07`; both F-F regexes tested against that and
+  four synthetic phantom shapes.
+- **Grep audit (claim 5).** `LOAD_DEGRADED_THRESHOLD` → `:94`, `:1004`, `:1008`.
+  `HOST_LOAD` → `:1002`. All display-only.
+- **Ladder archaeology (R-1 classification).** `4788e1f:scripts/run-tests.sh`
+  read in full: the crashed-binary arm sat below `FAIL_COUNT > 0`, so the hole
+  predates B2's reorder. Classified **pre-existing, not a regression**.
+
+**Environment**
+- Probes ran in `/Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1-review`
+  at `9495091` (source identical to `1add6fd`); the scoped live run and
+  `orgasmic verify` ran from the repo root, where the warm target dir lives.
+- `ORGASMIC_HOME` was never set; every `orgasmic` call used `env -u ORGASMIC_HOME`.
+- Strictly read-only: no repo file was edited. All scratch work is under the
+  session scratchpad.
+
+---
+
+## Fix Directions (summary)
+
+| # | severity | where | fix |
+|---|---|---|---|
+| R-1 | HIGH, blocks | `run-tests.sh:1078` | detect crashed targets from the **log** (`error: test failed, to rerun pass \`<target>\`` set minus binaries with parsed failure blocks; corroborate with `process didn't exit successfully:` / `(signal: N, …)`); own section, own RED arm above `FAIL_COUNT>0` and `HOST_DEGRADED`. **Do not re-drop the guard.** |
+| R-2 | HIGH, blocks | `run-tests.sh:1078`, `:604` | stamp `# orgasmic-suite-exit: <n>` next to `# orgasmic-host-state:`; read it under `--classify`, `"?"` only when absent |
+| R-3 | LOW | `project.org:23` | correct the contract sentence once R-1/R-2 land |
+| R-4 | LOW | `run-tests.sh:111` | none requested; if scoped-run host judgment is ever wanted, widen the measurement window, never lower the floor |
+| R-5 | LOW | `selftest:768,793` | fail when `$live_log` is absent, or pin the case count |

@@ -1,0 +1,60 @@
+#+title: orgasmic task TASK-HQ970
+#+orgasmic_version: 2
+
+* DONE TASK-HQ970 tx record accepts a multi-line --reason and bricks the append-only ledger :tx:data-integrity:defect:
+:PROPERTIES:
+:ID: TASK-HQ970
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-core
+:END:
+
+`orgasmic tx record --reason "<multi-line text>"` writes the newlines verbatim
+into the org property drawer, returns success with a tx_id, and leaves the
+append-only ledger unparseable. Every subsequent CLI read fails, so no verb —
+including the ones you would use to repair it — can run. The only way out is a
+hand-edit of the file the manager is forbidden to hand-edit.
+
+REPRODUCED [2026-07-26], not inferred. `orgasmic tx record --type manager.action
+--project orgasmic --task TASK-D0GA3 --reason "$(cat multi-line-file)"` returned
+
+    {"tx_id": "tx-20260726-orgasmic-2973", "tx_path": ".orgasmic/tx/2026-07.org"}
+
+and the next command failed with
+
+    Error: parse .orgasmic/tx/2026-07.org
+    Caused by: ...:29850: malformed property drawer entry: blank line inside
+    property drawer
+
+The remaining `--extra KEY=VALUE` properties were appended AFTER the injected
+prose, so they landed outside the drawer too. A second, subtler failure mode:
+once the blank lines were removed the parser then rejected the entry with "tx
+entry has trailing content after property drawer" — tx entries are drawer-only
+and carry no body at all, which is not stated anywhere in `tx record --help`.
+
+BLAST RADIUS. The write is accepted, so a manager has no signal until the next
+read. Both ledgers were hit in one session: the project ledger and, because
+`tx record` is not project-scoped by default (TASK-HXSW0 instance 6),
+`$ORGASMIC_HOME/state/tx/2026-07.org` as well. A daemon that cannot parse its
+tx file cannot dispatch, cannot close, cannot update a task.
+
+THREE SEPARATE DEFECTS, all in this one path:
+1. No validation. A value containing a newline must be rejected at the API
+   boundary with a clear error, before anything is written.
+2. No atomicity or verification. The writer should re-parse what it produced
+   before reporting success — a ledger that only accepts what it can read back
+   cannot be bricked by its own writer.
+3. No documented body support. If long prose belongs in a tx (and
+   `tx-scannable-bodies` implies it does), the entry format needs a body region
+   the parser accepts, or `--reason` needs to be documented as single-line and
+   the convention corrected.
+
+Acceptance:
+- `tx record --reason` with an embedded newline fails with a clear message and
+  writes nothing
+- a tx write that would not round-trip through the parser is rejected rather
+  than committed
+- `tx record --help` states the single-line constraint, or a body region exists
+  and is tested with multi-paragraph prose
+- a regression test asserts the ledger still parses after each supported write
+SIBLING FILED [2026-07-28]: TASK-ZYWZD applies this task's defect-2 principle (a writer must not commit what it cannot read back) to the node body surface, where `node body set` silently truncated TASK-ATAXN to 300 of 3959 chars. If either fix grows shared compose->re-parse->refuse machinery, use it for both.
+

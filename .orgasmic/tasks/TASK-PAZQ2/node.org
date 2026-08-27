@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-PAZQ2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-PAZQ2 RunSummary should expose the work clock: last_progress_age + last evidence observation
+:PROPERTIES:
+:ID: TASK-PAZQ2
+:PRIORITY: P3
+:END:
+
+From TASK-JK66P (2026-07-29): the supervisor now holds last_progress_at and work-evidence observations, but RunSummary does not expose them, so 'quiet for 8 minutes, work confirmed' is invisible to orgasmic manager status / the UI. arch_EAVPP §5 wants the same surface. Add last_progress_age_secs and the last observation (Working/Idle/Unknown + detail) to RunSummary and thread to the CLI status output. Coordinate with TASK-6HJYT's /runs/live shape (supervisor-local — this is exactly the kind of field it should carry).
+

@@ -1,0 +1,59 @@
+#+title: orgasmic task TASK-C7ZG5
+#+orgasmic_version: 2
+
+* DONE TASK-C7ZG5 UI task-drawer real-time agent chat overlay (codex-stdio live dogfood validates TASK-HY0QT) :ui:task-dialog:acp:chat:ux:dogfood:
+:PROPERTIES:
+:ID:               TASK-C7ZG5
+:PRIORITY:         P2
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:
+:PRODUCES:         ui/src/components/TaskDialog.tsx ui/src/components/manager/ManagerChatTranscript.tsx
+:WRITE_SCOPE:      ui/src/components/TaskDialog.tsx ui/src/components/manager/ManagerChatTranscript.tsx ui/src/lib/types.ts ui/src/lib/api.ts crates/orgasmic-daemon/src/api.rs
+:READ_SCOPE:       ui/src/components/manager/ManagerPopover.tsx ui/src/components/manager/ManagerWorkbench.tsx ui/src/hooks/useEventStream.ts ui/src/lib/useResource.ts ui/src/components/ui/sheet.tsx crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/events.rs crates/orgasmic-daemon/src/ws.rs crates/orgasmic-drivers/src/modes/acp_stdio.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-HY0QT TASK-HY0QT.1 TASK-EBWZ9
+:END:
+
+** Description
+Surface the existing manager-popover chat transcript from inside the task drawer so the user can click the "current agent" badge on a task heading and watch the running agent's session stream in real time, without leaving the task UI. This was the user-stated UX motivation for closing TASK-HY0QT: "user can via task dialog (ui) click the current agent status to open the chat with the running agent and in real time monitor the session via the same chat interface as manager uses in har app for acp driver type".
+
+This dispatch is also a deliberate live-codex dogfood of TASK-HY0QT: the dispatch itself routes via =--worker implementer-codex-stdio= (codex CLI v0.133.0 on PATH at =~/.nvm/versions/node/v24.4.1/bin/codex=, =acp-stdio= driver landed in =cbdf079= and hardened in =6ecc820=). A clean run with =Ready= → ≥1 =TextChunk= → =RunComplete= envelopes in the session JSONL plus actual code landing = TASK-HY0QT live-validated. If the handshake stalls or the babysitter detects a stall, manager rolls back via the TASK-FB8CK.5 spawn-fail path and re-dispatches via =implementer-cursor=.
+
+*Heavy lifting is already done.* The chat component =ui/src/components/manager/ManagerChatTranscript.tsx= is driver-agnostic: it takes ={ runId, initialSource? }=, calls =fetchRun(runId)= for the session source, subscribes to the daemon's =/ws?topic=run= event stream via =useEventStream=, parses the JSONL into role-tagged bubbles, and handles =text= / =tool_call= / =run_fail= / =driver_error= / lifecycle / note envelopes (=ManagerChatTranscript.tsx:58-128=). It is currently used from =ManagerWorkbench.tsx:167= and =ManagerPopover.tsx:136=. The remaining work is plumbing it into =TaskDialog.tsx=.
+
+*Existing surfaces (read these first):*
+- =ui/src/components/TaskDialog.tsx:178-186= — the existing Owner badge. This is the click target. Today it just renders =task.owner= as a static badge.
+- =ui/src/components/manager/ManagerChatTranscript.tsx:142-188= — the component to reuse. No changes required to its surface unless this task needs a small prop addition (see Acceptance Criteria F-2).
+- =ui/src/lib/types.ts:44-56= — =TaskSummary= type. Does NOT currently carry =run_id=. This needs to be plumbed.
+- =crates/orgasmic-daemon/src/api.rs::apply_task_owners= (around line 193, 304, 565) — the function that populates =task.owner= from =supervisor.runs=. It already has the run in hand; just needs to attach =run_id= to the returned summary.
+- =ui/src/components/ui/sheet.tsx= — shadcn Sheet primitive available.
+- =crates/orgasmic-daemon/src/ws.rs= — =GET /ws?topic=run= is the wire the chat already subscribes to (per =ManagerChatTranscript= imports). Should not need changes.
+
+** Acceptance Criteria
+- [ ] *F-1 — plumb =run_id= into =TaskSummary= when an agent is active.* Daemon side: extend =apply_task_owners= (and the =TaskSummary= struct in =orgasmic-core= if that's where it lives) so that when a task has =owner = "agent.*"= (i.e., a run is currently leased to it), the matching =supervisor.runs= entry's =run_id= is attached to the returned summary. Default null when no active run. UI side: add =run_id?: string | null= to =TaskSummary= in =ui/src/lib/types.ts:44=. No breaking changes to any other consumer.
+
+- [ ] *F-2 — click-to-open chat overlay from the Owner badge.* In =TaskDialog.tsx=, when =task.owner= starts with =agent.= AND =task.run_id= is present, the Owner badge (currently lines 178-186) becomes a button (or wrap in =<button>=). Clicking it opens a shadcn =Sheet= sliding from the right (=side="right"=, narrow-medium width, e.g. =sm:max-w-md= or =sm:max-w-lg=). Sheet content: =<ManagerChatTranscript runId={task.run_id} />=. Sheet header: terse run identifier (task ID + short run_id slug + a small lucide icon, e.g. =MessageSquare=). Sheet should be dismissible via Esc and the standard shadcn close button; the underlying TaskDialog stays mounted behind it (use Sheet, not Dialog-inside-Dialog).
+
+  When =task.owner = "human"= or =task.run_id= is null, the Owner badge stays as today (non-interactive). Do NOT gate on driver type — the chat component handles any driver's session JSONL envelopes; restricting to acp-stdio / acp-ws would shrink the feature unnecessarily and the user's spec calls out ACP as the primary motivator but not the only valid case.
+
+- [ ] *F-3 — accessibility + UX polish.* The clickable Owner badge must have an accessible label (e.g., =aria-label={`View live agent chat for ${task.id}`}=) and a tooltip/affordance hint that it's clickable (e.g., subtle =cursor-pointer= + =hover:ring-1 hover:ring-ring/40= or similar — match the existing dialog's interactive-element styling). Keyboard: Enter / Space opens the Sheet. Focus management: opening the Sheet moves focus into it; closing returns focus to the Owner badge.
+
+- [ ] *F-4 — empty state and error state.* =ManagerChatTranscript= already renders "No transcript events for this run yet." when source is empty, and a destructive banner on fetch error. If the run finishes while the Sheet is open, the transcript should still update via the WS event stream (which it does by design — no action needed; just verify). If =fetchRun(run_id)= returns 404 (run completed and was GC'd), the destructive banner is acceptable but the Sheet should remain dismissible.
+
+- [ ] *F-5 — no regressions in existing manager-popover usage.* =ManagerWorkbench.tsx:167= and =ManagerPopover.tsx:136= must continue to work unchanged. If F-2 needs a prop addition to =ManagerChatTranscript= (e.g., a header slot), default it so existing call sites compile.
+
+- [ ] *Gates*: =cargo test --workspace= (currently 366) stays green; =cargo clippy --workspace --all-targets -- -D warnings=, =cargo fmt --check=, =git diff --check= all green. MSRV 1.78 — pay attention to the CLAUDE.md MSRV pitfall list (=fs2::FileExt::lock_exclusive=, no =Option::is_none_or= etc.). UI: =cd ui && npm run typecheck && npm run build= clean (no new TypeScript errors). No lint warnings introduced by the new code (=npm run lint= if defined).
+
+- [ ] *Live verification* (optional but encouraged — manager will dogfood it post-merge): after the daemon is rebuilt + restarted with this change, dispatch any small task via =--worker implementer-codex-stdio= (or =implementer-cursor=, doesn't matter — the UI is driver-agnostic), open the task in the UI's task drawer, click the Owner badge while the run is active, observe the live chat transcript update. If this is left to the manager post-merge, document the constraint in the Evidence section.
+
+** Notes
+- *NOT* =:FIX_SUBTASK: t= — full IMPLEMENT → REVIEW → DONE lifecycle with reviewer pass per persona rule 2.
+- *Out-of-scope*: don't touch the manager popover or workbench layout. Don't add a new daemon endpoint — the existing =/runs/:id= + =/ws?topic=run= are sufficient (= what =ManagerChatTranscript= already consumes). Don't add a "send message to agent" textbox — this task is monitor-only. Don't refactor the JSONL parser in =ManagerChatTranscript= unless a real bug is found. Don't touch =BoardView=, =TasksPage=, or anywhere else the Owner badge might render — scope is limited to =TaskDialog=. (If the badge renders in two places, OK to lift it into a small shared component; not required.)
+- *Worker for this dispatch*: =implementer-codex-stdio= — this dispatch is also the TASK-HY0QT live-codex validation. The dispatch CLI's watch-hint (TASK-CNZGR) emits the inner worker-server PID; the babysitter-stall-detector worker is configured on the codex-stdio worker spec and will catch stalls. If the codex handshake breaks on real work, this brief and the worktree should be preserved; manager will re-dispatch via =implementer-cursor= and file a TASK-KFGDS to harden the handshake.
+- *Implementer choice — Sheet vs inline expandable*: brief recommends shadcn =Sheet= sliding from the right because (a) it doesn't fight the existing TaskDialog layout, (b) the manager-popover already conditions users to chat-as-overlay, (c) mobile is naturally handled by shadcn's Sheet responsive behavior. If during implementation the Sheet-inside-Dialog has focus-trap or stacking-context issues (= a known DOM hazard with nested =@radix-ui/react-dialog= primitives), fall back to an inline expandable section beneath the task body; document the fallback in the Evidence section.
+- *Implementer choice — header slot*: if the Sheet header benefits from a "Release run" / "Open in manager popover" affordance, that's a nice-to-have but NOT required. Default to a terse =SheetHeader= with just title + close button.
+- *On the daemon side*: =apply_task_owners= is the natural seam for F-1. If the existing struct is in =orgasmic-core/src/...= and changing it has wider impact than expected, an alternative is a tiny new endpoint =GET /tasks/:id/active_run= returning ={ run_id }= or null; the UI fetches it lazily when the badge is clicked. The struct-extension is cleaner; the endpoint is the escape hatch.
+
+** Evidence
+(populated after implementer + reviewer + post-merge live-codex dogfood)
+

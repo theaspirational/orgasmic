@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_GG6B9
+#+orgasmic_version: 2
+
+* dec_GG6B9 Where and how should the /orgasmic skill be installed?    :scaffold:onboarding:skill:distribution:
+:PROPERTIES:
+:ID:            dec_GG6B9
+:GLOSSARY_REFS: term_CEQFS term_WQMJJ
+:DECIDED_AT:    [2026-06-07 Sun 15:00]
+:SOURCE:        scripts/install.sh
+:PARENT:        dec_RX4DF
+:END:
+** Context
+dec_RX4DF made the =/orgasmic= skill the install-free way to scaffold =.orgasmic/=, with the scaffold bundled inside the skill folder. But "the skill is installed" was left unspecified — there was no standard place to put it, and getting it there still implied knowing internal repo paths. The ecosystem has a de-facto Agent Skills convention: one folder per skill containing =SKILL.md= (plus optional =scripts/= / =references/= / =assets/=), discovered from a shared cross-agent path =~/.agents/skills/<skill>/=. The orgasmic skill already matches this shape (=SKILL.md= + a bundled =scaffold/= asset folder), so it only needs a defined install location and a frictionless way to get there.
+** Decision
+Distribute the skill to =~/.agents/skills/orgasmic/= and provide two install routes, both preferring a symlink to a local checkout so updates flow automatically: (1) =scripts/install.sh= links =~/.agents/skills/orgasmic= -> =$INSTALL_DIR/shipped/skills/orgasmic= as part of a normal install (directory overridable via =AGENT_SKILLS_DIR=), refreshing an existing symlink but never clobbering a real directory a user placed there; (2) a copy-paste prompt in the README that a user hands to any coding agent — the agent finds a local checkout (current repo, =$ORGASMIC_HOME/orgasmic=, =~/.orgasmic/orgasmic=) and symlinks to it, or, if none exists, copies just the =shipped/skills/orgasmic/= subtree (SKILL.md + scaffold/) from the public GitHub repo without polluting the reserved build-checkout path. The agent prompt is natural language (what, not how) so each agent picks platform-appropriate commands and can also link into an agent-specific skills dir (e.g. =~/.claude/skills=).
+** Consequences
+A user can make =/orgasmic= available machine-wide either by running the installer or by pasting one prompt, with no daemon/CLI build required for the skill itself; symlink-by-default means a local checkout's edits and =git pull= updates are picked up live. The skill stays self-contained and standard-shaped, so it is portable to any agent honoring =~/.agents/skills=. The installer change is guarded (idempotent symlink, no-clobber) and verified by simulation. Open follow-up (from dec_RX4DF) is unchanged: an optional =scripts/scaffold.sh= curl path for users who want only the scaffold and are not driving an agent.
+

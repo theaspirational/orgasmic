@@ -1,0 +1,39 @@
+#+title: orgasmic task TASK-B5GFJ.1
+#+orgasmic_version: 2
+
+* DONE TASK-B5GFJ.1 fix-subtask: EOT terminal detection closes driver stream + releases supervisor + kills tmux session :drivers:tmux:claude:fix:lifecycle:high:
+:PROPERTIES:
+:ID:               TASK-B5GFJ.1
+:PRIORITY:         P1
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-daemon/src/supervisor.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/** crates/orgasmic-daemon/src/**
+:READ_SCOPE:       crates/orgasmic-drivers/src/** crates/orgasmic-daemon/src/**
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+Reviewer F-1 (HIGH): EOT marker observation emits =RunComplete= but never releases the supervisor run or kills the tmux session. Cleanup lives only in =DriverControl::release= which is not called by the EOT path. Run stays live; tmux orphans.
+
+Files / line refs:
+- =crates/orgasmic-drivers/src/modes/tmux.rs:653-660= (EOT detection)
+- =crates/orgasmic-drivers/src/modes/tmux.rs:294-304= (release path with kill_tmux_session)
+- =crates/orgasmic-daemon/src/supervisor.rs:416-420= (supervisor records terminal outcome but does not auto-release)
+
+Fix shape (two options; pick the cleaner):
+- (A) Teach supervisor: when a terminal driver event (=RunComplete= / =RunFail= / fatal =DriverError=) is observed on a tmux-tui run, auto-trigger release (calls into DriverControl::release which kills the tmux session).
+- (B) Refactor tmux driver: on EOT detection, the capture loop itself calls the same cleanup path that external release uses (kill_tmux_session + drop event senders), so the supervisor sees the natural Ready→TextChunk→RunComplete→drop sequence and releases per its normal terminal handling.
+
+Either approach must satisfy: EOT detected → tmux session killed → capture loop terminated → event channel closed → supervisor sees terminal outcome → run transitions to released state automatically (matching acp-stdio pattern).
+
+** Acceptance Criteria
+- [ ] EOT marker detection triggers full cleanup: tmux session killed, capture task aborted, event senders dropped.
+- [ ] Supervisor records run as released (not stuck "active") after terminal driver event for tmux-tui runs.
+- [ ] No tmux session orphans after EOT in tests OR live dispatch.
+- [ ] No regression to acp-stdio release path (this fix should not change codex/claude-acp behavior).
+- [ ] Cargo test green; clippy clean; MSRV 1.78.
+
+** Evidence
+(populated at task close)
+

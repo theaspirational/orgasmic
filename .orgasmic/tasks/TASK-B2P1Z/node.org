@@ -1,0 +1,104 @@
+#+title: orgasmic task TASK-B2P1Z
+#+orgasmic_version: 2
+
+* DONE TASK-B2P1Z Daemon POST /projects + wire ProjectAddDialog (close TASK-VEZYR FIXME) :daemon:api:ui:projects:
+:PROPERTIES:
+:ID:               TASK-B2P1Z
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       dec_CGVRW
+:PRODUCES:         crates/orgasmic-daemon/src/api.rs crates/orgasmic-core/src/projects.rs ui/src/lib/api.ts ui/src/components/ProjectAddDialog.tsx
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-core/src/projects.rs crates/orgasmic-core/src/lib.rs crates/orgasmic-cli/src/project.rs crates/orgasmic-cli/src/board.rs crates/orgasmic-cli/src/main.rs ui/src/lib/api.ts ui/src/components/ProjectAddDialog.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-050-brief.md .orgasmic/decisions.org
+:TEST_CMD:         cargo test --workspace && cd ui && npm run build
+:DEPENDS_ON:       TASK-VEZYR TASK-VEZYR.1
+:END:
+
+** Description
+Close the =FIXME(TASK-VEZYR-followup)= stub left in =ui/src/components/ProjectAddDialog.tsx:51-58= by giving the daemon a =POST /projects= route and wiring the dialog to use it.
+
+*Current state*:
+- Daemon exposes =GET /projects= and =GET /projects/:id...= (read-only).
+- =crates/orgasmic-cli/src/project.rs::init_project()= scaffolds =.orgasmic/= files; =crates/orgasmic-cli/src/board.rs::register_project()= appends to =$ORGASMIC_HOME/state/board.org= and parses for validation. Both are pure file/Org operations with no CLI-only deps.
+- =orgasmic project init <path>= calls =init_project= then =register_project=. =orgasmic project add <path>= calls =register_project= only.
+- Daemon watches =$ORGASMIC_HOME= and refreshes index on board.org changes (per TASK-FB8CK.6 watcher fix).
+- ProjectAddDialog's submit handler returns a static "register from CLI" message.
+
+*Scope*:
+
+*(1) Move shared logic to a common crate (or expose via daemon-callable surface).* =register_project= and =init_project= currently live in =orgasmic-cli=. The daemon needs to call them. Cleanest path: move them to =orgasmic-core/src/projects.rs= (new module). Update =crates/orgasmic-cli/src/main.rs= callsites + tests in =cli/src/{project,board}.rs= to import from =orgasmic_core::projects=. =orgasmic-cli/src/{project,board}.rs= become thin shims OR delete them entirely if the CLI now imports directly from core. Pick the cleanest option that preserves all existing tests.
+
+*(2) Daemon =POST /projects= route.* Accept JSON body:
+#+begin_src json
+{
+  "path": "/absolute/or/relative/path/to/repo",
+  "project_id": "optional-explicit-id",
+  "repo_url": "optional-explicit-url",
+  "default_branch": "optional-explicit-branch",
+  "scaffold": false
+}
+#+end_src
+- =path= required; if relative, resolved against the daemon's cwd (or rejected — pick the safer behavior; the daemon doesn't know the user's cwd, so probably require absolute and return 400 otherwise).
+- If =scaffold=true= AND =.orgasmic/= doesn't exist at the path: call =init_project= first (need =name=, =project_id=, =repo_url=, =default_branch= — derive missing ones the way =ScaffoldInputs::derive= does).
+- If =scaffold=false= AND =.orgasmic/= doesn't exist: 400 with a clear error message ("path is not an orgasmic project; pass scaffold=true to initialize").
+- Always call =register_project= after (or skip if already in board, with appropriate error).
+- Trigger a board refresh so =GET /projects= reflects the new entry immediately (don't rely on the watcher debounce).
+- Return =201 Created= with the new =ProjectIndex= entry (the same shape =GET /projects= returns).
+
+*(3) UI client.* Add to =ui/src/lib/api.ts=:
+#+begin_src ts
+export type AddProjectRequest = {
+  path: string;
+  projectId?: string;
+  repoUrl?: string;
+  defaultBranch?: string;
+  scaffold?: boolean;
+};
+export async function addProject(req: AddProjectRequest): Promise<ProjectIndex> { ... }
+#+end_src
+
+*(4) ProjectAddDialog wire.* Replace the FIXME stub:
+- Submit handler calls =addProject({ path, projectId, repoUrl })=. (Skip =scaffold= for v1 — the dialog is for registering existing projects per its current DialogDescription "Register an existing repo that already has an orgasmic project directory.")
+- On success: trigger refresh via =useRefreshBus=, switch active project via =useActiveProject.setActiveProject(returned.project_id)=, close dialog.
+- On error: surface daemon error message inline (keep the amber callout block; replace the static message with the actual error). If the error is "project does not have .orgasmic/" THEN show a follow-up message + checkbox/button "Scaffold a new orgasmic project here" that re-submits with =scaffold=true=.
+
+** Acceptance Criteria
+- [ ] Daemon =POST /projects= route registered in =api.rs= and reachable by the same auth as GET endpoints.
+- [ ] Submitting valid body for an existing-but-unregistered orgasmic project succeeds: returns =201= with the =ProjectIndex= entry; subsequent =GET /projects= includes it.
+- [ ] Submitting for a path without =.orgasmic/= AND =scaffold=false= → =400= with clear error message.
+- [ ] Submitting for a path without =.orgasmic/= AND =scaffold=true= → daemon scaffolds + registers + returns =201=.
+- [ ] Submitting for an already-registered project → =409 Conflict= (or =400=, pick consistent with other daemon errors) with "project already on the board" message.
+- [ ] =register_project= + =init_project= now live in =orgasmic-core::projects= (or equivalently accessible from daemon); CLI tests still pass after the move; CLI subcommands (=orgasmic project init=, =orgasmic project add=) behave unchanged.
+- [ ] UI: clicking "+ Add project" → filling path → submitting → dialog closes + the new project appears as the active project + nav reflects new project. Tested in Chrome (manager will smoke after merge).
+- [ ] UI: error path renders the daemon error inline; if it's the "not initialized" error, the scaffold-CTA appears.
+- [ ] UI: =useRefreshBus= fires after success so the ProjectSelector dropdown re-fetches.
+- [ ] Verification gate: =cargo test --workspace= clean (existing 205 + new daemon route tests, expect ~+3-6 tests); =cargo clippy --workspace --all-targets -- -D warnings= clean; =cargo fmt --check= clean; =git diff --check= clean. MSRV 1.78. =cd ui && npm run build= clean, main =index= chunk under +5 kB over current 360.93 kB.
+- [ ] No new external dependencies in =Cargo.toml= or =package.json=.
+
+** Notes
+*Why now*: TASK-VEZYR left this as a FIXME to keep the IA dispatch focused. Now that the shell IA is live + smoke-clean, closing the FIXME is the natural smallest follow-up. Single coupled commit; matches the TASK-DK0Y2 multi-area-scope pattern.
+
+*Out of scope (do NOT touch in this dispatch)*:
+- New /projects DELETE / PATCH routes (don't add unregister / edit; one mutator at a time).
+- Board file format changes.
+- Re-architecting how the daemon watches/loads projects.
+- Changes to GET /projects shape.
+- ProjectsManageDialog (the larger Manage modal — out of scope).
+- Any TASK-EBWZ9/TASK-ZYPJC/TASK-DK0Y2 surfaces.
+
+*Close pattern*: single =implementer.done= via =orgasmic manager dispatch-close --task TASK-B2P1Z --status done --merge-sha <SHA> --codex-commit <SHA> --codex-session <ID> --tokens <N> --wall <DUR> --branch-delete=. Auto-flip: IMPLEMENT → REVIEW (TASK-B2P1Z lacks =:FIX_SUBTASK: t=, polish task needs reviewer per persona rule 2). Reviewer pass follows merge.
+
+** Evidence
+- [2026-05-24 Sun 13:54] Shipped =7e10cfd= on =task-050-impl=; merged no-ff as =7155caa= on main. Codex gpt-5.5 xhigh, 10m12s wall, 193,850 tokens, session =019e5996-0e00-74e0-90f9-61169911b117=. =implementer.done= =tx-20260524-org-0176= via dispatch-close. **DOGFOOD #16+#17 PASS** (BACKLOG → IMPLEMENT on dispatch; IMPLEMENT → REVIEW on close; TASK-B2P1Z lacks =:FIX_SUBTASK: t=, polish path).
+- 9 files changed, +576 / -169.
+- *Shared module move (Option A — delete CLI files)*: =crates/orgasmic-cli/src/board.rs= deleted (-137); =crates/orgasmic-cli/src/project.rs= renamed to =crates/orgasmic-core/src/projects.rs= (+131 net). =init_project=, =register_project=, =ScaffoldInputs=, =BoardEntry=, =read_board=, =render_board=, =board_path= all in =orgasmic_core::projects=. CLI =cmd_project_init= + =cmd_project_add= in =crates/orgasmic-cli/src/main.rs= import from core.
+- *Daemon =POST /projects=*: new handler +153 lines in =crates/orgasmic-daemon/src/api.rs=. Accepts JSON body =${path, project_id?, repo_url?, default_branch?, scaffold?}=. Returns 201 with =ProjectIndex= on success; 400 on validation failures; 409 on duplicate. Immediate index refresh after register.
+- *Integration tests*: =crates/orgasmic-daemon/tests/integration.rs= +206 lines covering 4 main paths + relative path rejection.
+- *UI client*: =ui/src/lib/api.ts= +18 lines (=addProject=).
+- *ProjectAddDialog wire*: =ui/src/components/ProjectAddDialog.tsx= +76/-22. Replaced FIXME stub with real submit handler + spinner + error callout + scaffold CTA.
+- Verification: 205 → 210 tests. clippy/fmt/diff/ui-build clean. Main =index= 360.93 → 361.63 kB (+0.70 kB).
+
+** Reviewer pass
+- [2026-05-24 Sun 14:01] Codex reviewer (gpt-5.5 xhigh, 4m32s wall, 120,403 tokens, session =019e59a1-e18c-73d1-b97a-f82fe7cca0fa=). Verdict: =has-issues, blocks-ship=. **5 findings**: F-1 HIGH security (Org injection — caller-provided strings rendered into board.org without escaping/validation; reparse-after-write only validates syntax, not absence of injected properties/headings); F-2 MEDIUM concurrency (read-modify-write on board.org without lock — concurrent POSTs race, lost entries possible, same-ID race bypasses duplicate check); F-3 LOW security (filesystem paths leaked in error envelope); F-4 LOW a11y (error callout missing =role="alert"= / =aria-live=); F-5 LOW design (Cancel disabled during submit). Recommends bundled TASK-B2P1Z.1 covering all 5. =reviewer.done= =tx-20260524-org-0178= via dispatch-close with =--property RECOMMENDED_SUBTASKS=TASK-B2P1Z.1=. **DOGFOOD #18 PASS** (REVIEW stays REVIEW, RECOMMENDED_SUBTASKS rule fired).
+- *Process note*: reviewer flagged that TASK-B2P1Z heading was NOT in sprint.org of the review worktree (off =7155caa=). Manager edited sprint.org locally pre-dispatch but didn't commit the heading in a dispatch-handoff commit (cf. TASK-VEZYR's =8b6f9fd=). Reviewer used brief + last.txt + diff + CLAUDE.md as authority. **Manager discipline gap**: sprint headings must be committed in the dispatch-handoff commit before dispatching. Fixed in the cluster-closure commit.
+

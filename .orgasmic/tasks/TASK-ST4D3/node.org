@@ -1,0 +1,42 @@
+#+title: orgasmic task TASK-ST4D3
+#+orgasmic_version: 2
+
+* DONE TASK-ST4D3 Draft implementation tasks from decided architecture :planning:
+:PROPERTIES:
+:ID:               TASK-ST4D3
+:PRIORITY:         P1
+:WORKER:   planner
+:WRITE_SCOPE:      .orgasmic/sprint.org .orgasmic/backlog.org
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org .orgasmic/glossary.org docs/adr/*.org Cargo.toml crates/** ui/** shipped/**
+:TEST_CMD:         cargo build
+:DEPENDS_ON:       TASK-C9V29
+:END:
+
+** Description
+Read the decided decision graph and architecture graph, then draft the first implementation task graph for v0.0.1. Each downstream task must carry explicit =:IMPLEMENTS:= edges to architecture nodes and =:PRODUCES:= paths for the files the implementer is expected to create or modify.
+
+** Acceptance Criteria
+- [X] TASK-ST4D3 is started as the planner-layer task after =architecture.complete= for TASK-C9V29.
+- [X] Implementation tasks are drafted with =:IMPLEMENTS:= architecture edges.
+- [X] Implementation tasks are drafted with concrete =:PRODUCES:= file paths.
+- [X] User accepts the task plan or requests revisions.
+
+** Question
+I propose the v0.0.1 implementation work as TASK-VWBDJ through TASK-WG82T below. The order keeps the plain-file substrate and daemon write model ahead of runtime, manager, graph, UI, and restart-recovery work.
+
+Reply =accept= to let planning complete, or describe revisions to task boundaries, order, or acceptance criteria.
+
+** Evidence
+- [2026-05-21 Thu 19:40] Drafted eight implementer tasks from arch_WZFAX through arch_Z3Z3V.
+- [2026-05-21 Thu 19:41] Verification passed: git diff --check, cargo build, cargo test.
+- [2026-05-21 Thu 19:42] Operator authorized manual tx append while daemon/CLI writer is stubbed; wrote tx-20260521-org-0007.
+- [2026-05-21 Thu 19:57] Promoted active task read scopes from the archive spec to `.orgasmic/` plus generated ADRs.
+- [2026-05-21 Thu 20:16] User accepted the v0.0.1 task plan via the manager swarm session; planning.complete recorded as tx-20260521-org-0010 (written by manager).
+
+** Worklog
+- [2026-05-21 Thu 19:40] Read CLAUDE.md, state machine schema, architecture graph, decisions, glossary, and current repo stubs.
+- [2026-05-21 Thu 19:40] Started TASK-ST4D3 and produced a reviewable planner artifact in sprint.org.
+- [2026-05-21 Thu 19:41] Verified the planning-only edit against the current Rust workspace.
+- [2026-05-21 Thu 19:42] Backfilled the planner draft audit event into the project tx file with explicit operator authorization.
+- [2026-05-21 Thu 20:16] Closed planner draft after user acceptance; handed implementation chain off to manager.
+

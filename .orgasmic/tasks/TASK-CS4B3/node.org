@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-CS4B3
+#+orgasmic_version: 2
+
+* BACKLOG TASK-CS4B3 tmux_server_selection() never names $TMUX even when $TMUX chose the socket
+:PROPERTIES:
+:ID: TASK-CS4B3
+:PRIORITY: P3
+:END:
+
+From TASK-2GS7V (2026-07-29): the diagnostic 0RCRY added says 'the default shared server (no -L/-S and no TMUX_TMPDIR)' while the socket in the measured failure actually came from $TMUX — which the message never mentions, though 0RCRY's own gotcha records that $TMUX selects the socket. One line in crates/orgasmic-drivers/src/modes/tmux.rs: when $TMUX is set and no -L/-S was passed, the selection description names $TMUX and its socket path. Keep the existing wording for the genuinely-default case.
+

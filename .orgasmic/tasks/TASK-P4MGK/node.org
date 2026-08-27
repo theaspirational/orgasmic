@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-P4MGK
+#+orgasmic_version: 2
+
+* DONE TASK-P4MGK Universal dispatch finalize: accept worker-declared completion from every mode
+:PROPERTIES:
+:ID: TASK-P4MGK
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Make orgasmic dispatch finalize (dec_3M7M0) the completion signal for ALL modes, not just rmux: daemon accepts finalize from acp-stdio, acp-ws, subprocess-stream-json, tmux, rmux runs; each driver treats it as the primary end-of-run. Move the finalize contract prose from the rmux worker templates into prompt-specs/base_worker.org so every kind inherits it once.
+Risk to test hardest: ACP modes already have protocol turn-end events — finalize and protocol-end must not double-release or race the lease.
+

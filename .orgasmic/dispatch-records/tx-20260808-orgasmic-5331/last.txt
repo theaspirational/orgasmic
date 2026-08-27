@@ -1,0 +1,58 @@
+# Findings
+
+## P1 HIGH correctness — a silent catalog can hide contradictory authenticated replacements and the resolver now accepts one
+
+`crates/orgasmic-daemon/src/recovery_claim.rs:1294-1299` treats `matching.len() == 0` as non-contradictory and returns the loaded claim when its own transcript verifies. The empty slice has no completeness provenance. `collect_recovery_origin_index` can omit every matching link because a board entry/path/identity/session directory is unavailable, because a catalog record is absent or lacks `replacement_run_id`, because a candidate scan rejects the file, or—most importantly—because `RunCatalog::invalidate_session` removed every relevant live entry (`crates/orgasmic-daemon/src/api.rs:11831-11873`, `crates/orgasmic-daemon/src/run_catalog.rs:1124-1134`).
+
+The codebase already models two daemon-HMAC-authenticated replacements for one origin as a safety violation: `duplicate_authenticated_replacements_fail_closed` builds both valid transcripts and requires `InvalidQuarantined` (`crates/orgasmic-daemon/src/recovery_claim.rs:2455-2543`). If both replacement records have been invalidated by lifecycle appends, the collector supplies no links; the changed branch verifies only the loaded claim's transcript and returns `Valid`, never discovering the other authenticated replacement. `/api/runs/:id/recover` then returns that one replacement (`crates/orgasmic-daemon/src/api.rs:9075-9097`), and inventory clears recovery actions (`crates/orgasmic-daemon/src/api.rs:11780-11801`), silently choosing authority in a state the existing duplicate regression requires to fail closed.
+
+This is the pre-authorized block-ship condition: a globally contradictory authority set becomes admissible solely because the cache is silent. The safe slow path must distinguish “this one entry is temporarily invalidated” from “the candidate set is incomplete.”
+
+## P2 MEDIUM test — the new unit test bypasses the production component whose blindness is the claimed mechanism
+
+`committed_claim_survives_an_index_blind_to_its_replacement` passes a literal `&[]` directly to the resolver (`crates/orgasmic-daemon/src/recovery_claim.rs:2634-2640`). It does not instantiate `RunCatalog`, invalidate a record, call `collect_recovery_origin_index`, or retain a hidden contradictory replacement. It therefore passes if the production collector is accidentally globally blind, and it passes while the P1 duplicate state is hidden. Restoring the old `matching.len() == 1` predicate would make this test fail by control flow, so it pins the permissive resolver branch, but not whether the silence reaching that branch is safe.
+
+## P2 MEDIUM test/process — green crash-recovery executions are never repeated, so an intermittent P0 can still merge green
+
+The CI suite invokes `scripts/run-tests.sh` once (`.github/workflows/ci.yml:194-207`). The wrapper only re-executes tests that failed in that first run (`scripts/run-tests.sh:944-959,1007-1015`). A green execution of `recovery_faults_kill_real_daemon_and_preserve_original_pane` receives no repetition or pass-rate scoring. That directly explains how an approximately 40%-red crash-recovery defect can pass an ordinary gate roughly three rounds in five. Add a focused repeated canary or pass-rate gate for this recovery test; the existing failure-isolation machinery cannot detect intermittent reds on an initially green run.
+
+# Verdict
+
+`reject` — BLOCK SHIP on P1. TASK-2QK4P (crash-recovery replay 409s) fixes the measured 409 path, but the zero-link branch is broader than the “one live entry temporarily invalidated” state it intends to authorize.
+
+# Open Questions
+
+No unresolved product decision is needed for this review. `matching.len() > 1` is deliberate conservatism consistent with the existing uniqueness regression. The normal commit path also suppresses a duplicate identical `RecoveryOrigin` append (`crates/orgasmic-daemon/src/api.rs:9395-9410`). If the product wants a current claim to supersede historical authenticated duplicates, that would require an explicit authority-ordering rule and replacement of the current fail-closed test; this patch does neither.
+
+# Verification Notes
+
+- Tier: risky. Priority, recovery safety blast radius, and dependency/coupling triggers fire.
+- Read the live task through `orgasmic task get --project orgasmic TASK-2QK4P`, plus `.orgasmic/project.org`, `.orgasmic/gotchas.org`, commit `724973d`, merge `1c0d2b0`, and the relevant claim/catalog/API/writer/test paths. The worktree remained source-clean.
+- Corrected premise independently confirmed from source history: strict claim corroboration (`b35ae5b`) and catalog-based candidate filtering/removal-on-invalidation (`9bee827` plus its ancestors) are both ancestors of TASK-RMA18 merge `ebc69c2`. No TASK-RMA18 daemon change caused this. The causal design combination predates it.
+- `git diff --check 1c0d2b0^ 1c0d2b0`: passed.
+- Independent full crate gate, under the required syspolicyd watchdog: `scripts/run-tests.sh -p orgasmic-daemon`, exit 0, watchdog not tripped. Authoritative VERDICT:
+
+  ```text
+  failures : 0
+  crashed  : none — every failing target reported a failure list
+  cargo    : exited 0
+  ignored  : 5 test(s) carrying #[ignore]
+  environ  : complete — no tool requirement was waived
+  host     : calm; rate 0.6802
+  verdict: GREEN — no failures.
+  ```
+
+  The billed test was explicitly NOT RUN. Durable logs: `/tmp/TASK-2QK4P-review.b1jA2v/daemon-gate.log` and `/var/folders/9p/823z6j817xj9ts2xpvnx1q_40000gn/T/orgasmic-run-tests.qYV74o/suite.log`.
+- Direct already-built unit probes: `committed_claim_survives_an_index_blind_to_its_replacement` passed 1/1; `duplicate_authenticated_replacements_fail_closed` passed 1/1.
+- Direct already-built production-path probe: `recovery_faults_kill_real_daemon_and_preserve_original_pane` passed 6/6, each with one test thread and `ORGASMIC_HOME`/`ORGASMIC_RUN_ID` removed from the child environment. Probe summary: `/tmp/TASK-2QK4P-probes.pCxxew/summary.txt`.
+- C2: I found no accidental-satisfaction path within the daemon trust model. The verifier requires a complete daemon-HMAC-authenticated claim, a no-follow/inode-validated replacement file, exact run/runtime/boot/project identities, Acquire and immutable plan fields, an exact embedded claim snapshot, and the matching origin transcript (`crates/orgasmic-daemon/src/recovery_claim.rs:1822-1939`). Missing, malformed/truncated, relocated, or different-run transcripts return false.
+- C3: `matching.len() > 1` is conservative by design and consistent with the existing duplicate-authenticated-replacement regression. I found no normal commit transition that emits an identical duplicate link.
+- C5: the nine-line integration-test edit only buffers status/body so a failed assertion includes the 409 body, then parses the same successful JSON body (`crates/orgasmic-daemon/tests/recovery_fault_restart.rs:569-583`). No assertion was weakened; the exact run/runtime/boot/session identity, two-session count, and original-pane checks remain (`:584-629`).
+
+Not checked: I did not mutate a scratch checkout to execute the old predicate or add the hidden-duplicate injection because this reviewer is strictly read-only. I did not rerun the pre-fix base distribution, per the brief's “already established; do not re-derive” instruction. I did not run workspace-wide tests, clippy, fmt, MSRV, or non-Unix coverage. `git diff --check`, a full daemon crate gate, two focused unit probes, and six real-daemon recovery executions were run independently.
+
+# Fix Directions
+
+1. On zero catalog matches, perform an authoritative slow-path enumeration of the canonical project's session JSONL files, or make catalog completeness/dirty generation explicit and retry/fallback until the origin candidate set is authoritative. Accept only exactly one verified link equal to the loaded claim; fail closed on multiplicity or unresolved completeness.
+2. Replace the literal-`&[]` mechanism test with a production-shaped `RunCatalog`/collector test that invalidates the matching replacement record. Add the paired case where a second authenticated replacement is also hidden; the resolver must not return `Valid`.
+3. Add focused repetition/pass-rate scoring for the crash-recovery production test. Continue quoting `run-tests.sh`'s VERDICT block for crate-level claims; a raw `test result:` line remains per-binary evidence only.

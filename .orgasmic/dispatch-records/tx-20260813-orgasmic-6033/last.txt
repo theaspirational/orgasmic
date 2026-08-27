@@ -1,0 +1,284 @@
+# TASK-P9T4N (atomic dispatch close) — independent review
+
+Reviewed `e8b33a9` (`merge: atomically commit dispatch close`) against its first
+parent `1ee2db6`. Read-only: no source or project state was edited; the
+injection was exercised in a throwaway clone under `/tmp`, and this worktree is
+byte-clean (`git status --porcelain` empty at HEAD `0d535bb`).
+
+## Verdict
+
+**NO-SHIP.** The writer core is sound and the atomicity claim holds, but the
+branch ships a red suite: two pre-existing `orgasmic-cli --test dispatch` tests
+that pass on the parent fail on this commit. One of them is a real behavioural
+regression, not a stale fixture — a partially-closed bundle whose close tx
+predates `LIFECYCLE_FROM`/`LIFECYCLE_TO` is now stranded at its pre-close stage
+forever, because the retry path that used to finish it was deleted and the
+reconciler has no candidate for an old-format close tx. That directly negates
+the acceptance clause "Reconciler still passes its torn-close tests against
+old-format ledgers."
+
+## Findings
+
+### P1 (HIGH, bug/regression, unmet acceptance) — a retried partial bundle close no longer finishes the lifecycle leg of already-closed tasks
+
+`crates/orgasmic-cli/src/manager.rs:1348`
+
+The close loop now iterates `missing_close_tasks` only, and applies each task's
+lifecycle transition inside that same loop. The deleted
+`apply_close_lifecycle_transitions` (was `manager.rs:8498`, removed in this
+diff) ran over **all** `transitions` — including tasks whose close tx had
+already landed. So on a retried bundle close, a task in `open.closed_tasks` now
+gets no transition attempt at all.
+
+The reconciler cannot cover it: `torn_close_candidates`
+(`manager.rs:8636-8650`) only records a candidate when the close tx carries
+`LIFECYCLE_FROM`, `LIFECYCLE_TO` **and** `CLOSED_TX`. A close tx written before
+TASK-EP3H1 (or by any other producer) has no lifecycle pair, so nothing repairs
+the task — ever. It stays at its pre-close stage until an operator moves it by
+hand.
+
+Failure scenario, reproduced by an existing test:
+`bundled_partial_close_retry_is_idempotent_and_visible`
+(`crates/orgasmic-cli/tests/dispatch.rs:3039`) seeds exactly this shape via
+`append_partial_close_tx` (`dispatch.rs:721`, note the seeded properties contain
+no `LIFECYCLE_*`), then retries the close for both tasks.
+
+- HEAD: FAILS at `dispatch.rs:683` — `expected TASK-BUNDLE-A heading keyword
+  IN_REVIEW`, actual `IN_PROGRESS`.
+- Parent `1ee2db6`: passes.
+
+Fix direction: keep the atomic grouped write for tasks that still need a close
+tx, and additionally apply the lifecycle leg (via the existing
+`post_task_state` labelled-no-op contract) for tasks already in
+`open.closed_tasks` — i.e. restore the old "all transitions" sweep for the
+already-closed subset rather than dropping it.
+
+### P1 (HIGH, test/regression) — the branch's own dispatch suite is red; the QGWK7 ordering guarantee lost its regression test
+
+`crates/orgasmic-cli/tests/dispatch.rs:11346`
+(`a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused`)
+
+The test tears a close with `start_lifecycle_rejecting_proxy`
+(`dispatch.rs:8258`), which 503s `POST /api/projects/orgasmic/tasks/TASK-CLEANUP`.
+That route is no longer on the close path, so the close now succeeds and the
+fixture cannot tear anything: the run fails at `dispatch.rs:11409` — `the
+fixture must really tear the close:` with empty stderr, because the string
+`close tx appended but lifecycle update failed` no longer exists in
+`manager.rs`.
+
+- HEAD: FAILS. Parent `1ee2db6`: passes.
+- Full suite at HEAD: `test result: FAILED. 87 passed; 2 failed`.
+
+Two consequences: the merge commit is red, and the ordering invariant this test
+protects (TASK-QGWK7.1.1.1 F-6 — `reconcile_torn_closes_best_effort` must run
+*before* the absolute-`REPORT_PATH` refusal) is now unguarded. The
+implementer re-authored the other two close tests but left this one untouched.
+
+Fix direction: re-cut the fixture the same way
+`legacy_torn_dispatch_close_is_still_repaired_by_next_manager_command`
+(`dispatch.rs:8347`) was — seed a legacy torn close tx directly into the ledger
+instead of relying on a proxy to break the second leg — so the ordering
+assertion survives.
+
+### P2 (MEDIUM, correctness) — the grouped idempotency cache skips the mutation-identity guard every other writer path enforces
+
+`crates/orgasmic-daemon/src/writer.rs:802` (handle fast path) and
+`crates/orgasmic-daemon/src/writer.rs:1571` (writer-loop hit)
+
+Both return the cached `CachedResponse::Multi { results }` on a bare
+`request_id` match. `cached_transaction_from_map` (`writer.rs:668`) and
+`cached_mutation_from_map` (`writer.rs:613`) instead compare a
+`MutationIdentity` and `bail!` on mismatch — the contract stated at
+`writer.rs:736-738`: "Recover a mutation only when its exact semantic scope
+matches. A request-id collision across operations, projects, or payloads fails
+closed instead of returning an unrelated prior result."
+
+Failure scenario: two grouped calls that share a `request_id` but carry
+different rewrites or tx payloads — the second returns the first call's
+`tx_id`s as a success and its write is silently dropped, with no ledger entry
+and no error. The CLI's ids are deterministic per (task, dispatch generation)
+and it skips already-closed tasks, so I could not reach this from
+`dispatch-close` today; it is a latent hole in exactly the layer the task calls
+"the risky layer". Note the collision check the code *does* have
+(`writer.rs:1573-1585`) only guards the inverse direction (an inner tx id
+already used outside a group).
+
+Fix direction: store a `MutationIdentity` alongside `Multi` results (hash the
+rewrites plus every tx) and fail closed on mismatch, exactly as the single-tx
+path does.
+
+### P2 (MEDIUM, correctness/stale state) — the close no longer refreshes the project index when the ledger is home-routed
+
+`crates/orgasmic-daemon/src/api.rs:17174`
+
+The endpoint acknowledges with `refresh_after_tx` (`api.rs:7954`), which for
+`project_tx == false` refreshes **only** the home ledger. The lifecycle write it
+replaced went through `write_task_lifecycle_and_record` (`api.rs:16971`), which
+uses `refresh_after_project_mutation` (`api.rs:7981`) — that one refreshes the
+project index *and* the home ledger.
+
+Failure scenario: with `[tx] commit_to_project = false` (parsed at
+`config.rs:149`; default is `true`, `config.rs:104`), a dispatch close rewrites
+the project's task `.org` files and appends both txs to the home ledger, but the
+project index is never refreshed. The daemon then serves the pre-close lifecycle
+stage from `GET /projects/:id/tasks/...`, the board, and the UI after
+acknowledging the write — until the filesystem watcher happens to fire. The
+`TaskUpdated` event published at `api.rs:17175` makes clients re-fetch straight
+into the stale snapshot.
+
+Fix direction: use `refresh_after_project_mutation(&state, &project_id,
+close_project_tx, refresh_tx_id)` — the project is always the mutation target
+here, regardless of where the tx was routed.
+
+### P2 (MEDIUM, bug) — the new lifecycle-intent precondition can refuse a close after cleanup has already destroyed the worktree
+
+`crates/orgasmic-daemon/src/api.rs:17075-17081`
+
+The endpoint 400s unless the close tx's `LIFECYCLE_FROM` equals the daemon's
+indexed `task.lifecycle_stage`. The CLI computes that value by reading the task
+files from disk (`read_task_lifecycle`, `manager.rs:8189`); the daemon compares
+against its in-memory index, and `ensure_project_loaded`
+(`crates/orgasmic-daemon/src/index.rs:1104-1113`) returns early whenever the
+project is already `Ready` — it does not re-stat the files. Any window where the
+index lags disk turns a close into a hard failure.
+
+Failure scenario: the manager merges a worker branch that touched
+`.orgasmic/tasks/*.org`, then immediately runs `dispatch-close`. The CLI reads
+the post-merge stage, the daemon still holds the pre-merge stage, and the close
+is refused with `dispatch close lifecycle intent does not match current task
+state` — after `cleanup_dispatch` (`manager.rs:1312-1320`) has already removed
+the worktree and deleted the branch, and with no close tx on the ledger. The
+old path had no such coupling: the close tx always landed and the transition
+used whatever `from_state` the daemon had.
+
+Fix direction: treat the mismatch as a conflict that names the retry, or
+re-resolve the task from disk before comparing, rather than refusing the whole
+commit.
+
+### P3 (MEDIUM-LOW, correctness) — the close path dropped the "never write a task file the reader would choke on" guard
+
+`crates/orgasmic-daemon/src/api.rs:17087-17125`
+
+`write_task_lifecycle_and_record` re-parses every rewrite with `OrgFile::parse`
+before handing it to the writer (`api.rs:16933-16936`). The new endpoint
+rebuilds the same rewrites (same producers, same order) but hands them straight
+to `transaction_multi` with no parse check. A rewriter bug on the close path now
+lands on disk instead of being refused with a 400. Likelihood is low (identical
+producers), but the guard was deliberate and is cheap.
+
+### P3 (LOW, correctness) — a partially written append can now reuse a project tx sequence number
+
+`crates/orgasmic-daemon/src/writer.rs:2154`
+
+`append_txs_inner` commits the staged sequence cache only after `append_many`
+returns `Ok`. The previous `append_tx_inner` advanced `seq_cache` inside
+`prepare_tx_entry` before writing. If `write_all` fails after writing some bytes
+(ENOSPC class), the bytes are on the ledger but the sequence is not consumed, so
+the next append re-issues the same `tx-YYYYMM-slug-NNNN`. Before this change the
+same failure left a sequence gap, which is the safer end of the trade. Not
+reachable in the test suite; flagged because duplicate tx ids break `CLOSED_TX`
+back-references.
+
+### P3 (LOW, test) — `expect-red` pins a signature that does not identify the protected assertion
+
+`verify/TASK-P9T4N/expect-red:6`
+
+`contains: called `Option::unwrap()` on a `None` value` matches either
+`ledger.find(...).unwrap()` at `dispatch.rs:8335` (close tx missing) or
+`:8336` (transition missing). An injection that broke the close entirely would
+produce the same red. The verified red run does panic at `:8336`, i.e. the
+correct assertion, but the pin does not hold it there. Pinning the line, or
+replacing the `unwrap()`s with labelled `expect()`s, would make the artifact
+say what it proves.
+
+### P4 (LOW, docs/robustness)
+
+- `crates/orgasmic-cli/src/manager.rs:8265-8274`: the `CloseTransition` doc still
+  states the close "is two daemon writes ... and cannot be one commit without
+  either a multi-tx writer transaction or collapsing `task.state_transitioned`
+  into the close tx". This commit made that false; the comment now reads as the
+  current design.
+- `crates/orgasmic-cli/src/manager.rs:1349`:
+  `.expect("every readable close task has a lifecycle transition")` turns a
+  previously tolerated `None` into a panic in the operator binary. Unreachable
+  today (`close_lifecycle_transitions` bails on an unreadable task before the
+  loop), but a `bail!` costs nothing.
+
+## What holds up
+
+Recorded so the manager does not re-derive it:
+
+- **Writer core / atomicity.** `TxWriter::append_many` (`tx.rs:421-436`)
+  validates and round-trips every entry into a `String` buffer before a single
+  `write_all` + `flush`; nothing partial reaches the file on a validation
+  failure. `transaction_multi_locked_inner` (`writer.rs:2540-2620`) stages each
+  rewrite to a tmp file with `sync_all`, takes a backup with `sync_all`, calls
+  the pre-commit hook, renames, appends the whole group, then fsyncs — and
+  rolls the renames back on either an append or an fsync failure. The injected
+  boundary lands neither leg. Ordering, one-flock and non-interleaving are
+  proven by the three new tests.
+- **Single-writer flows unchanged.** The batched append path still uses
+  `prepare_tx_entry` + `write_tx_append` directly (`writer.rs:1956-1957`);
+  `transaction()` now delegates to the group implementation with a one-element
+  slice and produces byte-identical output. All six pre-existing
+  `writer_durability` tests pass.
+- **Endpoint authz.** The route is registered inside `protected`
+  (`api.rs:708`, under `identity_middleware`) and is absent from
+  `MEMBER_ALLOWED_ROUTES` (`api.rs:883-904`), so it is admin-only — same class
+  as the `POST /projects/:id/tasks/:task_id` it replaces. The handler binds the
+  close tx's `project`/`task` to the path (`api.rs:17046-17052`) and restricts
+  the tx type to the four terminal close types (`api.rs:17054-17062`), so it
+  cannot mutate another task. `tx_path` override remains possible on the
+  embedded `TxAppendRequest`, but that is pre-existing `POST /tx` behaviour and
+  the one-ledger check (`writer.rs:2126`) makes it fail closed whenever a
+  transition tx is present.
+- **Reconciler untouched.** `reconcile_torn_closes` and `torn_close_candidates`
+  are byte-unchanged; `legacy_torn_dispatch_close_is_still_repaired_by_next_manager_command`
+  and `resubmitted_close_and_transition_are_labelled_no_ops` both pass, so
+  legacy-ledger repair and the labelled no-op contract still work for the shapes
+  they cover.
+- **Injection artifact.** `git apply --check` clean; verified red out-of-tree.
+
+## Open questions
+
+1. Was dropping the transition sweep for already-closed tasks (P1) intentional —
+   i.e. is "old-format partial bundle" considered out of support now? If so the
+   task's acceptance clause and `bundled_partial_close_retry_is_idempotent_and_visible`
+   both need an explicit decision, not a silent failure.
+2. Is `[tx] commit_to_project = false` still a supported deployment? P2
+   (index refresh) only bites there.
+
+## Verification notes
+
+All commands run from this worktree unless stated. Rust toolchain per
+`rust-toolchain.toml`.
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p orgasmic-daemon --test writer_durability` | **9 passed, 0 failed** (incl. the 3 new grouped-writer tests) |
+| `cargo test -p orgasmic-cli --test dispatch` (full) | **87 passed, 2 FAILED** — `a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused`, `bundled_partial_close_retry_is_idempotent_and_visible` |
+| Same two tests, re-run in isolation at HEAD | FAILED again (deterministic, not flaky) |
+| Same two tests at parent `1ee2db6`, clean clone `/tmp/p9t4n-base`, separate `CARGO_TARGET_DIR` | **2 passed** → classification: **regression**, introduced by this commit |
+| `cargo test -p orgasmic-daemon --lib` | 831/833 reported `ok`, **0 failed**; the run itself died on SIGTERM while `supervisor::tests::babysitter_{runs_use_separate_jsonl,summary_chunk_collapses_events}` sat past 60s under full parallel load. Re-run in isolation: both pass in 0.23s. Classification: environment/contention, unrelated to this diff (supervisor babysitter, no writer or close code). |
+| `git apply --check verify/TASK-P9T4N/injection.patch` | clean |
+| Injection applied in `/tmp/p9t4n-base` at `e8b33a9`, then `verify/TASK-P9T4N/cmd` | `exit=101`; panic at `dispatch.rs:8336` (`task.state_transitioned` find), `test result: FAILED. 0 passed; 1 failed` — matches all four `expect-red` lines. Injection touches only `append_many(&entries)` → `append_many(&entries[..1])` in `append_txs_inner`. The repo under review was never modified; `git status --porcelain` is empty. |
+
+Logs: `/tmp/p9t4n-logs/{writer,dispatch,rerun,baseline,injected,daemon-lib}.log`.
+
+Not run: the full gate (fmt/clippy/all crates). The brief asked for focused
+independent verification, and two red integration tests already decide the
+verdict.
+
+## Fix directions (summary)
+
+1. Re-apply the lifecycle transition for tasks already in `open.closed_tasks`
+   during a retried close, via the existing `post_task_state` labelled-no-op
+   path; keep `transaction_multi` for tasks that still need a close tx.
+2. Re-cut `a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused`
+   against a seeded legacy torn close, as the sibling legacy test does, so the
+   reconcile-before-refusal ordering keeps a guard.
+3. Give `CachedResponse::Multi` a mutation identity and fail closed on mismatch.
+4. Swap `refresh_after_tx` for `refresh_after_project_mutation` in the close
+   endpoint.
+5. Make the `LIFECYCLE_FROM` mismatch recoverable rather than a flat 400.
+6. Re-add the `OrgFile::parse` check over the close endpoint's rewrites.

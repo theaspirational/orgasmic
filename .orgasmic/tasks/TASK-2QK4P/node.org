@@ -1,0 +1,126 @@
+#+title: orgasmic task TASK-2QK4P
+#+orgasmic_version: 2
+
+* DONE TASK-2QK4P crash-recovery replay 409s when the run catalog is briefly blind to a live replacement (pre-existing, intermittent ~40%) :daemon:recovery:
+:PROPERTIES:
+:DEPENDS_ON: TASK-RMA18
+:ID: TASK-2QK4P
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:FIX_SUBTASK: TASK-2QK4P.1
+:END:
+
+** READ THIS FIRST — STATUS
+*THE ORIGINAL PREMISE OF THIS TASK WAS FALSE, AND THE MANAGER WROTE IT.* This was
+filed as a REGRESSION "bisected to TASK-RMA18". It is not a regression. It is a
+PRE-EXISTING intermittent defect that fails roughly 40% of the time on any tree.
+
+THE MANAGER'S BISECT SAMPLED NOISE. One run per commit, on a test with a ~40%
+failure rate: base passed once, three later commits failed once each, and that
+was read as a clean before/after. The implementer challenged it and was right.
+
+MEASURED AFTERWARDS BY THE MANAGER, same binary, 8 consecutive runs at
+=3a36858= — the commit recorded above as PASS:
+
+: 5 passed / 3 failed
+
+So the "before" tree fails too. The implementer's own control (3 of 6 at base)
+reproduced independently.
+
+CONSEQUENCES FOR THE RECORD, all of which the manager got wrong:
+- TASK-RMA18 did NOT break crash recovery. The section below headed "Why it was
+  missed three times" is wrong on its first bullet: the TASK-RMA18 implementer
+  classified this as "pre-existing / host-load" and *that call was correct about
+  the class*. Its only error was giving up rather than root-causing it.
+- The manager's criticism of that implementer's control was itself the better
+  measurement only by accident; a whole-suite control IS a poor instrument for a
+  single-test question, but the conclusion it reached was right.
+- The one criticism that STANDS: the manager reported "daemon suite 738 passed /
+  0 failed" from the LIB binary while this crate has *23 test binaries*. A
+  per-binary number was quoted as a per-crate result. The remedy is to quote
+  =run-tests.sh='s VERDICT block, never a raw =test result:= line.
+
+THE REAL CAUSE, root-caused by the implementer and verified by the manager:
+=resolve_authoritative_recovery_claim= required a Committed claim to be
+corroborated by a link in =indexed_origins=, which is derived from =RunCatalog=
+— a cache that DROPS a record on every lifecycle append by design. A replay about
+a LIVE replacement therefore hit a window where the index carried no link,
+quarantined a claim that had just verified itself against the replacement's own
+transcript, fell through to a fresh acquire, and took =LeaseHeld= from the live
+replacement. An index that CONTRADICTS a claim still quarantines; one that is
+merely SILENT no longer does.
+
+VERIFIED ON THE MERGED TREE BY THE MANAGER: *12 passed / 0 failed of 12*
+consecutive runs, against 5/8 at base. Plus the new
+=committed_claim_survives_an_index_blind_to_its_replacement= unit test, which is
+what actually pins the mechanism — 12/12 is ~99.8% confidence against a 45%
+rate, not proof.
+
+*STILL OPEN AND WORTH A TASK:* nothing in the pipeline repeats a crash-recovery
+test or scores a pass rate, so a defect at 40% ships green one round in two.
+That is how this survived however long it has been there.
+
+** The measurement
+=recovery_faults_kill_real_daemon_and_preserve_original_pane=
+(=crates/orgasmic-daemon/tests/recovery_fault_restart.rs:576=) fails:
+
+: response: replay status 409 Conflict
+
+BISECTED, each run in an ISOLATED worktree with its own =CARGO_TARGET_DIR=, the
+single test by name, on a calm host (syspolicyd < 3%, load 4-7):
+
+| commit                                | result |
+|---------------------------------------|--------|
+| =3a36858= (before TASK-RMA18)         | *PASS*, 7.33s |
+| =ebc69c2= (TASK-RMA18 merged)         | *FAIL*, exit 101 |
+| =c090b51= (state commit after RMA18)  | *FAIL*, exit 101 |
+| =d10b0cf= (TASK-RMA18.1 merged)       | *FAIL*, exit 101 |
+
+*So TASK-RMA18 introduced it and TASK-RMA18.1 is not at fault.* It fails ALONE,
+repeatably — this is not the concurrency-and-load shape of TASK-K9WWM.
+
+** Why it was missed three times, which is the more useful finding
+- The TASK-RMA18 implementer SAW this exact failure ("recovery_faults_kill_real_daemon_and_preserve_original_pane
+  (409 on replay)") and classified it *pre-existing / host-load*, supported by a
+  control that reverted =supervisor.rs= to main and ran the WHOLE SUITE, which
+  came back with three DIFFERENT failures. A whole-suite comparison under load
+  cannot answer a single-test question: it measured the host on both sides. The
+  correct control is the one above — one test, by name, isolated worktree.
+- The reviewer ran no tests, by explicit instruction in the manager's brief, and
+  said so plainly in its report. Its residual-risk statement named exactly this
+  gap. *That is the brief's fault, not the reviewer's.*
+- The manager reported the daemon suite "738 passed / 0 failed" — which was the
+  LIB binary only (=orgasmic_daemon-<hash>=). =recovery_fault_restart= is a
+  separate INTEGRATION binary and was never in that number. A per-binary green
+  was read as a per-crate green.
+
+** Where to look
+=/api/runs/<id>/recover= with =action: start_recovery_run= returns 409 from
+=recovery_claim_conflict= (=api.rs:11723=), which fires when a claim exists whose
+=request_id= differs, or when a Committed claim is not authoritative per
+=committed_claim_is_authoritative= — and that function consults =indexed_origins=,
+so an index that is not ready yet produces a conflict rather than a replay.
+
+TASK-RMA18's daemon surface is small and entirely in =supervisor.rs=:
+=AdmittedRun= replacing the lease's =String=, =worktree_identity= /
+=same_worktree=, =pending_admission_in_worktree=, and the =blocking_run_for_close=
+consultation.
+
+*RULED OUT ALREADY, do not repeat it:* the manager reverted =admit_live_run='s
+broadened conflict match (=same_worktree= back to =key.worktree_key ==
+worktree_key=) on the merged tree, rebuilt, and the test STILL FAILED. That was
+the obvious candidate — a broadened equality on a conflict check can only produce
+more conflicts — and it is not the cause.
+
+** Acceptance
+- =recovery_faults_kill_real_daemon_and_preserve_original_pane= passes on main,
+  alone and in the full =-p orgasmic-daemon= suite on a calm host.
+- The root cause is stated as a measurement naming which part of TASK-RMA18's
+  daemon change broke the recovery replay, not as a plausible story.
+- If the test's premise (not the product code) turns out to be what RMA18
+  invalidated, say so explicitly and justify changing the test rather than the
+  code — the bar is high, because this test guards crash recovery.
+- A gate would have caught this: =scripts/run-tests.sh -p orgasmic-daemon= covers
+  it, so state why the round that introduced it went out green, and whether
+  anything should change so a per-binary result is never reported as per-crate.
+

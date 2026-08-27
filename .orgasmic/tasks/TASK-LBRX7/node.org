@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-LBRX7
+#+orgasmic_version: 2
+
+* IN_REVIEW TASK-LBRX7 Ledger branch extraction: orphan `orgasmic` branch, hidden worktree, .orgasmic leaves the main tree :twcp9:distributed:
+:PROPERTIES:
+:ID: TASK-LBRX7
+:PRIORITY: P1
+:DEPENDS_ON: TASK-SRBGS
+:END:
+
+** Description
+TWCP9 decision, step 1. Create the orphan `orgasmic` branch (no shared history with main). The daemon owns a hidden worktree for it at ~/.orgasmic/<project>/ledger/ and repoints every ledger read/write there. `.orgasmic/` is removed from the main tree; worker worktrees are ledger-free by construction. Single combined cutover: extend the AP971.9 migrator (`orgasmic project migrate`) with a target-branch mode so old-format state migrates directly onto the branch — never migrate twice. CLI/daemon project discovery must work from a worktree that contains no `.orgasmic` (resolve via the git common dir).
+** Acceptance
+- [ ] `orgasmic` branch exists as an orphan; daemon reads/writes only via the hidden worktree
+- [ ] main tree and fresh worker worktrees contain no `.orgasmic` (test)
+- [ ] `orgasmic project migrate --to-branch` is one-shot, idempotent, --dry-run capable
+- [ ] CLI verbs work from a worker worktree with no `.orgasmic` present (test)
+- [ ] CI config excludes the `orgasmic` branch from triggers
+

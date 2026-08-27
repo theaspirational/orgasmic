@@ -1,0 +1,17 @@
+## Changed
+- `crates/orgasmic-daemon/src/api.rs`: routes the AP971.5 node-scoped type table to exactly one node journal, keeps project/dispatch/deletion types in `tx/`, creates tasks as node directories with journal entry #1, sends artifact events to artifact journals, removes deleted node directories after the project tombstone, and makes dispatch close one `transaction_multi` call containing one close append plus the node rewrite.
+- `crates/orgasmic-daemon/src/writer.rs`: adds native journal appends with prose-body preservation and validation, keeps journal ids on the project sequence, and includes every node journal in the cold-start max scan.
+- `crates/orgasmic-cli/src/manager.rs`: documents torn-close reconciliation as legacy-only now that new closes have no separate transition append.
+
+## Verification Gates
+- `cargo fmt --all` — pass.
+- `git diff --check` — pass.
+- `cargo test -p orgasmic-daemon --lib ap971_` — pass: 4 passed, 0 failed. Covers the complete known routing table, one-append dispatch close, journal-aware cold-start sequencing, and task creation journal entry #1 through a real daemon HTTP path.
+- `cargo test -p orgasmic-daemon --lib artifact_create_submit_feedback_consume_roundtrip -- --nocapture` — pass: 1 passed, 0 failed; focused artifact production-path probe.
+
+## Unmet Criteria
+- None.
+
+## Residual Risk
+- Heavy/workspace suites were intentionally not run, per the dispatch test budget.
+- Node-directory removal follows the durable project tombstone; an OS removal failure is surfaced but can leave the already-emptied directory for operator cleanup.

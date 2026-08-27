@@ -1,0 +1,49 @@
+#+title: orgasmic task TASK-CNZGR
+#+orgasmic_version: 2
+
+* DONE TASK-CNZGR dispatch CLI watch-hint outputs inner cursor-agent pid (or run-state poll), not outer wrapper :cli:dispatch:dx:fix:
+:PROPERTIES:
+:ID:               TASK-CNZGR
+:PRIORITY:         P3
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-cli/src/manager.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/tests/manager.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-J95T2
+:END:
+
+** Description
+The =orgasmic manager dispatch= CLI currently prints a watch hint like:
+
+#+begin_src
+dispatched: TASK-XXX implementer pid=50864 run_id=run-... worker=...
+watch: until [ -s '/private/tmp/orgasmic-codex/task-XXX-last.txt' ] || ! ps -p 50864 > /dev/null; do sleep 8; done
+#+end_src
+
+The =pid=50864= here is the OUTER wrapper PID — the cursor-agent CLI launcher that forks the worker-server process and then exits within seconds. The watch hint relies on =ps -p 50864= to detect "dispatch is done", but this is wrong: =ps -p 50864= goes false within seconds while the actual cursor-agent worker-server process (e.g., PID 37147) keeps running for the full dispatch duration (10 min to 1h+).
+
+Live observed this turn on TASK-J95T2 reviewer dispatch and TASK-J95T2.1 implementer dispatch: my manager watcher script exited early because it polled the wrong PID. I worked around by also polling =pgrep -f "cursor-agent/versions.*worker-server"= and adding a 5s post-exit drain. This works but should be the CLI's responsibility, not the manager's.
+
+** Acceptance Criteria
+- [ ] The =orgasmic manager dispatch= CLI output prints a watch hint that correctly reflects the dispatch's true liveness. Pick ONE approach:
+  - *(a) Inner-PID approach*: have the daemon's =POST /projects/:project_id/tasks/:task_id/dispatch= response include the cursor-agent worker-server PID (not just the wrapper PID), and the CLI prints that PID in the watch hint. Requires daemon-side: poll =/proc= (or =ps= on macOS) for the wrapper's child process within a short window after spawn (~5s) and stash the descendant PID in the run record. Caveat: depends on knowing the worker-server is always a direct child of the wrapper.
+  - *(b) Run-state-poll approach*: change the watch hint to poll the daemon's API (e.g., =/runs/:run_id/status=) for run released, rather than polling a PID. Requires daemon-side: ensure such an endpoint exists and is bearer-authed appropriately. CLI side: print a watch hint that uses =curl= with the bearer token. More robust (no PID fragility) but the watch hint becomes longer.
+  - *(c) Process-pattern approach*: print a watch hint that uses =pgrep -f= matching the worker pattern + session id or run id. E.g., =until [ -s last.txt ] || ! pgrep -f "cursor-agent.*<session_id>" > /dev/null; do sleep 8; done=. Requires cursor-agent's argv to actually include the session id; verify by inspecting =ps -o command= for an active dispatch first.
+- [ ] After the fix, a typical manager watcher script using the new watch hint exits when the dispatch actually completes (not when the outer wrapper dies). Verify by dispatching TASK-CNZGR itself (dogfood — the dispatch that ships this fix should be the first to benefit from it).
+- [ ] Add a unit test in =crates/orgasmic-cli/tests/= (or integration test in =dispatch_endpoint.rs= depending on approach chosen) that asserts the dispatch CLI output contains a sensible watch hint (e.g., approach (a): contains an inner-PID format; approach (b): contains the daemon URL + run_id; approach (c): contains a process-pattern).
+- [ ] =cargo test --workspace + clippy + fmt + diff= all green. MSRV 1.78.
+
+** Notes
+NOT :FIX_SUBTASK: t — full IMPLEMENT → REVIEW → DONE lifecycle. P3 because the manager's pgrep workaround works; this is DX polish, not a blocker. The daemon-side approach (a) is the cleanest long-term and matches the existing pattern of the dispatch handler tracking subprocess lifecycle (TASK-M5JTN + TASK-J95T2 work). Recommended choice: (a) inner-PID.
+
+** Evidence
+- Implementer: cursor-agent (implementer-cursor, composer-2.5-fast), ~24min wall, self-commit =f7b52d5= on =task-075-impl=. Merged no-ff. Approach (a) inner-PID via =pgrep -P= polling.
+- Files: =api.rs= +11, =supervisor.rs= +131, =dispatch_endpoint.rs= +114. Three files in WRITE_SCOPE (supervisor.rs added as the one-extra-file allowance).
+- Implementation: new =supervisor::resolve_dispatch_watch_pid= polls direct children via =pgrep -P= for up to 5s, prefers =worker-server= children, falls back to wrapper PID. Only applied to =cli_dispatch= spawns (early-exit watcher still uses wrapper PID — implementer reverted an attempt to switch that because it broke real cursor-agent auto-spawn). =manager.rs= unchanged — it already prints =response.pid=.
+- Tests: 361 → 363. Workspace clean (cargo test + clippy + fmt + diff). MSRV 1.78.
+- Reviewer: cursor-agent (reviewer-cursor, composer-2.5-fast), ~5min wall. Verdict =has-issues, no-blocks-ship= (5 findings). Report at =/tmp/orgasmic-codex/task-075-review-report.md=. Findings: F-1 MEDIUM (500ms fallback latches non-worker-server intermediate child — LIVE-DEMONSTRATED by the reviewer dispatch itself: printed =pid=36632= didn't match wrapper 36202 or worker-server 37731), F-2 MEDIUM (tests don't exercise worker-server preference path), F-3 LOW (doc comment overstates early-exit watcher behavior), F-4 LOW (fallback to dead wrapper PID inherent), F-5 LOW (5s sync HTTP latency).
+- 3 of 5 reviewer findings closed by TASK-CNZGR.1 fix-subtask (F-1 strict worker-server gate, F-2 worker-server preference test, F-3 doc fix). F-4 + F-5 reviewer-accepted (no action needed).
+- *F-1 fix LIVE-VALIDATED by the second TASK-CNZGR.1 retry dispatch*: with the strict worker-server gate, cursor-agent dispatches now wait the full 5s for the worker-server descendant before falling back. Note: the FIRST TASK-CNZGR.1 dispatch attempt SIGKILL'd (cursor-agent crashed at seq 2, before any work — unclear cause; possibly OS pressure). That run got stuck "active" in the daemon because TASK-J95T2's early-exit classifier counts =driver_error= as a "work envelope", masking the no-real-work state. Candidate TASK-CF435: extend the early-exit classifier to treat =driver_error= envelopes as terminal (not work).
+- Hand-flipped TASK-CNZGR REVIEW → DONE in this cluster-close commit. Bumps =:LIVENESS:= 6c882fa → <new HEAD>.
+

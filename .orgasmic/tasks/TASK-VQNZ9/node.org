@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-VQNZ9
+#+orgasmic_version: 2
+
+* DONE TASK-VQNZ9 TASK-SZEWA fix round 4: truthful semantic governance and wire proof
+:PROPERTIES:
+:ID: TASK-VQNZ9
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Resolve all eight HIGH findings from TASK-JKPAP review of 2475248: native-only turn boundaries; explicit character-budget migration; HTTP governance disable matrix; remove remaining worker model knowledge and prove no-worker/wire paths; true cold artifact restart; manager argv validation; live-switch transport capture; format/warning gates.
+

@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-E3K1B
+#+orgasmic_version: 2
+
+* BACKLOG TASK-E3K1B doctor reports no vendor-transcript inventory, so dec_Y5MPK's operator-owned retention has no numbers to act on    :doctor:sessions:evidence:
+:PROPERTIES:
+:ID: TASK-E3K1B
+:PRIORITY: P2
+:RELATES_TO: dec_Y5MPK TASK-H0TYV TASK-F9VEZ TASK-B6D8W TASK-2B215
+:END:
+
+Filed by TASK-H0TYV (VB9DQ fix round). dec_Y5MPK names `doctor` as the owner of two obligations and neither exists in code.
+
+Item 5 (2026-07-25): orgasmic never prunes a vendor transcript, and "its obligation is visibility: report per-harness counts, total size, and age distribution through `doctor` so the operator can act with full information."
+
+Item 6 (added 2026-07-28 by TASK-H0TYV): that per-harness report splits into orgasmic-attributed and unattributed, where a transcript is orgasmic-attributed exactly when its native session id appears in a `NativeRuntime` lifecycle record in orgasmic's own session JSONL.
+
+Neither has been filed until now, and `doctor` reports nothing about vendor stores. The decision assigns retention to the operator on the explicit premise that orgasmic supplies the numbers; without this the operator owns a duty they have no instrument for. Measured on the operator machine 2026-07-28: 652 JSONL under `~/.claude/projects`, 1457 under `~/.codex/sessions`, 909 under `~/.cursor`, 82 under `~/.hermes/sessions`.
+
+Work:
+1. Per-harness inventory in `doctor`: file count, total size, age distribution. Roots are already defined and test-overrideable — reuse `TranscriptRoots::from_env_home` (`crates/orgasmic-drivers/src/transcript_finder.rs`) rather than hardcoding a second copy of the path rules.
+2. Split each harness's numbers into orgasmic-attributed and unattributed by the item 6 rule. Read attribution from recorded `NativeRuntime` events; never from path shape, file age, or launch-time proximity — those are the discovery heuristics dec_Y5MPK item 3 forbids.
+3. Report honestly where the split is not computable. Today only claude mints its own session id, so codex, cursor-agent and hermes are wholly unattributable until TASK-F9VEZ, TASK-B6D8W and TASK-2B215 land. `doctor` must say "attribution unavailable for this harness" and name the blocking task, not silently report 0 attributed — a zero that means "cannot tell" reads as "orgasmic wrote none of these", which is false and would misdirect a prune.
+4. Report only. `doctor` never deletes, moves, or offers to delete a vendor file (item 5).
+

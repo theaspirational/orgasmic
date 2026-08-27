@@ -1,0 +1,122 @@
+#+title: orgasmic task TASK-YRK1V
+#+orgasmic_version: 2
+
+* DONE TASK-YRK1V Full ID migration: re-key all task/decision/arch/glossary nodes to minted short-random IDs, rewrite every live reference :identity:migration:state:tooling:
+:PROPERTIES:
+:ID:               TASK-YRK1V
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:WRITE_SCOPE:      .orgasmic/ crates/ ui/src/ shipped/
+:READ_SCOPE:       .orgasmic/ crates/ ui/src/ shipped/
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-GBT5W
+:END:
+
+** Description
+Executes dec_X72P5b (operator: FULL migration, no mixed scheme). This is the
+first minted-ID node in the repo — filed under the new grammar.
+
+Inventory at filing [2026-06-11]: 217 task headings (incl. subtasks) across
+sprint/backlog/archive, 70 dec records, 17 arch records, 40 =term:= glossary
+entries; ~772 =dec_= refs, ~897 =arch_= refs, TASK refs throughout org state
++ tx records, 8 code files with =orgasmic:task_= markers, shipped/ prompt
+specs, test fixtures.
+
+Method (script-driven, ONE commit, daemon quiesced for the apply +
+restarted after). TWO-PHASE EXECUTION (manager, 2026-06-12): live
+=.orgasmic/= state keeps moving while a worker holds a worktree snapshot,
+so the WORKER delivers the migration script + rehearsal evidence (script
+run inside its own worktree copy: mapping built, rewrite applied, greps
+clean, workspace tests green) but does NOT migrate live state; the
+MANAGER executes the merged script on quiesced fresh main, runs the
+verification battery (greps, tests, daemon restart + parse_errors 0, UI
+smoke), and lands the rewrite as the ONE tagged commit. The rehearsal
+worktree diff is discarded — only the script + doc line merge.
+1. Build the mapping: mint one conforming ID per node (=TASK-XXXXX= /
+   =dec_XXXXX= / =arch_XXXXX= / =term_XXXXX=); subtask suffixes derive from
+   the parent's new ID (TASK-HC7PW.1 → TASK-<new148>.1); dec clause refs
+   migrate with their clause letter (dec_SSJVDa → dec_<new071>a).
+2. Rewrite longest-match-first (subtask/clause refs before parent refs)
+   across ALL live surfaces: org headings + drawers (=:ID:=, =DEPENDS_ON=,
+   =PARENT_TASK=, =GLOSSARY_REFS=, =tracked_by=, =:SOURCE:=), org prose
+   (incl. ranges/shorthand like "TASK-E9K1B/TASK-ZSD0B"), tx records (re-keying is
+   not falsification — git holds the originals; UI tx→task links must
+   resolve), goal/handoff, conventions, the structured =orgasmic:task_*=
+   code markers (9 lines), shipped/ specs (50 lines). EXEMPT per dec_X72P5b
+   carve-out: free-text code comments (497 mention lines / 61 crates/ui
+   files — point-in-time annotations, bridged by the tagged migration
+   commit per dec_X72P5 v4) and test
+   fixtures (synthetic self-consistent org data; TASK-GBT5W's audit keeps
+   suites green).
+3. Land as ONE commit and tag it =id-migration= — the commit diff IS the
+   durable mapping; NO =:RENAMED_FROM:= drawers (dec_X72P5b v4: migrated
+   state must be indistinguishable from greenfield). Document the lookup
+   one-liner (=git show id-migration | grep <old-id>=) in
+   conventions/contributing.org. Git history and =archive/= essays
+   intentionally keep old IDs. Historical artifact names in evidence prose
+   (dead branches/worktrees like =task-103.1-impl=) are left as-is — they
+   name artifacts that no longer exist.
+4. Verify: zero matches for legacy patterns (=TASK-[0-9]=, =dec_[0-9]+=,
+   =arch_[0-9]=, =term:[a-z]= as identity) in =.orgasmic/= + =shipped/= +
+   structured markers — exempting =archive/= and free-text code comments;
+   =cargo test --workspace= green; daemon restart
+   + doctor clean (parse_errors 0); UI smoke — kanban renders, task lookup
+   by new ID, tx links resolve.
+
+** Acceptance Criteria
+- [ ] Mapping built and applied for all four classes in ONE commit, tagged
+  =id-migration=; the lookup one-liner documented in
+  conventions/contributing.org; zero =:RENAMED_FROM:= or other migration
+  traces in live state.
+- [ ] Zero legacy-pattern matches in =.orgasmic/= + =shipped/= + structured
+  markers (archive/ and free-text code comments exempt per dec_X72P5b) —
+  grep proof recorded in evidence.
+- [ ] Subtask (=.k=) and dec clause (=dec_NNNa=) references migrated
+  consistently with their parents (no orphaned suffixes).
+- [ ] =cargo test --workspace= green; daemon restarts clean with
+  parse_errors 0; UI kanban + task lookup + tx-link smoke pass.
+- [ ] Migration script checked in (idempotent, dry-run mode) so the
+  procedure is reproducible for other repos adopting dec_X72P5.
+
+** Evidence
+- EXECUTED [2026-06-12]: migration commit =a0ffba0= tagged =id-migration=
+  (68 files, ~4,492 line pairs) — the commit diff IS the durable old->new
+  mapping; lookup forever: =git show id-migration | grep <old-id>=
+  (documented in conventions/contributing.org). 258 nodes re-keyed (131
+  tasks incl. subtasks, 70 decisions, 17 architecture, 40 glossary terms;
+  TASK-YRK1V/TASK-ZD72S/TASK-84QVC already minted, skipped), 6,661
+  replacements across 67 state/shipped/marker files; live-corpus fixture
+  test expectations updated in the same commit; 20 multi-task slash
+  chains expanded; mapping json deleted before commit (no migration
+  traces in live state).
+- Tooling: 2 worker rounds (implementer-cursor / composer-2.5-fast, runs
+  run-20260611T215941-76361c1 + run-20260611T223957-945fbfe; round-1
+  process died mid-final-summary, report recovered from session jsonl) +
+  manager review findings each round (GLOSSARY_REFS cross-file drawers,
+  slug-prop scoping vs non-glossary :ID: lines, Crockford regex classes,
+  glossary-create term: prefix, .orgasmic/tmp/ skip).
+- EXECUTION-FOUND DEFECTS (fixed before the tag): cascade rewrite —
+  legacy 067 minted to digit-leading stem 145JX, legacy key 145 then
+  matched inside the fresh value in a later batch producing a corrupt
+  E9K1BJX stem; fixed with strict alphanumeric lookaheads + letter-first
+  stems (84 digit-leading mapping values re-minted) + cascade self-test
+  (script fix commit e8d9de9). Post-smoke: load_glossary filtered
+  headings by legacy =term:= title prefix — all 40 terms missing from
+  index (TASK-GBT5W audit miss); 5 single-word :CANONICAL: phrases
+  clobbered into term ids (CANONICAL is prose, not identity) — both
+  fixed in 063d689, CANONICAL repaired inside the tagged commit.
+- Verification: script =--verify= zero residual legacy identity patterns
+  (archive/, free-text code comments, crate test fixtures,
+  .orgasmic/tmp/ exempt by design); second =--apply= a no-op
+  (idempotent); =--self-test= green incl. cascade + GLOSSARY_REFS +
+  config-:ID: guards; core 102 + fixtures 28/28 green (live-corpus
+  expectations minted); cli dispatch stub green isolated; daemon lib
+  143/143; daemon restarted on migrated state pid 6945 parse_errors 0;
+  API smoke — 220 tasks (zero legacy-grammar ids in index), task get by
+  minted id, 40 glossary terms, 52 arch nodes, decisions list with
+  =term_*= GLOSSARY_REFS resolving.
+- Known-failure set unchanged (TASK-ZD72S): 3 dispatch_endpoint PID
+  tests, 2 integration.rs assertions, PoisonError cascade neighbors,
+  + hermes =real_hermes_websocket_fixture_roundtrip= verified failing
+  identically on pre-migration main (added to ZD72S scope).
+

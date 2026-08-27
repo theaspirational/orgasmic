@@ -1,0 +1,56 @@
+#+title: orgasmic task TASK-4DTBZ
+#+orgasmic_version: 2
+
+* BACKLOG TASK-4DTBZ rmux review transport must survive auth-shadow and daemon disconnects    :drivers:rmux:claude:hardening:
+:PROPERTIES:
+:ID: TASK-4DTBZ
+:PRIORITY: P1
+:RELATES_TO: TASK-QSX56
+:END:
+
+Two consecutive TASK-QSX56 reviewer dispatches blocked the required Opus verdict for different transport reasons. Attempt 1 inherited a stale ANTHROPIC_AUTH_TOKEN from the foreground daemon and native Claude returned 401 even though the stored claude.ai login was healthy. After restarting the daemon with provider auth overrides removed, attempt 2 reached real Claude Opus 4.8/high and performed substantive analysis, then the rmux daemon closed the pane-output-cursor transport after 4m25s; the worker released protocol_end_without_finalize and no report was preserved. Define explicit provider-auth environment precedence/scrubbing for rmux launches, and make a daemon-side rmux disconnect preserve or reattach the native Claude session/report rather than losing the review. Add deterministic regressions for stale auth shadowing and rmux daemon disconnect during an active reviewer session.
+HARD EVIDENCE [2026-08-03], and it is worse than "survive auth-shadow and daemon
+disconnects": THE RMUX DAEMON DIED UNDER THREE CONCURRENT DISPATCHES AND KILLED
+ALL OF THEM AT ONCE.
+
+Measured. At =2026-08-03T00:03:10Z= the orgasmic daemon logged, for all three
+live runs within 24 milliseconds:
+
+: ERROR supervisor: driver release failed; continuing unconditional producer and
+:       lifecycle cleanup  run_id="run-...a0f17bb2..." / "...f6cae37c..." / "...a642ea86..."
+: (hint: verify the rmux daemon is running and the endpoint is reachable) and CLI
+:  fallback (driver transport unavailable: rmux send child exited with exit status: 1)
+: WARN api: dispatch completion watcher: release without worker finalize, flagging orphan  x3
+
+Then the orgasmic daemon restarted at =00:04:11Z= — TWICE, two different boot_ids
+one after the other, which is the launchd KeepAlive race. No machine reboot:
+uptime was continuous at 7h01m and no new panic reports exist. =rmux ls= returned
+EMPTY afterwards while a NEW =rmux-daemon= pid was already up.
+
+Casualties: TASK-VEGRV and TASK-3CM0Q implementers, both with uncommitted work
+(preserved by the manager as =ad368c6= and =a409197=), and the TASK-FZB6T round-3
+reviewer, which lost its entire run. Three workers, one transport failure.
+
+RMUX CYCLED ITS PID AT LEAST THREE TIMES during the 2026-08-02/03 session
+(=6049= at 20:06, =99375= later, =3150= after this incident), so this is not a
+one-off. It leaves NO trace: =rmux.err.log= has not been written since
+2026-07-26, and there is no crash report in either DiagnosticReports directory.
+
+WHY THIS IS SHARPER THAN ITS PRIORITY SUGGESTS. rmux was chosen for every
+dispatch that session precisely BECAUSE it is the only pane transport with a
+liveness channel in the installed runtime (=57e35de= predates TASK-4CSMYs tmux
+channel). So the safe-looking choice is the one that lost three workers, and the
+alternative — tmux — is only unsafe because the runtime has not been rebuilt.
+Whichever way a manager turns today, one of the two failure modes is live.
+
+WHAT A FIX HAS TO COVER, beyond the original scope:
+- rmux dying must not be silent. It currently writes nothing anywhere.
+- a driver-release failure across MULTIPLE runs at once should be recognisable as
+  a transport-level event rather than reported three times as unrelated run
+  failures.
+- the orphan flagging is correct but the recovery is not: three workers with live
+  work were left with no route to finalize, and the manager had to salvage two
+  worktrees by hand.
+- consider whether the daemon should refuse to keep dispatching onto a transport
+  whose endpoint it has just failed to reach.
+

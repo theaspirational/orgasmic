@@ -1,0 +1,152 @@
+#+title: orgasmic task TASK-RMA18.1.1.1.1.1
+#+orgasmic_version: 2
+
+* DONE TASK-RMA18.1.1.1.1.1 delete the help's last unbounded universal, and stop describing two identical wording bans asymmetrically
+:PROPERTIES:
+:ID: TASK-RMA18.1.1.1.1.1
+:PRIORITY: P2
+:IMPLEMENTS: TASK-RMA18.1.1.1.1
+:END:
+
+** READ THIS FIRST — STATUS
+Follow-up round for TASK-RMA18.1.1.1.1, opened by an *APPROVE-WITH-FOLLOW-UPS*
+(=tx-20260808-orgasmic-5465=, claude/opus-5 same-family — cross-family blocked by
+[[TASK-52NJS]]).
+
+*THE REVIEWER SAID IT WOULD REINSTALL ON THIS TREE.* Two independent reviewers
+have now answered the shipping question YES. This round is FOUR TINY ITEMS: delete
+one word, add three string literals, fix one doc comment, author one verify
+artifact, and hedge one message. *It exists because the item that matters — R1 —
+is an over-promise in OPERATOR TEXT, and the reinstall is exactly what puts that
+text in front of an operator.*
+
+*THE REVIEW REPRODUCED ITS OWN RED*, which is worth recording as the standard: it
+exported =HEAD= with =git archive= into a scratch tree, deleted the
+=if repo_gone { … }= block at =manager.rs:4155-4168=, rebuilt, and got *exactly
+one test red, failing on the ARM assertion* (=dispatch.rs:9477=). That
+independently proved F2 was real on the production path AND F3's premise that no
+other prune regression covered that arm.
+
+** Findings to close
+*** R1 (MEDIUM, docs) — the help still makes ONE unbounded universal about the walk
+=crates/orgasmic-cli/src/manager.rs:386-388=
+
+: "…the anchored walk of the tree's own contents refuses any NESTED `.git` entry, of any type…"
+
+The walk is bounded THREE ways: =:3833= returns at =depth > anchored_dir::MAX_DEPTH=
+(64), =:3836= returns on an =entry_names= error, =:3855= skips an
+=open_child_dir= =Err=. So "refuses ANY nested =.git= entry" is, read literally,
+an over-claim — *the dangerous direction* — and it is the same class
+=cli_parity.rs:156-161= now bans in the wording ="at any depth"=, while the
+shipped sentence makes the identical claim more compactly and passes.
+
+*WHY IT IS MEDIUM AND NOT HIGH — the reviewer re-derived round five's symmetry
+claim from source and it HOLDS EXACTLY:*
+
+| fail-open in =walk_worktree=                     | matching limit in the removal |
+|--------------------------------------------------+-------------------------------|
+| =:3833= =depth > MAX_DEPTH=, entered =walk(root,1,…)= =:3860= | =:3180= =bail!= at the same constant, entered =remove_contents(&child,1,…)= =:3243= |
+| =:3836= =let Ok(names) = entry_names(dir) else { return }=    | =:3183= =for name in entry_names(dir)?= — propagates |
+| =:3855= =Err(_) => continue= on =open_child_dir=              | =:3184= =open_child_dir(dir,&name)?= — propagates |
+
+=open_child_dir= (=:2977-2984=) maps only =ENOTDIR=/=ELOOP=/=EMLINK=/=ENOENT= to
+a non-error; everything else including =EACCES= is =Err=. So a =.git= too deep or
+too unreadable for the walk sits inside a directory too deep or too unreadable
+for =remove_contents= → a =RemovalFailure=, *never a silent clean deletion.*
+
+*BUT THE SYMMETRY DOES NOT DELIVER WHAT THE HELP IMPLIES.* =RemovalFailure=
+carries =touched= (=:3174-3177=) and =remove_contents= is READDIR-ORDERED, so
+siblings enumerated before the blocked directory are ALREADY GONE — and on the
+repo-gone branch there is no salvage. The operator's inference from this sentence
+— "a nested =.git= anywhere means the worktree is KEPT untouched" — is wrong in
+the fail-open shapes: they get a *reported partial removal.* The nested
+repository itself survives (it is inside the thing that blocked the walk), which
+is why this is docs and not data-loss.
+
+*** R2 (MEDIUM, test) — the F5 shape-1 clause is a WORDING ban too, and the doc comment says otherwise
+=crates/orgasmic-cli/tests/cli_parity.rs:112-115= vs =:119-126=
+
+=:112-115= says the first escape "is closed below"; =:119-126= correctly says the
+second closes "THAT WORDING, not the class". *That asymmetry is not real* — the
+new clause at =:228-241= bans the literals ="every branch"= / ="all branches"=
+inside a sentence containing ="index"=, which is a wording ban of exactly the
+same kind.
+
+MEASURED — the reviewer re-implemented the pin verbatim against the shipped
+=after_help= and confirmed the shipped help PASSES (matching the real green
+=cli_parity= run, so the reimplementation is faithful), then:
+
+| appended false sentence                                     | pin |
+|-------------------------------------------------------------+-----|
+| "… INDEX for gitlinks on *every branch*."                    | CAUGHT |
+| "… INDEX for gitlinks on *both branches*."                   | *PASSES* |
+| "… INDEX for gitlinks, *whatever the branch*."               | *PASSES* |
+| "… INDEX for gitlinks. That is true of every branch this verb has." (split across two sentences) | *PASSES* |
+| repo-gone + "… *at any depth* and through unreadable directories" | CAUGHT |
+| repo-gone + "… *however deeply nested* and through every directory in the tree" | *PASSES* |
+
+*="both branches"= is not an exotic rewording.* The help's own vocabulary is
+"WHAT IT CAN CHECK DIFFERS BY BRANCH, so read *both* of the next two sentences"
+(=manager.rs:378-379=) — it is the phrasing the next author is most likely to
+reach for.
+
+*** R3 (LOW, test/process) — the new regression has no verify artifact, so its red is not replayable
+There is no =verify/TASK-RMA18.1.1.1.1/=. Every other node on this chain has one
+(=TASK-RMA18=, =.1=, =.1.1=, =.1.1-placement=, =.1.1.1= — all five
+=git apply --check= CLEAN on this tree). =verify/README.md= is explicit that a
+re-authored-at-merge-time probe is where false green lives. The reviewer
+reproduced the red by hand, but a one-off scratch injection is not a pinned
+artifact and does not survive the dispatch. *On a path where a regression already
+rotted into passing-for-the-wrong-reason once, the artifact is what catches it a
+second time.*
+
+*** R4 (LOW, docs) — the new refusal states as observed fact something it only inferred
+=manager.rs:4156-4167= says "…its own =.gitmodules= does survive inside the tree,
+and names an initialized submodule at {module}". The condition that got here is
+=nonempty_dir_under= (=:4635-4657=), which returns =true= BOTH when the directory
+lists non-empty AND when the listing FAILED (=:4655=, =Err(_) => true=,
+fail-closed by design). In the second case the verb has not observed an
+initialized submodule; *it has observed that it could not look.* The remedy is
+still correct and the direction is KEEP, so this is cosmetic — but it is the
+"say what you actually checked" discipline this whole chain exists for. The
+identical over-statement is PRE-EXISTING in the sibling arm at =:4169-4173=.
+
+** Acceptance
+1. *R1: DELETE THE BARE "any".* Manager ruling — see below. Do not extend the
+   sentence.
+2. R2: add ="both branches"=, ="either branch"=, ="whatever the branch"= to the
+   ban list, and change =:112-115= to the same honest framing =:119-126= already
+   uses, naming the split-across-two-sentences escape that no per-sentence pin of
+   this shape can see.
+3. R3: author =verify/TASK-RMA18.1.1.1.1/= from the injection already known to
+   work — delete the =if repo_gone { … }= block at =manager.rs:4155-4168=;
+   =expect-red= pins =contains: while the repository is still there=.
+4. R4: hedge the message so it states what was checked. Fix the sibling arm at
+   =:4169-4173= too, since it is the same sentence.
+5. All 14 =worktree_prune_*= regressions and =cli_parity= still green; the six
+   verify artifacts (five existing plus the new one) all PASS.
+
+** Manager rulings
+1. *R1 IS A DELETION, NOT A REWRITE.* The reviewer asked whether a fourth
+   hand-edit is the right instrument and answered its own question well: dropping
+   the bare "any" *removes the over-claim without asserting anything new, and
+   therefore cannot introduce a fourth false statement.* This sentence has been
+   written wrong twice and corrected once. *Reduce it; do not extend it.* Do not
+   add the "as deep and as far as it can read" clause the reviewer offered as its
+   first option — that asserts something new about a bound nobody has exercised.
+2. *R2 is three string literals and a doc-comment correction.* Do not attempt to
+   close the class; a clap-text pin cannot decide truth, and chasing synonyms is a
+   thesaurus. Both reviewers agree the stopping point is right — the defect is
+   that the doc comment describes the two clauses ASYMMETRICALLY when they are
+   the same kind.
+3. *Everything here is KEEP-direction or text.* If any item turns out to need a
+   behaviour change, stop and report rather than making one.
+
+** Deliberately NOT in this round
+The reviewer named what it wants *before the next destructive change to this
+verb, not before the reinstall*: a fixture for at least one fail-open — the
+=chmod 000= shape is far cheaper than the 65-deep one and is the more reachable —
+and it noted neither fail-open has ever been exercised by any fixture. *That is a
+separate task, not this one.* R1's safety rests on source symmetry that two
+reviewers have now independently derived but nobody has run.
+

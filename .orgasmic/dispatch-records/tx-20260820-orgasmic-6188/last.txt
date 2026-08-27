@@ -1,0 +1,212 @@
+# TASK-ZKZBF.2 reviewer report — dead keys, one ID sentence, drawer 400, --extra honesty
+
+Range reviewed: `dbf6bcd^..4c9ffaa` (== `main~1..main`), merged `b5df13e`.
+Read-only; worktree `task-zkzbf.2-review` at `b5df13e`, clean before and after.
+
+## Verdict
+
+**APPROVE with follow-ups.** All four claimed follow-ups are real, land on the
+production path, and are pinned by tests I re-ran myself. Both injection
+artifacts replay PASS under my own runs, and the re-authored TASK-ZKZBF.1
+artifact is **not** weakened — every substantive `contains:` pin survives
+verbatim. Nothing regresses.
+
+Three residuals, none blocking: one MEDIUM that is the *same defect class* this
+round was chartered to close, still live on 29 real drawer lines; two LOW.
+
+## Findings
+
+### MEDIUM — `crates/orgasmic-daemon/src/api.rs:16560` — the dead-key removal door was opened for two keys, not for the class; on the real files the only accepted spelling deletes the LIVE line
+*kind: correctness. Filed as `tx-20260820-orgasmic-6190`.*
+
+The round split the **refusal table** by direction, which fixes `PARENT_TASK`
+and `LAST_UPDATED`. It did not split the **case check** — and that check is the
+one blocking the legacy lines that actually exist in this repo.
+
+`validate_drawer_property_key_case` is a write-side argument ("a miscased key
+would be written and never read") applied to the removal direction as well.
+`OrgRewriter::remove_property` matches byte-exact
+(`crates/orgasmic-core/src/org.rs:1216`, `.find(|e| e.key == key)`). So for a
+drawer carrying `:priority:`:
+
+- `node prop unset <task> priority` → 400, "Use `PRIORITY`", drawer untouched.
+- `node prop unset <task> PRIORITY` → accepted, and removes `:PRIORITY:`.
+
+Both halves are already pinned green in the merged tree by
+`node_prop_unset_refuses_a_miscased_task_key_and_names_the_canonical_one`
+(`crates/orgasmic-cli/tests/node_property_silent_drop_cli.rs:356-384`) — it
+asserts exactly the refusal at :361 and exactly the working removal at :378.
+No new probe needed; the contract is pinned, only its consequence went unnoticed.
+
+Live instances — 29 lines across `.orgasmic/tasks/*.org` (done.org 25,
+backlog.org 2, cancelled.org 2), keys `priority`, `read_scope`, `test_cmd`,
+`write_scope`. Two are on live BACKLOG tasks and carry BOTH spellings:
+
+```
+.orgasmic/tasks/backlog.org:243  TASK-099T6 (driver_modes equivalence test)
+    :priority: P1      <- dead, unremovable
+    :PRIORITY: P1      <- live, and the only spelling unset accepts
+.orgasmic/tasks/backlog.org:301  TASK-A55J7 (persist model and effort)
+    same pair
+```
+
+Impact: an operator told by the new refusal sentences to "clean up the legacy
+line" gets a 400 for the real spelling, and the spelling the guard *does*
+accept silently removes the working `:PRIORITY:` while the dead `:priority:`
+survives. That is strictly worse than the PARENT_TASK case the round fixed.
+
+**Fix direction:** apply the same direction split the refusal table got — skip
+the case check (and see LOW-2 below, the shape check) when `value.is_none()`,
+and let `remove_property`'s own `PropertyNotFound` be the refusal. The removal
+door should refuse only keys owned by another door; every other byte-present
+line should be removable by the spelling that is actually in the drawer.
+
+### LOW — `crates/orgasmic-daemon/src/api.rs:16755` — one unreachable hand-check survived the LOW-1 sweep
+*kind: deadcode. Filed as `tx-20260820-orgasmic-6191`.*
+
+LOW-1's acceptance is "the dead special case and unreachable arms are gone".
+The `post_task_create` `ID` special case and both `update_task_properties`
+arms are gone — but `task_create_lifecycle_stage` still carries a byte-exact
+`req.properties.contains_key("STATE")` with its own third sentence ("new tasks
+land in BACKLOG").
+
+Unreachable: `post_task_create` calls `validate_task_property_keys` at
+`api.rs:16855`, which refuses `STATE` case-insensitively via the refusal table
+(`api.rs:16402` region) — thirty lines before `task_create_lifecycle_stage` runs
+at `api.rs:16886`. No user-visible impact; it is the same dead-arm shape the
+round deleted three of.
+
+**Fix direction:** delete the `if`, return `Ok(LifecycleStage::Backlog)`.
+
+### LOW — `crates/orgasmic-daemon/src/api.rs:16588` — the new shape rule is applied to the unset direction too, and suggests a key the drawer does not carry
+*kind: design. Filed as `tx-20260820-orgasmic-6192`.*
+
+The LOW-2 shape branch runs regardless of `value.is_none()`. For a removal it
+emits "Unset `FOO_BAR` if that is the line the drawer carries" — but the line
+the drawer carries is `:FOO-BAR:`, so no accepted spelling removes it. Same
+write-side-rule-applied-to-removal shape as the MEDIUM above.
+
+Pre-round this path was **not** blocked: the node-edit tx does not carry the
+property key (`write_org_node_edit_and_record`, `api.rs:15720`), so the ledger
+writer's shape refusal never fired on unset. So this is a narrow new
+removal-side restriction, not a pre-existing one.
+
+Severity held at LOW because no such key exists: I swept every `.org`, `.rs`,
+`.ts`, `.tsx` under the repo for drawer keys and found **zero** self-uppercase
+non-snake keys. Nothing writes one either. Only a hand edit or `POST /org/file`
+could produce one.
+
+**Fix direction:** same one-line direction split as the MEDIUM — skip the shape
+check when `value.is_none()`.
+
+## Non-findings I chased and cleared
+
+- **Does the unset split open a hole?** No. `parent_task` is derived from the
+  id grammar only (`crates/orgasmic-core/src/schema.rs:242`,
+  `derive_task_parent_id`); there is no drawer reader for `PARENT_TASK`
+  anywhere in `crates/`. `LAST_UPDATED` has no reader at all —
+  `TaskSummary.last_updated` (`ui/src/lib/types.ts:134`) is never populated
+  from the drawer. Unsetting either removes nothing anyone consumes.
+- **Another UI surface writing PARENT_TASK?** No. `grep -rn PARENT_TASK ui/src`
+  returns only the new comment in `descriptor.ts:103-107` and test fixtures.
+  BoardView/TaskDialog/TasksPage/taskTree all read the *derived* `parent_task`
+  off `TaskSummary`, never the drawer — so dropping the descriptor field loses
+  no information from the UI.
+- **Does the shape rule reject a key some drawer legitimately carries?** No —
+  zero uppercase non-snake drawer keys repo-wide (sweep above). The lowercase
+  keys that do exist hit the *case* branch, which is the MEDIUM, not this rule.
+- **Does the one-step correction ever suggest a wrong spelling?** Not in a way
+  that misleads. `-FOO`/`1FOO` correctly yield no suggestion (mapped form fails
+  `is_uppercase_snake_key`, so the plain refusal fires). Where the case branch
+  fires and `canonical` is a schema key, `suggested == canonical` necessarily
+  (all schema keys are uppercase-snake), so the `KEY=VALUE` tail can't disagree
+  with the advertised spelling.
+- **Any other byte-exact ID/STATE check?** Exactly one, the LOW above. The only
+  other hit is `api.rs:16552`, the deliberate `eq_ignore_ascii_case("ID")`
+  identity guard.
+- **Second copy of `is_uppercase_snake_key`?** No. One definition
+  (`crates/orgasmic-core/src/tx.rs:307`, now `pub`); `manager.rs:25` imports
+  it, `api.rs` calls it at :16504, :16517, :16605.
+- **Does the shipped doc contradict anything?** No. `shipped/schema/tx.org:16-23`
+  is the only statement of the rule and no `shipped/` file shows a lowercase
+  `--extra` example (`grep -rn -- "--extra [a-z]" shipped/` is empty).
+- **Is the re-authored TASK-ZKZBF.1 artifact a weaker pin?** No. `git diff` on
+  `verify/TASK-ZKZBF.1/expect-red` shows all six substantive `contains:` lines
+  unchanged byte for byte; only the count line moved (`6 passed; 7 failed` →
+  `7 passed; 8 failed`) plus a re-authoring note. My replay's red run failed
+  exactly the seven round-1.1 tests plus the new dead-key test, and the seven
+  greens are the round-1 six plus the new ZKZBF.2 shape test.
+
+## Verification Notes
+
+Independent runs, all in the clean worktree at `b5df13e`:
+
+| Gate | Result |
+|---|---|
+| `orgasmic verify --artifact verify/TASK-ZKZBF.2 TASK-ZKZBF.2` | **PASS** — red exit 101 signature matched, tree byte-identical after revert, green exit 0 |
+| `orgasmic verify --artifact verify/TASK-ZKZBF.1 TASK-ZKZBF.1` | **PASS** — red `FAILED. 7 passed; 8 failed`, green `ok. 15 passed` |
+| `cargo test -p orgasmic-cli --test task_property_silent_drop_cli` | 7/7 green (incl. new `task_create_id_property_refusal_is_one_sentence_in_any_case`) |
+| `cargo test -p orgasmic-cli --test node_property_silent_drop_cli` | 15/15 green (via the verify green leg; incl. both new tests) |
+| `cargo test -p orgasmic-cli --bin orgasmic tx_record_help` | 2/2 green (the `--extra` flag-honesty pin) |
+| `npm --prefix ui ci && npm --prefix ui test -- --run` | 58 files, **352/352** green |
+| `npm --prefix ui test -- --run NodeDocEditor` | 6/6 green (4 pre-existing + 2 new Parent Task pins) |
+
+Manager's claims reproduced: the 22 focused Rust tests and 352 UI tests are
+real, and **both** artifacts replay PASS under my runs, not just the manager's.
+
+Process: replays ran detached (PID 35663, log `/tmp/zkzbf2-verify.log`, atomic
+status `/tmp/zkzbf2-verify.status`); gates likewise (PID 44744, log
+`/tmp/zkzbf2-gates.log`). Both completed on the first attempt; no interrupted
+runs, no retries. `git status --porcelain` empty before and after everything.
+
+### What I did NOT check
+- **`verify/*/injection.patch` bodies** — forbidden by the brief (provider
+  content-filter kill on record). I judged the artifacts from `cmd`,
+  `expect-red`, the `expect-red` diff, and the replay's own red/green logs.
+- **`cargo fmt` / `clippy -D`** — manager-run only; I did not re-run them. Risk:
+  low, the diff is small and compiled clean under my test runs.
+- **The full daemon/integration suite** — only the two focused CLI suites plus
+  the help unit tests. Risk: a regression outside the drawer-key surfaces would
+  not have been caught here. `validate_drawer_property_key_case` is shared by
+  `graph create`/`graph revise`/`node prop`/`task create`/`task update`, and
+  the new shape branch is a *new* refusal on all of them — the sweep says no
+  existing key trips it, but no integration-level run confirmed that.
+- **Any live probe against the real `.orgasmic`** — the MEDIUM would have been
+  provable at a terminal, but every probe of it is a mutation of tracked state
+  (and the accepted spelling deletes a live `:PRIORITY:`). I proved it from the
+  existing green test at `node_property_silent_drop_cli.rs:356-384` plus
+  `org.rs:1216` instead.
+- **Manual/browser UI** — the Parent Task drop is verified by source (field
+  deleted from `TASK_DESCRIPTOR`; `NodeDocEditor` renders descriptor fields
+  only, no catch-all property renderer at
+  `ui/src/components/orgdoc/NodeDocEditor.tsx`) and by the 2 new vitest pins,
+  not by driving a browser.
+
+### Cosmetic, not filed
+`verify/TASK-ZKZBF.1/expect-red:44-46` still says "the round-1 six stay green"
+while the pinned count is now `7 passed`. The seventh green is the new
+ZKZBF.2 shape test. Prose lagging the count in an artifact comment.
+
+## Open Questions
+
+1. Is closing the MEDIUM (removal direction skips the case + shape checks) in
+   scope for a ZKZBF.3, or does the chain close here? The 29 legacy lines are
+   pre-existing debt, not a regression from this round — but the round's own
+   stated principle ("refuse to write a key nothing reads must not extend to
+   refuse to delete a legacy line already there") is what leaves them stranded.
+2. If the direction split lands, do the 25 lines in `done.org` get cleaned up,
+   or only the 4 on live backlog/cancelled tasks?
+
+## Fix Directions (summary)
+
+1. **MEDIUM** — in `validate_drawer_property_key_case`, gate the case check and
+   the shape checks on `value.is_some()`. Removal should consult only the
+   door-owned table (`task_property_key_unset_refusal_reason`) and the `ID`
+   identity guard; `PropertyNotFound` already names the drawer's real keys when
+   the spelling is genuinely absent. Pin it with the real shape: seed a drawer
+   carrying both `:priority:` and `:PRIORITY:`, assert `unset priority` removes
+   the dead line and leaves the live one.
+2. **LOW-1** — delete the `if` in `task_create_lifecycle_stage`
+   (`api.rs:16755`).
+3. **LOW-2** — falls out of fix 1; the shape check is one of the branches to
+   gate on `value.is_some()`.

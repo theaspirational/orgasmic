@@ -1,0 +1,251 @@
+#+title: orgasmic task TASK-G64ZH.1
+#+orgasmic_version: 2
+
+* DONE TASK-G64ZH.1 fix-round: --no-log-mirror turns a boot-time durable-open failure into total silence, and puts a binary-version flag in a config file that outlives the binary :daemon:ops:
+:PROPERTIES:
+:ID: TASK-G64ZH.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,verify/**
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Fix round for the TASK-G64ZH REJECT. Two BLOCK SHIP findings, both REGRESSIONS
+INTRODUCED BY =eaa88da=, both verified against the code by the manager before
+this task was filed. Three test gaps ride along because F-B's fix makes one of
+them load-bearing.
+
+The irony worth stating once, because it should shape the fix: this chain exists
+to remove unbounded unrotated growth from =daemon.out.log=, and the diff that was
+supposed to finish it introduced BOTH a total-silence path and a new route to
+unbounded growth in =daemon.err.log=.
+
+** F-A — HIGH — BLOCK SHIP — a boot-time durable-open failure is now TOTAL SILENCE
+=logging.rs:142-143=, =:220-222=, =:449=; =lib.rs:906-914=
+
+The chain is unconditional straight-line code:
+
+1. =lib.rs:909= passes =requested_log_mirror(opts.no_log_mirror)=. Under the
+   plist / unit / wrapper this diff writes, that is =LogMirror::None=.
+2. =init_tracing_to= at =:142-143= does
+   =durable_log.and_then(|path| open_durable_log(path).map(|file| (path.to_path_buf(), file)))=.
+   When the open fails THE WHOLE OPTION COLLAPSES TO =None= — the path is
+   discarded along with the handle.
+3. =resolve_mirror= at =:220-222=: =let Some(path) = durable_path else { return mirror; }=.
+   With no durable sink it returns the CALLER'S mirror unchanged, and the caller's
+   mirror is now =None=.
+4. =MirrorState::None=, and =state.durable_path.is_some()= is false at =:449=, so
+   not even =record_drop()= fires.
+
+Net: ZERO tracing lines anywhere, ZERO counter movement, one stderr line at boot.
+
+PRE-DIFF the identical failure produced =LogMirror::Stdout= — the old =lib.rs=
+passed =Stdout= unconditionally, the same early return preserved it, and every
+line landed in launchd's =StandardOutPath= (=daemon.stdout.log=). The existing
+green test =stdout_mirror_without_durable_still_writes_when_redirected= proves
+that early return hands the caller's mirror straight through; it is the same
+return that now yields silence because the caller supplies =None=.
+
+SECOND LEG, SAME ROOT CAUSE: THE NEW BACKOFF IS UNREACHABLE FOR A BOOT FAILURE.
+Step 2 discards the path, so =durable_path= is =None=, so =maybe_reopen_durable=
+returns early forever (=:393-395=). The daemon runs its whole lifetime with no
+durable log and never retries. The 1s->60s retry only covers failures AFTER a
+successful boot open. The trigger class F1 names — persistent =EMFILE=, =EACCES=
+on the logs dir, =ENOSPC=, =daemon.out.log= replaced by a directory — is exactly
+the class that gets none of the fix.
+
+*Fix (preferred):* keep the path when the boot open fails — construct the sink
+with =durable: None, durable_path: Some(path)= so =maybe_reopen_durable= owns the
+retry at 1s->60s and =record_drop()= fires per dropped line. That is machinery
+this chain ALREADY BUILT, merely not wired to the boot path, and it fixes both
+legs at once. A cheaper stopgap, if you can argue for it: degrade an explicit
+=LogMirror::None= to =Stdout= in =resolve_mirror= when there is no durable sink —
+=--no-log-mirror= means "do not double-write", not "log nothing", and with no
+durable sink there is nothing to double.
+
+*Run the probe the reviewer could not.* It was a correctly-reported unrun gap: a
+read-only reviewer cannot make this fail without an edit or a staged
+=ORGASMIC_HOME=. You can. In a THROWAWAY home — and note =ORGASMIC_HOME= is
+BANNED inside a dispatch for any =orgasmic= invocation, so drive the daemon
+binary directly rather than through a verb that may open a connection — make
+=logs/daemon.out.log= unopenable (=mkdir= a directory at that path, or =chmod
+000= the logs dir), start with the mirror suppressed, and confirm both the
+durable file and the stdout capture stay empty while a request is served. Then
+confirm your fix makes lines appear and the counter move.
+
+** F-B — HIGH — BLOCK SHIP — the generated service definitions hard-depend on a binary feature, so a rollback is a launchd crash loop
+=daemon_service.rs:845= (plist =ProgramArguments=), =:931= (systemd =ExecStart=), =:972= (Windows wrapper)
+
+The plist this diff writes carries =KeepAlive= =true= and =ThrottleInterval=
+(verified at =:851-853=), and =StandardErrorPath= = =daemon.err.log=. An old
+binary handed an unknown =--no-log-mirror= exits non-zero from clap before doing
+anything, so launchd respawns it every throttle interval FOREVER, writing clap's
+usage error into =daemon.err.log= — which nothing rotates and nothing prunes.
+Same unbounded-growth shape this chain exists to remove, reached from a third
+direction, on top of a daemon that is DOWN rather than degraded.
+
+REACHABILITY IS STRUCTURAL. =write_macos_launch_agent= is reached by every
+install and every =orgasmic update=, and it renders from the code of the RUNNING
+process — so the plist's contents and the binary on disk have INDEPENDENT
+LIFETIMES. =update.rs= keeps one previous install *specifically* so a manual
+rollback has a target (verified: =DEFAULT_RUNTIME_RETENTION: usize = 1=, comment
+"One previous install is kept so a manual rollback still has a target"). Sequence:
+new binary runs =daemon start= -> operator rolls the runtime back manually ->
+reboot/login or =launchctl kickstart= -> old binary + unknown flag -> crash loop.
+The only symptom is clap usage text in an unrotated log. The automatic rollback
+inside =orgasmic update= self-heals only because the running process there is the
+OLD binary; the manual path has no such protection.
+
+*Fix:* move the suppression into =EnvironmentVariables= / =Environment== / =set
+"…"= — the env form is strictly better here and this diff ALREADY SHIPS THE
+PARSER (=env_log_mirror_off=). An old binary IGNORES an unknown env var, and
+under launchd =is_terminal()= is false anyway, so a rollback degrades to
+IDENTICAL behaviour instead of failing to start. The plist already has an
+=EnvironmentVariables= dict, systemd already has =Environment== lines, the
+Windows wrapper already has =set "…"= lines — one line each. Keep
+=--no-log-mirror= as the interactive/ad-hoc override. Confirm no leakage:
+non-=serve= CLI tracing goes through =init_tracing=, which passes
+=LogMirror::Stdout= directly and never consults =requested_log_mirror=, so an
+inherited =ORGASMIC_LOG_MIRROR=off= cannot silence child =orgasmic= commands —
+verify that still holds after your change.
+
+SECOND HALF OF THE SAME FINDING, AND IT NEEDS NO ROLLBACK: the three definitions
+embed the string literal =--no-log-mirror= and NOTHING CROSS-CHECKS IT AGAINST
+CLAP. The new tests assert the literal against itself; =cli_parity.rs= has no
+=serve= coverage; no test anywhere executes =orgasmic serve --no-log-mirror=.
+Rename or remove the clap flag and all seven service-definition tests stay green
+while every generated definition becomes a start failure. Add a test that runs
+the flag through the real =Cli= (or execs it) so the literal and the parser
+cannot drift.
+
+** F-D — MEDIUM — the F3 seam MOVED rather than closed
+=logging.rs:281=
+
+The acceptance bullet is met at =resolve_mirror= — inverting the predicate there,
+or gating purely on =durable_path.is_some()=, is caught — and the FALSE side of
+the production expression is genuinely pinned by
+=launchd_shaped_stdout_mirror_writes_each_line_once_across_both_files=, which
+=dup2=s fd 1 to a file and calls the production constructor.
+
+What remains free is the TRUE side of one line. =new= at =:280-282= is the only
+production caller of =new_with_terminal_gate=, which is otherwise only ever fed
+literals by tests. Hardcoding
+=Self::new_with_terminal_gate(durable, mirror, rotation, false)= at =:281= keeps
+ALL 12 daemon logging tests green and silences interactive =orgasmic serve= — the
+exact defect F3 exists to prevent, relocated one call frame outward.
+
+*Fix:* =openpty(3)=, =dup2= the slave onto fd 1 inside the existing
+=STDOUT_REDIRECT_LOCK= (the pattern is already in the module), then call the
+PRODUCTION =new= and assert the mirror survives. That was F3's own original fix
+direction.
+
+** F-E — MEDIUM — only the backoff CEILING is pinned, never the floor
+=logging.rs:379-385=, =:918-922=, =:941-985=
+
+=persistent_open_failure_bounds_reopen_attempts_not_per_line= asserts
+=open_attempts == 1= inside the initial window — the upper bound.
+=failed_reopen_after_roll_counts_drops_and_retries= gets its recovery by MANUALLY
+writing =state.next_reopen_attempt = Instant::now()=. No test ever waits out a
+real window.
+
+So a mutation making the retry effectively permanent — =schedule_reopen_retry=
+setting =now + 86400s=, or a raised =REOPEN_BACKOFF_CAP= — passes all 12 tests
+AND =orgasmic verify TASK-G64ZH=, while the daemon never recovers its durable log
+after a transient failure. "Bounded per unit time" has two halves and only one is
+pinned. =REOPEN_BACKOFF_CAP= = 60s is never asserted either.
+
+*Fix:* inject the clock (a =now: fn() -> Instant= in =SinkState=, symmetric with
+the terminal gate F3 already added), or set =reopen_backoff= to ~1ms in the
+fixture and assert a SECOND attempt occurs — liveness without a sleep.
+
+** F-F — LOW — =requested_log_mirror= / =env_log_mirror_off= have no test at all
+=logging.rs:103-119=
+
+Nothing in =crates/= references =ORGASMIC_LOG_MIRROR=, =requested_log_mirror= or
+=env_log_mirror_off= from a test. A typo in the variable name, or a change to the
+accepted value set (=off= / =0= / =false=), is caught by nothing. UNDER F-B'S FIX
+THIS BECOMES LOAD-BEARING — the env form becomes the thing the service
+definitions rely on — so it is not optional in this round.
+
+** Acceptance
+- A boot-time durable-open failure under a mirror-suppressed launch still
+  produces log output AND moves =dropped_log_writes=, and the 1s->60s reopen
+  backoff retries it. Proven by an executable probe, not by reading.
+- The generated launchd plist, systemd unit and Windows wrapper suppress the
+  mirror in a way an OLDER binary ignores harmlessly. State in the commit what a
+  rollback now does.
+- A test fails if the clap flag and the string the service definitions embed ever
+  drift apart.
+- The TRUE side of the production terminal predicate is asserted through the
+  production constructor.
+- A test fails if the backoff never expires.
+- =requested_log_mirror= and =env_log_mirror_off= have direct coverage including
+  the accepted value set.
+- =verify/TASK-G64ZH.1/= pins F-A: the injection restores the total-silence
+  chain, and the pinned message is the FIRST failing assertion in the red run.
+
+** Notes
+NOT IN THIS ROUND: the rename-failure branch staying per-line. It is
+PRE-EXISTING — byte-identical to =eaa88da^1= in the reopen-succeeds sub-case — and
+it has its own task, TASK-CGJM7. Do not fold it in; it needs a rotate-side
+backoff design, not a patch.
+** Evidence
+*Implementer* =implementer-cursor-agent-tmux= — tmux / cursor-agent /
+cursor-grok-4.5-high-fast. Run
+=run-20260806T135605-e9f0ea7e9295418dacad1d6331a57b5f=, started_tx
+=tx-20260806-orgasmic-4885=, worker commits =94e54f8= + =ea60fba=, merged
+=44e7e8d=.
+
+*F-A — keep the path.* =resolve_durable_open()= now returns
+=Option<(PathBuf, Option<File>)>= and maps rather than =and_then=s, so a failed
+boot open keeps =durable_path= = =Some=. =record_drop()= fires per dropped line
+and =maybe_reopen_durable= owns the 1s->60s retry, both of which were unreachable
+before. The implementer took the heading's PREFERRED direction rather than the
+=resolve_mirror= degrade.
+
+*F-B — env form, and better than asked.* The plist, the systemd unit and the
+Windows wrapper no longer embed =--no-log-mirror=; they set
+=ORGASMIC_LOG_MIRROR=off=. An older binary ignores an unknown env var and, under a
+non-tty stdout, its pre-flag =is_terminal()= fallback still suppresses the mirror
+— so a manual rollback degrades to IDENTICAL behaviour instead of a KeepAlive
+crash loop into the unrotated =daemon.err.log=. The literal-drift half of the
+finding is closed STRUCTURALLY, not by assertion: all three definitions render
+from =orgasmic_daemon::LOG_MIRROR_ENV=, the same constant the parser reads, and
+the tests now assert the flag's ABSENCE. =serve --no-log-mirror= survives as the
+interactive override.
+
+*F-D / F-E / F-F.* =production_new_keeps_stdout_mirror_when_stdout_is_pty= drives
+the PRODUCTION =new()= after =openpty= + =dup2= makes fd 1 a real tty, so
+hardcoding =false= at =:311= goes red — the true side of the predicate the other
+tests leave free. An injectable clock pins that the backoff EXPIRES, not only that
+it holds. =LOG_MIRROR_ENV= / =env_log_mirror_off= have direct coverage.
+
+*Gates, replayed by the manager on the MERGED tree:* =cargo fmt --all --check=
+clean; =cargo test -p orgasmic-daemon --lib logging= 16 passed (up from 12);
+=--test logging_sink= 1 passed; =cargo test -p orgasmic-cli --bin orgasmic
+daemon_service::tests= 25 passed; =cargo clippy --workspace --all-targets -- -D
+warnings= clean.
+
+*Proofs.* BOTH replay green on the committed tree, each with EXACTLY ONE panic in
+its red log and that panic being the pinned assertion. =verify/TASK-G64ZH.1/=
+injects the old =and_then= collapse and fails on "boot-time open failure must keep
+durable_path so reopen backoff and record_drop remain reachable".
+=verify/TASK-G64ZH/= was RETARGETED by this round (=Instant::now()= ->
+=self.now()=, because F-E introduced the clock seam) and still fails on the
+IDENTICAL assertion with the IDENTICAL message as before the retarget — checked
+against the previous round's red log, which is what distinguishes a mechanical
+retarget from a weakened claim.
+
+*Carried to the reviewer — the manager's own finding, not the implementer's.*
+F-A MAY BE HALF-FIXED. Under a mirror-suppressed launch with a PERMANENTLY
+unopenable durable path, =resolve_mirror= takes its =LogMirror::None =>
+LogMirror::None= arm and the handle is absent, so there is STILL ZERO OUTPUT for
+the whole failure window — a moving counter and a failing retry, but no lines
+anywhere. The pre-TASK-G64ZH daemon captured every one of them on launchd's
+=StandardOutPath=. This task's own acceptance says the failure "still produces log
+output AND moves =dropped_log_writes=": the second half is met, the first
+arguably is not. The previous reviewer offered the =None= -> =Stdout= degrade for
+exactly this case as a stopgap. Also carried: this round EDITED A PREVIOUSLY
+APPROVED PROOF, which deserves an independent ruling even when the retarget looks
+mechanical.
+

@@ -1,0 +1,95 @@
+# TASK-2QK4P.1.1.1 review
+
+**Would I reinstall the operator runtime on this tree? No.**
+
+## Verdict
+
+**REJECT — BLOCK SHIP.** The named round-four defects are fixed and their targeted regressions are green, but acceptance 1's completeness argument is false. The recovery-authority path still contains untyped observation failures that can quarantine a live claim, mint a competitor, or irreversibly write into a pending recovery's session. The new permanent project-wide refusal also meets the brief's pre-authorized block condition because the operator is not told which file to repair.
+
+## Findings
+
+### F1 — HIGH / correctness / BLOCK SHIP — claim access failures still become corrupt evidence, quarantine, and permission to mint
+
+`ClaimDirectory::open` maps every component-open error other than `NotFound` to `RecoveryClaimError::CorruptClaim` at `crates/orgasmic-daemon/src/recovery_claim.rs:586-599`. `ClaimDirectory::read_regular` similarly maps every claim-file open error other than `NotFound` to `CorruptClaim` at `:633-640`. These buckets include observation failures such as `EACCES`, `EIO`, and descriptor exhaustion, not only observed path facts such as `ELOOP`/`ENOTDIR`.
+
+`load_recovery_claim` propagates that result at `:1110-1140`, and `resolve_authoritative_recovery_claim` treats it as invalid evidence: it calls `quarantine_invalid_claim` at `:2066-2069` and then reconstructs or returns `Missing`. For a pending claim there is no committed `RecoveryOrigin` to reconstruct, so a failed inventory read can remove the pending claim; the later POST sees a complete origin enumeration plus no claim and reaches `plan_pending_recovery_claim` at `crates/orgasmic-daemon/src/api.rs:9427-9444`. That is the round's generating defect one layer deeper: an observation failure destroys authority and permits a competing replacement.
+
+The implementer report's 16-row enumeration does not contain `ClaimDirectory::open` or `read_regular`; its claim that every fallible authority predicate is typed is therefore not complete. Recorded as `tx-20260808-orgasmic-5499`.
+
+**Fix direction:** distinguish verified path facts from observer failure at both boundaries. Carry claim-directory/claim-file observation failures as `Unobserved`, never `CorruptClaim`; propagate them through inventory and POST as retryable 503 without quarantine. Add an injected pending-claim open/read failure regression proving no `Valid`, no quarantine, no new replacement, byte-identical claim survival, then normal reconciliation after repair.
+
+### F2 — HIGH / correctness / BLOCK SHIP — `readdir` failure is returned as a complete claim-name set
+
+`ClaimDirectory::names` uses raw `libc::readdir` at `crates/orgasmic-daemon/src/recovery_claim.rs:684-710`. A null result unconditionally breaks the loop and returns `Ok(names)`; errno is never cleared or checked, so EOF and a mid-enumeration read failure are indistinguishable.
+
+`pending_recovery_claim_owns_session` trusts that vector as complete at `:1217-1260`. If a transient directory read error hides the pending claim that owns a boot candidate, it returns `ClaimEvidence::Invalid`. The boot caller then enters generic reattach at `crates/orgasmic-daemon/src/api.rs:10725-10747`; its own comment records the consequence: `Supervisor::reattach` appends `Reattach` into the immutable prefix owned by the pending recovery, an irreversible write. This is another omitted authority-path observation predicate, and none of the five behavioural-pin injections reaches it. Recorded as `tx-20260808-orgasmic-5498`.
+
+**Fix direction:** make `names` distinguish errno-bearing null from EOF and return an observation error; propagate it as `ClaimEvidence::Unobserved`. Add an injected nth-entry `readdir` failure on the production boot routing path and prove no reattach/session write, followed by normal behavior after repair.
+
+### F3 — HIGH / correctness / operability / BLOCK SHIP — a permanent project-wide refusal has no actionable file identity or repair path
+
+The F4 boundary is correct as far as torn-write semantics go: `scan_session_lifecycle_complete_reader` rejects a newline-terminated malformed relevant line at `crates/orgasmic-core/src/session.rs:1478-1526`, while tolerating only a non-terminated EOF fragment. But `line_is_lifecycle_relevant` at `:1264-1268` treats every line not positively identified as `driver_event` as relevant, including `{}` and other complete junk.
+
+Consequently, any such line in any session file permanently makes the entire project's authoritative enumeration `Unobserved`. `enumerate_recovery_origin_links` stops on the first member failure at `crates/orgasmic-daemon/src/recovery_claim.rs:1882-1939`, but `UnobservedSession` carries only a reason and discards the offending path. The inventory fields at `crates/orgasmic-daemon/src/api.rs:7425-7468` also carry only a reason; the 503 at `:11891-11896` returns `origin_run_id` plus `SessionUnreadable`, not the file. The UI type at `ui/src/lib/types.ts:291-299` does not include either new recovery-observation field.
+
+This is not a transient retry: it answers 503 forever, across every recovery in the project, until a human edits an immutable session file they have not been told how to locate. The branch therefore creates exactly the pre-authorized blocker named in the brief: a permanent refusal the operator cannot diagnose or clear. Recorded as `tx-20260808-orgasmic-5497`.
+
+**Fix direction:** preserve a sanitized project-relative session identifier and a remediation class through enumeration, inventory, logs, and the 503; render it in the operator surface. Either provide a documented safe repair/quarantine action or redesign the blast radius so one permanently malformed unrelated file cannot silently wedge all project recovery. Regress the user-facing diagnostic and successful recovery after the documented repair.
+
+### F4 — MEDIUM / correctness — remaining raw claim IO is 500 or a decided negative, not retryable `Unobserved`
+
+Not every raw claim IO error takes the destructive `CorruptClaim` route. State-root canonicalization/open/metadata failures at `crates/orgasmic-daemon/src/recovery_claim.rs:558-568,602` and metadata/read failures at `:641-647` remain `RecoveryClaimError::Io`. `load_recovery_claim` propagates them, but `recovery_claim_load_error` maps only the explicit `Unobserved` variant to 503 and maps raw IO to 500 at `crates/orgasmic-daemon/src/api.rs:11877-11888`.
+
+Additionally, `committed_claim_is_authoritative` maps every resolver error through `_ => CommittedClaimAuthority::NotAuthoritative` at `:11907-11929`. That is literally the rejected shape—"could not decide" represented as a decided negative—even though the current surrounding branches usually fail closed before minting. Acceptance 2's promised retryable propagation is incomplete. Recorded as `tx-20260808-orgasmic-5501`.
+
+**Fix direction:** give all read-side claim IO an explicit observation reason, match every resolver result explicitly, and return retryable 503. Reserve `NotAuthoritative` for observed contradictory evidence. Add raw read-error tests at both the direct load and helper boundaries.
+
+### F5 — MEDIUM / test — the most destructive newly found fix has no regression that exercises it
+
+The `authority_key` tests inject `authority_key_fault(home)?` at `crates/orgasmic-daemon/src/recovery_claim.rs:419-421`, before `try_exists()` runs at `:422-425`. Every authority-key failure test, including the five-case behavioural pin at `:5381-5486`, uses that same early hook. Replacing `try_exists` with the old `exists` plus `load_or_generate` would therefore leave the suite green. The structural pin checks types and function return signatures, not this branch.
+
+This leaves C8 unpinned despite the defect's host-wide consequence: a stat failure can mint a new token and invalidate every authority tag. Recorded as `tx-20260808-orgasmic-5500`.
+
+**Fix direction:** inject the existence/stat observer itself, or use a filesystem fixture that makes stat fail while preserving the token. Assert `load_or_generate` was not reached, token bytes are unchanged, the decision is `Unobserved`/503, and retry succeeds after repair. Prove the test reds when `try_exists` is replaced by `exists`.
+
+## Open Questions
+
+1. For F3, should a permanently malformed session be isolated as a per-file authority fault, or should project-wide refusal remain the safety rule with an explicit file diagnostic and repair operation? The current anonymous project-wide refusal is not shippable either way.
+2. The claim-directory classifier needs an explicit errno policy: `NotFound` is absence; symlink/non-directory evidence may be invalid; access, IO, and resource failures are unobserved. That policy should be written alongside the type rather than spread across call sites.
+
+I found no automatic retry distinction between 400 and 503 in the current CLI (`crates/orgasmic-cli/src/main.rs:3257-3283`) or UI POST wrapper (`ui/src/lib/api.ts:350-359`), so I leave `recovery_origin_authority`'s acknowledged 400 classification as a follow-up rather than elevating it here. `tmux_session_exists` also fails closed without quarantine/mint/write and is re-evaluated on the next POST; the non-Unix collapse remains outside the shipped Unix path.
+
+## Verification Notes
+
+Independent checks on `d7f26bd`:
+
+- Audited `main...HEAD` production changes in `crates/orgasmic-core/src/session.rs`, `crates/orgasmic-daemon/src/api.rs`, and `crates/orgasmic-daemon/src/recovery_claim.rs`; traced all production callers of claim load/resolve/verify/plan/reconcile/quarantine and the boot routing hint.
+- `cargo test -p orgasmic-daemon 'recovery_claim::tests::' -- --test-threads=1`: **31 passed, 0 failed**.
+- `api::tests::one_recover_post_enumerates_the_project_once`: **1 passed**. The counter is at the only production call to `enumerate_recovery_origin_links`; later POST lookups use the same authority object, so F2's one-pass cost claim is supported.
+- `api::tests::an_invalid_action_answers_400_even_while_the_enumeration_is_unresolved`: **1 passed**. The completeness check remains immediately before the first branch that can load/reconcile/accept/mint a claim.
+- `api::tests::forged_recovery_claim_does_not_suppress_actions_without_session_proof`: **1 passed**. The corrected well-formed fixture still proves the original property: it yields a complete empty link set, the unproved claim is rejected, and normal recovery remains available; the second malformed-file phase separately proves suppression.
+- `session::tests::a_torn_final_line_is_observed_and_a_torn_middle_line_is_not`: **1 passed**.
+- Every cargo invocation was output-redirected and owned by a syspolicyd watchdog sampling every 10 seconds with the required 400%-for-60-seconds kill rule. Highest observed sample was 43.7%; no watchdog fired.
+- `git diff --check main...HEAD -- crates` passed; worktree remained clean; HEAD is one commit, `d7f26bd`.
+
+Manager-supplied evidence accepted as prior evidence, not independently rerun: all six `orgasmic verify` artifacts pass/apply; full daemon wrapper GREEN on a calm host; recovery-fault repetition 10/10; clippy/fmt/core/workspace-adjacent gates stated in the brief. Acceptance 8 is treated as met as instructed.
+
+Not checked:
+
+- I did not open, dump, diff, or inspect any `verify/*/injection.patch` body, per the explicit safety rule. I did not independently rerun the six verify artifacts.
+- I did not rerun the full daemon wrapper, recovery-fault repetition, clippy, fmt, workspace suite, MSRV 1.87, non-Unix behavior, or real-board latency measurement.
+- I did not start/stop/reinstall the daemon or exercise the live UI/browser. I did not build running fault injections for the newly found `readdir` and claim-file-open defects; those findings are derived from the exact production error/control-flow paths above.
+- No source files were edited and no mutating repo command was run.
+
+## Fix Directions
+
+Round five should be treated as a class fix, not three call-site patches:
+
+1. Inventory every authority-relevant observation boundary, including `Result<Option<_>>`, directory iterators, and error-to-API/helper conversions—not only functions spelled `-> bool`/`Option`.
+2. Introduce typed claim-observation reasons with optional sanitized source identity; propagate them through load, resolver, inventory, boot routing, and POST without quarantine, write, or mint.
+3. Make claim-directory iteration honest about partial results and add the production boot-path regression.
+4. Add claim-file open/read regressions for committed and pending claims, including repair-and-retry.
+5. Add an operator-facing permanent-corruption diagnostic and clear repair path; update UI types/rendering.
+6. Add a stat-specific `authority_key` regression that actually crosses `try_exists`.
+
+The already-fixed endpoint scan sharing, validation ordering, F4 tear boundary, named F1 failure propagation, and 10/10 recovery-fault gate should remain unchanged.

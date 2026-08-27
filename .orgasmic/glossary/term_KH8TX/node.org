@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_KH8TX
+#+orgasmic_version: 2
+
+* term_KH8TX Worker driver
+:PROPERTIES:
+:ID:                 term_KH8TX
+:CANONICAL:          worker driver
+:AVOID:              agent adapter, shell wrapper
+:RELATES_TO:         term_3YTBK term_GMTWY term_X4JGJ
+:DEFINITION:         A typed runtime adapter that starts an AI worker, streams its events, and exposes orgasmic task-state tools.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

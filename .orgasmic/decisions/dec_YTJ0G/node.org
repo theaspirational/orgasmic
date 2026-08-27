@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_YTJ0G
+#+orgasmic_version: 2
+
+* dec_YTJ0G Must the orgasmic runtime be installed to work in a coordinated repo, and what do the root pointers route to?
+:PROPERTIES:
+:ID: dec_YTJ0G
+:PARENT: dec_RX4DF
+:RELATES_TO: dec_A6CXY dec_A10RB
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+dec_RX4DF and dec_A6CXY made the /orgasmic skill an install-free scaffold path and framed the CLI/daemon as opt-in. That stance has already drifted: the shipped SKILL.md now says =init= requires the runtime and delegates to =orgasmic project init=. Meanwhile the scaffolded surface rots: =entry.org= and =conventions/*= are copied into each repo at init and never touched again — =init= is create-only (=init_project= skips existing files even under =--force=) and bundle update explicitly excludes registered project =.orgasmic/= files. A repo initialized on an old runtime keeps its old router and guidance forever. Root pointers (=AGENTS.md=/=CLAUDE.md=) are committed, so they cannot carry machine paths into =$ORGASMIC_HOME=.
+** Decision
+The runtime is mandatory for working in a coordinated repo. Root instruction files keep exactly one committed line routing to =.orgasmic/entry.org=, which shrinks to a ~6-line stub: the =#+orgasmic_version= marker (state-layout pin), the instruction to run =orgasmic entry= and follow its output, and the detached protocol — if the CLI is missing, offer to install (=/orgasmic install=); if the user declines, default to read-only for =.orgasmic/= and proceed with source edits only on explicit user confirmation, warning that drift must be reconciled once the runtime returns. A new CLI command =orgasmic entry= prints the live router: manager route, project map, write rules, and the resolved default workflow body — generated from the current runtime on every invocation, so router guidance is update-tracked and can detect state-layout version skew.
+** Consequences
+The frozen-surface staleness problem is solved at the router: everything prescriptive lives behind a command the bundle update refreshes. Partially supersedes dec_RX4DF (install-free init) and dec_A6CXY's CLI-optional framing; ratifies the drift already shipped in SKILL.md. Detached is a protocol in the stub, not a workflow — the one situation it covers (no runtime) is the one situation a loader cannot serve it. Existing repos need a migration: rewrite root pointers and shrink =entry.org=. Shell-less agents keep the stub as breadcrumb.
+

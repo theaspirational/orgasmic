@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_FD6M7
+#+orgasmic_version: 2
+
+* dec_FD6M7 Should machine config and project identity share one file or be split apart?    :project-model:file-substrate:
+:PROPERTIES:
+:ID:            dec_FD6M7
+:DECIDED_AT:    [2026-06-03 Wed 00:22]
+:SOURCE:        session:2026-06-03 config-split-grill
+:PARENT:        dec_QWZB2
+:END:
+** Context
+The =* PROJECT= heading in =.orgasmic/project.org= mixed two unrelated concerns: stable project identity and human prose (=:ID:=, Mission, Operating Constraints, Product Baseline per dec_F2WRW) and machine config — the stage-worker map (dec_JW9TJ) plus =TEST_CMD=/=LINT_CMD=/=BUILD_CMD=/=DEFAULT_BRANCH=. It also carried three fields read by nothing in the codebase: =DEFAULT_WORKER=, =MAX_CONCURRENT_RUNS=, and a =:ORGASMIC_VERSION:= property redundant with the =#+orgasmic_version:= file keyword. Settings UI, dispatch worker resolution, and prompt-slot defaults all reached into the one heading. Identity and machine config have different audiences and edit lifecycles, and the inert fields read like live knobs but are dead.
+** Decision
+Split the file. =project.org= keeps only the =* PROJECT <id>= heading with =:ID:= plus the prose sections (Mission, Operating Constraints, Product Baseline). A new =.orgasmic/config.org= holds all machine config under a =* CONFIG <id>= heading (id echoed): the =STAGE_WORKER_*= map (dec_JW9TJ) and =TEST_CMD=/=LINT_CMD=/=BUILD_CMD=/=DEFAULT_BRANCH=. The three inert fields are deleted, not moved. A dedicated =ProjectConfig= view parses =config.org= via =find_by_title_prefix("CONFIG ")=; =ProjectFile= slims to id + prose. Greenfield hard cut: no =project.org= fallback for the moved fields, and the legacy =STAGE_AGENT_*= / =DEFAULT_AGENT_TEMPLATE= aliases are removed from parser and Settings UI. The two readers repoint to =config.org= (=index.rs::load_project= for the stage map, =api.rs::project_prompt_defaults= for commands/branch); =SettingsView= reads and writes =config.org=. The scaffold emits both files, and its =STAGE_WORKER_IMPLEMENT= default becomes =implementer-claude-tmux= (the validated tmux/claude worker) rather than the deferred =implementer-claude-acp=.
+** Consequences
+=project.org= is pure identity + prose, so dec_F2WRW's product baseline still lives there unchanged and design tooling reads one stable file. Machine config has a single repo-local, version-controlled home, still editable in Settings. Dead fields and legacy property names are gone. Updates dec_JW9TJ (the map's file and property name) and dec_CX17K (which references the map). Pairs with dec_F2WRW (product baseline in project.org) and dec_QWZB2 (canonical file substrate).
+

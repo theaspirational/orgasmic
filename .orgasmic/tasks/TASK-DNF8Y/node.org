@@ -1,0 +1,25 @@
+#+title: orgasmic task TASK-DNF8Y
+#+orgasmic_version: 2
+
+* DONE TASK-DNF8Y Full (run_id, runtime_id, boot_id) ownership tuple guard :runtime:arch_Z3Z3V:
+:PROPERTIES:
+:ID:               TASK-DNF8Y
+:PRIORITY:         P1
+:WORKER:   implementer-codex
+:IMPLEMENTS:       arch_Z3Z3V
+:PRODUCES:         crates/orgasmic-daemon/src/supervisor.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/supervisor.rs
+:READ_SCOPE:       .orgasmic/architecture.org docs/adr/*.org crates/orgasmic-daemon/src/** crates/orgasmic-core/src/session.rs archive/2026-05-22_arch-conformance/audit.md
+:TEST_CMD:         cargo test -p orgasmic-daemon
+:DEPENDS_ON:       TASK-M1MZ4
+:END:
+
+** Description
+arch_Z3Z3V constraint: "Runtime state changes are guarded by =(run_id, runtime_id, boot_id)= ownership". Supervisor currently compares =boot_id= only; =run_id= and =runtime_id= mismatches don't trip the guard. Fix the comparison to use the full tuple.
+
+** Acceptance Criteria
+- [ ] Supervisor guards check all three fields; tests cover mismatch on each individually (boot_id, runtime_id, run_id).
+- [ ] cargo test/clippy/fmt/diff clean; MSRV 1.78.
+
+** Worklog
+

@@ -1,0 +1,66 @@
+#+title: orgasmic task TASK-WE0Q7
+#+orgasmic_version: 2
+
+* DONE TASK-WE0Q7 No gate runs a daemon longer than ten seconds; add a scheduled soak that would have caught Q07Y5 :daemon:testing:mechanism:
+:PROPERTIES:
+:ID: TASK-WE0Q7
+:PRIORITY: P2
+:END:
+
+Filed 2026-07-28. No test in this repository runs a daemon longer than about
+ten seconds, so any defect that needs uptime to express passes every gate.
+That is not hypothetical: TASK-Q07Y5 shipped fully green and killed the
+operator's daemon 10.00s after every boot. TASK-R74E8 fixed it and added
+`daemon_serves_far_beyond_its_connection_drain_budget` — one test, watching one
+instance of the class (drain-budget misapplication, 8x budget ~ seconds). The
+CLASS — anything that expresses only with minutes of uptime: timers, budgets,
+watchers, leaks, heartbeat/stall interactions (see TASK-VZMZE), fd/session
+accumulation — still has nothing watching it.
+
+=== Mechanism
+
+A scheduled soak gate, not a per-merge one (minutes of wall clock do not belong
+in the merge path):
+
+1. A self-contained script (suggested `scripts/soak.sh` or a subcommand) that:
+   boots a REAL daemon from the tree under test with an isolated
+   `ORGASMIC_HOME` and random port (the isolated smoke-daemon recipe in
+   gotchas/memory — never `daemon start`, never the LaunchAgent, never the
+   installed runtime), runs it for a configurable duration (default >= 5
+   minutes; >= 10x any derived budget), under light periodic traffic (status
+   probes, a task read, a tx list — hit real surfaces), then SIGTERMs it.
+2. Asserts across the whole window: one pid and one boot_id throughout; zero
+   parse errors; memory/fd growth bounded (record; alert on gross growth, do
+   not tune thresholds finely); clean exit within
+   `ShutdownBudgets::default().total()` + margin (derived, not a literal —
+   the R74E8/ATAXN/QRB8S standard); marker/lock files retracted after exit.
+3. Wire it into a schedule: the repo already has `nightly-macos` /
+   `nightly-runtime` workflows — add it there, and/or a local launchd schedule
+   for the operator machine. Decide and record which; a soak that exists but
+   never runs is the same blindspot with extra steps.
+
+=== Acceptance
+
+- The soak runs green on current HEAD for the full default duration, output
+  showing the single pid/boot_id assertion sampled across the window.
+- Injection proof: reintroduce the Q07Y5-class defect (apply the drain budget
+  to the server's whole life instead of the drain phase) and show the soak
+  catches it — daemon dies mid-window, soak exits nonzero with a message
+  naming when it died. Restore, green. This proves the gate watches the class,
+  not the code path R74E8 already guards.
+- A second, different uptime defect class is demonstrated caught (suggested: a
+  short-interval timer/watcher misbehavior injected artificially) — one
+  exemplar beyond Q07Y5's, to show the gate is not overfit.
+- The soak NEVER touches the installed runtime, the real LaunchAgent, or
+  `$ORGASMIC_HOME` proper — asserted in the script itself, not just documented.
+
+=== Non-goals
+
+- Not the PR test lane (TASK-S2KM0); this is the scheduled long-run complement.
+- No multi-hour endurance matrix; one honest daily soak at minutes-scale first.
+- Do not run harness/provider turns in the soak — zero billed cost by
+  construction.
+
+Related: TASK-S2KM0 (CI), TASK-VZMZE (a defect exactly this gate would
+express), memory "orgasmic daemon uptime blindspot".
+

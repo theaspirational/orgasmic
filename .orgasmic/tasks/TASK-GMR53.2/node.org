@@ -1,0 +1,30 @@
+#+title: orgasmic task TASK-GMR53.2
+#+orgasmic_version: 2
+
+* DONE TASK-GMR53.2 fix-subtask: explicit /ws/tmux frame contract (delta vs full) + xterm replace-not-append :daemon:ws:tmux:ui:fix:robustness:medium:
+:PROPERTIES:
+:ID:               TASK-GMR53.2
+:PRIORITY:         P2
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_B7YH2
+:PRODUCES:         crates/orgasmic-daemon/src/ws.rs ui/src/components/manager/ManagerTmuxPane.tsx
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/ws.rs ui/src/components/manager/ManagerTmuxPane.tsx
+:READ_SCOPE:       crates/orgasmic-daemon/src/** ui/src/components/manager/** crates/orgasmic-drivers/src/modes/tmux.rs
+:TEST_CMD:         cd ui && npm run build && cargo test --workspace
+:END:
+
+** Description
+TASK-GMR53 reviewer F-2 MEDIUM: the daemon's real path may send either an append-only delta or the entire current capture as a plain text frame, but the UI always writes every text frame as append-only terminal data. For full-screen TUI redraws, scrollback truncation, clears, or any non-prefix pane change, the server falls back to sending a full capture and the client appends that full screen below the previous screen — turning the manager pane into repeated snapshots rather than a live terminal view.
+
+Fix: make the WS frame contract explicit. Either structured JSON frames =\{type: 'delta' | 'full', text\}= (binary text frames stay plain text for the delta case, JSON for full), OR adopt a real PTY-attach stream (xterm.js + pty bytes through). Lighter-touch path: =\{type, text\}= JSON frames; client clears/homes xterm on =full= before writing.
+
+** Acceptance criteria
+- [ ] WS frame format documented: distinguish delta (append-only) from full (replace-screen).
+- [ ] Daemon =ws.rs= picks the correct frame type per the delta/full branch in =pane_delta=.
+- [ ] UI =ManagerTmuxPane= handles =full= via =term.clear() + term.write(...)= or equivalent reset path.
+- [ ] Inline test for non-prefix pane update (server emits =full=; client expects replace).
+- [ ] All gates green.
+
+** Evidence
+(populated at task close)
+

@@ -1,0 +1,34 @@
+#+title: orgasmic task TASK-WNC5H
+#+orgasmic_version: 2
+
+* DONE TASK-WNC5H Promote init spec into current project state :documentation:
+:PROPERTIES:
+:ID:               TASK-WNC5H
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_QFQTD arch_MPAQT arch_PCSQE
+:PRODUCES:         CLAUDE.md README.md ui/README.md .orgasmic/project.org .orgasmic/sprint.org .orgasmic/tx/2026-05.org archive/21_05_26_init/spec.org shipped/schema/tx.org crates/orgasmic-core/src/*.rs crates/orgasmic-daemon/src/*.rs crates/orgasmic-drivers/src/*.rs crates/orgasmic-cli/src/main.rs
+:WRITE_SCOPE:      CLAUDE.md README.md ui/README.md .orgasmic/project.org .orgasmic/sprint.org .orgasmic/tx/2026-05.org archive/21_05_26_init/spec.org shipped/schema/tx.org crates/orgasmic-core/src/*.rs crates/orgasmic-daemon/src/*.rs crates/orgasmic-drivers/src/*.rs crates/orgasmic-cli/src/main.rs
+:READ_SCOPE:       .orgasmic/project.org .orgasmic/sprint.org .orgasmic/decisions.org .orgasmic/architecture.org .orgasmic/glossary.org docs/adr/*.org
+:DEPENDS_ON:       TASK-ST4D3
+:END:
+
+** Description
+Promote the generated project graph and ADRs to the active implementation source of truth. Leave the init spec in `archive/` as historical provenance only.
+
+** Acceptance Criteria
+- [X] Active guidance points agents at `.orgasmic/` and `docs/adr/`, not the archive spec.
+- [X] Future implementer task read scopes no longer require the archive spec.
+- [X] Code stubs and shipped schema comments point to current project state.
+- [X] The archive spec carries an explicit deprecation notice.
+- [X] A tx entry records the promotion.
+
+** Evidence
+- [2026-05-21 Thu 19:57] Updated CLAUDE.md, README.md, ui/README.md, project state, task scopes, stubs, shipped tx schema, and archive spec deprecation notice.
+- [2026-05-21 Thu 19:57] Wrote tx-20260521-org-0008 with operator-authorized manual tx append.
+- [2026-05-21 Thu 19:59] Verification passed: archive spec HTML render, cargo fmt --check, git diff --check, cargo build, cargo test.
+
+** Worklog
+- [2026-05-21 Thu 19:57] Promoted current `.orgasmic/` graph and ADRs as active project authority.
+- [2026-05-21 Thu 19:59] Verified the promoted source-of-truth state and regenerated archive/21_05_26_init/spec.html.
+

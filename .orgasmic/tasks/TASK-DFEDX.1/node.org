@@ -1,0 +1,46 @@
+#+title: orgasmic task TASK-DFEDX.1
+#+orgasmic_version: 2
+
+* DONE TASK-DFEDX.1 ApiError audit fix-subtask: dispatch-validation test shape + uncovered family regressions + shared assert helper + docstring polish + tracing cause + cross-platform :daemon:security:test:fix:
+:PROPERTIES:
+:ID:               TASK-DFEDX.1
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/integration.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/integration.rs
+:READ_SCOPE:       /tmp/orgasmic-codex/task-054-review-report.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-DFEDX
+:END:
+
+** Description
+9 findings from TASK-DFEDX reviewer (verdict has-issues no-blocks-ship); bundled as one fix round per :FIX_SUBTASK: t discipline. Report: =/tmp/orgasmic-codex/task-054-review-report.md=.
+
+*F-1 (MEDIUM docs)* — Commit message lacks exhaustive ApiError audit table. ~126 =ApiError::= construction sites in =crates/orgasmic-daemon/=; commit summarised categories not each site. Fix: append rg-output classification table to Evidence section in sprint.org (or commit amendment + sprint Evidence).
+
+*F-2 (MEDIUM test)* — =dispatch_driver_validation_failure_is_path_free= seeds an UNSUPPORTED driver/harness pair, so =Worker::from_org= rejects at parse (= =content_load_error= → 500 "failed to load worker"). Test never reaches =driver.validate()= / =driver_validate_error=. Fix: seed a SUPPORTED pair (e.g. =acp-stdio/codex=) but pass a dispatch body that fails =validate()= (missing binary, bad cwd). Assert 400 + ="driver configuration is invalid"= + path-free.
+
+*F-3 (MEDIUM test)* — 7 of the 13 fixed leak families have no regression: =writer_transaction_error=, =writer_append_error=, =writer_drain_error=, =supervisor_release_error=, =supervisor_continue_error=, =prompt_slot_operation_error=, =org_input_parse_error=, =org_rewriter_error=, snapshot restore/restart, =reconcile_file_mismatch=, =graph_heading_missing_id=. Fix: add minimal failing-path tests for the highest-impact families (writer transaction, org parse, reconcile mismatch, snapshot restore).
+
+*F-4 (MEDIUM test)* — Dispatch =assert_path_free_error= reimplements integration's helper without canonical-path checks (=/tmp= → =/private/tmp= on macOS). Fix: extract shared helper or import the integration version; pass =project_root= + =home.root= as =reject_paths=.
+
+*F-5 (LOW docs)* — ApiError docstring documents canonical envelope but not absent fields. Fix: one-line addition "No other top-level fields are emitted (=code=, =details=, =trace_id=, etc.)."
+
+*F-6 (LOW design)* — =pre_stage_snapshot= =map_err(|_| ...)= discards cause from tracing. Fix: =map_err(|e| { tracing::error!(error = %e, ...); ApiError::internal(...) })= or route through =snapshot_io_error=.
+
+*F-7 (LOW design)* — Generic =prompt_slot_operation_error= public message identical for dry-run/compile/scan. Fix (optional): stable per-operation messages without =format!("{e}")=.
+
+*F-8 (LOW test)* — Unix-gated =make_readonly= leaves non-Unix paths untested. Fix: =#[cfg(not(unix))] return;= or cross-platform injection (mock writer error / invalid contents).
+
+*F-9 (LOW design)* — 17-helper proliferation flagged for future. Defer to TASK-WQFPG follow-up (consider fold).
+
+** Acceptance Criteria
+- [ ] *F-1* + *F-2* + *F-3* + *F-4* (the 4 MEDIUMs) addressed concretely.
+- [ ] *F-5* + *F-6* (LOWs that are 1-2 line fixes) folded in.
+- [ ] *F-7* + *F-8* + *F-9*: implementer's choice — fold if cheap, defer otherwise with explicit note in commit/Evidence.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new deps.
+
+** Notes
+:FIX_SUBTASK: t. On close, auto-flips IMPLEMENT → DONE; manager hand-flips TASK-DFEDX REVIEW → DONE for cluster closure. WRITE_SCOPE overlaps with TASK-RF3J1.2/.3/.4/.5 (all touch api.rs) — serialize the dispatches.
+

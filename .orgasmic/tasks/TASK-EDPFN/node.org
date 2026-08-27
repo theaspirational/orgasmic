@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-EDPFN
+#+orgasmic_version: 2
+
+* BACKLOG TASK-EDPFN Abandon has no --reason: the tombstone names the judgment but cannot carry the operator's evidence
+:PROPERTIES:
+:ID: TASK-EDPFN
+:PRIORITY: P3
+:END:
+
+From TASK-VSWZT (2026-07-29): rescue-policy's inspect-before-choosing section wants the operator's evidence recorded ('superseded by TASK-X', 'worktree empty'), but RunRecoverRequest has no reason field, so the abandon tombstone carries only the fixed judgment string. Add optional reason threaded into the Release tombstone's reason suffix; CLI --reason flag on run recover. Small; keep the fixed prefix stable (JK66P's leading-token consumers).
+

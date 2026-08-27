@@ -1,0 +1,103 @@
+#+title: orgasmic task TASK-ZBYH3
+#+orgasmic_version: 2
+
+* DONE TASK-ZBYH3 daemon.out.log is double-written and never rotates :daemon:ops:
+:PROPERTIES:
+:ID: TASK-ZBYH3
+:PRIORITY: P2
+:WRITE_SCOPE: crates/**,verify/**
+:END:
+
+** Description
+=$ORGASMIC_HOME/logs/daemon.out.log= grows without bound AND every line is
+written to it twice. Measured on the operator's live daemon 2026-08-06: 13 MB,
+of which roughly half is exact duplication. Truncated manually to 0; it will
+grow back.
+
+The two problems are coupled — rotation is not well-defined while two
+descriptors own the same file — so they are one task.
+
+** Defect 1 — every tracing line lands in the file twice
+=lib.rs:898= installs the subscriber as:
+
+: init_tracing_to(&cfg.log_level, Some(&daemon_log), LogMirror::Stdout)
+
+so tracing writes to the durable sink AND mirrors to stdout. Under the
+LaunchAgent, *stdout IS that same file*: the generated plist sets
+=StandardOutPath= to =logs/daemon.out.log= (=daemon_service.rs:370=, emitted at
+=:846= and =:896=). So the daemon holds two descriptors on one inode and writes
+identical content through both.
+
+Measured (=lsof=, pid 41745): *fd 1u and fd 10w, same device, same inode
+439742072*.
+
+: last 400 lines -> 400 total, 201 unique
+: last 2000 lines -> 995 adjacent identical pairs
+
+Evidence file:
+=<scratchpad>/daemon-log-dup-evidence.txt= (captured before truncation).
+
+The mirror is correct and wanted for interactive =orgasmic serve= in a terminal.
+It is pure waste under launchd.
+
+** Defect 2 — no rotation
+Nothing rotates the durable log. =logging.rs= opens it =create(true).append(true)=
+(=:92=) and never rolls. 13 MB accumulated since roughly 2026-07-29.
+
+** Two candidate rulings — pick one and say why
+*** A. Separate the launchd capture file from the daemon's durable log
+Point =StandardOutPath= at =logs/daemon.stdout.log= (and keep
+=StandardErrorPath= as is), leaving =daemon.out.log= owned solely by the daemon's
+own sink. Then the mirror is harmless, and the daemon can rotate its own file
+without launchd holding a renamed inode. *Requires a plist change, so it only
+takes effect after the LaunchAgent is rewritten* — note that
+=orgasmic daemon start= rewrites the plist, and see the warning below.
+
+*** B. Suppress the mirror when it resolves to the durable file
+At startup, =stat= fd 1 and the durable path; if device+inode match, install
+=LogMirror::None=. Self-healing, no plist change, works on already-installed
+LaunchAgents. Leaves =StandardOutPath= pointing at the same file, so stray
+=println!=/panic output still lands there and would survive a rotation on the
+old inode.
+
+B is the smaller, self-correcting fix and needs no reinstall to take effect.
+A is the cleaner end state. *They compose* — B alone is sufficient to make
+rotation coherent; A additionally keeps non-tracing stdout out of the durable
+log. If you take both, say so.
+
+** Rotation requirements
+- Size-triggered roll on the durable sink: when the file exceeds a threshold,
+  rename to =daemon.out.log.1= (rolling =.1= -> =.2= ... up to a small keep
+  count) and reopen. Threshold and keep count should have sane defaults and be
+  overridable from =config.yaml= (=DaemonConfig=, =config.rs=), consistent with
+  how other daemon settings are read.
+- *Never let a rotation failure kill the daemon or fail a request.* The whole
+  point of this module (TASK-FZF2D, see its header comment) is that a dead log
+  sink is survivable. A failed rename must degrade to "keep writing the current
+  file", counted through the existing =record_drop= / =dropped_log_writes=
+  mechanism.
+- The sink is behind =Arc<Mutex<SinkState>>=; the roll happens under that lock.
+  Keep the hot path cheap — do not =stat= on every line; track bytes written in
+  the sink and check against the threshold.
+
+** Acceptance
+- A test proving a line logged once appears *once* in the durable file when the
+  mirror resolves to that same file. This is the defect that measured 2x.
+- A test proving the file rolls at the threshold, that the rolled file retains
+  the earlier content, and that the keep count is honoured.
+- A test proving a rotation failure does not propagate — the daemon keeps
+  logging and the drop counter moves.
+- =crates/orgasmic-cli/tests/logging_sink.rs= still passes; it asserts the sink
+  survives a closed pipe and keeps writing the durable file.
+
+** Notes and traps
+- *Do NOT run =orgasmic daemon start= to test a plist change.* It rewrites the
+  one real per-user LaunchAgent. Assert on the GENERATED plist STRING
+  (=daemon_service.rs:846,:896= already render it) rather than installing it.
+- The operator's log was truncated in place and that was safe *because both
+  descriptors are =O_APPEND=*. If any future writer drops =append(true)=,
+  in-place truncation starts leaving sparse gaps.
+- 13 MB is not itself an outage. This is filed as a real defect because the
+  double-write means half of every log read, grep and incident capture is
+  redundant, and because unbounded growth on the operator's home is a slow leak.
+

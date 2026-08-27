@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_ZKRQW
+#+orgasmic_version: 2
+
+* dec_ZKRQW How should one agent act as both manager and implementer without the full pipeline?    :manager:conventions:entry:
+:PROPERTIES:
+:ID:            dec_ZKRQW
+:GLOSSARY_REFS: term_X4JGJ
+:DECIDED_AT:    [2026-06-10 Wed 16:45]
+:SOURCE:        user direction 2026-06-10 (single-worker routing gap)
+:PARENT:        dec_DK7AZ
+:END:
+** Context
+`entry.org` routes prompts to either a strict worker dispatch or the manager. When one agent is both manager and implementer (single-worker setups with no dispatch surface), arbitrary prompts fell to the manager route and were implemented with no implementer policies attached. The full staged pipeline (task heading, lifecycle transitions, pre-flight tx, dedicated REVIEW) was designed for swarm dispatch and is redundant overhead for a single agent iterating with the user.
+** Decision
+Add a manager-implementer mode via `conventions/manager-implementer.org`, referenced from the entry router before the first direct source edit. The mode skips task creation, per-edit lifecycle and tx ceremony, and the dedicated REVIEW stage. It keeps the durable-knowledge surfaces live while iterating: new decisions recorded and changed ones edited in `decisions.org`, `architecture.org` updated when structure changes, the code marker policy followed, and `gotchas.org` read before edits. Task, handoff, and tx state is reconciled in batch at natural pauses.
+** Consequences
+Single-worker sessions iterate at conversational speed without losing durable rationale, architecture currency, or marker hygiene. Kanban and tx fidelity becomes batch-eventual rather than per-edit in this mode; swarm-mode dispatch discipline is unchanged.
+

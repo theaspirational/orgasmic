@@ -1,0 +1,372 @@
+# TASK-RMA18.1.1 (worktree-prune submodule refusal) — review of `d10b0cf..1cdf25b`
+
+## Verdict
+
+**reject** — narrow and fully actionable. The two BLOCK SHIPs this round answered
+(F1 index source-of-truth, F2 RepoGone placement) are genuinely closed for the
+branches they name, F4 is closed, and the index parser survived everything I
+could throw at it. The round is rejected on three things:
+
+1. the residual the implementer disclosed and you ruled on in C1 is still a live
+   data-loss path (**F-A**),
+2. the operator help is **false in exactly the case it calls out** (**F-B**), so
+   acceptance item 6 is met only in appearance, and
+3. F3's overstatement was rewritten in the doc comment and **left standing in the
+   inline fence comment 100 lines below it** (**F-C**).
+
+**Is the verb safe to ship to an operator binary? No — not as documented.** A
+managed worktree whose admin directory is gone, holding a populated nested
+repository with uncommitted work, is still deleted with no salvage and no
+refusal, while `worktree-prune --help` tells the operator the refusal covers
+"EVERY removal this verb makes, the repo-gone one included". Either close F-A or
+correct the help before reinstalling. F-B alone is a one-sentence fix; F-A is
+maybe twenty lines.
+
+Findings filed as `tx-20260808-orgasmic-5400..5404`.
+
+---
+
+## Findings
+
+### F-A (HIGH, bug) — RepoGone + an index-only gitlink is still deleted; your C1 ruling is not implemented
+`crates/orgasmic-cli/src/manager.rs:3972`, `:4352-4390`, `:4690`, `:4693`
+
+In the `RepoGone` state all three sources go quiet at once, and I checked each
+one in source rather than inferring from the disclosure:
+
+- `worktree_admin_dir_holds_modules` (`:4352`) ends at
+  `resolved.join("modules").is_dir()` (`:4390`) — the gitdir is gone, so `false`.
+- `worktree_index_gitlinks` (`:4039`) stats the gitdir, gets `NotFound`, returns
+  `NoRepository`, and the caller's arm at `:3972` is `=> {}` — no candidates.
+- `gitmodules_paths` returns `Ok(vec![])` when the file is absent.
+
+`worktree_submodule_refusal` therefore returns `None`, the `RepoGone` arm at
+`:4693` runs `root.remove_child`, and a populated independent checkout goes with
+it. No salvage runs on that branch at all.
+
+This is the gap the implementer disclosed and you ruled on. **I did not
+reproduce it on the production prune path** — see Verification Notes for why —
+but the two shipped regressions bracket it exactly: `worktree_prune_removes_a_-`
+`worktree_whose_repo_is_gone` proves RepoGone deletes, and
+`worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule` proves the
+new refusal fires there *via `.gitmodules`*. Remove `.gitmodules` from the second
+fixture and nothing is left.
+
+**On your ruling — I agree with it, with two corrections.**
+
+Where you are right: in `RepoGone` git has no oracle, `RepoGone` reclamation is a
+feature orgasmic invented, and the cost asymmetry is the one this project has
+already ruled on. And the ruling-4 counterargument really does land soft,
+because the heuristic is scoped to a state that only arises when the repository
+has already disappeared.
+
+**Correction 1 — "a nested populated `.git`" must mean a `.git` entry of ANY
+type, not a directory.** This is not a nit; a directory-only check would miss the
+case the ruling exists for. `git submodule update --init` on git 2.52.0 writes
+the submodule's `.git` as a **file** holding `gitdir: ../../.git/modules/<name>`,
+and when the superproject's repository is gone that admin directory is gone too —
+so the nested repo is a `.git` *file* pointing at nothing. A "populated `.git`
+directory" predicate returns false on the single most likely shape.
+
+**Correction 2 — there is no `--force` on this verb.** I read the shipped help:
+the only options are `--dry-run` and `--task`. So the answer to "is there a state
+where this refuses forever with no operator escape" is: **no forever-refusal, but
+no in-verb escape either.** The operator must delete the nested `.git` (or the
+whole directory) by hand, and the current advice string points them at
+`git worktree remove --force`, which cannot work when the repository is gone (see
+F-D). If you take the ruling, the `KEPT` line for the `NoRepository` branch needs
+its own advice text naming the path and saying "remove it yourself" — otherwise
+you ship a refusal whose stated remedy is impossible.
+
+**Is a nested-`.git` scan sound against symlinks through the anchored handle?**
+Yes, if it reuses the existing machinery rather than a new walk:
+`anchored_dir::entry_names` / `open_child_dir` already resolve every component
+with `openat(O_NOFOLLOW|O_DIRECTORY)`, which is what `nonempty_dir_under`
+(`:4463`) is built on and what round 3 cleared at source level. A `PathBuf`-based
+`walkdir` would not be sound and must not be used here.
+
+**Is there a cheaper predicate?** Yes, and it is free: the reclaim path already
+does a full anchored size walk of the tree before the reservation (`:3753-3784` — recursive, descends by `openat` from the worktree handle, so it is already sound against symlinks). Have that walk
+record "did I see any child entry named `.git`" and the `NoRepository` branch
+costs one boolean instead of a second traversal. Note the ordering consequence —
+the refusal currently sits *above* the size walk, so taking this option means the
+`NoRepository` leg of the predicate has to consume a result computed later, or
+the walk has to move up.
+
+### F-B (HIGH, docs) — the operator help is false in the case it names; acceptance item 6 is met only in appearance
+`crates/orgasmic-cli/src/manager.rs:373-381`; pin at `crates/orgasmic-cli/tests/cli_parity.rs:104-111`
+
+Shipped text, read out of `target/debug/orgasmic manager worktree-prune --help`:
+
+> The submodule refusal is CATEGORICAL and runs before EVERY removal this verb
+> makes, **the repo-gone one included**; it reads the worktree's own INDEX for
+> gitlinks as git does, plus `.gitmodules`, and **a submodule record it cannot
+> read is itself a refusal.**
+
+Both emphasised clauses are false of the repo-gone branch, and they are false
+*together*, in one sentence that explicitly names that branch. On `RepoGone`
+there is no index to read, and `NoRepository` — a submodule record that cannot be
+read — is deliberately **not** a refusal (`:3972`, and the doc comment at
+`:3946-3953` says so honestly). The operator's takeaway from this help is exactly
+the protection F-A shows they do not have.
+
+`cli_parity` cannot catch this: `worktree_prune_help_describes_the_mechanism_it_-`
+`actually_uses` asserts the lowercased help *contains* `"categorical"` and
+`"index"`. Both substrings are present in a sentence that is untrue. The pin is a
+keyword pin, not a truth pin — which is the shape acceptance item 6 was written
+to prevent.
+
+If you take the C1 ruling, the sentence becomes true after one more clause about
+the disk fallback. If you overrule yourself and keep the disclosed carve-out,
+this text must say so — something like "…except when the repository itself is
+gone, where there is no index and the check falls back to `.gitmodules` and the
+admin `modules/` directory."
+
+### F-C (MEDIUM, docs) — F3's overstatement was rewritten in one place and re-asserted in another
+`crates/orgasmic-cli/src/manager.rs:4721-4726` vs. the rewritten statement at `:4598-4636`
+
+The fence comment above the first `assert_path_names` still reads:
+
+> This is the fence for all of it: … **It is re-taken before EACH subprocess**;
+> see the window this narrows but cannot close in the doc comment above.
+
+The doc comment "above" now says the opposite — "It does NOT run before every
+path-resolving `execve`" — and enumerates the three windows. A maintainer reading
+the code top-down hits the corrected version; a maintainer reading the function
+body hits the version round 3 filed F3 about. This is the same defect class,
+relocated. Delete the "re-taken before EACH subprocess" clause or point it at the
+enumeration.
+
+(The doc comment also says the assert "runs at three points here"; there are four
+`assert_path_names` calls at `:4727`, `:4735`, `:4773`, `:4795`. The fourth is
+the post-subprocess re-prove, which the comment describes separately, so the
+statement under-claims rather than over-claims. Not a finding.)
+
+### F-D (LOW, design) — the `Unreadable` refusals give submodule advice to trees that may hold no submodule, and an impossible remedy on the RepoGone branch
+`crates/orgasmic-cli/src/manager.rs:3957-3959`, `:3974-3980`, `:3984-3988`
+
+`advice` is a single shared string: *"no salvage can capture what is inside a
+submodule, because the parent records it as a gitlink. Remove the submodule's
+checkout yourself, or remove the worktree with `git worktree remove --force`…"*.
+It is now appended to refusals that are not about a submodule at all — a split
+index, a `.gitmodules` that is a symlink, an index that did not parse. An
+operator whose worktree was kept because it uses a split index is told to remove
+a submodule checkout that does not exist.
+
+And on any `RepoGone` refusal (including the one the new regression proves), the
+offered escape `git worktree remove --force` cannot run: there is no repository.
+The refusal is still correct; only the remedy is wrong. This matters more if you
+take the C1 ruling, because that adds a second refusal reachable only in the
+state where that remedy is impossible.
+
+### F-E (LOW, test) — no injection proof pins F2's placement
+`verify/TASK-RMA18.1.1/injection.patch`
+
+The injection disables only the `Recorded(paths)` arm, which proves F1's
+completeness cleanly (both TASK-RMA18.1 branches stay live — a good proof, and
+better than a "was it wired up" proof). But moving
+`worktree_submodule_refusal` back below the `RepoGone` early return leaves
+`orgasmic verify TASK-RMA18.1.1` green; only
+`worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule` catches it.
+Two BLOCK SHIPs closed, one rung on the injection ladder.
+
+---
+
+## Answers to the numbered claims
+
+**C1 — your ruling.** Answered in F-A. Short version: I agree, with the two
+corrections above (`.git` of any type, not a populated directory; and the
+`NoRepository` refusal needs its own advice string because there is no `--force`
+and `git worktree remove --force` is impossible in that state). No forever-refusal
+exists. The cheapest predicate is the size walk you already pay for.
+
+**C2 — index parser robustness. No fail-open found; one interesting negative
+result.** I built 16 index shapes with the local `git 2.52.0` and compared the
+derived gitlink set against `git ls-files -s` ground truth:
+
+| shape | result |
+|---|---|
+| default v2, SHA-256, v4, v4+SHA-256 | correct |
+| 2000 entries (v2 and v4) | correct |
+| path > 4095 bytes (flags name-length caps at `0x0FFF`), v2 and v4 | correct |
+| UTF-8 path (Cyrillic + combining mark + CJK), v2 and v4 | correct |
+| space and tab in path | correct |
+| `skip-worktree` (extended flags, forces v3) | correct |
+| `intent-to-add` neighbour entry | correct |
+| untracked-cache (`UNTR`), `EOIE`/`IEOT` via `index.threads` | correct |
+| conflicted gitlink at stages 1/2/3 | correct (dedup collapses them) |
+| **split index** | **refused** (caught by the empty-path entry) |
+| **sparse index with a gitlink under the collapsed directory** | **not collapsible — see below** |
+
+The one worth writing down: **git will not collapse a directory containing a
+gitlink into a sparse-directory entry**, so a sparse index cannot hide a
+submodule from an index-reading predicate. Measured as a matched pair — control
+(`keep/a`, `out/deep/b`, `index.sparse=true`, cone set to `keep`) collapses to two
+entries, the second being mode `040000 out/`; the identical fixture with a
+`160000 out/deep/sub` gitlink added keeps all three entries at full depth even
+though `out/` is removed from disk. That was the only shape I could think of
+where git's own reader and a raw parse could legitimately disagree, and git
+closes it upstream.
+
+Caveat, stated plainly: the 16-shape sweep ran against a **line-by-line Python
+port** of `index_gitlink_paths`/`index_entries`/`index_varint`, not the shipped
+parser — it was a screen for candidate fixtures, and it found none to escalate.
+The shipped parser itself I exercised only through its own unit tests (3 git-written
+shapes + the 6-case fail-closed battery + the split-index case), which passed.
+I also re-derived `index_varint` against git's `decode_varint` semantics
+(`val += 1; val = (val<<7) + (c & 127)` per continuation byte, not plain LEB128) —
+the port matches, and v4 fixtures with multi-byte strip counts parsed correctly.
+
+**C3 — is the index the right file?** Yes, and the boundary is the same one git
+takes: `validate_no_submodules` reads `worktree_git_path(wt, "index")`, i.e. the
+linked worktree's own `.git/worktrees/<id>/index`, which is what `:4039` resolves.
+The `gitdir:` content is read *through the anchored handle*; only the admin
+directory itself is resolved by pathname, and it lies outside anything this verb
+anchors or deletes. On the race question: anything that removes or replaces
+`<project>/.git/worktrees/<id>` between the `symlink_metadata` at `:4116` and the
+`File::open` at `:4127` lands on `Recorded(vec![])` (index `NotFound`) — i.e. it
+degrades toward *fewer* candidates. I looked for a realistic producer and did not
+find one: `git worktree prune` only removes admin entries whose worktree
+directory is missing, and this one exists by construction; `git worktree move`
+rewrites the `.git` file rather than the admin directory. git has the identical
+exposure through the same pathname. Not a finding; recorded as a residual.
+
+**C4 — completeness from the other side.** No populated submodule that git
+refuses and this cannot see, beyond the disclosed `NoRepository` case. On the
+false-refusal risk that ruling 4 named: every `Unreadable` trigger is opt-in or
+pathological — split index (`core.splitIndex` / `update-index --split-index`, not
+set by `feature.manyFiles`), `.git` a symlink, `.gitmodules` a symlink or
+directory or unreadable, a non-UTF-8 gitlink path, an index that does not parse.
+The union with `.gitmodules` can only add a refusal where a `.gitmodules` entry
+names a path that is a non-empty directory, which was already true before this
+round. The orgasmic repo itself has no `.gitmodules` and no nested `.git` at
+depth ≤ 4, so the verb's own primary use case is unaffected. I did not find a
+shape that makes the verb useless.
+
+**C5 — did the round break anything?** The four implementer commits touch
+`crates/orgasmic-cli/{src/manager.rs,tests/dispatch.rs,tests/cli_parity.rs}` and
+`verify/` only — no daemon, core, or UI source. (`recovery_claim.rs` and
+`recovery_fault_restart.rs` appear in the `d10b0cf..1cdf25b` range from the
+interleaved TASK-2QK4P merge `1c0d2b0`, not from this task.) The
+`verify/TASK-RMA18.1/injection.patch` edit is an honest rebase: line offsets and
+context follow the new source, and both `if false &&` injection sites are
+semantically unchanged.
+
+**C6 — F3's argument.** **True, verified at source.** `git_would_remove_worktree`
+(`:4508`) runs `git worktree list --porcelain` first, with `current_dir(project_root)`,
+and it never resolves `worktree.path` — it string-compares `normalize_path`
+output against the porcelain records (`:4513-4542`). Only afterwards does
+`git status --porcelain --ignore-submodules=none` run with
+`current_dir(worktree)` (`:4564-4568`). So the demonstrated window really does
+sit *between two subprocesses of one call*, and an assert immediately before every
+`execve` would not close it — the actor never has to hit an assert-to-`execve`
+gap. The rewritten statement's enumeration of the three windows is accurate and
+its bound ("the deletion cannot be redirected; the inode removed can be the dirty
+unsalvaged one") is the right one. It is **not complete** while `:4721-4726` says
+the opposite — that is F-C, and it is the only thing wrong with F3's close.
+
+**The manager's RED gate — attribution corroborated, independently.** I re-ran
+both named tests from the **same prebuilt test binary built at `1cdf25b`**, so
+this is the merged tree, not a fresh build:
+
+```
+test reviewer_close_non_clean_verdict_flags_stay_in_progress ... ok
+test reviewer_close_refuses_verdict_flag_alongside_property_verdict ... ok
+test result: ok. 2 passed; 0 failed; ... finished in 7.51s     (1m load 3.40)
+```
+
+7.5s for both against a 10s per-request HTTP budget is a margin that load 15
+plausibly eats. Combined with the panic text naming that budget, isolation
+passing, and the absence of any mechanical path from an index-derived submodule
+predicate to a dispatch-close release call, "host load" is the well-supported
+classification and I am not treating the round as unproven on that basis. What I
+have **not** done is reproduce the failure at load 15, so the classification rests
+on green-at-low-load plus mechanism, not on a demonstrated load threshold.
+
+---
+
+## Verification Notes
+
+Everything below was run by me, at `1cdf25b`'s `orgasmic-cli` tree (verified
+unchanged: `git diff --stat 1cdf25b b225616 -- crates/orgasmic-cli/` is empty).
+Per the brief I re-executed already-built binaries instead of going through
+cargo — **no `cargo` invocation was made by this review**, so the syspolicyd
+watchdog was never needed. Peak observed 1m load during my work: 8.96.
+
+**Ran and green:**
+- All 12 `worktree_prune_*` integration tests, `dispatch-1654a1239a34b320`,
+  `--test-threads=1`: `12 passed; 0 failed` in 454.81s. Includes both new
+  regressions (`..._refuses_a_submodule_recorded_only_in_the_index`,
+  `..._refuses_a_repo_gone_worktree_containing_a_submodule`) and the
+  `..._removes_a_worktree_whose_repo_is_gone` case the C1 fallback protects.
+- `cli_parity`, all 7: `7 passed; 0 failed` in 3.56s, including
+  `worktree_prune_help_describes_the_mechanism_it_actually_uses`.
+- The 4 new `manager::tests` unit tests from the bin test binary
+  `orgasmic-87c25c2c3532d469`: the 3 `index_gitlink_paths_*` and
+  `worktree_submodule_refusal_fires_on_a_populated_gitlink_and_not_a_placeholder`.
+  All pass.
+- The 2 `reviewer_close_*` tests from the manager's RED gate (above).
+- Read the shipped `manager worktree-prune --help` out of `target/debug/orgasmic`
+  (confirmed current — it carries the new "CATEGORICAL" text) rather than
+  trusting the clap source.
+
+**Independent probes:** the 16-shape git-index sweep and the sparse-index
+collapse pair described under C2, all against the local `git 2.52.0` as the
+oracle. No web access used.
+
+**F4 — closed, checked.** `scripts/run-tests.sh` has no `--release-gates`: its
+option loop (`:158-192`) `break`s on the first unrecognised argument and the rest
+becomes `CARGO_ARGS`, so the old comment really did produce a cargo argument
+error. The new comment names `scripts/run-tests.sh -p orgasmic-cli`, and
+`nda_in_scope` (`:1215-1233`) matches exactly that: it tracks `-p`/`--package`
+followed by `orgasmic-cli`, plus the `-p=orgasmic-cli` and `--workspace`/`--all`
+forms. The comment now names a real invocation.
+
+**Not checked — say it out loud:**
+- **F-A was not reproduced on the production prune path.** Proving it needs a new
+  integration test, which needs a `cargo test -p orgasmic-cli --test dispatch`
+  compile; the brief forbids mutating repo source and a scratch copy would be a
+  cold build against a concurrent cargo dispatch. I closed it by source reading
+  of the three predicates plus the two shipped tests that bracket it, and by the
+  implementer's own disclosure. If you want it measured before the fix lands, the
+  cheapest route is to copy the accepted `..._refuses_a_repo_gone_worktree_-`
+  `containing_a_submodule` fixture and swap `git submodule add` for the
+  `update-index --cacheinfo` + standalone `git clone` shape from the other new
+  test.
+- `orgasmic verify TASK-RMA18`, `TASK-RMA18.1`, `TASK-RMA18.1.1` — **not re-run**.
+  `verify` patches the working tree and runs cargo; both were off-limits with
+  another dispatch live. Acceptance item 7 remains a manager claim. I did read
+  all three artifacts and the RMA18.1 rebase (C5).
+- Workspace suite, `orgasmic-daemon`, UI checks, `clippy -D warnings`,
+  `fmt --check` — not run. Manager claims.
+- The 12 `worktree_prune_*` and `cli_parity` results are from **prebuilt binaries
+  built at `1cdf25b`**, not from a fresh compile. If you doubt the artifacts, a
+  fresh `run-tests.sh -p orgasmic-cli` is the only thing that settles it.
+- Non-Unix behaviour: untested, implementation is `#[cfg(unix)]`-gated.
+- The C2 sweep used a Python port as its screen (caveat stated under C2).
+- I did not audit `anchored_dir`'s `openat` primitives myself; I relied on round
+  3's source-level clearance of the anchored walk.
+
+---
+
+## Fix Directions
+
+1. **F-A** — in the `NoRepository` arm only (`:3972`), refuse when the anchored
+   walk finds any child entry named `.git`, of **any** type (a modern submodule's
+   nested `.git` is a *file*). Reuse `anchored_dir` — never a pathname walk. Name
+   the offending path in the `KEPT` line. Cheapest source is the size walk that
+   already traverses the tree. Add the missing third regression: RepoGone +
+   `update-index --cacheinfo 160000` gitlink + standalone populated clone + no
+   `.gitmodules`, sentinel survives, reasoned `KEPT`.
+2. **F-B** — make the help sentence true of whichever behaviour ships. If F-A
+   lands, add the disk-fallback clause; if you overrule your own C1 ruling, the
+   help must name the repo-gone carve-out explicitly. Consider strengthening the
+   `cli_parity` pin from substrings to something that cannot pass on a false
+   sentence — at minimum pin the carve-out clause too.
+3. **F-C** — delete "It is re-taken before EACH subprocess" from `:4721-4726`, or
+   replace it with a pointer to the three-window enumeration at `:4598`.
+4. **F-D** — split `advice` into a submodule variant and a
+   record-unreadable variant, and give the `RepoGone` refusals a remedy that
+   exists (there is no repository, so no `git worktree remove --force`).
+5. **F-E** — optional: a second injection that moves the refusal back below the
+   `RepoGone` early return, so both closed findings have a rung.

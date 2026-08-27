@@ -1,0 +1,32 @@
+#+title: orgasmic task TASK-VXB0T
+#+orgasmic_version: 2
+
+* DONE TASK-VXB0T Implement dec_WV1ZH-069: kanban lifecycle v3, performer sub-states, worker pipeline :schema:state-machine:run-substate:kanban:pipeline:
+:PROPERTIES:
+:ID:               TASK-VXB0T
+:PRIORITY:         P2
+:WRITE_SCOPE:      shipped/schema/state-machine.org shipped/skills/orgasmic/scaffold/config.org crates/orgasmic-core/src/session.rs crates/orgasmic-core/src/schema.rs crates/orgasmic-core/src/projects.rs crates/orgasmic-core/src/org.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/src/manager.rs shipped/workers .orgasmic/tasks/sprint.org ui/src
+:READ_SCOPE:       .orgasmic/decisions.org
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-PT2DC
+:END:
+
+** Description
+Apply the TASK-PT2DC accepted decisions (dec_WV1ZH, dec_P7EY8, dec_DEH2T). Likely needs splitting into subtasks at dispatch time — the heading-keyword migration alone touches parsers, dispatch transitions, sprint.org data, and the kanban UI.
+
+** Acceptance Criteria
+- [ ] =shipped/schema/state-machine.org= rewritten to v3: lifecycle Backlog/Todo/In Progress/In Review/Done/Cancelled with new transition table; one shared sub-state base (working, done, blocked, cancelled) + reviewer/human verdict deltas; all six per-kind RUN-SUBSTATE blocks deleted (dec_WV1ZH/068).
+- [ ] =RunSubState= validation (=session.rs=) accepts performer namespaces (worker kinds, human, ci) per dec_P7EY8.
+- [ ] Supervisor wires =DriverEvent::TransitionState= into =rec.sub_state= so sub-states have a real consumer; exposed via RunSummary (dec_P7EY8).
+- [ ] =STAGE_WORKER_*= replaced by an ordered worker pipeline in the config scaffold; dispatch logic reads it (dec_DEH2T).
+- [ ] Heading keywords migrated: sprint.org data + core parsers + daemon index/watcher/api transitions + CLI + kanban UI columns; BLOCKED rendered as badge (sub-state + :BLOCKED_BY:), not a column (dec_WV1ZH).
+- [ ] =shipped/workers/*.org= =:APPLICABLE_STATES:= aligned with the new verb set.
+- [ ] Gates: =cargo test --workspace=, =clippy -D warnings=, =fmt --check=, =npm --prefix ui run build= green.
+
+** Evidence
+Umbrella closed [2026-06-10 Wed] — all of dec_WV1ZH/068/069 implemented across three child tasks in one session:
+- TASK-VXB0T.1 (backend, merge =f57de5a=): schema v3, parser allowlist, transitions, performer sub-states, supervisor wiring, PIPELINE config, data migration. Reviewer no-blocks-ship; F-2 doc fix manager-side.
+- TASK-VXB0T.2 (UI, merge =08ede1f=): kanban v3 columns, blocked badge, sub-state display, PIPELINE editor (closed reviewer F-1). Reviewer SHIP, zero findings.
+- TASK-VXB0T.3 (fix, merge =fb9f227=): =blocked_by= exposed on task summaries; badge verified live (=TASK-VXB0T.2 blocked_by: ['TASK-VXB0T.1']= in payloads post-rebuild).
+Live validation of the new machinery during its own rollout: daemon dispatch flip BACKLOG→IN_PROGRESS with matching =:STATE:= (8c14313), CLI implementer close IN_PROGRESS→IN_REVIEW (tx-0074), =:FIX_SUBTASK:= one-round IN_PROGRESS→DONE (tx-0077). Daemon rebuilt twice (parsers, then index) — parse_errors 0 throughout. Residual non-blocking gaps: no UI unit tests for SettingsView splicing / kanban bucketing; no browser smoke this session; CLI =VERDICT=clean= vs reviewer-report =ship= vocabulary mismatch noted in 132.2 Evidence.
+

@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_G38EC
+#+orgasmic_version: 2
+
+* dec_G38EC How do projects register with orgasmic without auto-discovery or a central database?    :project-model:
+:PROPERTIES:
+:ID:            dec_G38EC
+:GLOSSARY_REFS: term_CEQFS term_FM60Y
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Project task files
+:END:
+** Context
+Orgasmic needs to know which projects it manages without introducing background auto-discovery or a central database. Auto-scan brings surprise and ambiguous ownership; a central database breaks plain Git collaboration as the primary coordination mechanism.
+** Decision
+Project add/init is explicit. Each repo opts in with repo-local =.orgasmic/= state, and the home board stores only project pointers. The orgasmic repo is registered as =orgasmic= on the board.
+** Consequences
+Aggregation is derived from the index rather than stored on the board. There is no auto-scan and no surprise project registration.
+

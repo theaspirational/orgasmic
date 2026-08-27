@@ -1,0 +1,30 @@
+#+title: orgasmic task TASK-EBWZ9.4
+#+orgasmic_version: 2
+
+* DONE TASK-EBWZ9.4 Code-split GraphView and tmux terminal dependencies :ui:perf:
+:PROPERTIES:
+:ID:               TASK-EBWZ9.4
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_M8JQT
+:PRODUCES:         ui/src/app/App.tsx ui/src/components/manager/ManagerWorkbench.tsx ui/vite.config.ts
+:WRITE_SCOPE:      ui/src/app/App.tsx ui/src/components/manager/** ui/vite.config.ts
+:READ_SCOPE:       /tmp/orgasmic-codex/task-046-review-report.md
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-EBWZ9
+:MERGE_SHA:        6d1070e
+:CODEX_COMMIT:     ad2c715
+:END:
+
+** Description
+Addresses reviewer finding F-7 (medium perf) from the review report. Today =GraphView= is statically imported by =App.tsx= and =ManagerWorkbench= statically imports =ManagerTmuxPane= which statically imports =@xterm/xterm= CSS+JS. Build emits a single 1062 kB raw / 313 kB gzip minified chunk. Users on Board / Tasks paths pay for ReactFlow + xterm without ever opening Graph or a tmux manager run.
+
+** Acceptance Criteria
+- [X] *F-7 fix — Graph lazy.* =App.tsx= wraps the graph-view branch in =React.lazy(() => import('../components/GraphView'))= + =Suspense fallback={<Loading />}=. Board/tasks/project/runs/org/status/settings paths no longer eagerly parse reactflow/dagre.
+- [X] *F-7 fix — xterm lazy.* =ManagerWorkbench= lazy-loads =ManagerTmuxPane= and gates it behind =isTmuxDriver(driverTag)= in =Suspense=. ACP-family drivers never parse xterm.
+- [X] *F-7 fix — vendor chunks.* =vite.config.ts= gained =build.rollupOptions.output.manualChunks= splitting =reactflow/@reactflow= → =vendor-reactflow=; =dagre/graphlib/lodash= → =vendor-dagre=; =@xterm/*= → =vendor-xterm=. Main chunk **1062.21 kB → 470.23 kB** (well under the 500 kB warning threshold).
+- [X] =cd ui && npm run build= passes; chunk-size summary in =/tmp/orgasmic-codex/task-046-fixes-last.txt=: main 470.23 kB / reactflow 160.67 kB / dagre 91.01 kB / xterm 334.21 kB / GraphView-lazy 11.14 kB / ManagerTmuxPane-lazy 0.98 kB.
+
+** Evidence
+- [2026-05-23 Sat 15:34] Shipped in bundled fix-implementer commit =ad2c715= (merged =6d1070e=). Files: =App.tsx= +14, =ManagerWorkbench.tsx= +20, =vite.config.ts= +21. Reviewer F-7 (medium perf) closed. Main chunk now 44% of the pre-fix size; users on non-graph paths skip reactflow+dagre, users on non-tmux runs skip xterm.
+

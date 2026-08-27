@@ -1,0 +1,299 @@
+#+title: orgasmic task TASK-STWVB.1
+#+orgasmic_version: 2
+
+* DONE TASK-STWVB.1 fix-round: the gate now returns INCONCLUSIVE forever, and B's headline signal is both dead and sampled at the wrong time :testing:daemon:flake:
+:PROPERTIES:
+:ID: TASK-STWVB.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,scripts/**,verify/**,.github/**,.orgasmic/project.org
+:FIX_SUBTASK: t
+:END:
+
+=== READ THIS FIRST — STATUS ===
+Fix round for TASK-STWVB (merged =b94f942=, reviewed REJECT). FOUR BLOCK SHIP,
+FIVE FOLLOW-UPS. Part A is KEPT — the reviewer checked the link-vs-fresh
+boundary call at every converted site and found it correct at all eight,
+including the one where a wrong call would have been a silent-pass disaster.
+Nothing here argues for reverting A.
+
+The full review is preserved and tracked at
+=.orgasmic/dispatch-records/tx-20260806-orgasmic-4980/last.txt= (28,018 bytes).
+READ IT — it carries measurements, a per-site boundary table, and a reproduced
+=execvp= experiment that no summary preserves.
+=== END STATUS ===
+
+** The headline, because it changes what this task is about
+The gate does not merely mis-measure: it now returns *no verdict at all*, for
+the very suite it was built for. The suite trips its own load threshold, and
+=INCONCLUSIVE= preempts =REAL= in the verdict ordering. So exit 0 and exit 1 are
+both effectively unreachable for =orgasmic-daemon=, and a failure that fails IN
+ISOLATION — where load is already excluded as an explanation — comes back
+"re-run when calm". The implementer's own gate is the demonstration: *exit 4 on
+734 passed / 0 failed*.
+
+That is the mirror image of the risk the brief worried about. Not everything
+excused — everything UNADJUDICATED. A gate whose answer is always "no verdict"
+gets waved through exactly like a gate that is always red, which is the failure
+TASK-STWVB was opened to fix, one level up.
+
+** F1 — HIGH — nothing samples DURING the run
+=scripts/run-tests.sh:432=. =HOST_DURING= is taken after =SUITE_EXIT=$?=,
+back-to-back with =HOST_AFTER=. The header claim "sampled before / during /
+after" is not what the code does, and the worker's own block proves it: =during
+load=22.49= and =after load=22.49=, identical. Load average survives this by
+1-minute decay, which is why B looks like it works; syspolicyd %CPU does not —
+the task's own note says killing the suite dropped it to 75% within seconds.
+*So the scan-storm burst is unobservable at that sampling point even once the
+regex is fixed.* Manager-verified in the source.
+
+** F2 — HIGH — the syspolicyd signal never fires, and reports a MEASURED ZERO
+=scripts/run-tests.sh:320-321=. =ps -axo comm=,pcpu== truncates =comm= to 16
+chars, so the line is =/usr/libexec/sys= and the regex can never match. Then
+=END { if (NR || s > 0) ... }= makes NR always true, so the miss prints =0.0=
+rather than =?= — while the sampler's own contract says a missing signal becomes
+=?=. B ships with one of two signals, and the dead one is the mechanism this
+whole task documented (586% syspolicyd at load 11.41).
+
+*Load-average-alone is NOT sufficient*, and the reviewer's ruling on this is the
+sharpest thing in the review: a scan storm is a SERIALIZATION stall — processes
+blocked in exec, not runnable — and this task's own canonical measurement
+("alive, blocked, and has consumed ZERO CPU") describes a state that contributes
+to load average weakly and inconsistently. The 2026-08-02 reading was load 11.41
+on a run 8-15x slowed; load only 2.6x a quiet Mac. Dropping to load-alone deletes
+the only signal that discriminates the mechanism.
+
+Also: =ps -o pcpu= is a short-window decaying average, not a lifetime one
+(syspolicyd read 9.1 / 0.6 / 13.3 seconds apart against a lifetime 8.26%), so a
+point sample is noisy as well as mistimed. *The right instrument is the one this
+task already used successfully*: cumulative CPU-time delta (=ps -o time=)
+before/after, which produced the clean =+281s with rmux / +32s without= result.
+Immune to jitter, immune to F1's timing, needs no background sampler. One piece
+of work fixes F1 and F2 together.
+
+** F3 — HIGH — the interlock is FALSE on =--classify=, and that is the only path under test
+=scripts/run-tests.sh:410,418-419,586=. Under =--classify= the host sample is
+taken at RECLASSIFY time and assigned to before/during/after. It has no
+relationship to the run that produced the log — days later, or a machine busy
+for unrelated reasons. So the =:582= comment ("THIS run's measured host state")
+is false there, and reclassifying an old log from a loaded shell relabels genuine
+REAL failures as LOAD-SENSITIVE.
+
+*And all six new selftest cases drive =--classify=.* The only automated coverage
+the feature has is of the unsound path.
+
+Fix: on =--classify=, host state is UNKNOWN — so =HOST_DEGRADED=0=,
+LOAD-SENSITIVE unavailable, and say so in the stamp. Unknown must not mint an
+excuse, exactly as unknown does not trip the gate elsewhere. Or stamp host state
+into the suite log at run time and read it back. Either way, add a selftest case
+that drives the LIVE sampler path.
+
+** F4 — HIGH — the suite trips its own gate, and INCONCLUSIVE preempts REAL
+=scripts/run-tests.sh:77,822=. =load>=8.0= sampled seconds after a
+full-parallelism =cargo test= on a 10-core machine. This host idles at
+=4.50/6.64/6.34= with dispatches alone; a suite run on top clears 8.0 with room
+to spare. Manager-verified ordering: the =HOST_DEGRADED= branch at =:822= sits
+AHEAD of the interlock tripwire (=:836=), REAL (=:842=), and the bare
+cargo-nonzero branch (=:847=).
+
+Consequences, all confirmed in the source: an alone-red failure returns exit 4;
+a test binary that aborts with no failure list is swallowed into exit 4; and
+since the suite always degrades the host, exit 0 and exit 1 are both unreachable
+for this crate. The selftest ENCODES this as intended (=degraded host + fails
+alone too -> INCONCLUSIVE=), so it is a design ruling to overturn, not a slip.
+
+Fix direction: (a) judge degradation on host state NOT attributable to this run
+— the BEFORE sample for load, plus the syspolicyd cumulative delta; in the
+worker's own run BEFORE was already 12.95 (three live workers), so that run would
+still correctly have been INCONCLUSIVE. (b) Let an alone-red REAL failure keep
+exit 1 regardless of host; report the host stamp ALONGSIDE it rather than
+replacing the verdict with it — move =:822= after =:842=. (c) Re-derive the load
+threshold against a measured calm-host baseline of the suite's OWN load
+contribution, not against the 11.41 thrash reading. Nobody has that number; it
+is one =sysctl -n vm.loadavg= sampled mid-run.
+
+** F5 — MEDIUM — exit 4 fails the CI workspace lane
+=.github/workflows/ci.yml:196-201= runs =bash scripts/run-tests.sh=, captures
+=status=$?=, and does =exit $status=. Manager-verified. Not a misreport —
+non-zero propagates correctly — but combined with F4 it converts a lane that
+would otherwise be green into one that is red saying "re-run when calm". That
+file's OWN header is the argument against shipping it: "a lane that is red for
+reasons nobody is expected to fix teaches everyone to ignore it, which is worse
+than no lane."
+
+Whether it actually trips depends on the runner — =macos-15= is 3-vCPU, so a
+workspace run may or may not clear 8.0. *The new verdict block answers this for
+free on the first CI run: read the =host := line before deciding.* Then decide
+explicitly whether the lane should fail on 4, and say so AT =ci.yml:200= rather
+than by accident.
+
+** F6 — MEDIUM — =/bin/true= does not exist on macOS, and nothing covers the arm
+=crates/orgasmic-daemon/src/test_fixtures.rs:124=. Manager-verified: =/bin/true=
+absent, =/usr/bin/true= present. The =malicious-claude= arm exits 126 with two
+stderr errors instead of exec-ing cleanly. It breaks no test *because the only
+test using it asserts the shim never runs* — so the whole arm is dead code
+reachable only when a test is already failing. That is precisely the
+"still passes and no longer tests anything" shape, caught one step before it
+happened.
+
+Fix =/bin/true= -> =/usr/bin/true= (or =exit 0=), AND add a positive control
+that execs the linked shim directly and asserts the log appears, so the negative
+assertion cannot rot into vacuity.
+
+Good news the reviewer established by experiment and you should not re-derive:
+the =$0=-relative side channel WORKS for a PATH-resolved shim — the kernel's
+=#!= handling passes the path given to =execve=, which =execvp= has already
+resolved to absolute. Reproduced with both a bash launch and =os.execvp=. So the
+security shape of that test is preserved.
+
+** F7 — LOW — the exit-97 sentinel is shadowed by the argv prelude
+=test_fixtures.rs:175-182= sits AFTER the prelude at =:60-101=. For
+=$1 in {warm, artifact-ready, artifact-busy, cursor-worker-sibling, config}= the
+prelude wins and the sentinel never runs, where the old wrapper's
+=[ "$1" = __exec-pinned ] || exit 97= was unconditional. =config= execs
+=/bin/sleep 30=, so that regression shape would HANG rather than fail loudly.
+Move the =orgasmic-pinned-wrapper= check above the prelude for marked links.
+
+** F8 — LOW — the overwrite fallback mutates a shared inode in place
+=test_fixtures.rs:240-251=. The happy path (=pending.persist=) is a same-dir
+rename and is atomic — safe. The =Err= fallback is =std::fs::write=, which
+truncates IN PLACE; since every converted site is a hard link to that inode, it
+would mutate every already-installed fixture link in every running test at once,
+and can race an in-flight exec (=ETXTBSY=, or a torn script). Close to
+unreachable (content-hashed path), but the consequence is exactly the cross-test
+flakiness this task exists to remove, and the safe form is temp-file + rename.
+
+** F9 — MEDIUM — A is not proven, and the probe that would prove it is F2's fix
+Keep A. But the shipped evidence does not support "14-20 -> 0 BECAUSE OF A":
+- The counters count fixture-CREATION API calls
+  (=test_fixtures.rs:238,250,289,311=), not execs. The diff itself documents
+  converted sites never executed at all (=api.rs:23364=). So
+  =shared_link_reuses=134= is an upper bound on avoided scans with no lower
+  bound, and =fresh_first_execs=4= says nothing about what the UNCONVERTED rest
+  of the suite still pays.
+- Before is an 8-site inventory on a different tree; historical runs were ~637
+  passed against the after-run's 734.
+- The discriminator read =0.0= in both after-runs (F2), so there is no evidence
+  either run was under scan pressure at all — the condition under which A is
+  supposed to matter. *Claims 1 and 2 fail together.*
+
+What DOES support A, on the record: 734 passed / 0 failed at load 22.49, where
+load >= 11 historically produced 14 failures. One data point, and load is not
+scan pressure, but it is not nothing. The mechanism itself is not in doubt —
+already measured on this task (fresh exec 196ms, second 4ms, hard link 4ms,
+byte-identical copy 162ms).
+
+*The cheap settling probe:* record syspolicyd cumulative CPU
+(=ps -o time= -p $(pgrep -x syspolicyd)=) before and after ONE run of the
+ALREADY-BUILT test binary, with and without consolidation behind a one-line kill
+switch inside =link_shared_test_executable=. Two runs of an existing binary, no
+rebuild, ~100s total. Same instrument that produced +281s/+32s. It is also the
+F2 fix, so one piece of work buys both.
+
+** F10 — LOW — two documentation/robustness residuals
+- =scripts/run-tests.sh:313-317=: =load=$(sysctl ... | awk ...) || load="?"= —
+  the =||= never fires because awk exits 0 on empty input, and only the cpu field
+  gets the =[ -n "$cpu" ] || cpu="?"= guard. An unreadable load stamps a BLANK,
+  not =?=. Cosmetic (it does not trip the gate) but the same class as F2.
+- =.orgasmic/project.org:23= says "All three must be green before a change is
+  called done". Exit 4 is neither green nor red, so that sentence now has no
+  defined meaning. *Decide and document what a worker does with INCONCLUSIVE* —
+  workers will otherwise invent an answer each.
+
+** Open questions the reviewer left, worth answering rather than assuming
+1. Does a whole-workspace run on a 3-vCPU =macos-15= runner clear load 8.0? The
+   verdict block answers it free on the first CI run; the answer decides whether
+   F5 is theoretical or already breaking merges.
+2. What is the suite's OWN calm-host load contribution on this 10-core Mac? That
+   is what the threshold should be calibrated against and nobody has measured it.
+3. Is INCONCLUSIVE advisory or blocking for a worker's gate?
+
+** Acceptance
+- Host state is sampled in a way that can actually observe a scan storm: either a
+  during-run sampler or (preferred) a cumulative CPU-time delta across the run.
+  Pinned by a test.
+- A missing signal prints =?=, never a measured =0.0= or a blank. Both the
+  syspolicyd path and the load path.
+- An alone-red failure returns exit 1 with its "this red means something"
+  verdict, whatever the host was doing; the host stamp is reported ALONGSIDE the
+  verdict, not INSTEAD of it.
+- Degradation is judged on state not attributable to this run, and the load
+  threshold is justified against a MEASURED calm-host baseline of the suite's own
+  load.
+- On =--classify=, LOAD-SENSITIVE is unavailable and the stamp says host state is
+  unknown. At least one selftest case drives the live sampler path.
+- =/usr/bin/true=, plus a positive control that execs the malicious shim and
+  asserts the log appears.
+- The exit-97 sentinel fires for every argv value.
+- The overwrite fallback no longer writes in place.
+- The CI lane's behaviour on exit 4 is decided EXPLICITLY and stated at
+  =ci.yml:200=; =.orgasmic/project.org= says what a worker does with INCONCLUSIVE.
+- A stated verdict on whether A's own effect is established, with the two-run
+  syspolicyd-delta probe run, or a stated reason it was not.
+** Evidence
+IMPLEMENTED 2026-08-06. Worker implementer-cursor-agent-tmux; driver tmux,
+harness cursor-agent, model cursor-grok-4.5-high-fast, effort omitted
+deliberately (the model id carries the tier). Merged 54dae49. Report preserved
+at =.orgasmic/dispatch-records/tx-20260806-orgasmic-5000/last.txt=.
+
+FOUR BLOCK SHIP ADDRESSED, manager-verified in the merged source:
+- F1+F2 together. =sample_syspolicyd_time_live= now selects by pid
+  (=pgrep -x syspolicyd=) and reads CUMULATIVE CPU-TIME, with the judgment
+  sample taken as a delta across the run — so the truncated =comm= field is out
+  of the path entirely and the mistimed point sample is gone. Verified LIVE by
+  the manager: the sampler returns =load=9.97 syspolicyd_time=491:02.40= where
+  the old one returned a phantom =0.0=. Unknown now prints =?= on both the
+  syspolicyd and the load path.
+- F3. =--classify= reads a host stamp written into the suite log at run time
+  (=:557-558=) and falls back to =load=? syspolicyd_time=?= when absent
+  (=:565-566=), so a reclassify cannot mint an excuse from an unrelated machine
+  state.
+- F4. Ladder reordered and verified in source: =REAL_COUNT= at =:991= now
+  precedes =HOST_DEGRADED= at =:1002=, with the comment stating the rule. An
+  alone-red failure returns exit 1 with the host stamp reported ALONGSIDE.
+  Degradation is judged on the BEFORE load plus the syspolicyd delta — state not
+  attributable to the run.
+- F5. =ci.yml= now says IN CODE that exit 4 fails the lane deliberately, with
+  the reasoning inline. F6 =/usr/bin/true= at =test_fixtures.rs:137= plus a
+  positive control. F7, F8, F10 per the heading.
+
+CALM-HOST BASELINE, the number nobody had: the suite's own mid-run load
+contribution measures ~7.35, and post-run 4.13 -> 7.87. So
+=LOAD_DEGRADED_THRESHOLD=8.0= is applied to the BEFORE sample only — which is
+exactly why the suite can no longer trip its own gate.
+=SYSPOLICYD_CPU_DEGRADED=100.0= seconds of delta.
+
+GATES at merge, manager-run: selftest 27 passed / 0 failed; =--check= OK; clippy
+=-D warnings= clean; fmt clean; =orgasmic verify TASK-STWVB.1= PASS. The pinned
+red was checked against the log rather than trusted: it is the ONLY FAIL in the
+red run and it is the F4 alone-red case, which is the load-bearing behaviour.
+=verify/flake-registry.toml= byte-unchanged again.
+
+THE PROBE CAME BACK NEGATIVE, AND THAT IS THE MOST IMPORTANT LINE IN THIS ROUND.
+F9 ran as specified — two executions of the already-built binary, consolidation
+on and off behind =ORGASMIC_DISABLE_SHARED_FIXTURE_LINKS=:
+
+| run | mode | BEFORE load | syspolicyd delta | wall | fixtures |
+| 1 | consolidated | 8.94 | +53.89s | 155.7s | fresh=4 links=136 |
+| 2 | consolidation OFF | 4.13 | +49.33s | 51.4s | fresh=140 links=0 |
+
+The deltas are within 9% of each other, and the UNCONSOLIDATED run was three
+times FASTER. Both readings are confounded (run 2 was cache-warmed by run 1 and
+started on a calmer host; run 1 spent wall time on a hung-mux failure), so this
+does not disprove A either. But it is now two independent attempts that have
+failed to demonstrate A's causal contribution ON THIS SUITE, and the second one
+leans against it. The MECHANISM is not in question (fresh exec 196ms, link 4ms,
+copy 162ms, measured earlier on this task); what is in question is whether the
+converted sites were ever on the hot path. A is KEPT and the question is live.
+
+PARTIALLY ADDRESSED, carried to the review: the reviewer's F4 also named the
+=SUITE_EXIT != 0= branch (cargo aborts with no per-test failure list) as being
+swallowed into INCONCLUSIVE. It still sits AFTER =HOST_DEGRADED= at =:1016=, so
+that case is unchanged. =BUILD_BROKE= is caught earlier, so the residual is an
+aborting or signalled test binary on a degraded host.
+
+ALSO WORTH NAMING: the final GREEN verdict block in the worker report was
+produced by =--classify= over the F9 green log plus a measured stamp, not by a
+live full run — the third run was skipped per the execution budget. So "the gate
+returns GREEN on a calm host" is demonstrated through the reclassify path, which
+is itself one of the paths this round changed.
+

@@ -1,0 +1,320 @@
+# TASK-K9WWM independent review — refresh coalescing / write-path amplification
+
+Reviewer: Claude Opus 5 (high). Branch `codex/task-k9wwm-write-refresh` @ `e5570ee`
+(impl merge `f3e6627`, author commit `f062309`). Read-only; no daemon installed or restarted.
+
+## Verdict
+
+**Request changes — does not ship as-is.** Two blocking items: the workspace clippy gate
+fails on new code, and immediate read-after-write visibility is measurably broken for
+project mutations under the supported `tx.commit_to_project: false` configuration.
+
+The core of the design is sound and the acceptance regression is real: the three
+`reviewer_close_*` cases ran green 4/4 at `--test-threads=4` on this host at load 8.7–11.9,
+and the mutation-acknowledgement path no longer forks Git or holds the index write lock
+across a disk scan. But the coalescing story in `verify/TASK-K9WWM/README.md` is measured
+under an arrival pattern production does not produce, and several correctness edges around
+the coordinator are open.
+
+---
+
+## Findings
+
+### HIGH
+
+**H1 — `cargo clippy --workspace --all-targets -- -D warnings` fails on the new enum.**
+`crates/orgasmic-daemon/src/index.rs:464` (`enum BuiltRefresh`).
+
+```
+error: large size difference between variants
+   --> crates/orgasmic-daemon/src/index.rs:464:1
+    | the largest variant contains at least 544 bytes
+    | the second-largest variant contains at least 48 bytes
+    = note: `-D clippy::large-enum-variant` implied by `-D warnings`
+error: could not compile `orgasmic-daemon` (lib) due to 1 previous error
+error: could not compile `orgasmic-daemon` (lib test) due to 1 previous error
+```
+
+Measured by me, not inferred: `CLIPPY_EXIT=101`. The implementer's report lists clippy as an
+unmet criterion because its command session was interrupted twice; it is not merely unrun, it
+is red, and the failure is in code this task added. Because compilation stops at
+`orgasmic-daemon`, `orgasmic-cli` was never linted at all. Fix: box `project`, or split the
+project payload into its own struct behind a `Box`.
+
+**H2 — Immediate read-after-write is broken for project mutations when
+`tx.commit_to_project: false`. Reproduced on a live daemon.**
+`crates/orgasmic-daemon/src/api.rs:7770-7792` (`refresh_after_tx`), plus the unconditional
+`state.index.refresh_project(...)` calls this change removed from `post_task_create`
+(api.rs:15918 on `main`), `write_org_node_edit_and_record`, `write_graph_and_record`,
+`write_goal_file_and_record`, `write_task_lifecycle_and_record`, and `post_org_file`.
+
+`refresh_after_tx` refreshes the *tx destination*, not the *mutated project*. When
+`tx_destination` routes to the home ledger (`api.rs:7876-7883`, reached whenever
+`state.tx_commit_to_project` is false), a mutation that rewrote a project task file refreshes
+only `RefreshTarget::HomeTx`. The project projection is never rebuilt, so the mutation is
+invisible to the very next read. Previously the removed unconditional `refresh_project` covered
+this regardless of tx routing.
+
+Production probe — real `orgasmic serve` daemon, isolated `ORGASMIC_HOME`, isolated port,
+built from this worktree:
+
+```
+config: tx.commit_to_project: false
+POST /api/projects/probe/tasks  -> {"id":"TASK-NDTD2","tx_id":"tx-20260811094429-ffdfbc9e"}  (200)
+GET  /api/projects/probe/tasks  -> ['TASK-C9V29','TASK-C9V29.1','TASK-C9V29.2','TASK-C9V29.3']   # TASK-NDTD2 ABSENT
+GET  /api/projects/probe/tasks  (after 1.2s, watcher convergence)
+                                -> [... ,'TASK-NDTD2']                                            # now present
+
+same daemon, same project, config flipped to tx.commit_to_project: true
+POST /api/projects/probe/tasks  -> {"id":"TASK-8G1CB","tx_id":"tx-20260811-probe-0001"}      (200)
+GET  /api/projects/probe/tasks  -> [... ,'TASK-8G1CB']                                            # present immediately
+```
+
+`tx: commit_to_project: false` is a documented, loadable config key
+(`crates/orgasmic-daemon/src/config.rs:149`, test at `config.rs:604`). No test covers it: the
+CLI integration harness writes only `bind_host`/`bind_port`
+(`crates/orgasmic-cli/tests/common/mod.rs:97-99`), which defaults the key to `true`
+(`config.rs:104`), and the single `ApiState` literal that sets it false
+(`api.rs:20016`) never registers a project. So the whole suite is green while this is broken.
+
+---
+
+### MEDIUM
+
+**M1 — The coordinator mutex is held across the index write-lock acquisition.**
+`crates/orgasmic-daemon/src/index.rs:867-883`. `run_refresh_worker` takes
+`self.refresh.state.lock().await`, then `await`s `publish_refresh`, which itself
+`await`s `self.inner.write()`. For the whole time one target waits for the index write lock —
+which waits behind every in-flight API reader — no other target's worker can complete, no new
+`refresh_after_tx` can even register a waiter, and `GET /daemon/status` blocks in
+`refresh_status`. This converts a per-project publication stall into a daemon-wide
+serialization point, on a loaded host, which is the exact condition this task exists for. The
+accepted design says the write lock covers "board verification and atomic replacement"; it does
+not sanction wrapping that in the coordinator lock. Fix: compute the publication outcome first,
+re-take the coordinator lock only to complete waiters.
+
+**M2 — The 50 ms trailing window has no maximum wait, and adds an unconditional latency floor.**
+`crates/orgasmic-daemon/src/index.rs:776-796`. This is a pure trailing-edge debounce: every
+request bumps `window_generation`, and the worker will not scan until 50 ms pass with no new
+request. There is no deadline and no cap on iterations. A same-target request stream arriving
+faster than every 50 ms defers the scan — and therefore every waiter's acknowledgement —
+indefinitely, against the deliberately unchanged 10 s client budget. The 16-request test cannot
+see this: it releases all 16 through a `Barrier` at once.
+
+Measured cost on the calm path (live daemon, uncontended `POST /projects/:id/tasks`):
+
+```
+create 0.090s / 0.090s / 0.138s     writer last_duration_ms=17, scan last_duration_ms=5
+```
+
+i.e. ~50 ms of the ~90 ms round trip is the window. Fix: add a max-wait (scan after N ms since
+the first pending request regardless of arrivals).
+
+**M3 — Idempotent replay short-circuits before any refresh, so retrying after a committed-503
+returns success without repairing the projection.**
+`crates/orgasmic-daemon/src/api.rs:15827` (`post_task_create`) and `api.rs:13938`
+(`create_graph_heading`) return the cached `{id, tx_id}` from `writer.cached_mutation(...)`
+*before* `refresh_after_tx` is reached. Sequence: attempt 1 with `request_id=R` commits, its
+refresh fails, client gets the new 503 telling it to reconcile; attempt 2 with `request_id=R`
+gets a plain 200 and the index is still stale. The writer-level replay path is fine (it goes
+through `refresh_after_tx`, and `completed_tx_ids` only records *successful* publications), so
+the hole is specific to these two API-level early returns.
+
+**M4 — A concurrent Git probe result is silently lost by any in-flight project refresh.**
+`crates/orgasmic-daemon/src/index.rs:971` seeds `build_refresh` from a snapshot clone;
+`index.rs:988` calls `load_project(&board_entry, &mut next, None)`, so `repo_url` is taken from
+that pre-scan seed (`index.rs:1254-1259`); `publish_refresh` then wholesale
+`snap.projects.insert(...)`. A `refresh_repo_url` write landing in that window
+(`index.rs:1188-1190`) is overwritten. This is a regression: the old `refresh_project` held the
+index write lock across `load_project`, so it read `repo_url` from live state. It is also
+durable now — Git is no longer probed on the refresh path, so nothing re-derives the value until
+the next boot, registration, or explicit reindex. `rebuild` guards exactly this hazard with
+`prior_repo_urls` (`index.rs:511-534`); `build_refresh` does not.
+
+**M5 — A failed scan errors waiters it never attempted, and drops watcher convergence.**
+`crates/orgasmic-daemon/src/index.rs:903-916` and `index.rs:932-940`. On error the worker
+`drain()`s *all* `mutation_waiters`/`explicit_waiters`/`watcher_waiters`, including requests that
+arrived during the scan and were not part of it, and unconditionally clears `watcher_pending`.
+Consequences: one transient failure 503s an unrelated concurrent batch, and an external-edit
+event that arrived mid-scan is answered with an error and never rescheduled. Contrast the
+success path, which correctly drains only `..explicit_count` / `..watcher_count`.
+
+**M6 — On `/api/runs/:id/release`, a refresh failure now reports a fully successful release as a
+failure, with a log line that states something untrue.**
+`crates/orgasmic-daemon/src/api.rs:9066-9075`. `append_tx_request` now propagates the
+committed-503 (`api.rs:2669`), so `release_run_and_record_tx` takes its `Err` arm, logs
+`"released run but failed to write its terminal tx"` — the tx *was* written — and returns the
+error. `orgasmic dispatch finalize`, whose contract is that finalize is the sole success
+authority, then reports a failed run for a dispatch that completed, on a run whose lease is
+already gone. The CLI's new reconciliation wording (`daemon_client.rs:367-386`) is the right
+message but it arrives on a path where the operator has no live run left to reconcile against.
+
+---
+
+### LOW
+
+**L1 — Duplicate Git probe sweeps introduced.** `api.rs:13274-13275`: `post_reindex` calls
+`rebuild()` (which already spawns a sweep at `index.rs:579-581` when enabled) and then
+`spawn_repo_url_refresh()`, which spawns a second. Registration is also doubled:
+`api.rs:1339` (`add_project`) and `watcher.rs:383` both call `spawn_repo_url_refresh_for` for the
+same newly registered project. Each probe is a 3 s-bounded `git` spawn; the duplicates also race
+on the same `projects[id].repo_url` write.
+
+**L2 — The stale-generation test does not test a stale generation.**
+`crates/orgasmic-daemon/src/index.rs:3998`
+(`mutation_arriving_during_scan_discards_stale_generation`). The gate fires at the *top* of
+`build_refresh` (`index.rs:947-963`), i.e. **before** `let seed = self.inner.read().await.clone()`
+at `index.rs:971` and before any disk read. The test's `backlog.org` write therefore happens
+before the first scan reads anything, so that scan's projection already contains `TASK-002`. The
+counters (`discarded_total == 1`, `scans_total == 2`) are exercised, but the final assertion
+`task("project","TASK-002").is_some()` would hold even if a genuinely stale projection had been
+published. This is precisely the "merely a pre-scan delay" case the brief asked to rule out. Fix:
+gate *after* the seed read / inside the blocking scan.
+
+**L3 — The coalescing headline is measured under an arrival shape production does not produce.**
+`sixteen_same_project_mutations_coalesce_without_concurrent_scans` (`index.rs:3926`) releases 16
+requests through a `Barrier`, giving 16 → 1. Sequential/staggered CLI traffic does not do this.
+Measured on the live daemon, 30 creates issued at ~20 ms stagger:
+
+```
+index_refresh: requests_total 52, scans_total 38, coalesced_total 16, discarded_total 1
+```
+
+≈ 1.1 scans per mutation, not 16 → 1. The real win here is the removal of *amplification*
+(previously ~3 refreshes per mutation: `refresh_after_tx` + the explicit `refresh_project` + the
+`TxAppended` index listener removed at `lib.rs:1025`) plus taking Git and the write lock off the
+acknowledgement path — not the trailing window. `verify/TASK-K9WWM/README.md:6-17` should say so;
+as written it attributes the fix to coalescing on evidence that only holds for simultaneous
+arrival.
+
+**L4 — Test gaps.** No test drives concurrent same-project mutations *through the HTTP router*;
+no test asserts anything about the unchanged 10 s budget; no test covers retry-after-committed-503
+(see M3); no test covers `tx.commit_to_project: false` (see H2). The committed-503 test
+(`api.rs:20043`) calls `append_tx_request` directly rather than through the route.
+
+**L5 — `dec_YYMSK` revision landed outside the `** Decision` section.**
+`.orgasmic/decisions.org:287` — the new paragraph sits in the node preamble; `** Decision`
+(line 293) still states only the v0.0.1 answer. A reader of the decision's Decision section does
+not see the new refresh semantics.
+
+**L6 — Writer telemetry rough edges.** `writer.rs:1424` logs a hardcoded `coalescing_count = 0`
+in the slow-writer warning — a constant masquerading as a measurement. Deferred session appends
+(`writer.rs:1209`, `writer.rs:1342`) are counted `completed_total` when deferred and again when
+they run.
+
+**L7 — Global scan permit is 2 for *all* targets, not two project scans.** `index.rs:444`
+(`Semaphore::new(2)`). `RefreshTarget::HomeTx` competes for the same permits, so a home-ledger
+refresh can queue behind two project scans. The accepted design said "at most two project scans
+globally".
+
+**L8 — `Index::refresh_home_tx` (`index.rs:1199`) is now unreferenced** — the watcher moved to
+`schedule_home_tx_refresh`. It stays compiling only because it is `pub`.
+
+**L9 — Two small disclosure widenings, noted not demanded.** `/api/daemon/status` now returns
+`writer.in_flight_operation.path`, i.e. absolute filesystem paths in an HTTP body; and
+`committed_refresh_error` (`api.rs:7794-7802`) interpolates a raw internal error string into the
+client-visible body. Today's strings are safe (`unknown project X`, `project X registration
+changed during refresh`), but the relaxed doc comment at `api.rs:18714-18721` no longer
+constrains what may end up there.
+
+---
+
+## Acceptance criteria
+
+| Criterion | Status |
+|---|---|
+| Three tests pass under `-p orgasmic-cli` concurrency on a calm host, repeatably, not registered as flakes | **Partially met.** 4/4 green here at `--test-threads=4` (7.61 / 7.38 / 6.99 / 7.41 s) at load 8.7–11.9 — a *loaded* host, which strengthens it. `flake-registry.toml` is untouched. But `scripts/run-tests.sh -p orgasmic-cli` (the classified gate the criterion names) has not been run by anyone; the implementer says so explicitly. |
+| Root cause stated as a measurement, naming budget / release path / test concurrency | **Met, with a caveat.** `verify/TASK-K9WWM/README.md:6-17` names the release path (redundant refresh + Git + index-lock work) and rules out the budget. My measurements support that. The coalescing part of the attribution is overstated — see L3. |
+| `daemon request timed out` no longer classified as a genuine assertion failure, **or** the decision not to distinguish recorded with its reason | **Met via the second arm.** The implementer's report records: "The timeout classifier was not changed: the accepted plan superseded classifier-only mitigation with the architectural fix, and the allowed write scope excludes the test wrapper." `scripts/run-tests.sh` is indeed outside the declared write scope and is unchanged. |
+
+## Open questions
+
+1. Is `tx.commit_to_project: false` a configuration anyone actually runs? If it is dead, say so
+   and delete the branch; if it is live, H2 is a data-visibility bug on every project mutation.
+   Either way the current state — supported, reachable, untested, broken — should not stand.
+2. Was the 50 ms window chosen by measurement? Nothing in the task record or the verify runbook
+   derives it, and it is now the dominant term in every uncontended mutation round trip (M2).
+3. For M6: should a committed-refresh failure on `/runs/:id/release` be a 503 at all, given the
+   release and the terminal tx both succeeded and the caller may already be dead? A 200 with an
+   `index_status` field would keep `dispatch finalize`'s success authority honest.
+
+## Verification notes
+
+Everything below was run by me on this worktree at `e5570ee`. Implementer claims were treated as
+claims; where they are reproducible I say so.
+
+- `cargo test -p orgasmic-daemon --lib index::tests:: -- --test-threads=1` → **46 passed, 0 failed**
+  (`EXIT=0`). Includes all six new coordinator/Git cases.
+- `cargo test -p orgasmic-cli --test dispatch reviewer_close_ -- --test-threads=4`, 4 independent
+  repetitions → **5 passed each time**, 7.61 / 7.38 / 6.99 / 7.41 s. `uptime` load averages
+  11.90 before the first run, 8.75 after. This is *not* a calm host, which makes the result
+  stronger than the acceptance asks for. I ran 4, not the runbook's 5.
+- `cargo test -p orgasmic-daemon --lib committed_refresh_failure_returns_structured_503` →
+  **passed**. `cargo test -p orgasmic-cli --bins
+  committed_refresh_failure_requires_reconciliation_not_blind_retry` → **passed**. (The runbook's
+  `--lib` form fails for `orgasmic-cli`: `no library targets found`. Use `--bins`.)
+- `cargo clippy --workspace --all-targets -- -D warnings` → **RED**, `CLIPPY_EXIT=101`, one error,
+  in new code. See H1. Linting stopped before `orgasmic-cli`.
+- **Production-path probe** (for H2, M2, L3): built `target/debug/orgasmic` from this worktree, ran
+  `orgasmic serve` under `ORGASMIC_HOME=/tmp/k9probe/home` on an ephemeral port with a scaffolded
+  throwaway project. Exercised `POST/GET /api/projects/probe/tasks` and `GET /api/daemon/status`
+  under both `commit_to_project` settings, plus a 30-request staggered write burst. Daemon killed
+  and `/tmp/k9probe` removed afterwards.
+- **Not run, deliberately:** `scripts/run-tests.sh -p orgasmic-cli` (the brief says do not rerun
+  the full gate by default; it remains an open verifier gate, and the implementer flagged it too).
+  Residual risk: the classified gate could surface a failure outside the five `reviewer_close_*`
+  cases I ran.
+- **No live daemon installation or restart occurred (brief item 12).** `~/.orgasmic/bin/orgasmic`
+  mtime `Aug 9 10:51`; `~/Library/LaunchAgents/orgasmic.daemon.plist` mtime `Aug 8 20:52` — both
+  predate the Aug 11 commits under review. No `orgasmic-daemon` process was running. My probe
+  daemon used an isolated home and port and never touched the LaunchAgent. The `.orgasmic/decisions.org`
+  edit came from the manager's record commit `e5570ee`, consistent with the implementer's report
+  that it did not edit `dec_YYMSK`.
+- **Traced, no finding:** removal of the generic writer `GraphChanged` emission (`writer.rs`
+  `Rewrite`/`Mutate`/`Transaction`) has no in-tree consumer — `grep` for `graph_changed` /
+  `GraphChanged` across `crates/`, `ui/src`, `src-tauri` finds only the two remaining publishers
+  (`api.rs:13386`, `api.rs:16172`) and the enum definition. The two direct `rewrite_file` consumers
+  that lost the event are the run-catalog snapshot (`api.rs:11335`, `api.rs:11739`) and the restart
+  drain marker (`api.rs:13183`), neither of which is graph state; `mutate_file` has no production
+  caller. The `TxAppended` WebSocket event is retained (`writer.rs` transaction branch); only its
+  index listener was removed (`lib.rs:1025`).
+- **Traced, no finding:** every `writer.transaction(...)` site in `api.rs` now reaches exactly one
+  `refresh_after_tx`; the only surviving direct `refresh_project` calls are `add_project`
+  (`api.rs:1331`) and `post_reindex_project` (`api.rs:13286`), both explicit reindex paths. The
+  cross-target `activity_index` lost-update guard in `publish_refresh` (`index.rs:1071`) is correct,
+  and per-project `tx` / `parse_errors` partitioning does not clobber other projects.
+- **Traced, no finding:** detached convergence is real — the coordinator owns the scan and
+  `cancelled_waiter_does_not_cancel_refresh_convergence` (`index.rs:3960`) proves the aborted-waiter
+  case; the coordinator-lock → index-lock ordering has no AB-BA partner
+  (`schedule_watcher_refresh` scopes its read guard before taking the coordinator lock), so M1 is a
+  convoy, not a deadlock.
+
+## Fix directions
+
+1. **H1**: `Box` the `BuiltRefresh::Project` payload (or hoist it into a struct held behind a
+   `Box`), then re-run `cargo clippy --workspace --all-targets -- -D warnings` to completion so
+   `orgasmic-cli` is actually linted.
+2. **H2**: make the authoritative refresh follow the *mutation*, not the tx destination. Either
+   pass the mutated project id to `refresh_after_tx` and always refresh it (in addition to the home
+   ledger when the tx is home-routed), or have `refresh_after_tx` take both targets. Add a
+   regression that boots an `ApiState` with `tx_commit_to_project: false`, registers a project,
+   creates a task, and asserts the very next `get_project_tasks` contains it — that test fails on
+   this branch today.
+3. **M1**: drop the coordinator guard before `publish_refresh`, re-acquire it to settle waiters.
+4. **M2**: bound the debounce with a max-wait since the first pending request, and add a test that
+   drives staggered arrivals (not a `Barrier`) and asserts a hard upper bound on acknowledgement.
+5. **M3**: move the `cached_mutation` early return so it still runs `refresh_after_tx` with the
+   cached `tx_id` (the `completed_tx_ids` check already makes that free when the first publish
+   succeeded, and correctly rescans when it did not).
+6. **M4**: thread the live `repo_url` through publication the way `rebuild` does — re-read it under
+   the publication write lock rather than from the seed.
+7. **M5**: on error, complete only the waiters this scan covered (`..explicit_count` /
+   `..watcher_count` and the captured `required_tx_ids`), and leave `watcher_pending` set if a
+   watcher event arrived during the scan.
+8. **M6**: decide explicitly whether a committed-refresh failure should fail the release response,
+   and fix the `"failed to write its terminal tx"` log to distinguish tx-write failure from
+   refresh failure.
+9. **L2/L3**: move the test gate after the seed read so the stale-projection case is genuinely
+   covered, and correct the root-cause paragraph in `verify/TASK-K9WWM/README.md` to attribute the
+   win to amplification/Git/lock removal, recording the staggered-arrival scan ratio alongside the
+   barrier one.

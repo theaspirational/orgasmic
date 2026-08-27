@@ -1,0 +1,22 @@
+## Changed
+- Added the shared claim-log fold for `.orgasmic/machines/<machine-id>/claims.org`, deterministic winner selection (timestamp then machine id), release events, advisory `WRITE_SCOPE`, and machine/path validation.
+- Dispatch acquire/release now appends claim events; the daemon writer refuses node writes when another machine holds the effective claim, naming that machine.
+- Filled the MSYN4 claimed-node staging hook so only the deterministic holder stages a node directory.
+- Added claim-log ingestion to activity, claim annotations and `DOUBLE_CLAIM` to generated board views, and `CLAIM_HOLDER`/`DOUBLE_CLAIM` to `manager dispatch-status`.
+- Added regression coverage for two-daemon convergence, the write gate, claimed-node staging, ingest-order-independent views, activity union, status visibility, and close-time release.
+
+## Verification Gates
+- `cargo test -p orgasmic-core` — PASS (175 passed, 2 ignored; fixtures 19 passed).
+- `cargo test -p orgasmic-daemon --lib two_daemon_loops_converge_through_the_bare_remote -- --nocapture` — PASS.
+- `cargo test -p orgasmic-daemon --lib node_write_claimed_by_another_machine_is_refused_with_holder` — PASS.
+- `cargo test -p orgasmic-daemon --lib claimed_node_staging_hook_selects_only_the_deterministic_holder` — PASS.
+- `cargo test -p orgasmic-daemon --lib activity_is_the_deduplicated_union_of_machine_ledgers -- --nocapture` — PASS.
+- `cargo test -p orgasmic-cli --test dispatch manager_dispatch_status_close_done_with_stub_codex -- --nocapture` — PASS.
+- `cargo check -p orgasmic-core -p orgasmic-daemon -p orgasmic-cli` — PASS.
+- `cargo fmt --all -- --check` and `git diff --check` — PASS.
+
+## Unmet Criteria
+- None.
+
+## Residual Risk
+- The full daemon and CLI suites were not run; verification used the required focused production-path and regression gates for the touched behavior. No daemon-longevity, Docker, smoke, bare `cargo test`, or workspace-wide test was run per the brief.

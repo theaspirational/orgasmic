@@ -1,0 +1,136 @@
+#+title: orgasmic task TASK-YFAER
+#+orgasmic_version: 2
+
+* DONE TASK-YFAER Realign task lifecycle + add subtasks/comments/ownership-lock (UI-grill model refactor) :model:refactor:ui-redesign:
+:PROPERTIES:
+:ID:               TASK-YFAER
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_EVJYP arch_NAFA1 arch_QFQTD arch_BVH7M arch_C87Z9
+:PRODUCES:         shipped/schema/state-machine.org shipped/schema/tx.org shipped/schema/slots.org crates/orgasmic-core/src/schema.rs crates/orgasmic-core/src/org.rs crates/orgasmic-core/src/session.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/writer.rs crates/orgasmic-daemon/src/api.rs .orgasmic/sprint.org .orgasmic/backlog.org .orgasmic/archive.org .orgasmic/project.org shipped/project-scaffold/project.org
+:WRITE_SCOPE:      shipped/schema/*.org shipped/project-scaffold/*.org crates/orgasmic-core/src/** crates/orgasmic-daemon/src/** crates/orgasmic-cli/src/main.rs .orgasmic/sprint.org .orgasmic/backlog.org .orgasmic/archive.org .orgasmic/project.org
+:READ_SCOPE:       .orgasmic/decisions.org .orgasmic/architecture.org .orgasmic/glossary.org docs/adr/*.org crates/**
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       dec_MKC0A dec_RECYG dec_CX17K dec_JW9TJ dec_A4V2N dec_JW11K
+:MERGE_SHA:        397d89a
+:CODEX_COMMIT:     2183138
+:END:
+
+** Description
+Implement the schema and daemon changes that the 2026-05-23 UI grilling session locked in. Five model additions, one model realign, one new tx type, one new projection, one new slot. All landed in a single sprint task so the new UI sessions (3 onwards) can build against the new model without serialization tricks.
+
+The five model additions:
+1. *Task lifecycle realign* (dec_MKC0A). Collapse per-kind state machines to a single 6-stage lifecycle on the task heading: BACKLOG / EXPLORE / PLAN / IMPLEMENT / REVIEW / SHIP / DONE plus BLOCKED / CANCELLED. Update =shipped/schema/state-machine.org=, =crates/orgasmic-core/src/schema.rs::TaskState=, =crates/orgasmic-core/src/org.rs::TODO_KEYWORDS=. Migrate the existing 45 sprint headings to the new keywords (most map directly: =DONE=→=DONE=; =READY=→=BACKLOG= or =IMPLEMENT= depending on task; =analyzing/implementing/testing/fixing/merging=→folded into =IMPLEMENT= stage).
+2. *Run sub-state* (dec_RECYG). Per-kind sub-states (=analyzing=, =implementing=, =testing=, =fixing=, =merging=, =planning=, =drafted=, =findings_recorded=, =reviewing=, =approved=, =requested_changes=) move off the task heading and onto the run record as a string field with three namespaces: =agent.<verb>=, =human.<verb>=, =ci.<verb>=. Add a =RunState= field on =RunSummary= and serialize through =DriverEvent= lifecycle.
+3. *Subtasks* (dec_JW11K). Add =:PARENT_TASK:= property to =TaskHeading=. ID format =TASK-NNN.M=. Daemon's materialized index rolls up =subtasks: BTreeMap<TaskId, Vec<TaskId>>= from back-edges; index rejects orphan subtasks at boot/refresh. Subtask creation via =POST /tasks/:id/subtasks=. UI never directly mutates the org file.
+4. *Comments + activity projection* (dec_A4V2N). New tx type =comment= per =shipped/schema/tx.org=: properties TX_ID, TIME, TYPE=comment, ACTOR, PROJECT, TASK, RUN_ID (optional), ARTIFACTS (optional), IN_REPLY_TO (optional), BODY (escaped markdown). New endpoint =POST /tasks/:id/comments= (writer routes through =POST /tx= internally). New projection in =index.rs=: =activity_index: BTreeMap<TaskId, Vec<TxEntry>>=; rebuilt on boot, incrementally updated on each =comment= or =manager.action= tx append. New endpoint =GET /tasks/:id/activity= returns chronologically-merged comments + state-transition tx + run lifecycle events from the JSONL session.
+5. *Ownership lock model* (dec_CX17K, dec_JW9TJ). Add =:STAGE_AGENT_BACKLOG:= through =:STAGE_AGENT_DONE:= properties to =shipped/project-scaffold/project.org= and parse them in =ProjectFile= view. On a stage transition (whether DnD-via-tx or supervisor-driven), the daemon consults the stage-agent map and auto-spawns a run if a template is configured (empty = human-only). Supervisor reports =owner= on the run record: =human= when no active run, =agent.<kind>= when active. Add =POST /runs/:id/release= endpoint that cancels the active run and returns ownership to =human= (used by the UI's "Release agent" affordance).
+6. *Activity slot for agent prompt compiler* (dec_A4V2N). Register =task.activity= slot namespace in =shipped/schema/slots.org=; extend =crates/orgasmic-core/src/slots.rs::is_dynamic_skill_slot= to recognize it; loader fills from the same =activity_index= projection. Existing agent templates can opt in with ={{task.activity}}=; not required for v0.0.1 dogfood.
+
+** Acceptance Criteria
+- [X] =shipped/schema/state-machine.org= rewritten with the 6-stage lifecycle as the unified task state machine. Per-kind run-sub-state machines documented separately.
+- [X] =TaskState= enum in =crates/orgasmic-core/src/schema.rs= replaced with =LifecycleStage= (9 keywords: BACKLOG EXPLORE PLAN IMPLEMENT REVIEW SHIP DONE BLOCKED CANCELLED).
+- [X] =TODO_KEYWORDS= in =crates/orgasmic-core/src/org.rs= narrowed to the new lifecycle keywords.
+- [X] Existing task headings in =.orgasmic/sprint.org= migrated. (40 headings, not 45 as the brief estimated; worktree was authoritative.)
+- [X] New =RunSubState= field on the run record; allowed values gated by namespace (=agent.= / =human.= / =ci.=) per the dec_RECYG verb list.
+- [X] =:PARENT_TASK:= property added to =TaskHeading=; subtask ID format validated; index rolls up =subtasks=; orphan rejected (surfaced via =/graph/parse-errors=).
+- [X] New tx type =comment= written to =shipped/schema/tx.org= with the property list above.
+- [X] New endpoints =POST /tasks/:id/comments=, =GET /tasks/:id/activity=, =POST /runs/:id/release=, =POST /tasks/:id/subtasks= implemented and exercised by integration tests.
+- [X] =activity_index= projection in =index.rs= rebuilt on boot + incrementally updated on append; tested with rebuild-from-disk + post-append assertions.
+- [X] =:STAGE_AGENT_*:= properties parsed from =project.org=; defaults populated in =shipped/project-scaffold/project.org=. Auto-spawn deferred via =EventPayload::AutoSpawnRequested= event (TASK-MGFZ7 follow-up) per the brief's scope clarification.
+- [X] =task.activity= slot registered in =shipped/schema/slots.org= and accepted by =crates/orgasmic-core/src/slots.rs::is_dynamic_skill_slot=.
+- [X] All workspace tests green (183, +13 from 170 baseline); clippy =--workspace --all-targets -- -D warnings= clean; fmt clean; =git diff --check= clean.
+
+** Migration plan
+1. Inventory existing task states across =.orgasmic/sprint.org= (45 headings), =.orgasmic/backlog.org= (0), =.orgasmic/archive.org= (0). Map each to the new lifecycle keyword.
+2. Snapshot before migration via =POST /snapshots= (label =pre-task-lifecycle-realign=).
+3. Update =state-machine.org=, =schema.rs=, =org.rs= in one commit so parser + types stay in sync.
+4. Update sprint.org headings in a second commit (with the snapshot as rollback if parsing breaks).
+5. Add the new properties + tx types + endpoints in subsequent commits.
+6. Verify =cargo test --workspace= after each commit (boot reconciliation must still succeed against the migrated files).
+
+** Evidence
+- [2026-05-23 Sat 11:18] Codex (gpt-5.5, xhigh, ~20 min wall, 371k tokens) implementer pass committed as =2183138= on branch =task-042-lifecycle-refactor=; merged no-ff into main as =397d89a=.
+- =shipped/schema/state-machine.org= rewritten: one 9-keyword unified lifecycle (BACKLOG/EXPLORE/PLAN/IMPLEMENT/REVIEW/SHIP/DONE/BLOCKED/CANCELLED) at the top, per-kind run sub-state machines documented separately below.
+- =crates/orgasmic-core/src/schema.rs::TaskState= → =LifecycleStage= (9 variants); FromStr / serde / display aligned; =TaskHeading::lifecycle_stage= replaces =task_state=.
+- =crates/orgasmic-core/src/org.rs::TODO_KEYWORDS= narrowed to the 9 new uppercase keywords; the per-kind verbs no longer parse as TODO keywords (per CLAUDE.md pitfall — heading + parser change landed in the same commit).
+- =crates/orgasmic-core/src/session.rs= adds =RunSubState= newtype with namespace-gated validation (=agent.= / =human.= / =ci.= prefix; non-empty lowercase verb).
+- =:PARENT_TASK:= added to =TaskHeading=; daemon index rolls up =subtasks: BTreeMap<TaskId, Vec<TaskId>>=; orphan parent surfaces via =/graph/parse-errors=.
+- New =comment= tx type (TX_ID, TIME, TYPE=comment, ACTOR, MACHINE, PROJECT, TASK, optional RUN_ID/ARTIFACTS/IN_REPLY_TO, escaped-markdown BODY); routed through the existing daemon writer; project-routing rules from TASK-Y0350 apply.
+- =activity_index: BTreeMap<TaskId, Vec<ActivityEntry>>= projection in =index.rs= (rebuilt on boot, incremental on tx append); =GET /tasks/:id/activity= returns the chronologically-merged feed in O(comments_in_task).
+- =POST /tasks/:id/comments=, =POST /tasks/:id/subtasks=, =POST /runs/:id/release= endpoints implemented + integration-tested.
+- =:STAGE_AGENT_*:= property group added to =shipped/project-scaffold/project.org= and =.orgasmic/project.org= (defaults: EXPLORE=griller, PLAN=planner, IMPLEMENT=implementer-claude, REVIEW=reviewer; BACKLOG/SHIP/DONE empty). Auto-spawn emits =EventPayload::AutoSpawnRequested= for a future async consumer (TASK-MGFZ7) rather than synchronously acquiring; the brief explicitly authorised this scope clarification.
+- =task.activity= slot registered in =shipped/schema/slots.org= and allowlisted in =crates/orgasmic-core/src/slots.rs::is_dynamic_skill_slot= (per CLAUDE.md pitfall — both files updated together).
+- =.orgasmic/sprint.org= migrated: TASK-YFAER → IMPLEMENT (now DONE), TASK-X3YV2 → BACKLOG, 40 DONE headings unchanged keyword. No old-keyword stragglers (=grep -E '^\* (READY|ANALYZING|IMPLEMENTING|...)'= returns empty).
+- Tests: workspace 170 → 183 (+13). New clusters: =crates/orgasmic-core/src/session.rs= (sub-state validation), =crates/orgasmic-core/tests/fixtures.rs= (lifecycle parsing, parent parsing), =crates/orgasmic-daemon/src/index.rs= (activity_index rebuild + orphan detection + subtask roll-up), =crates/orgasmic-daemon/tests/integration.rs= (comments / subtasks / release / activity / stage-agent map).
+- Verification: =cargo test --workspace= 183 green, =cargo clippy --workspace --all-targets -- -D warnings= clean, =cargo fmt --check= clean, =git diff --check= clean.
+- Codex notes (filed verbatim): "backlog.org has 120 lines and archive.org has 4 lines in this worktree (brief said empty), so left untouched"; "40 task headings, not 45". Both are honest sample-vs-brief drift; manager confirms both are intentional.
+
+** Notes
+This is a substantial single-task refactor. It is filed as one task rather than a Round of N because the schema/projection/endpoint changes are mutually-dependent: you cannot land =comment= tx type without the writer accepting it; cannot land the activity index without the comment tx type; cannot land subtasks without the index roll-up. Splitting would force ordering serialization without the benefit of parallel execution.
+
+Verification command after each landing:
+=cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --check && git diff --check=.
+
+After this task lands, UI sessions resume:
+- *Session 3*: Tasks page (list + kanban + DnD + ClickUp-style modal + subtasks + activity rail) — depends on subtasks model, comment tx, activity projection.
+- *Session 4*: Manager popover (peek/workbench/focus + xterm.js bridge) + bell + LED + gear + theme + TanStack Router migration — depends on the new tx topology only loosely.
+- *Session 5*: Decisions + Architecture + Glossary + ADR + Snapshots + Activity + cross-domain Graph — depends on existing graph endpoints; no new model needs.
+
+** Reference implementations from multica-ai/multica (MIT)
+multica-ai/multica's =packages/views/= ships near-1:1 implementations of nearly every component we need. Use them as reference (read, don't bundle — their Next.js+Go stack diverges from ours). Key files:
+
+*Tasks page (kanban / list / detail):*
+- =packages/views/issues/components/board-view.tsx= · =board-column.tsx= · =board-card.tsx= — kanban primitives
+- =packages/views/issues/components/list-view.tsx= · =list-row.tsx= — list view
+- =packages/views/issues/components/issues-page.tsx= · =issues-header.tsx= — page composition
+- =packages/views/issues/components/batch-action-toolbar.tsx= — multi-select
+- =packages/views/issues/components/infinite-scroll-sentinel.tsx= — pagination
+- =packages/views/issues/components/gantt-view.tsx= — bonus third view (consider for later)
+
+*Task modal (Q18/dec_P2X0Y):*
+- =packages/views/issues/components/issue-detail.tsx= — the centered modal layout
+- =packages/views/issues/components/progress-ring.tsx= — subtask progress (matches the ClickUp ref)
+- =packages/views/issues/components/labels-panel.tsx= — tags chip group
+- =packages/views/issues/components/pickers/= — status / priority / agent / label dropdown pickers
+- =packages/views/issues/components/comment-card.tsx= · =comment-input.tsx= · =reply-input.tsx= — comments + threading
+- =packages/views/issues/components/execution-log-section.tsx= — activity timeline
+- =packages/views/issues/components/resolved-thread-bar.tsx= — collapsed thread
+- =packages/views/issues/components/terminate-task-confirm-dialog.tsx= — analogous to "Release agent" confirm
+- =packages/views/issues/components/pull-request-list.tsx= — for SHIP-stage PR display (deferred)
+
+*Status pill (dec_QWEQ8):*
+- =packages/views/chat/components/task-status-pill.tsx= — single combined pill format
+- =packages/views/issues/components/status-icon.tsx= · =status-heading.tsx= — icon + heading conventions
+- =packages/views/issues/components/priority-icon.tsx= — priority chip
+- =packages/views/issues/components/issue-chip.tsx= — referenceable issue chip
+- =packages/views/issues/components/agent-live-card.tsx= · =issue-agent-activity-indicator.tsx= · =workspace-agent-working-chip.tsx= — agent-owned visual lock signal (matches dec_CX17K)
+
+*Manager popover (dec_DTJPD/dec_HY3E0):*
+- =packages/views/chat/components/chat-window.tsx= — peek/workbench/focus shell
+- =packages/views/chat/components/chat-resize-handles.tsx= · =use-chat-resize.ts= — drag/resize logic
+- =packages/views/chat/components/chat-input.tsx= · =chat-message-list.tsx= — composer + messages
+- =packages/views/chat/components/chat-fab.tsx= — floating action button (peek handle)
+- =packages/views/chat/components/context-anchor.tsx= — pinning a task as chat context
+- =packages/views/chat/components/no-agent-banner.tsx= · =offline-banner.tsx= — states
+
+*Notification bell (dec_JZDKT):*
+- =packages/views/inbox/components/inbox-page.tsx= · =inbox-list-item.tsx= · =inbox-display.ts= — Linear-style inbox
+
+*Navigation (dec_CGVRW/dec_HYD58):*
+- =packages/views/navigation/app-link.tsx= · =context.tsx= · =types.ts= — typed nav + project-scoped paths
+- =packages/views/projects/= — project list / selector / create flows
+
+*Tags / labels (dec_CXYVV):*
+- =packages/views/labels/= — entire labels package
+
+*Settings (top-header gear):*
+- =packages/views/settings/= — settings shape
+
+*Runtimes / agents (Status + Manager full):*
+- =packages/views/runtimes/= — driver runtime mgmt
+- =packages/views/agents/= — agent template mgmt
+- =packages/views/squads/= — agent groups (future)
+
+License: MIT. Copy patterns and prop shapes; don't import. Their Next.js + Postgres data hooks won't fit our Vite + Rust daemon.
+

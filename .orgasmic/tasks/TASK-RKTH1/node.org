@@ -1,0 +1,58 @@
+#+title: orgasmic task TASK-RKTH1
+#+orgasmic_version: 2
+
+* DONE TASK-RKTH1 Deliver oversized tmux worker prompts without hitting the imsg ceiling
+:PROPERTIES:
+:ID: TASK-RKTH1
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-drivers --lib
+:WRITE_SCOPE: crates/orgasmic-drivers/**
+:END:
+
+** Description
+
+The tmux mode delivers the worker's compiled prompt as an argv element
+(=push_initial_prompt_argv=, =modes/tmux.rs=) and hands the whole command line
+to =tmux new-session=. tmux packs an entire command line into ONE imsg to its
+server, and imsg's payload ceiling is =MAX_IMSGSIZE= (16 KiB) less the header.
+A dispatch whose brief pushes the packed argv past that ceiling dies with
+tmux's own =command too long=, surfaced to the operator as an opaque
+=500 failed to acquire worker run=.
+
+Measured 2026-07-30 on tmux 3.6a: a 16 000-byte argv spawns, 20 000 does not.
+Typical compiled prompts here are 4-5 KB, which is why this stayed hidden until
+TASK-3NJ9K was dispatched with a 5.5 KB brief.
+
+The ceiling is tmux's own compile-time constant. It cannot be raised from
+outside tmux, and refusing the dispatch with "shorten your brief" pushes a
+tool limit onto the operator. The prompt must instead reach the pane by a route
+that is not the imsg command line.
+
+=modes/rmux.rs= drives its panes through the rmux SDK socket
+(=ProcessSpec=), not the CLI, so it does not share this ceiling; the rmux CLI
+does (same fork), which is why a CLI probe shows the same limit.
+
+** Acceptance
+
+- A tmux dispatch whose compiled prompt is far larger than the imsg ceiling
+  (100 KB+) spawns and reaches the harness with the prompt intact.
+- Prompt bytes are preserved exactly, including trailing whitespace and
+  newlines, embedded single quotes, and non-ASCII.
+- Dispatches under the ceiling keep their current, direct argv route; the
+  fallback engages only when the packed argv would not fit.
+- No operator-facing refusal that asks for a shorter brief.
+- The Claude launch gate (=native_resume_mode=) and the pinned-executable
+  identity check keep working when the fallback engages.
+- Nothing that carries the prompt is left readable by other users, and the
+  spawn failure path does not leak the artefact.
+- Unit tests cover the size accounting and the escaping; a live tmux test
+  proves an oversized prompt actually spawns, gated the way every other
+  tmux test in the binary is.
+
+** Prior Evidence
+
+Failure captured in =~/.orgasmic/logs/daemon.out.log= 2026-07-30T13:41:32Z:
+=driver transport unavailable: tmux new-session failed (exit 1) on the default
+shared server (no -L/-S and no TMUX_TMPDIR): command too long=. Workaround at
+the time was shortening the TASK-3NJ9K brief from 5476 to 2724 bytes.
+

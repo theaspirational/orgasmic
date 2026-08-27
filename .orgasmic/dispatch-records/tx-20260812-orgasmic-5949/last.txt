@@ -1,0 +1,24 @@
+## Changed
+
+- Added a `cfg(test)`-only, path-specific seam in `crates/orgasmic-daemon/src/writer.rs` that renames a tx pathname after the writer append and immediately before the retained descriptor is synced.
+- Added daemon-writer regressions for both normal batched append acknowledgement and rewrite-plus-tx acknowledgement. Both assert that the original pathname is gone and the appended entry is present at the renamed destination.
+- Replaced the missing transaction mutation-identity `unreachable!` with a request-local error and added a private-module regression proving the malformed command receives that error while the next valid append succeeds.
+- Kept production sync routing on the cached `TxWriter` descriptor; added no post-sync pathname stat/open and made no change to the external-unlink tradeoff.
+
+## Verification Gates
+
+- `cargo test -p orgasmic-daemon --lib writer::tests::` — PASS, 17 passed / 0 failed. Covers both retained-descriptor routes and writer liveness after the malformed transaction.
+- `cargo test -p orgasmic-daemon --test writer_durability` — PASS, 6 passed / 0 failed. Re-proves fsync-before-ack, injected sync failure, one-sync-per-batch, rewrite rollback, hot-path sequence caching, and replacement-path reopen behavior.
+- Reopen fault injection — PASS: temporarily restored the old `OpenOptions::read(true).open(path)` acknowledgement sync, ran `cargo test -p orgasmic-daemon --lib retained_descriptor_after_path_rename`, and observed the required RED (0 passed / 2 failed, missing original pathname). Restored source byte-for-byte, then reran the focused green gates.
+- `cargo fmt -- crates/orgasmic-daemon/src/writer.rs` — PASS.
+- `cargo clippy -p orgasmic-daemon --all-targets -- -D warnings` — PASS.
+- `git diff --check` — PASS.
+
+## Unmet Criteria
+
+- Independent review is not self-performed by the implementer; the manager-owned reviewer pass remains the next workflow stage.
+
+## Residual Risk
+
+- Intentionally unchanged: external removal of a fully unlinked tx file can still detach the retained descriptor from the ledger pathname. This task explicitly excludes solving that policy tradeoff.
+- Verification was the focused writer/durability and targeted daemon clippy matrix requested by the dispatch; the full workspace suite was not run in this implementer worktree.

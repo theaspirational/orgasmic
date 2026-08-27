@@ -1,0 +1,57 @@
+#+title: orgasmic task TASK-S81TJ
+#+orgasmic_version: 2
+
+* DONE TASK-S81TJ Driver-as-mode refactor: split current drivers into (mode driver + harness adapter) :drivers:architecture:abstraction:refactor:foundation:
+:PROPERTIES:
+:ID:               TASK-S81TJ
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/src/trait.rs crates/orgasmic-drivers/src/lib.rs crates/orgasmic-drivers/src/modes/ crates/orgasmic-drivers/src/adapters/
+:WRITE_SCOPE:      crates/orgasmic-drivers/
+:READ_SCOPE:       /tmp/orgasmic-codex/task-057-brief.md ../har/src/drivers/
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-M88ZM.1
+:END:
+
+** Description
+Foundation refactor for the driver/harness layer. Current drivers (=claude-acp=, =codex-appserver=, =hermes=, =cursor-agent=, =tmux-tui=) couple "wire mode" with "harness CLI event shape" into one struct each. The user wants the abstraction to follow HAR's lead: drivers are MODE-ONLY (=subprocess-stream-json=, =acp-stdio=, =acp-ws=, =tmux=), each parameterized at construction with a =HarnessEventAdapter= (=codex= / =claude= / =cursor-agent= / =hermes=). Legacy transport names preserved via registry aliases. No template/task/CLI changes in this task — TASK-G6EV7/TASK-YVZ9V/TASK-RF3J1 follow.
+
+Brief: =/tmp/orgasmic-codex/task-057-brief.md=.
+
+** Acceptance Criteria
+- [ ] New trait =HarnessEventAdapter= in =crates/orgasmic-drivers/src/trait.rs= covers event translation + request composition per harness.
+- [ ] New mode drivers in =crates/orgasmic-drivers/src/modes/=: =subprocess_stream_json.rs=, =acp_stdio.rs=, =acp_ws.rs=, =tmux.rs= (rename from =tmux_tui.rs=).
+- [ ] New harness adapters in =crates/orgasmic-drivers/src/adapters/=: =codex.rs=, =claude.rs=, =cursor.rs=, =hermes.rs=.
+- [ ] =lib.rs= registry preserves legacy transport names (=claude-acp=, =codex-appserver=, =hermes=, =cursor-agent=, =tmux-tui=) — each maps to a (mode, adapter) tuple. New API =driver_for_mode_harness(mode_id, harness_id)= available.
+- [ ] All 261 existing tests pass unmodified. New tests cover (a) mode driver in isolation with a mock adapter, (b) each adapter in isolation with mock raw events, (c) registry coverage for both legacy + new keys.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new heavyweight deps.
+- [ ] Implementer commits the work themselves before declaring done.
+
+** Notes
+Foundation for TASK-G6EV7/TASK-YVZ9V/TASK-RF3J1. Inspired by HAR's =src/workers.rs= pattern (capability lists + eligibility matching). HAR's =src/drivers/= structure can be referenced as the architectural lead. Out of scope: agent template schema changes (TASK-G6EV7), eligibility matcher (TASK-YVZ9V), dispatch CLI refactor (TASK-RF3J1). Reviewer pass after merge per persona rule 2.
+
+** Evidence
+- [2026-05-24 Sun 19:39] Codex (gpt-5.5 xhigh, ~24m wall) committed =83e7799= ("refactor drivers into modes and adapters") — codex committed itself this round per session pattern. Merged no-ff as =10bc6e6=.
+- 19 files +2926/-1885 net. Significant LOC reduction in extracted adapters (each shed ~30-56%):
+  - =adapters/claude.rs= 661 LOC (was =claude_acp.rs= 1199 — -45%)
+  - =adapters/codex.rs= 815 LOC (was =codex_appserver.rs= 1299 — -37%)
+  - =adapters/cursor.rs= 714 LOC (was =cursor_agent.rs= 1158 + TASK-M88ZM.1's 470 — -56%)
+  - =adapters/hermes.rs= 450 LOC (was =hermes.rs= 663 — -32%)
+- New mode drivers: =modes/subprocess_stream_json.rs= 513 LOC, =modes/acp_stdio.rs= 56 LOC (thin — Claude's stdio framing is simple), =modes/acp_ws.rs= 591 LOC (heaviest — serves both codex-appserver and hermes), =modes/tmux.rs= small delta from rename of =tmux_tui.rs=.
+- =HarnessEventAdapter= trait + =HarnessRequest= enum added to =trait.rs= +195 LOC. Adapter contract: =harness()= / =parse_event(raw)= / =compose_request(ctx, config)= / =validate_config()=.
+- =lib.rs= +148 LOC: =MODES=/=HARNESSES= constants exported; =driver_for(transport)= preserved as legacy alias; new =driver_for_mode_harness(mode, harness)= as first-class composition entry.
+- Daemon-side import surgery: =api.rs= +4, =lib.rs= +4, =supervisor.rs= +16 — minimal because registry contract held.
+- Old driver files (=claude_acp.rs= / =codex_appserver.rs= / =hermes.rs= / =cursor_agent.rs= / =tmux_tui.rs=) deleted; no shells.
+- =implementer.done= =tx-20260524-org-0205= via =dispatch-close=. **DOGFOOD #33 PASS** (BACKLOG→IMPLEMENT on dispatch).
+- Verification: =cargo test --workspace= 261 → 265 (+4 driver-mode tests in new =tests/driver_modes.rs=); clippy =-D warnings= clean; fmt =--check= clean; diff =--check= clean. MSRV 1.78. No new deps.
+- Backward-compat invariant held: all 261 prior tests passed unmodified.
+
+** Reviewer pass
+- [2026-05-24 Sun 19:52] Codex reviewer (gpt-5.5 xhigh, ~10m wall) produced =/tmp/orgasmic-codex/task-057-review-report.md=. Verdict: =has-issues, no blocks-ship=. 4 medium + 1 low (0 critical/high). =reviewer.done= =tx-20260524-org-0207=. **DOGFOOD #34 PASS** (REVIEW→REVIEW idempotent NO-OP — RECOMMENDED_SUBTASKS non-empty + parent stays REVIEW until fix-subtask closes).
+- *F-1 MEDIUM bug*: =driver_for_mode_harness= composed every (mode, harness) eagerly; unsupported pairs (e.g. =acp-ws + cursor-agent=) returned =Some(broken)= and failed later at acquire-time. Closed by TASK-S81TJ.1.
+- *F-2 MEDIUM bug*: =acp_ws.rs:313= request_response lost the terminal short-circuit on codex =turn/start=; server emitting =turn/completed= before =turn/start= response produced =RunComplete= + fatal =turn/start closed before response= pair. Closed by TASK-S81TJ.1.
+- *F-3 MEDIUM bug*: =acp_ws.rs:88= synchronously connects WS during =acquire()=; hermes connection failures returned =Err= from acquire instead of post-Ready =DriverError= event per old =hermes.rs=. Closed by TASK-S81TJ.1.
+- *F-4 MEDIUM bug*: =adapters/hermes.rs:125= lost the =serde_json::from_value::<DriverEvent>= native fallback that the old =hermes.rs= had — would break Hermes servers sending orgasmic-native event JSON. Closed by TASK-S81TJ.1.
+- *F-5 LOW test*: =tests/driver_modes.rs= initial 3 tests too shallow — no tmux, no unsupported-pair, no adapter fixtures, no legacy equivalence. Closed by TASK-S81TJ.1.
+

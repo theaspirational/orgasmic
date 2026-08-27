@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-40ZMJ
+#+orgasmic_version: 2
+
+* BACKLOG TASK-40ZMJ Provider/quota health invisible until a worker dies: manager drivers --health probe + dispatch pre-flight refusing provider_quota/provider_auth    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-40ZMJ
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 11. Codex locked out five days; glm-5.2/5.3 share one z.ai quota so a 429 on one kills the other; `claude` harness reports "no catalog available" which reads as cannot-run but means cannot-enumerate.
+** Expected
+- `orgasmic manager drivers --health`: per configured provider auth ok / quota ok / retry-after.
+- dispatch pre-flight refuses with `provider_quota: codex locked until …` instead of spawning a worker that dies in two seconds.
+- Empty catalog message: catalog unavailable; --model passed through unvalidated.
+Related: item 1 (reason classification) supplies the provider_quota class.
+

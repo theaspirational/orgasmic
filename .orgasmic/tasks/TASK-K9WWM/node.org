@@ -1,0 +1,130 @@
+#+title: orgasmic task TASK-K9WWM
+#+orgasmic_version: 2
+
+* DONE TASK-K9WWM three dispatch-close tests time out on the 10s daemon budget under suite concurrency, and one now recurs on a calm host :dispatch:testing:
+:PROPERTIES:
+:ID: TASK-K9WWM
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**,verify/TASK-K9WWM/**
+:END:
+
+
+=== Accepted implementation plan [2026-08-11]
+Replace refresh amplification with one read-after-write-safe coalesced refresh per mutation batch. Keep the serialized writer and existing HTTP timeouts. Remove Git lookup from mutation acknowledgement, build project projections off the index lock, make one authoritative post-tx refresh, retain watcher convergence, add committed-but-refresh-failed 503 semantics, expose writer/index timing metrics, revise dec_YYMSK, ship deterministic concurrency/injection coverage, and require independent review before installation.
+
+** READ THIS FIRST — STATUS
+The 2026-08-07 handoff recorded two of these failing once, attributed them to an
+identified external CPU hog, and set an explicit trigger: *if they recur on a
+calm host that is a real finding about the 10s daemon budget and deserves a task,
+not a registry excuse.* [2026-08-08] they recurred, and the third run was on a
+host =run-tests.sh= itself classified CALM. So this is filed as the handoff
+instructed. *Do not register these in =flake-registry.toml= to green the gate.*
+
+** The failure
+All three are in =crates/orgasmic-cli/tests/dispatch.rs= and all three fail the
+same way — the CLI request to =/api/runs/<run_id>/release= exceeding the 10s
+client budget during =manager dispatch-close=:
+
+: Error: release recorded run before dispatch-close cleanup
+: Caused by: daemon request timed out after 10s (1m load average 26.72) — the
+: daemon may be healthy but the system is under load; a timed-out request can
+: still land server-side, so re-read state instead of assuming it failed
+
+- =reviewer_close_non_clean_verdict_flags_stay_in_progress=
+- =reviewer_close_refuses_verdict_flag_alongside_property_verdict=
+- =reviewer_close_verdict_has_issues_stays_in_progress=
+
+** Observations, dated
+- [2026-08-07] two of the three, once, at load 14, external Python at 96% CPU.
+- [2026-08-08] all three, at load 26.72, during a full =-p orgasmic-cli= run.
+- [2026-08-08] later, on a quieter host, ONE recurred
+  (=reviewer_close_non_clean_verdict_flags_stay_in_progress=) with the suite
+  reporting =host: calm=, =rate 0.0000=, load 5.38 before / 4.27 after.
+- Every occurrence passes in isolation. Five =reviewer_close_*= tests ran 3/3
+  green at =--test-threads=4= on the same binary.
+
+*NOT caused by TASK-RMA18*, ruled out by mechanism rather than by argument: that
+change adds filesystem work only to =admit_live_run= (acquire) and
+=blocking_run_for_close= (close reservation), and neither is on the
+=/api/runs/<id>/release= path these three time out on. Two of the three predate
+it.
+
+** The second finding, which may be the more useful one
+=run-tests.sh= called the third run =host: calm=. Its host word is derived from
+the syspolicyd CPU-seconds-per-wall-second rate (TASK-STWVB.1.1), which was
+=0.0000= — correctly, because syspolicyd was idle. *The classifier is blind to
+ordinary CPU load*, and ordinary CPU load is exactly what makes these three fail.
+Load is deliberately =corroborating display only= per the STWVB chain, and that
+was the right call for the syspolicyd question it was solving — but it means a
+load-induced red is reported as a calm-host REAL failure, which is the strongest
+possible verdict, on the weakest evidence the script has.
+
+Weigh carefully before changing it: the STWVB chain spent a whole round
+establishing that an ABSOLUTE load threshold was wrong. The answer is probably
+not a load threshold; it may be that a client-timeout failure signature deserves
+its own classification arm, since =daemon request timed out after 10s= is a
+self-describing host-state error the classifier could read directly.
+
+** Direction — decide, then implement
+1. Establish whether the 10s budget is simply too tight for a
+   =release=-then-cleanup sequence under parallel test load, or whether something
+   on the release path is slower than it should be. Measure it; do not reason
+   about it.
+2. If the budget is the problem, changing it is a PRODUCTION decision, not a test
+   one — the same 10s applies to an operator on a loaded machine. Whatever is
+   chosen must apply to both, or be explicitly justified as test-only.
+3. Consider the classification arm above, so a client timeout never again reports
+   as a calm-host REAL failure.
+
+** Acceptance
+- The three tests pass under full =-p orgasmic-cli= concurrency on a calm host,
+  repeatably, without being registered as flakes.
+- The root cause is stated as a measurement, naming whether the budget, the
+  release path, or test concurrency was at fault.
+- A =daemon request timed out= failure is no longer classified identically to a
+  genuine assertion failure, or the decision not to distinguish them is recorded
+  with its reason.
+** Occurrences
+THIRD OCCURRENCE, MEASURED [2026-08-08], on the merged tree at =1cdf25b= during
+the manager's TASK-RMA18.1.1 gate. =scripts/run-tests.sh -p orgasmic-cli=
+returned *RED — 2 real failure(s)*:
+=reviewer_close_non_clean_verdict_flags_stay_in_progress= and
+=reviewer_close_refuses_verdict_flag_alongside_property_verdict=, both at
+=crates/orgasmic-cli/tests/dispatch.rs:433=, both:
+
+: daemon request timed out after 10s (1m load average 13.64) ... url (http://127.0.0.1:51030/api/runs/<run>/release)
+: daemon request timed out after 10s (1m load average 15.03) ... url (http://127.0.0.1:51129/api/runs/<run>/release)
+
+=isolation: passed= — both green alone. The load was MANAGER-CAUSED: a
+=claude= implementer dispatch (TASK-2QK4P.1) was running cargo concurrently with
+the gate. That is normal operating load for this project, not an anomaly.
+
+*A SECOND FINDING, AND THE MORE INTERESTING ONE — THE HOST VERDICT IS BLIND TO
+THIS FAILURE MODE.* The same VERDICT block that reported these two failures also
+reported:
+
+: host : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
+: rate 0.1123
+
+*=run-tests.sh= called the host CALM while the load average at the moment of
+failure was 13.64 and 15.03.* That is not a bug in the wrapper — TASK-STWVB
+round 3 deliberately derived the host word from the syspolicyd RATE and demoted
+load to "corroborating only", and the round-6 review upheld that reasoning
+explicitly: =HOST_DEGRADED= is measured from syspolicyd CPU CONTENTION, which is
+not evidence of an unrelated failure mode.
+
+But it means *the one word an operator reads to decide whether a red is
+attributable is derived from a signal that cannot see a 10s HTTP budget
+expiring under scheduler pressure.* The 08-07 handoff said these tests
+recurring "on a calm host" would be a real finding rather than a registry
+excuse. They recurred, the host word said calm, and the word was measuring
+something else entirely. *Whatever fixes the 10s budget should also decide
+whether a load-sensitive timeout deserves its own attributability signal, rather
+than inheriting a syspolicyd-derived one.*
+
+NOT REGISTERED AS A FLAKE. The registry's own guard says a green-alone failure
+is REAL until OWNED, and this task owns it — but registering these two would
+make the gate report green-modulo on a real product weakness that is now
+three-times measured. The decision to register belongs with the fix, not ahead
+of it.
+

@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_YC32J
+#+orgasmic_version: 2
+
+* term_YC32J Tx file
+:PROPERTIES:
+:ID:                 term_YC32J
+:CANONICAL:          tx file
+:AVOID:              event database, EDN log
+:RELATES_TO:         term_N5SJT
+:DEFINITION:         An append-only audit artifact made of property-only headings that records durable coordination events.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

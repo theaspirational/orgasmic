@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_KH07K
+#+orgasmic_version: 2
+
+* dec_KH07K What belongs in v0.0.1 scope, and what waits for the design-graph phase?    :product-scope:
+:PROPERTIES:
+:ID:            dec_KH07K
+:GLOSSARY_REFS: term_XJM14 term_P94BF term_X4JGJ
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*v0.0.1 scope (Q15, revised)
+:END:
+** Context
+The first release needs a boundary ambitious enough to prove orgasmic but not overloaded with later graph features. A minimal CLI-only v0.0.1 ships faster but gives insufficient product proof; a graph-first v0.0.1 is more coherent end-state but delays usable coordination.
+** Decision
+v0.0.1 ships core coordination — install, projects, tasks, runs, drivers, manager, skills, prompts, UI, auth, streams, tx, and sessions — while the design graph follows starting in v0.0.5. The design graph is core orgasmic but not part of the first shippable slice.
+** Consequences
+The first release proves coordination before the heavier graph machinery lands.
+

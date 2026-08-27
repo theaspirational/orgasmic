@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-WTPYT
+#+orgasmic_version: 2
+
+* DONE TASK-WTPYT TASK-0SADP fix round: Codex misattribution, TUI-id gap, Hermes pairing, path containment
+:PROPERTIES:
+:ID: TASK-WTPYT
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-0SADP
+:END:
+
+Resolve 5 codex review findings on TASK-0SADP transcript finder adapters (review: .orgasmic/tmp/dispatch/task-0sadp-review/task-0sadp-review-last.txt). 3 HIGH: Codex cwd fallback maps earlier runs to later rollouts (reproduced on real data); Cursor/Hermes TUI runs have no session-id lookup input (gates TASK-AFE5Q capture removal); Hermes returns Ambiguous on its normal .json+.jsonl pair (78 real pairs). MEDIUM path traversal; LOW probe. Branch task-0sadp-impl atop 29bd525.
+

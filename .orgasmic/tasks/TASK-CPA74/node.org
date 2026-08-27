@@ -1,0 +1,48 @@
+#+title: orgasmic task TASK-CPA74
+#+orgasmic_version: 2
+
+* DONE TASK-CPA74 Polish phase 1 slice 3: README install ergonomics + UI quickstart + Cloudflare tunnel doc :docs:readme:dx:polish:
+:PROPERTIES:
+:ID:               TASK-CPA74
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:
+:PRODUCES:         README.md CONTRIBUTING.md
+:WRITE_SCOPE:      README.md CONTRIBUTING.md docs
+:READ_SCOPE:       /tmp/orgasmic-codex/task-055-brief.md
+:TEST_CMD:         git diff --check
+:DEPENDS_ON:       TASK-FWBYB.1
+:END:
+
+** Description
+Expand the README into a self-contained quickstart: Prerequisites (Rust 1.78 / Node engine pin / cloudflared optional), expanded Install section with binary location + =$PATH= setup, refined First-use that introduces =orgasmic status= + points at TASK-FWBYB staleness warn, new "Run the UI" section (=cd ui && npm run dev= on :5180; daemon at :8739; Vite proxy bearer), new optional Cloudflare tunnel section (named tunnel pattern with =~/.cloudflared/<name>.yml= config + DNS route + open/teardown), Status section refresh, optional brief Troubleshooting block. =CONTRIBUTING.md= gets a one-pass cross-reference review (no rewrite). Split into =docs/= only if README would exceed ~250 lines.
+
+Brief: =/tmp/orgasmic-codex/task-055-brief.md=.
+
+** Acceptance Criteria
+- [ ] =README.md= has =## Prerequisites= section with version-pin checks (Rust MSRV 1.78, Node from =ui/package.json=, cloudflared optional).
+- [ ] =## Install= section expanded with binary-location + =$PATH= one-liner + "what just got installed" summary.
+- [ ] =## First use= section adds =orgasmic status= step and explains the staleness warn.
+- [ ] =## Run the UI= section covers =cd ui && npm install && npm run dev= flow on :5180 with daemon :8739 + bearer-auth path.
+- [ ] =## Expose the UI via Cloudflare tunnel (optional)= section walks through =cloudflared tunnel create=, per-tunnel YAML, DNS route, open + teardown.
+- [ ] =## Status= section refresh mentions TASK-PYW86+052 (coordination plane production-safe; doctor self-diagnoses staleness).
+- [ ] All cross-references resolve (=scripts/install.sh= exists; =ui/vite.config.ts= proxy matches; token path matches reality).
+- [ ] =git diff --check= clean.
+
+** Notes
+Polish phase 1 batch (with TASK-G0C5R CLI + TASK-DFEDX daemon). Disjoint write scope (docs only) — runs in parallel with 053 and 054.
+
+** Evidence
+- [2026-05-25 Mon 00:02] Cursor-agent (composer-2.5-fast, ~7m wall, subprocess-stream-json + cursor-agent driver) finished =run_complete=. Manager-on-behalf commit =15e56e2= per TASK-RF3J1.5 gap. Merged no-ff as $(see git log).
+- 2 files +156/-14:
+  - =README.md= 96 → 232 lines: =## Prerequisites= (Rust 1.78 MSRV, Node 18/20/22+ from Vite 6 lockfile, Git, optional cloudflared), =## Install= expanded, =## First use= (=orgasmic status= + staleness warn surface — closes TASK-FWBYB user-facing handoff), =## Run the UI= (=ORGASMIC_DEV_TOKEN= from =$ORGASMIC_HOME/user/auth/token= per home.rs — corrects brief's stale =secrets/daemon_token=), =## Cloudflare tunnel= (optional, full YAML + DNS route + teardown), =## Status= + =## Troubleshooting= (4 bullets).
+  - =CONTRIBUTING.md= +12/-4: one-line cross-reference (.orgasmic/ + docs/adr/ active; archive spec historical).
+- No docs/ split — README stays under 250-line cap.
+- Cross-refs verified live by implementer: =scripts/install.sh=, =ui/vite.config.ts=, =home.rs= token path.
+- Verification: =git diff --check= clean. No Rust/JS changes; TEST_CMD per task heading is git diff only.
+- =implementer.done= =tx-20260524-org-0261= via =dispatch-close --merge-sha=. State IMPLEMENT → REVIEW.
+
+** Reviewer pass
+- [2026-05-25 Mon 00:00] Reviewer (cursor-agent reviewer-cursor; ~3m wall). Verdict =has-issues, no-blocks-ship=: 3 MEDIUM (F-1 port-config drift 4848 vs 8739 breaks fresh =orgasmic status= after documented serve; F-2 step 3 runs =orgasmic status= before token exists; F-3 Node engines AC source vs actual =ui/package.json=) + 3 LOW (token troubleshooting, PATH =$ORGASMIC_HOME=, port-conflict bullets). Report =/tmp/orgasmic-codex/task-055-review-report.md=. =reviewer.done= =tx-20260524-org-0269= with =RECOMMENDED_SUBTASKS=TASK-CPA74.1=.
+- TASK-CPA74.1 fix-subtask landed (commit =c63d63a= cherry-picked onto main as =0da6437=). All 6 findings closed in one cursor-agent round; self-committed. README +48/-15, =ui/package.json= +3 (engines field). Manager hand-flipped TASK-CPA74 REVIEW → DONE for cluster closure.
+

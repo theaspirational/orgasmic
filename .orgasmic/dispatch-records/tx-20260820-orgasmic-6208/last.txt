@@ -1,0 +1,57 @@
+# TASK-ZKZBF.3 reviewer report
+
+Range reviewed: worker commit `8319937` (byte-identical to merged `450af07` / `main~1..main`). Read-only source review.
+
+## Verdict
+
+**APPROVE WITH ONE LOW DOCS FOLLOW-UP.** The production change satisfies the removal-direction contract, the unreachable STATE branch is gone, the renderer sweep is safe on its sole production call path, and all three red/green artifacts replay independently. I found no runtime correctness, regression, data-loss, or test-harness defect.
+
+## Findings
+
+### LOW docs — `crates/orgasmic-cli/tests/node_property_silent_drop_cli.rs:14-15` — suite overview still states the superseded unset contract
+Filed as `tx-20260820-orgasmic-6210`.
+
+The module overview still says ``node prop unset <id> priority`` is refused and names `PRIORITY`. That directly contradicts the new contract documented at lines 38-42 and exercised at lines 369-424, where the byte-present lowercase line is removed by its own spelling. This does not affect runtime behavior, but it leaves the production-path suite describing mutually exclusive expectations and can mislead the next review or test edit.
+
+**Fix direction:** replace the stale lines 14-15 bullet with the exact-spelling removal behavior (and retain STATE/ID as the explicit removal refusals).
+
+No HIGH or MEDIUM findings.
+
+## Open Questions
+
+1. `crates/orgasmic-cli/src/node.rs` was edited outside the task's declared write scope. The change is a small, correct user-facing help update needed to avoid preserving the old uppercase-only unset guidance, so I did not treat it as harmful scope drift; the manager may want to widen the recorded scope for bookkeeping. The `verify/` edits are explicitly acceptance-mandated.
+2. The legacy cleanup remains correctly deferred: mutating the 29 tracked lowercase drawer lines was outside this implementation's source scope and outside this reviewer's read-only role. I confirmed the 29 task-file lines still exist, including the two dual-spelling BACKLOG tasks; cleanup should be a separately authorized operation.
+
+## Verification Notes
+
+### Source and contract audit
+
+- Inspected `git show 8319937` and the relevant pre/post source, CLI route, rewriter, task-create/update flow, test helpers, and artifact `cmd`/`expect-red` files.
+- Traced every production `OrgRewriter::remove_property` call. The generic `/org/node/:id/edit` `RemoveProperty` arm is the only user-supplied arbitrary-key removal route; task, other-layer, CLI, and direct wire callers all converge on `post_org_node_edit` and the shared guard.
+- Confirmed `validate_drawer_property_key_case` keeps empty-key and case-insensitive ID refusals before `let Some(value) = value else { return Ok(()) }`; set/create/update callers still pass `Some`, so the deleted `None` message arms were genuinely removal-only.
+- Confirmed task removal still canonicalizes solely for `task_property_key_unset_refusal_reason`, leaving STATE refused in every spelling while permitting byte-exact removal of legacy/dead keys.
+- Confirmed `OrgRewriter::remove_property` matches `e.key == key` byte-for-byte and maps absence through `unknown_property_error`, which names the node and actual drawer keys.
+- Confirmed `render_new_task_heading` has exactly one production caller, `post_task_create`, and that caller always runs `validate_task_property_keys(..., TASK_PROPERTY_KEYS_UPDATE_ONLY)` first. All six deleted `DROPPED` names are refused there: STATE/PARENT_TASK/LAST_UPDATED by the refusal table and KIND/BLOCKED_BY/FIX_SUBTASK by the create-only list, after the case/shape guard.
+- Confirmed `task_create_lifecycle_stage` now has no STATE hand-check and returns only `Backlog`.
+- Read the dual-spelling test rather than trusting its name: it seeds both `:priority:` and `:PRIORITY:`, removes each spelling independently, asserts the other survives, proves canonical priority remains readable after lowercase cleanup, and checks absent canonical removal reaches the absence refusal. The values are deliberately distinct (`P1`/`P2`), not literally TASK-099T6's equal `P1`/`P1` values; that strengthens selective-removal/readback evidence and does not weaken the legacy shape being pinned.
+
+### Independent commands
+
+- `orgasmic verify --artifact verify/TASK-ZKZBF.1 TASK-ZKZBF.1` — **PASS**; injected red signature matched, green 15/15, tree byte-identical after revert.
+- `orgasmic verify --artifact verify/TASK-ZKZBF.2 TASK-ZKZBF.2` — **PASS**; injected red signature matched, focused green 1/1, tree byte-identical after revert.
+- `orgasmic verify --artifact verify/TASK-ZKZBF.3 TASK-ZKZBF.3` — **PASS**; injected red 13 passed / 2 failed on the two direction-split tests, green 15/15, tree byte-identical after revert.
+- `cargo test -p orgasmic-cli --test task_property_silent_drop_cli` — **PASS**, 7/7.
+- `git diff --check` — clean; review worktree was clean after artifacts and tests.
+
+Artifact wrapper: PID 48257, log `/tmp/task-zkzbf3-review-artifacts-48256-26550.log`, atomic status `/tmp/task-zkzbf3-review-artifacts-48256-26550.status` = 0. Task-suite wrapper: PID 62463, log `/tmp/task-zkzbf3-review-task-suite-62460-20014.log`, atomic status `/tmp/task-zkzbf3-review-task-suite-62460-20014.status` = 0. Both completed on their first launched attempt; no duplicate or interrupted run.
+
+### What I did NOT check
+
+- I did **not** open any `verify/*/injection.patch` body, per the explicit provider-content-filter prohibition. Artifact judgment used only `cmd`, `expect-red`, and actual replay output.
+- I did not independently rerun `cargo fmt`, clippy `-D`, or the full repository suite; the manager's stated gates remain manager evidence. The independently compiled production-path suites cover all 22 focused tests.
+- I did not mutate or probe the tracked live task drawers, and did not run browser/UI checks; neither is needed for this daemon/CLI removal contract.
+
+## Fix Directions
+
+1. Update the stale suite-overview bullet at `node_property_silent_drop_cli.rs:14-15` to describe byte-exact removal by actual drawer spelling.
+2. No production-code fix is required from this review.

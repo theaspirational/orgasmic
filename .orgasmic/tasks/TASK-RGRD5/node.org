@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-RGRD5
+#+orgasmic_version: 2
+
+* IN_REVIEW TASK-RGRD5 Repair paths bypass the descriptor transition guard; fix last 11 dispatch.rs tests :e01mc:node_kernel:
+:PROPERTIES:
+:ID: TASK-RGRD5
+:PRIORITY: P1
+:END:
+
+** Description
+On e01mc-integration, 11 tests in `crates/orgasmic-cli/tests/dispatch.rs` still fail after the fixture port (8132b74a). Two causes:
+1. PRODUCTION: TASK-7A0H4's shipped task descriptor now guards state transitions, and the torn-close REPAIR path hits it ("task transition backlog -> in_review is not allowed by the shipped task descriptor"). Repair/recovery replays a transition that was already recorded and accepted — it must bypass the descriptor transition guard. Live, newly-requested transitions keep the guard. Find where torn-close reconciliation applies the transition and route it through a guard-free (or guard-suppressed) writer path; add one focused test pinning "repair bypasses guard, live transition does not".
+2. TESTS: remaining fixture/path issues (NotFound on record paths, e.g. dispatch.rs:12002) from the node-dir port. Red list: a_re_persist_lands_on_the_branch_the_re_run_is_standing_on, a_record_commit_cannot_land_on_a_branch_the_close_never_resolved, a_record_commit_rollback_reports_both_the_clean_and_the_failed_arm, a_record_persist_that_failed_is_recovered_by_re_running_the_close, a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused, an_empty_promoted_record_directory_is_never_reported_as_committed, dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request, dispatch_close_prunes_stem_dir_leaving_brief, dispatch_timeout_requests_daemon_cleanup, legacy_torn_dispatch_close_is_still_repaired_by_next_manager_command, task_update_from_dispatch_worktree_lands_in_the_live_ledger.
+If a test's LIVE transition starts from an illegal state, fix the fixture to a legal from-state instead of weakening the guard.
+** Acceptance
+- [ ] `cargo test -p orgasmic-cli --test dispatch` fully green
+- [ ] focused test: repair path bypasses the descriptor guard; a live illegal transition is still refused
+- [ ] no test deleted, no assertion weakened
+

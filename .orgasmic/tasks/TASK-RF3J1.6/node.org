@@ -1,0 +1,33 @@
+#+title: orgasmic task TASK-RF3J1.6
+#+orgasmic_version: 2
+
+* DONE TASK-RF3J1.6 dispatch-CLI on-rail BUNDLED fix-subtask: watch hint + worktree validation + override semantics + classifier + RunComplete last.txt + commit signal :cli:dispatch:daemon:supervisor:drivers:bug:fix:bundled:
+:PROPERTIES:
+:ID:               TASK-RF3J1.6
+:PRIORITY:         P1
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs crates/orgasmic-cli/tests crates/orgasmic-daemon/tests crates/orgasmic-drivers/tests
+:READ_SCOPE:       /tmp/orgasmic-codex/task-060-bundled-review-report.md /tmp/orgasmic-codex/task-060.6-brief.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-RF3J1 TASK-DFEDX.1
+:END:
+
+** Description
+Bundles TASK-RF3J1.2 (F-1 watch hint + F-2 worktree dir validation), TASK-RF3J1.3 (F-5 override semantics), TASK-RF3J1.4 (daemon classifier interrupted-while-alive bug), TASK-RF3J1.5 (last.txt writer + auto-commit signal) into ONE cursor-agent round. All four touch api.rs / dispatch flow and serialize on api.rs writes; bundling saves ~30 min of sequential dispatch overhead. Per the "save serialization" plan validated by TASK-DFEDX.1's 9-finding bundle (which landed cleanly in a single round).
+
+Brief: =/tmp/orgasmic-codex/task-060.6-brief.md=.
+
+** Acceptance Criteria
+- [ ] *F-1* (watch hint): =cmd_dispatch= prints =watch: orgasmic run show {run_id}= for non-subprocess modes. CLI test added.
+- [ ] *F-2* (worktree validation): 400 with sanitised message for missing/non-directory worktree. daemon dispatch_endpoint test added using shared =assert_path_free_helper=.
+- [ ] *F-5* (override semantics): docstring + =tracing::warn!= for off-list override + regression test asserting override flows through + warn emitted.
+- [ ] *F-6* (classifier): supervisor runtime-handle audit + session-jsonl-aware classifier; integration test asserts live/finished classifications correctly for subprocess-stream-json driver.
+- [ ] *F-7* (RunComplete last.txt + commit-pending signal): dispatch endpoint subscribes to RunComplete, writes summary to =last_path=; emits =implementer.commit_pending= tx if worktree dirty. Tests for both surfaces.
+- [ ] If =implementer.commit_pending= tx type added: also register in =shipped/schema/tx.org= (same pattern as TASK-HPJ16's =auto_spawn.failed=).
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new deps (use shell-out to =git status --porcelain= for the dirty-worktree check).
+
+** Notes
+:FIX_SUBTASK: t. On close, auto-flips IMPLEMENT → DONE. Manager hand-flips TASK-RF3J1 REVIEW → DONE AND demotes the now-redundant TASK-RF3J1.2/.3/.4/.5 BACKLOG headings to "(superseded by TASK-RF3J1.6)". Cluster-close commit then refreshes goal.org + bumps :LIVENESS:.
+

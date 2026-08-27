@@ -1,0 +1,177 @@
+# TASK-ZKZBF.1 reviewer report — ID-immutability guard, tx --extra case rule, message polish
+
+Diff reviewed: `git diff 4566e97^..f1b3d87` (== `main~1..main`), merged as `8f6e9c8`.
+Read-only pass. Working tree clean at start and end (`git status --porcelain` empty both times).
+`verify/TASK-ZKZBF.1/injection.patch` NOT opened, per the brief.
+
+## Verdict
+
+**ACCEPT.** All five round-1 findings (MEDIUM-1, MEDIUM-2, LOW-1/2/3) are genuinely
+fixed on the production path, not merely message-patched. I attacked each of the
+brief's five claims and could not break any of them. Four findings below: one MEDIUM
+that is **chain-introduced by round 1 (`928d3e0`), not by this diff** — it should be a
+follow-up task, not a reason to reject this round — and three LOWs.
+
+## Findings
+
+### MEDIUM-1 (correctness, UI/backend contract drift) — `ui/src/components/orgdoc/descriptor.ts:103`
+tx `tx-20260819-orgasmic-6169`
+
+The UI ships an editable **"Parent Task"** field bound to `{kind:'property', key:'PARENT_TASK'}`.
+`hideWhenEmpty` only hides it when *not* editing (`NodeDocEditor.tsx:291`), so in edit mode
+it is always shown. Saving it emits `{op:'set_property', key:'PARENT_TASK'}`
+(`NodeDocEditor.tsx:127`) into `post_org_node_edit`, which routes the Task arm through
+`validate_task_property_keys` (`api.rs:15523`) → `task_property_key_refusal_reason`
+(`api.rs:16392`) — `PARENT_TASK` is in the refusal table. **The field is a guaranteed 400.**
+`post_task_subtask` (`api.rs:2390`) confirms the daemon is the correct side: parentage is
+derived from the id grammar via `next_subtask_id`.
+
+Worse, the unset half — the code this diff *reworded* (`api.rs:15537`) — inherits the same
+write-only refusal table, so `remove_property PARENT_TASK` is refused too. `.orgasmic/tasks/done.org`
+carries real `:PARENT_TASK:` lines at 12371, 12541, 12984 and **there is now no supported verb
+that can remove them**: `node prop unset` is the only removal door, and `POST /org/file`
+(the raw whole-file escape hatch) has no CLI verb (`grep -n "/org/file" crates/orgasmic-cli/src/main.rs`
+→ no hits). Same trap for `LAST_UPDATED`.
+
+The asymmetry is the bug: a table whose job is "refuse to *write* a key nothing reads"
+should not also refuse to *delete* one that is already there.
+
+Classification: **pre-existing to this diff, introduced by the ZKZBF chain.**
+`git log -S 'validate_task_property_keys(&properties, &[])' -- crates/orgasmic-daemon/src/api.rs`
+→ `928d3e0` (round 1). Round 1's review (mine) missed it; this round reworded the message
+without noticing the semantics.
+
+Fix direction: split the refusal table into "owned by another door" (STATE — refuse both
+directions) and "dead key" (PARENT_TASK, LAST_UPDATED — refuse set, ALLOW unset), and either
+drop the Parent Task field from `TASK_DESCRIPTOR` or make it read-only/derived.
+
+### LOW-1 (correctness) — `crates/orgasmic-daemon/src/api.rs:16749`
+tx `tx-20260819-orgasmic-6170`
+
+The report's claim "create (old special case DELETED, collapsed into shared check)" is true
+only for `create_graph_heading`. `post_task_create` still carries its own byte-exact
+`req.properties.contains_key("ID")` check, whose message never says "immutable" and points at
+"use `id` to pin one". So:
+
+- `task create --property ID=x` → old message (no "immutable")
+- `task create --property id=x` → new shared guard, "Task identity is immutable …"
+
+Two sentences for one rule on one verb, decided by case — exactly the LOW-3 shape this round
+closed on `glossary create`. Fix: delete the special case; the shared guard already covers it
+(`validate_task_property_keys` runs at `api.rs:16761`, right below).
+
+Related dead code, same class as the arm LOW-3 removed: `update_task_properties`
+(`api.rs:17991`, `:17998`) still hand-checks `STATE` and `ID` case-insensitively after
+`validate_task_property_keys` at `:17976` already refused both. Both arms are unreachable.
+
+### LOW-2 (correctness) — `crates/orgasmic-core/src/tx.rs:309`
+tx `tx-20260819-orgasmic-6171`
+
+The two key checks now disagree on the accepted key set. `validate_drawer_property_key_case`
+(`api.rs:16476`) accepts any key equal to its own uppercase — `FOO-BAR` passes. The new tx
+pattern rule rejects it by `[A-Z][A-Z0-9_]*`. `task update --property FOO-BAR=1` feeds the
+drawer key straight into the ledger (`extra: req.changed`, `api.rs:17920`), and `prepare_api_tx`
+(`api.rs:8203`) never calls `validate()` — so the refusal only fires inside the writer and
+surfaces as HTTP **500 "failed to apply changes"** (`writer_transaction_error`, `api.rs:1713`),
+with the real reason visible only in the daemon log. `BLOCKED-BY` for `BLOCKED_BY` is the
+plausible typo.
+
+No data loss: `append_txs_inner` failure calls `rollback_renamed_rewrites`
+(`writer.rs:2831-2836`) and the staged rewrite is cleaned up.
+
+Classification: **pre-existing shape** (a colon-bearing drawer key already did this),
+**widened** by this diff to hyphen/dot/leading-digit keys. Fix: have the drawer check enforce
+the same `[A-Z][A-Z0-9_]*` pattern, so the refusal is a 400 that names the flag.
+
+### LOW-3 (docs/test) — `crates/orgasmic-cli/src/main.rs:862`
+tx `tx-20260819-orgasmic-6172`
+
+`--extra` now enforces `[A-Z][A-Z0-9_]*`, but its help still says only "single-line only",
+and the test whose whole job is keeping flag help honest —
+`reason_and_extra_flags_repeat_the_constraint_at_the_flag` (`main.rs:4139`) — asserts only
+that. Nothing in `shipped/` documents the case rule for `--extra` (`grep -rn -- "--extra" shipped/ scripts/ docs/`
+→ no hits), while 40+ live `reviewer.finding` entries in `.orgasmic/tx/2026-08.org`
+(`:kind:`, `:blocks_ship:`, `:file:`, `:evidence:` … at 16671-16747) were written lowercase by
+prior agents. Those calls now hard-fail with no shipped doc to correct the habit.
+
+Also: `is_uppercase_snake_key` is now duplicated verbatim in `manager.rs:9958` and `core/tx.rs:298`.
+Core is the lower crate; `manager.rs` could call it.
+
+## What I attacked and could NOT break (the brief's five claims)
+
+1. **Fifth unprotected drawer-write site — not found.** I enumerated every
+   `set_property`/`upsert_property`/`remove_property`/heading-render caller in
+   `crates/orgasmic-daemon/src` and `crates/orgasmic-core/src`. Exactly five take a
+   caller-supplied key, and all five validate first: `create_graph_heading` (`:14663`),
+   `mutate_graph_heading` (`:14848`), `post_org_node_edit` set (`:15521`) and unset (`:15525`)
+   and the `other` arm (`:15544`), `post_task_create` (`:16761`), `update_task_properties`
+   (`:17976`). Everything else — `artifacts.rs:368/370/389/404`, `api.rs:17018/17036/17263`,
+   the goal/handoff routes — writes hardcoded keys. `GoalSetRequest` has no `properties` field
+   at all, and Goal is rejected outright at `api.rs:15497`. The `NodeEditOp::SetProperty` wire
+   op is the same guarded route, not a second one.
+2. **Broken tx writer — not found.** Every in-repo `extra.push`/`extra:` literal is uppercase
+   (checked all of `crates/`). The only dynamic-key writer is `extra: req.changed`
+   (`api.rs:17920`), whose keys already passed the drawer check. No reader reads a lowercase
+   extra (`grep -rn 'extra("[a-z]' crates/` → empty). Every key in `.orgasmic/tx/*.org` written
+   by the *daemon* conforms; the nonconforming ones are agent-authored `reviewer.finding`
+   metadata that nothing reads (→ LOW-3). No `--extra` in `shipped/`, `scripts/`, `docs/`.
+   No UI or `.orgasmic` fixture affected.
+3. **Other path-leaking `PropertyNotFound` sites — none.** `PropertyNotFound` is constructed
+   only at `core/org.rs:979` and `:1217`, and reaches an API body only through
+   `api.rs:15676`, which now uses `unknown_property_error`. `index.rs:3230` swallows it.
+   Minor nit not filed: `unknown_property_error` reads the pre-loop `heading` snapshot, so a
+   multi-op request could list a key an earlier op in the same request removed — the whole
+   request rolls back anyway.
+4. **LOW-2/LOW-3 messages** — verified in source and by test.
+5. **Message regression on an unpinned path** — the one real message move is `task update
+   --property ID=…`, which went from the deleted table arm to the shared guard. Both say
+   "immutable"; no test pinned the old wording (`grep -rn "task identity is immutable" crates/`
+   → only the unreachable `api.rs:17998`). No regression found.
+
+## Verification notes
+
+Independently run by me, from a clean tree:
+
+- `scripts/run-tests.sh -p orgasmic-cli --test node_property_silent_drop_cli --test task_property_silent_drop_cli`
+  → exit 0. `node_property_silent_drop_cli`: **13 passed, 0 failed** (70.73s), including all
+  7 new tests. `task_property_silent_drop_cli`: 6 tests, suite exit 0. **19/19 GREEN** —
+  reproduces the manager's claim.
+- `cargo test -p orgasmic-core --lib tx::` → **20 passed, 0 failed**, including the 3 new
+  case-rule tests.
+
+Not run / not checked, and the residual risk:
+
+- **`verify --artifact verify/TASK-ZKZBF.1`** — NOT rerun. It mutates the worktree (applies
+  the injection patch) and I am read-only this round. Both the implementer and the manager
+  report PASS; I am relying on that claim. Residual risk: the red-pin could be weaker than
+  claimed. Reading `injection.patch` was forbidden, so I could not inspect it statically either.
+- **`cargo fmt` / `clippy -D warnings` / daemon-lib** — NOT rerun (manager verified; not
+  assigned to me).
+- **`POST /org/file`** (`api.rs:14023`) rewrites a whole org file with **no drawer-key
+  validation at all**, so the ID guard is bypassable there. I judged this out of scope rather
+  than a finding: it is a deliberate whole-file escape hatch, equivalent to editing the `.org`
+  by hand, and no CLI verb reaches it. Flagging it so the decision is explicit, not implicit.
+- **No live UI probe.** MEDIUM-1's UI half is proven from `descriptor.ts` + `NodeDocEditor.tsx`
+  + the daemon refusal table by reading, not by clicking. The daemon half (a 400 on
+  `set_property PARENT_TASK`) follows directly from `api.rs:15523`/`:16392` and is not in doubt.
+- No dispatches, no `ORGASMIC_HOME`, no source modification. Working tree clean.
+
+## Open questions
+
+1. MEDIUM-1: is the UI's "Parent Task" field meant to be **removed** (parentage is id-derived,
+   per `next_subtask_id`) or made **read-only/derived-display**? That is a product call, not mine.
+2. Should the "dead key" refusals (`PARENT_TASK`, `LAST_UPDATED`) allow `unset` so existing
+   drawer lines can be cleaned up? I believe yes, but it changes the ZKZBF contract and should
+   be ruled, not assumed.
+
+## Fix directions (ranked)
+
+1. File MEDIUM-1 as a follow-up task (NOT a fix round on ZKZBF.1 — it is round-1 debt):
+   split set-refusals from unset-refusals in `task_property_key_refusal_reason`, and resolve
+   the `PARENT_TASK` UI field.
+2. LOW-1: delete `post_task_create`'s `contains_key("ID")` special case and the two unreachable
+   arms in `update_task_properties`.
+3. LOW-2: enforce `[A-Z][A-Z0-9_]*` in `validate_drawer_property_key_case` so the drawer and
+   ledger agree and the refusal is a 400.
+4. LOW-3: put the case rule in the `--extra` help and extend `main.rs:4139` to assert it;
+   have `manager.rs` call the core `is_uppercase_snake_key`.

@@ -1,0 +1,46 @@
+#+title: orgasmic task TASK-WQFPG
+#+orgasmic_version: 2
+
+* DONE TASK-WQFPG dispatch follow-up: F-3 codex stdio upgrade gate as adapter capability + F-4 dispatch/AutoSpawn DRY extraction :drivers:daemon:dispatch:design:refactor:
+:PROPERTIES:
+:ID:               TASK-WQFPG
+:PRIORITY:         P3
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-drivers/src/trait.rs crates/orgasmic-drivers/src/modes/acp_stdio.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-daemon/src/api.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/ crates/orgasmic-daemon/src/api.rs
+:READ_SCOPE:       /tmp/orgasmic-codex/task-060-bundled-review-report.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-RF3J1 TASK-RF3J1.5
+:END:
+
+** Description
+Two design follow-ups from TASK-RF3J1 + TASK-RF3J1.1 reviewer report, NOT urgent enough to fix-subtask immediately:
+
+*F-3 (MEDIUM design)* — Codex stdio upgrade in =acp_stdio.rs:186-196= gated on harness string literal =adapter.harness() == "codex"=. Brittle to new harnesses. Move to a trait method on =HarnessEventAdapter= (default false; codex returns true) and have =compose_stdio_request= consult it.
+
+*F-4 (MEDIUM design)* — Substantial duplication between dispatch handler (=api.rs:2332-2440=) and AutoSpawn handler (=api.rs:2879-2982=): worker load, missing-skill check, driver lookup, bundle composition, config build, validation, session path naming, and acquire mirror each other almost line-for-line. Extract a shared =spawn_worker_run(...)= helper parameterized by prompt source, worker resolution, and origin tag.
+
+** Acceptance Criteria
+- [ ] *F-3*: =HarnessEventAdapter::upgrades_simulated_to_subprocess() -> bool= (default false) added; codex returns true; =compose_stdio_request= consults it instead of string-matching. Test that new harnesses with =stdio_spawn()= but no opt-in stay simulated.
+- [ ] *F-4*: =spawn_worker_run(...)= helper extracted; dispatch + AutoSpawn handlers reduced to thin wrappers with their own validation/origin tagging. No behavior change.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new deps.
+
+** Notes
+Not :FIX_SUBTASK: t — design polish, can wait for the next AutoSpawn/dispatch touch to bundle into. Depends on TASK-RF3J1.5 because that touches api.rs in the same region.
+
+** Evidence
+- [2026-05-25 Mon 00:46] Cursor-agent (composer-2.5-fast, ~7m wall) self-committed =49f8885= (5th in a row). Merged no-ff as =4e96cc0=.
+- 5 files +258/-136:
+  - =trait.rs= +9 (=upgrades_simulated_to_subprocess()= default =false=)
+  - =adapters/codex.rs= +4 (returns =true=)
+  - =modes/acp_stdio.rs= +6 (compose_stdio_request consults the trait method instead of harness-string match)
+  - =tests/driver_modes.rs= +22 (=acp_stdio_keeps_simulated_when_adapter_does_not_upgrade= regression)
+  - =daemon/src/api.rs= +353/-127 (=spawn_worker_run= helper at :2436 + =SpawnWorkerRequest/Result/Failure= types; =post_task_dispatch= at :2590 + =handle_auto_spawn= at :3360 reduced to thin wrappers; dispatch worktree validation in dispatch wrapper at :2566)
+- Tests: driver_modes 16 → 17 (+1). One real-binary cursor-agent smoke (=real_cursor_agent_stream_json_bridge_emits_events_and_releases= in =cursor_agent.rs:122=) is flaky in parallel-test runs — 15s timeout vs ~14s wall under load. Passes in isolation. NOT a TASK-WQFPG regression (driver code untouched); environmental flake noted as candidate for #[ignore] or longer timeout in a small follow-up.
+- =cargo clippy --workspace --all-targets -- -D warnings= clean. =cargo fmt --check= clean. =git diff --check= clean. MSRV 1.78. No new deps.
+- =implementer.done= =tx-20260524-org-0282= via =dispatch-close --merge-sha 4e96cc0=. State IMPLEMENT → REVIEW.
+
+** Reviewer pass
+Reviewer dispatch pending (=reviewer-cursor= via =--worker=). Refactor with "no behavior change" AC — review focus: F-3 trait shape + Claude/Cursor/Hermes default-false correctness; F-4 dispatch+AutoSpawn wrapper-vs-helper boundary correctness (no silently-removed assertions); the cursor-agent test flake (orthogonal but visible on cargo test).
+

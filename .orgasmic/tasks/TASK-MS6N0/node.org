@@ -1,0 +1,10 @@
+#+title: orgasmic task TASK-MS6N0
+#+orgasmic_version: 2
+
+* DONE TASK-MS6N0 Unify daemon_lifecycle test env-lock with shared test_support (SJQ9V residual flake) :test:flake:concurrency:
+:PROPERTIES:
+:ID: TASK-MS6N0
+:END:
+
+daemon_lifecycle.rs test mod had a PRIVATE env_guard()/ScopedEnv (separate OnceLock<Mutex>) guarding process-global ORGASMIC_DAEMON_URL. A private mutex does not exclude daemon_client/doctor tests (which use the shared crate::test_support lock) that read the same var — so under cargo test --workspace, daemon_lifecycle::repair_refuses_external_daemon_url set/cleared ORGASMIC_DAEMON_URL concurrently with daemon_client::explicit_daemon_url_prefers_token_env_over_home_token, flaking it (read home-token, expected env-token). Fix: use shared crate::test_support::{env_guard, ScopedEnv}; delete the private duplicates. Surfaced during goal reached-when 3x-workspace verification (run 2/3 red, 1&3 green). Test-only. Manager verification-fix, committed directly on main (not dispatched — 6-line duplicate-lock removal; the 3x-workspace re-run is the proof).
+

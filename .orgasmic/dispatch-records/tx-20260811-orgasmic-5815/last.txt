@@ -1,0 +1,34 @@
+# Changed
+
+- Made a successful blocking-scan registration return its owning `BlockingScanCompletion` guard, then moved that guard through seed capture into the blocking scan. Added production-coordinator regressions for Project, Markers, and Artifacts unknown/unloaded seed failures and immediate same-target retries.
+- Split unscoped `/tx` coverage into genuine failures and coordinator-only delayed projects. The conditional delayed segment is percent-encoded and absent when empty, preserving the established header shape and bare-array response.
+- Rendered delayed activity coverage as its own non-dismissible, non-path-failure notification. Genuine failure dismissal keys normalize only sorted failed project ids, including reordered-id coverage. Board diagnostics are destructive only for `failed`; delayed and Ready-with-diagnostic states use non-destructive styling.
+- Omitted captured scan-timeout values containing control characters from systemd environment rendering while preserving ordinary raw captured values and daemon-side bounded validation.
+- Raised the late-waiter regression's scan timeout from 800 ms to 5 s without changing its one-scan/shared-publication assertion.
+
+# Verification Gates
+
+- PASS `cargo test -p orgasmic-daemon index:: --lib -- --test-threads=1`: 72 passed, 0 failed, 753 filtered; includes the production-path lease regression and late-waiter test.
+- PASS `cargo test -p orgasmic-daemon api::tests::tx_coverage_separates_delay_from_failure_and_preserves_empty_shape --lib -- --exact --test-threads=1`: 1 passed.
+- PASS `cargo test -p orgasmic-daemon api::tests::unscoped_tx_returns_home_and_later_project_rows_with_partial_coverage --lib -- --exact --test-threads=1`: 1 passed.
+- PASS `cargo test -p orgasmic-cli daemon_service`: 27 daemon-service tests passed, including the control-character renderer regression.
+- PASS focused UI tests: 3 files, 16 tests.
+- PASS `npm --prefix ui run typecheck`.
+- PASS `npm --prefix ui run build`; existing CSS optimizer and chunk-size warnings remained non-fatal.
+- PASS `npm --prefix ui test`: 42 files, 285 tests.
+- PASS `node /Users/aspirational/.agents/skills/impeccable/scripts/detect.mjs --json ui/src/components/BoardView.tsx ui/src/components/notifications/NotificationBell.tsx`: no findings.
+- PASS `cargo fmt --all -- --check` and `git diff --check`.
+- PASS `cargo clippy --workspace --all-targets -- -D warnings`.
+- PASS `cargo build`.
+- ENVIRONMENT-BLOCKED then resolved: the first focused UI test attempt found no `ui/node_modules` (`vitest: command not found`); `npm --prefix ui ci` installed the locked dependencies and every rerun passed.
+- NOT RUN by explicit scope: the broad daemon/aggregate suite. Parent-provided classification remains 1,897 passed, 3 known unrelated timing failures, 15 ignored, and 1 billed filtered.
+- No daemon/service install, reload, restart, or live mutation was performed.
+
+# Unmet Criteria
+
+- None.
+
+# Residual Risk
+
+- The aggregate classification is inherited from the dispatch brief rather than re-measured, as explicitly required.
+- `npm ci` reported 19 existing lockfile audit findings, and the UI build emitted existing CSS optimizer/chunk-size warnings. Neither was changed because dependency/CSS cleanup is outside this task.

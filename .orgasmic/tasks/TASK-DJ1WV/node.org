@@ -1,0 +1,71 @@
+#+title: orgasmic task TASK-DJ1WV
+#+orgasmic_version: 2
+
+* DONE TASK-DJ1WV Red classification is manual folklore; a runner wrapper must retry failures in isolation against a signed flake registry :testing:mechanism:
+:PROPERTIES:
+:ID: TASK-DJ1WV
+:PRIORITY: P2
+:END:
+
+Filed 2026-07-28. Five tests fail on full-suite runs under load and pass in
+isolation. Today every full run therefore ends with a MANUAL classification
+step: a human (or manager agent) rereads the failure list, recalls which names
+are "known", reruns them alone, and decides whether red means anything. That
+step was performed from memory at least four times today; once a failure was
+misattributed to the wrong owning task (the 5HBST/STWVB mislabel — one test
+name, two distinct failure modes) and was caught only by reading the panic
+text. Standing red that requires folklore to interpret trains everyone to
+discount red, which is exactly how the next TASK-Q07Y5 walks through a green
+gate.
+
+=== Mechanism
+
+1. A machine-readable flake registry in the repo (suggested:
+   `verify/flake-registry.toml` or similar): per entry the exact test name, the
+   owning open TASK id, the failure SIGNATURE (substring/regex of the panic —
+   this is what makes the 5HBST/STWVB confusion impossible: one test may carry
+   two entries with different signatures and different owners), the evidence
+   ("fails under load, green in isolation, N/M runs on <date>"), and the date
+   filed. An entry whose owning task is done must fail a check — a registry
+   that only grows is a graveyard.
+2. A test-runner wrapper (script or cargo alias the whole project adopts —
+   workers, manager, and the future TASK-S2KM0 CI lane) that: runs the suite,
+   reruns each failure IN ISOLATION, and emits a final verdict block that
+   separates `REAL:` failures from `FLAKE (green in isolation, owner
+   TASK-STWVB, signature matched):` ones. Exit code nonzero iff REAL is
+   nonempty OR a failure matched no registry entry.
+3. A failure that matches a registered NAME but not its SIGNATURE is REAL —
+   that is the mislabel detector.
+4. The wrapper must bake in the mandatory
+   `--skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+   default for the drivers suite so the safe invocation is the short one
+   (until TASK-MFJZ7 lands the in-test gate; then keep both).
+
+=== Seed entries (verify signatures before recording, do not copy blindly)
+
+`poll_direct_child_pid_prefers_worker_server_over_generic_sibling`,
+`recovery_reattaches_tmux_session_when_handle_exists`,
+`recovery_inventory_waits_for_atomic_claim_commit`,
+`git_resolves_quoted_included_origin_from_linked_worktree` — owner TASK-STWVB;
+`production_resume_native_fork_uses_pinned_claude_not_path_shim` — owner
+TASK-STWVB with the `resume_native_fork recover: 500` signature ONLY (its env
+race signature was fixed by TASK-5HBST and must NOT be registered).
+
+=== Acceptance
+
+- A full-suite run under induced load ends with the verdict block; the five
+  seeds classify as FLAKE with owners named; an injected genuine failure (any
+  deliberately broken test) classifies as REAL and the wrapper exits nonzero.
+- A failure matching a registered name with a different panic signature is
+  reported REAL — demonstrated.
+- Registry entries pointing at a done/cancelled task fail a check.
+- The wrapper never runs the billed test by default — demonstrated by output.
+
+=== Non-goals
+
+- Not fixing the flakes themselves (TASK-STWVB, TASK-QCG6J, TASK-Y9BY6 own
+  those). This task makes red mean something while they are being fixed.
+- Not the CI lane itself (TASK-S2KM0 consumes this — its work item 2, "decide
+  what to do about known-red tests before the lane goes required", is answered
+  by this registry).
+

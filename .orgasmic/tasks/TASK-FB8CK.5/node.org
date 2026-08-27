@@ -1,0 +1,54 @@
+#+title: orgasmic task TASK-FB8CK.5
+#+orgasmic_version: 2
+
+* DONE TASK-FB8CK.5 Dispatch hardening: overlap detection + spawn-fail rollback + bundled-close atomicity + :FIX_SUBTASK: heuristic :cli:dispatch:dogfood:
+:PROPERTIES:
+:ID:               TASK-FB8CK.5
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_MK2Q2
+:PRODUCES:         crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/tests/dispatch.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/src/main.rs crates/orgasmic-cli/tests/dispatch.rs shipped/schema/tx.org
+:READ_SCOPE:       /tmp/orgasmic-codex/task-045.3-review-report.md .orgasmic/sprint.org
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-FB8CK.3
+:END:
+
+** Description
+Bundled polish round closing the 3 reviewer findings on TASK-FB8CK.3 + the already-known =:PARENT_TASK:= heuristic gap. All four live in =crates/orgasmic-cli/src/manager.rs= + tests; landed as ONE coupled commit per the reviewer's explicit bundle recommendation.
+
+*F-1 (medium bug):* =build_dispatch_plan= overlap check only rejects when an open dispatch contains ALL requested tasks. Open =TASK-A= + new =dispatch --task TASK-A --task TASK-B= passes validation because =latest_open_dispatch_for_tasks= misses the partial overlap. Two live dispatches end up owning =TASK-A=. Fix: reject any open record whose =:TASK:= set INTERSECTS the requested task set. Regression test: open A, then attempt to dispatch A+B → must error with a clear "already open for TASK-A" message.
+
+*F-2 (medium correctness):* =cmd_dispatch= flips the heading lifecycle (e.g., BACKLOG → IMPLEMENT) BEFORE spawning codex. If =spawn_codex= fails, the code appends =manager.dispatch_aborted= + cleans up the worktree, but never restores the heading — leaving a durably-aborted task stuck at IMPLEMENT. Fix: capture pre-dispatch stages (per task in the bundle), and on spawn-fail rollback path restore them via the same heading-writer helpers. If the restore itself fails, append a warning to stderr but keep the abort tx as durable record.
+
+*F-3 (medium correctness):* =dispatch-close= for a bundled dispatch appends N close tx via N separate /tx requests. First-append-succeeds + later-append-fails leaves the tx log with a partial bundle close AND the worktree is already cleaned up (per gap 4's cleanup-before-tx ordering). =scan_open_dispatches= correctly requires all bundled tasks to mark the dispatch closed — so =dispatch-status= shows it as plain "open" with NO PARTIAL_CLOSED warning. Fix: pick one — (a) make bundled close appends a single daemon-side batch/transaction (write all N records inside ONE /tx POST or with a daemon-side multi-write API); OR (b) make =dispatch-close= idempotent in the partial case (subsequent calls only append the missing close tx for tasks that don't yet have one), AND surface =PARTIAL_CLOSED=<closed>/<total>= in =dispatch-status= output with the missing task ids. **Pick (b)** — idempotent + visible-in-status. Simpler than batch tx semantics, gives the manager an explicit retry path.
+
+*Heuristic gap (already-known, from TASK-FB8CK.3 close-dogfood):* =:PARENT_TASK:= conflates "reviewer-finding fix subtask" (skip review, one-round-of-fixes) with "polish/follow-up subtask" (normal cycle, gets reviewer pass). Reviewer recommends: add =:FIX_SUBTASK: t= boolean property to fix-subtask headings; the auto-transition keys off that property instead of =:PARENT_TASK:= presence. Manager sets =:FIX_SUBTASK: t= when filing reviewer-finding fixes; polish-subtasks (like TASK-FB8CK.3, TASK-FB8CK.5) omit the property.
+
+** Acceptance Criteria
+- [ ] *F-1:* =dispatch --task TASK-A --task TASK-B= when TASK-A has an open dispatch errors with a message naming TASK-A as the overlapping task. Integration test asserts the regression: open A, then attempt A+B, expect error.
+- [ ] *F-2:* Spawn-fail rollback restores the lifecycle stage of each bundled task to its pre-dispatch state. Integration test: stub the codex spawn to fail; assert heading is back at BACKLOG (or whatever the pre-state was) after =manager.dispatch_aborted= lands.
+- [ ] *F-3 (approach b):* If a bundled close partially completes (e.g., simulated tx-append failure on the 2nd of 2 tasks), re-running =dispatch-close --task TASK-A --task TASK-B --status done ...= with identical args completes the missing close tx without double-appending the first. =dispatch-status= surfaces =PARTIAL_CLOSED=1/2 missing=[TASK-B]= (or similar) for the dispatch.
+- [ ] *Heuristic:* Auto-transition uses =:FIX_SUBTASK: t= as the "fix-subtask → direct-to-DONE" signal. =:PARENT_TASK:= alone (without =:FIX_SUBTASK:=) → normal IMPLEMENT → REVIEW cycle. Add a schema doc to =shipped/schema/state-machine.org= or =shipped/manager/persona.org= naming when the manager should set =:FIX_SUBTASK: t=.
+- [ ] *Heuristic test:* fixture with =:PARENT_TASK: T --kind implementer --status done= without =:FIX_SUBTASK:= flips IMPLEMENT → REVIEW; same fixture with =:FIX_SUBTASK: t= flips IMPLEMENT → DONE.
+- [ ] =cargo test --workspace= + =cargo clippy --workspace --all-targets -- -D warnings= + =cargo fmt --check= + =git diff --check= all clean. MSRV 1.78 preserved. No new deps.
+
+** Notes
+Single coupled commit. Polish-subtask (not a reviewer-finding fix-subtask) — so it goes through the normal lifecycle: BACKLOG → IMPLEMENT (auto on dispatch) → REVIEW (auto on close, NEW heuristic; TASK-FB8CK.5 itself does NOT have =:FIX_SUBTASK: t=) → DONE (on reviewer pass clean). This is also a dogfood opportunity: TASK-FB8CK.5's own close will exercise the NEW heuristic it's shipping.
+
+Reviewer pass dispatches after merge per persona.org rule 2. Spot-check the overlap-detection error message, the spawn-fail restore path, the idempotent partial-close behavior, and the =:FIX_SUBTASK:= heuristic table-driven correctness.
+
+** Evidence
+- [2026-05-23 Sat 22:55] Shipped in single coupled commit =f8cb966= on =task-045.5-impl=; merged no-ff as =56c48bf=. Codex gpt-5.5 xhigh, ~10m57s wall, 176,211 tokens, session =019e565c-8a7e-7a00-8ebf-6d3a27303da6=. 5 files +583/-25 net.
+- **FULL-CYCLE DOGFOOD PASS**: TASK-FB8CK.5 lacks =:FIX_SUBTASK: t= (polish-subtask), so close auto-flipped IMPLEMENT → REVIEW correctly via the new heuristic this commit shipped. =:CLEANUP_STATUS: ok= recorded on =tx-20260523-org-0161=. First close in session needing zero manager hand-correction end-to-end.
+- *:FIX_SUBTASK: heuristic*: =manager.rs= reads =task.properties.get("FIX_SUBTASK")= true-ish parsing (=t=, =true=, =1=, case-insensitive). =:PARENT_TASK:= decoupled from lifecycle decisions.
+- *F-1 overlap*: =build_dispatch_plan= rejects intersecting open dispatches; error names overlapping task ids; regression test covered.
+- *F-2 spawn-fail rollback*: pre-dispatch =LifecycleStage= captured per task; on spawn-fail, =manager.dispatch_aborted= appended FIRST (durable), THEN headings restored.
+- *F-3 bundled-close partial recovery*: =dispatch-close= idempotent on partial-close; =cleanup_already_run= new =:CLEANUP_STATUS:= variant; =dispatch-status= surfaces =PARTIAL_CLOSED=M/N missing=[...]=; =--partial-closed= filter.
+- Schema/persona docs updated.
+- Verification: tests 198 → 201 (+3); clippy/fmt/diff-check clean; MSRV 1.78 preserved; no new deps.
+
+** Reviewer pass
+- [2026-05-23 Sat 23:00] Codex reviewer (gpt-5.5 xhigh, ~3m57s wall, 124,737 tokens, session =019e5669-2864-7dd0-9202-783e4f1009d2=) read =git diff 79254d6..56c48bf -- crates/orgasmic-cli/ shipped/=, CLAUDE.md, sprint Acceptance Criteria, implementer brief, prior TASK-FB8CK.3 reviewer report. Produced =/tmp/orgasmic-codex/task-045.5-review-report.md=. **Verdict: =clean=. ZERO FINDINGS** — first clean verdict of the session. All four scoped fixes satisfied: =:FIX_SUBTASK:= heuristic drives implementer-close semantics correctly; overlap validation uses intersection; spawn-fail rollback restores bundled lifecycle stages after recording abort; partial bundled closes are visible (=PARTIAL_CLOSED=M/N=) AND retryable without duplicate tx. Accepted-as-is: =:FIX_SUBTASK:= explicit-false-table not exhaustively tested (helper is true-ish-only by design); overlap regression covers main case (other intersection shapes follow from same branch); spawn-fail "restore one fails while another succeeds" not tested (restore loops independently per task); partial-close negative coverage on =--partial-closed= filter inferred from predicate logic.
+- =reviewer.done= =tx-20260523-org-0163= via =orgasmic manager dispatch-close --task TASK-FB8CK.5 --status done --property VERDICT=clean --property FINDINGS_TOTAL=0 --property RECOMMENDED_SUBTASKS=...=. **AUTO-TRANSITION DOGFOOD #6 PASS**: REVIEW → DONE fired correctly because VERDICT=clean + empty RECOMMENDED_SUBTASKS. Heading flipped to =* DONE TASK-FB8CK.5=. Worktree =/tmp/orgasmic-worktrees/task-045.5-review= removed; branch deleted. =:CLEANUP_STATUS: ok= on the close tx. Full close cycle handled zero hand-edits.
+

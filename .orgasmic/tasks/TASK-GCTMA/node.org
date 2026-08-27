@@ -1,0 +1,54 @@
+#+title: orgasmic task TASK-GCTMA
+#+orgasmic_version: 2
+
+* BACKLOG TASK-GCTMA manager dispatch should refuse or loudly flag a dirty worktree the worker will not see    :dispatch:cli:workflow:
+:PROPERTIES:
+:ID: TASK-GCTMA
+:IMPLEMENTS: TASK-TW3N3
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-cli/**, crates/orgasmic-daemon/**
+:END:
+
+** Description
+
+TASK-TW3N3 landed the PROSE half: =shipped/entry/router.org= now states that
+=manager dispatch --from= takes a ref, so uncommitted source is invisible to the
+worker, and that a workers frozen =.orgasmic= snapshot cannot see the daemons
+uncommitted writes either.
+
+Prose is necessary and not sufficient. TW3N3s own acceptance says "a dispatch
+that would silently review the wrong tree is either blocked or loudly flagged",
+and nothing enforces that today. The most expensive version of the mistake is a
+REVIEWER dispatched against uncommitted work: it returns a confident, clean
+verdict on code it never read, and the verdict looks exactly like a real one.
+
+** Work
+
+- On =orgasmic manager dispatch=, detect a dirty worktree in the project root and
+  name the uncommitted paths the worker will NOT see. Warn at minimum; consider
+  refusing for =--kind reviewer= specifically, since a review is the case where
+  the wrong answer is confidently wrong.
+- Decide the override shape (=--allow-dirty=?) and make the message say what to
+  do instead: commit to a branch and pass it as =--from=.
+- Cover BOTH halves in the check, not just source: uncommitted =.orgasmic/=
+  writes are the half that bites managers most often, because the daemon writes
+  there continuously and a manager who has not committed since the last CLI
+  mutation is dirty without having typed anything.
+
+** Evidence this is real
+
+Every one of the eight dispatches in the 2026-08-02/03 session required
+committing =.orgasmic= state first; the manager did it by habit, not because
+anything checked. The session also hit the adjacent trap twice — a continuation
+or second review round cannot use the derived branch name and fails with
+=a branch named ... already exists=, which is now documented in the same router
+section.
+
+** Acceptance
+
+- A dispatch from a dirty project root either refuses or emits a warning that
+  names the specific uncommitted paths.
+- A reviewer dispatch is treated at least as strictly as an implementer one.
+- The guard does not fire on paths the worker legitimately does not need.
+- A regression proves both the fire and the no-fire case.
+

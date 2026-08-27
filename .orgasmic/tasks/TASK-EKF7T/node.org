@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-EKF7T
+#+orgasmic_version: 2
+
+* BACKLOG TASK-EKF7T Whole-file session readers remain where lifecycle facts suffice: the completion watcher re-reads the growing transcript on every poll
+:PROPERTIES:
+:ID: TASK-EKF7T
+:PRIORITY: P2
+:END:
+
+From TASK-7QM8M (2026-07-29), the boot path's siblings: (1) spawn_dispatch_completion_watcher (api.rs:5875 at its HEAD) calls read_session_file on EVERY POLL while waiting for release — the whole growing transcript, repeatedly; strictly worse than the boot path 7QM8M fixed, which paid it once. It needs only terminal lifecycle events (the scanner's tail window). (2) stage_outcome_from_session (api.rs:6394) reads whole for a stage's terminal outcome — one read, lifecycle-only consumption, same substitution. (3) The strictness decision 7QM8M surfaced: a live run with one torn transcript line is now boot-reattachable and inventory-visible but still UNREADABLE to these whole-file callers (read_session_file is all-or-nothing) — decide whether that strictness is right for any caller that only wants lifecycle facts, and state it where the callers live. Apply 7QM8M's scan_session_lifecycle substitution with its final_envelope_retained discipline; measure the watcher's per-poll cost before/after on a large live transcript.
+

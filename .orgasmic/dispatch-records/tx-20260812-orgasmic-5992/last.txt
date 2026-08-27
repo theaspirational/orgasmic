@@ -1,0 +1,325 @@
+# TASK-GPY3H (supervisor probe deadline + rmux test isolation) — independent review
+
+Reviewed `7ed905b` (the implementation commit) inside the merged range
+`29f6656..51eb648` at worktree HEAD `51eb648`, clean tree.
+
+## Verdict
+
+CHANGES REQUESTED — narrow, non-blocking for the code itself.
+
+The production change is safe and correctly scoped, the rmux test isolation is
+sound, and no flake-registry entry was added. But **acceptance 3 is not
+satisfied**: the change moves the spawn-latency dependency off the *child*
+deadline and onto the *probe/sweep* wall bound, and that new bound is neither
+stated in the source nor tested — the only assertion that measured it was
+deleted in the same commit. Acceptance 1 is answered by citing the task
+record's existing measurements, not by a fresh capture, and no post-fix
+measurement under the degraded-host conditions was taken.
+
+Recommend: keep the change, require the bound to be stated and tested (P1)
+before the family is treated as closed.
+
+## Findings
+
+### P1 · MEDIUM · correctness/test — the probe wall bound became `spawn + deadline`, is undocumented, and the assertion that measured it was deleted in the same commit
+
+Anchors: `crates/orgasmic-daemon/src/supervisor.rs:5496-5501` (the move),
+`:5450-5452` (now-stale doc claim), `:11072-11075` (new rationale),
+`:11166-11180` (replacement assertions), `:1604-1610` (outer timeout).
+
+1. **The bound changed direction.** Before: `probe_command_stdout` returned in
+   `max(spawn, PROBE_CHILD_DEADLINE)` — spawn latency was inside the budget, so
+   a slow spawn produced an *early* return. After: it returns in
+   `spawn + PROBE_CHILD_DEADLINE`. Under exactly the warm-host spawn latency
+   this task exists to handle, the function's wall time strictly increases (by
+   up to a full `PROBE_CHILD_DEADLINE`).
+
+2. **That matters at the caller.** `observe_work_evidence`
+   (`supervisor.rs:1604-1610`) caps only the *await* at `WORK_PROBE_TIMEOUT`
+   (5 s); `spawn_blocking` is not cancellable. Once `spawn + 2 s > 5 s`, the
+   blocking-pool thread and its live child outlive the sweep — the leak shape
+   TASK-JQ8AV.1 (owned probe children) closed, now reachable through spawn
+   latency rather than through a missing deadline. It is bounded (spawn is
+   finite) rather than unbounded, so this is a weakening, not a reversal.
+
+3. **The doc now overstates.** `supervisor.rs:5450-5452` still reads "well
+   inside the 5 s the supervisor is prepared to wait for the whole probe". That
+   is now conditional on spawn latency. Separately, one `observe` can run up to
+   three sequential deadlined children — `work_probe_root_pid`/`pane_pid`
+   (`:5293`), `process_cpu_table` (`:5296`), `pane_content` (`:5319`) — so the
+   aggregate worst case is `3 × (spawn + 2 s)`. (The `3 × 2 s = 6 s` aggregate
+   already exceeded 5 s before this change; the change makes it worse and the
+   doc still does not say so.)
+
+4. **The replacement assertions do not cover the deleted one.** The removed
+   `elapsed < WORK_PROBE_TIMEOUT` was the only check that the child deadline
+   fired *before* the outer timeout. Of the three new assertions:
+   - `!run_is_live(...)` (`:11166`) and
+     `release_reason(...) == STALL_TIMEOUT_REASON` (`:11170`) are both satisfied
+     by the outer `WORK_PROBE_TIMEOUT` path alone — `observe_work_evidence`
+     returns `Unknown` on timeout (`:1615-1617`) and `Unknown` yields the bare
+     reason (`:3887`, `:3904-3910`). They pass with an *unbounded* probe child.
+   - `wait_for_pid_to_disappear(hung_child, 5s)` (`:11176`) is the one with
+     teeth, and it starts only *after* the 5 s await has already returned. It
+     therefore tolerates a child deadline of roughly 10 s. Raising
+     `PROBE_CHILD_DEADLINE` above `WORK_PROBE_TIMEOUT` — breaking the invariant
+     `:5441-5448` is written to protect — now fails no test.
+
+   So: a test that can pass when the bug is restored does exist, but only for
+   the *tightness* half of the invariant. Full removal of the child deadline is
+   still caught by the pid assertion. I verified the mechanism by reading the
+   release path, not by mutating source (read-only role).
+
+5. **Acceptance 3 reads:** "the probe/sweep deadlines must not depend on child
+   spawn latency under load, or must state their bound and be tested at it."
+   The *child* deadline no longer does — that half is met and is a genuine
+   improvement. The *probe/sweep* bound now does, and it is neither stated nor
+   tested.
+
+Not HIGH because production behaviour stays fail-closed and safe: the outer
+timeout still bounds the sweep, `WorkEvidence::Unknown` still cannot rescue a
+run, and the child is still process-group-killed and reaped. The cost is a
+longer-lived blocking thread plus child under load, and lost regression
+coverage.
+
+### P1 · MEDIUM · test — the two focused tests still race the stub's pidfile inside a 400 ms budget, and the fix was never measured under the conditions that produce the flake
+
+Anchors: `supervisor.rs:10968` and `:11031` (`let deadline = Duration::from_millis(400)`),
+`:10989` and `:11053` (the `the stub recorded its \`sleep\` pid` expect —
+verbatim one of the two panics the task record names).
+
+The panic fires when `probe_command_stdout` kills `/bin/sh` before it reaches
+`sleep 120 & echo $! > <pidfile>`. Moving the deadline past `spawn` removes the
+dominant term — Rust's unix `Command::spawn` synchronises on the child's `exec`,
+so the Gatekeeper/`syspolicyd` cost of exec'ing `/bin/sh` was inside the old
+400 ms budget and is now outside it. The residual window remains: the child
+still has only 400 ms *after* spawn returns to finish dyld startup, fork, and
+write the pidfile.
+
+This is cheap to close and costs no strictness: the elapsed assertions already
+allow `deadline + 3 s` (`:10986`, `:11045`), so raising the test-local deadline
+to ~1-2 s removes the window without weakening anything the tests prove.
+
+The implementer's own residual-risk note (`last.txt:32`) confirms the degraded
+host state was not recreated: "it did not deliberately recreate the two-hour
+syspolicyd degradation or run the full daemon suite." So the flake is not shown
+to be gone — only its largest term removed. Combined with P1 above, the
+`the sweep must be bounded` panic was not fixed, it was deleted, and the
+underlying quantity it measured got larger.
+
+### P2 · LOW · test/design — `recovery_reattaches_rmux_session_when_handle_exists` hand-rolls an existing helper
+
+`crates/orgasmic-daemon/src/api.rs:32936-32941` re-implements
+`claim_owned_rmux_endpoint` (`api.rs:36783` unix / `:36795` non-unix), which
+already encapsulates exactly this sequence and is used at 8 sites
+(`:37127`, `:37192`, `:37258`, `:37363`, `:37422`, `:37632`, `:37793`, `:37932`).
+Both live in the same `tests` module — I scanned lines 29000-38000 for an
+intervening `mod` and found none, so the helper is directly reachable.
+
+The hand-rolled version is semantically equivalent today, but it re-introduces
+four `#[cfg(unix)]` attributes and its own non-unix arm that the helper already
+owns, which is where drift starts. The helper's doc (`:36778-36780`) even states
+the calling contract this test follows.
+
+### P2 · LOW · test — the owned-server pin is taken before the availability skip, inverting the family's guard order
+
+`api.rs:32938-32939` calls `own_rmux_server_for_tests()` unconditionally;
+`skip_mux_mode_if_unavailable` is only reached inside the shared helper
+(`api.rs:32848`). Every other member of this family skips first:
+`supervisor.rs:11927-11933`, `:12335-12340`, `:16141-16146` all run
+`skip_test_if_missing` before the pin. On a host without rmux this now creates
+and pins a socket root before skipping. Harmless today —
+`OwnedRmuxServer::start_keepalive` (`rmux.rs:1109-1113`) returns early when the
+binary is absent — but it is a gratuitous divergence from the pattern.
+
+### P2 · LOW · process — the `implementer.reported` tx points at a report path that does not exist
+
+`tx-20260812-orgasmic-5987` (`.orgasmic/tx/2026-08.org:33253`) records
+`:REPORT_PATH: .orgasmic/dispatch-records/tx-20260812-orgasmic-5985/last.txt`.
+That directory does not exist; the highest record present is
+`tx-20260812-orgasmic-5969`. The report survives only at
+`.orgasmic/tmp/dispatch/manager-brief-TASK-GPY3H/manager-brief-TASK-GPY3H-7927ad9af07b4c09a4865d6fc773fed5-last.txt`,
+a temp path. The answers to acceptance 1 and 4 exist *only* there. Harness blind
+spot, not the implementer's code.
+
+## What passed independent verification (no findings)
+
+- **Kill/reap/stdio semantics are unchanged.** Only the `expires_at` binding
+  moved across the `spawn` line (`supervisor.rs:5496-5501`). Process-group
+  creation (`:5491-5495`), `kill_probe_child` + `child.wait()` (`:5523-5524`,
+  `:5535-5536`), the shared-absolute-deadline drain (`:5534`,
+  `drain_finished_by` `:5550-5563`) and the `status.success()` gate (`:5541`)
+  are byte-identical. The implementer's claim on this point holds.
+
+- **The two new hung-mux assertions are real, new coverage.**
+  `release_reason == STALL_TIMEOUT_REASON` genuinely discriminates `Unknown`
+  from the alternatives: `Idle` appends `": no work evidence for {N}s; {detail}"`
+  (`supervisor.rs:3904-3910`), and `Working` returns without releasing at all
+  (`:3877-3884`). So "remained Unknown, added no false work credit" is proven,
+  and the old test did not prove it. This is a genuine gain alongside the P1
+  loss.
+
+- **rmux test isolation is sound and cannot reach the default/shared server
+  while the test holds its locks.**
+  - Lock order is flock-then-environment (`api.rs:32936-32937`), matching the
+    workspace rule documented at `api.rs:36778-36780` and followed at
+    `supervisor.rs:11926-11928`, `:12082-12083`, `:16141-16142`. I scanned
+    `supervisor.rs` and `api.rs` for the inverse order (env lock acquired before
+    `live_session_guard()` in the same function) and found none, so no
+    deadlock edge is introduced.
+  - `owns_runs_on` (`rmux.rs:680-684`) is registered *before* any session is
+    created, so a panic anywhere inside the helper still reaps; it addresses the
+    owned server by explicit `UnixSocket` endpoint (`rmux.rs:1057-1059`), not by
+    "default", so a lost pin cannot redirect the reap at the shared server.
+  - `pin_process_environment` (`rmux.rs:1097-1104`) re-applies `RMUX_TMPDIR` and
+    clears `RMUX`/`RMUX_PANE`/`TMUX`/`TMUX_PANE` on *every* call, and
+    `start_detached_session`'s rmux arm (`api.rs:29316-29330`) spawns with no
+    `-S`, so the fixture inherits the pin. The closing assertion
+    (`api.rs:32950-32953`) then reads the session back off the owned endpoint.
+  - Fixture lifetime is correct: `MuxSessionGuard::Rmux` is a unit
+    (`api.rs:29340`, `:29351`), so the helper returning does not tear the
+    session down, and the `server.session_names()` assertion reads a session
+    that is still live. Teardown is the `LiveSessionGuard` drop
+    (`rmux.rs:725-747`), which reaps before unlocking.
+  - Non-unix compiles: `session_name` is consumed by `let _ = session_name;`
+    (`api.rs:32955-32956`); the `#[cfg(unix)]` attributes sit on statements,
+    which is legal.
+  - The tmux twin's lack of an env lock is not a new hazard: both tests take
+    `live_session_guard()`, which is a blocking flock and therefore serialises
+    them against each other and against
+    `a_hung_mux_binary_...` (which mutates process `PATH` at
+    `supervisor.rs:11121-11124`).
+
+- **TASK-T7KSH was not folded in.** `inspect_rmux_binary`
+  (`crates/orgasmic-drivers/src/modes/rmux.rs:237-241`) still runs
+  `StdCommand::new(path).arg("-V").output()` with no deadline, and
+  `probe_rmux_binary` (`:211-224`) caches nothing, so it re-execs per probe.
+  `7ed905b` does not touch that file. Scope is clean.
+  Note (pre-existing, not this change): the hung-mux test comment at
+  `supervisor.rs:11093` says "see the residual risk note on that call" — no such
+  note exists in `supervisor.rs` or `rmux.rs`. Introduced by `24df77a`
+  (TASK-JQ8AV.1); dangling cross-reference only.
+
+- **No flake exception added.** `git diff --name-only 29f6656..51eb648 -- verify/`
+  is empty; `verify/flake-registry.toml` last changed at `a8edf93`, unrelated.
+  Brief constraint honored, and the round-six ruling (no unowned registry entry)
+  is respected — a production fix was chosen instead.
+
+- **Scope note for the manager.** The reviewed range `29f6656..51eb648` also
+  contains ~216 lines of unrelated `crates/orgasmic-cli/src/manager.rs` churn
+  from `8a031ca` / `1152ba9` (revert) / `957f295`, none of it TASK-GPY3H.
+  `git diff 7ed905b..51eb648 -- crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs`
+  is empty, so the merge added nothing to this task's files.
+
+## Acceptance criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Capture exact panic signatures and load conditions | **Met by citation only.** `last.txt:7` restates the task record's TASK-2QK4P.1.1.1.1.1 evidence (`the stub recorded its \`sleep\` pid`, `the sweep must be bounded`, syspolicyd 0.36→1.46, rested control at 0.1070/load 1.69). Both signatures do exist verbatim in source (`supervisor.rs:10989`, `:11053`; the second was the assertion this commit deleted). No fresh measurement. |
+| 2 | Decide: fix vs. time-boxed registry entries | **Met.** Production fix chosen; registry untouched; no unowned entry. |
+| 3 | Deadlines must not depend on spawn latency, or state their bound and be tested at it | **Not met.** See P1. Child deadline: fixed. Probe/sweep bound: now spawn-dependent, unstated, untested. |
+| 4 | Say which of TASK-4BBA6 / TASK-P4XKT lands first | **Met.** `last.txt:8` rules TASK-4BBA6 (syspolicyd watchdog in `run-tests.sh`) before TASK-P4XKT (repeat passing tests). I concur — repetition deliberately raises execution load, so the watchdog must exist to attribute the resulting reds. I would add: given P1, this family should not be treated as closed before P4XKT starts repeating it, or P4XKT will amplify an untested bound. |
+
+## Open Questions
+
+1. Was `PROBE_CHILD_DEADLINE` deliberately left at 2 s given that one `observe`
+   can chain three of them (`3 × (spawn + 2 s)`) against a 5 s
+   `WORK_PROBE_TIMEOUT`? If the intended contract is "one probe fits inside the
+   supervisor's wait", the three call sites need to share one budget, not each
+   get a fresh one.
+2. Should the deleted sweep-bound assertion be reinstated with a threshold
+   derived from `PROBE_CHILD_DEADLINE` (plus a stated spawn allowance) rather
+   than from `WORK_PROBE_TIMEOUT`? That keeps the invariant testable without the
+   host sensitivity that made the old form flake.
+3. The tmux twin `api::tests::recovery_reattaches_tmux_session_when_handle_exists`
+   is a *registered* flake owned by TASK-X0PV1 (`verify/flake-registry.toml:48`
+   signature `tmux test session should start`, `:64` signature `left: "interrupted"`,
+   the latter attributed to "cross-test contention over shared tmux state").
+   The rmux arm of the same shared helper just got owned-server isolation; the
+   same technique via `own_tmux_server_for_tests` (TASK-0RCRY) would plausibly
+   close both X0PV1 entries. Out of scope here — flagging so the manager can
+   route it rather than lose it.
+
+## Verification Notes
+
+All commands run in the review worktree
+`/Users/aspirational/.orgasmic/worktrees/orgasmic/TASK-GPY3H-review` at
+`51eb648`, clean tree. Read-only throughout: no file edited, nothing committed,
+installed, formatted, or restarted. No process was killed.
+
+**Focused tests, serially — PASS.** Log `/tmp/gpy3h-review-tests.log`, exit
+status file `/tmp/gpy3h-review-tests.status` (`exit=0`), owning PID 80438.
+
+```
+cargo test -p orgasmic-daemon --lib -- --test-threads=1 --exact \
+  supervisor::tests::a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline \
+  supervisor::tests::a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed \
+  supervisor::tests::a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport \
+  api::tests::recovery_reattaches_rmux_session_when_handle_exists --nocapture
+```
+```
+running 4 tests
+test api::tests::recovery_reattaches_rmux_session_when_handle_exists ... ok
+test supervisor::tests::a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport ... ok
+test supervisor::tests::a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed ... ok
+test supervisor::tests::a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 828 filtered out; finished in 5.53s
+orgasmic-fixture-exec-stats: fresh_first_execs=1 shared_link_reuses=2
+```
+
+**Formatter — PASS.** `cargo fmt --all -- --check` → exit 0
+(`/tmp/gpy3h-review-lint.log:2`).
+
+**Targeted daemon clippy — PASS.**
+`cargo clippy -p orgasmic-daemon --lib --all-targets --all-features -- -D warnings`
+→ exit 0 (`/tmp/gpy3h-review-lint.log:173`), no warnings emitted.
+
+**Host conditions.** This host was calm: the whole 4-test run finished in 5.53 s,
+which puts each hung-mux arm's sweep near the ~2 s `PROBE_CHILD_DEADLINE` rather
+than near the 5 s `WORK_PROBE_TIMEOUT`. That is a green measurement of the
+*rested* case only. It is the same class of evidence the task record already
+faults ("pass in isolation every time"), so it does **not** establish that the
+warm-host family is fixed. Classification of the original failures as
+environment-amplified (not regression) is confirmed by the task record's own
+controls; whether this change removes them under load is **unverified** and is
+the main residual risk.
+
+**Not run, and why.** No full gate suite (`scripts/run-tests.sh`) — the brief
+scoped verification to the four focused tests, formatter, and targeted clippy,
+and a full run on this host would reproduce neither the warm-host state nor a
+useful control. No degraded-host reproduction: recreating a two-hour
+`syspolicyd` climb was outside this dispatch's window, and it is the single
+piece of evidence that would close acceptance 3 empirically.
+
+**Static-analysis method for P1.** The claim that the two new release assertions
+survive a restored bug was established by reading the release path
+(`supervisor.rs:1604-1617` → `:3834-3891` → `:3904-3910`), not by reverting
+source — the reviewer role is read-only. The timing tolerance (~10 s) follows
+from `wait_for_pid_to_disappear` (`:10927-10937`) starting after the 5 s await
+returns.
+
+## Fix Directions
+
+1. **P1, pick one** (in preference order):
+   a. Give one `observe` a single shared budget: thread a deadline down from
+      `WORK_PROBE_TIMEOUT` so `pane_pid` + `process_cpu_table` + `pane_content`
+      draw on one clock instead of three fresh ones. This satisfies acceptance 3
+      outright — the sweep stops depending on spawn latency at all.
+   b. Or state the bound and test it: update `supervisor.rs:5450-5452` to say the
+      per-call bound is `spawn + PROBE_CHILD_DEADLINE` and the aggregate is
+      `3 × that`, add a compile-time or unit assertion pinning
+      `PROBE_CHILD_DEADLINE < WORK_PROBE_TIMEOUT`, and reinstate a sweep
+      assertion keyed to `PROBE_CHILD_DEADLINE` (plus an explicit spawn
+      allowance) instead of to `WORK_PROBE_TIMEOUT`.
+2. **P1 (tests)**: raise the two test-local deadlines at `supervisor.rs:10968`
+   and `:11031` from 400 ms to ~1-2 s. The `deadline + 3 s` elapsed assertions
+   absorb it with no loss of strictness, and it closes the remaining pidfile
+   race that produced `the stub recorded its \`sleep\` pid`.
+3. **P2**: replace `api.rs:32936-32941` with
+   `let _rmux = claim_owned_rmux_endpoint(&live_guard).await;` and drop the four
+   `#[cfg(unix)]` attributes; move the availability skip ahead of the pin to
+   match `supervisor.rs:11927-11933`.
+4. **P2**: fix the `implementer.reported` `REPORT_PATH` so the durable record
+   exists where the tx says it does, or copy the report out of
+   `.orgasmic/tmp/` before it is swept.

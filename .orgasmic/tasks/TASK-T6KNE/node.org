@@ -1,0 +1,36 @@
+#+title: orgasmic task TASK-T6KNE
+#+orgasmic_version: 2
+
+* DONE TASK-T6KNE Advisory source-code marker indexing :graph:arch_MPAQT:
+:PROPERTIES:
+:ID:               TASK-T6KNE
+:PRIORITY:         P2
+:WORKER:   implementer-codex
+:IMPLEMENTS:       arch_MPAQT
+:PRODUCES:         crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org docs/adr/*.org crates/** shipped/conventions/code-markers.org
+:TEST_CMD:         cargo test -p orgasmic-daemon
+:DEPENDS_ON:       TASK-M1MZ4 TASK-ZPNQA
+:END:
+
+** Description
+arch_MPAQT interface promises advisory source-code markers are "indexed as hints". The =code-markers= convention specifies the format (=// orgasmic:<node-id>= at file top, group level, etc.). Today there's no marker index. Walk source files at rebuild, regex-match marker comments, build a per-node-id → file-list map, and expose via =GET /graph/markers/:node_id=.
+
+** Acceptance Criteria
+- [X] =Index::rebuild= scans project-root source files (Rust + TypeScript + shell + Org) for =// orgasmic:<id>=, =// orgasmic:<id>,<id2>=, and the shell/Python equivalent (=# orgasmic:<id>=).
+- [X] Index exposes =markers: HashMap<NodeId, Vec<PathBuf>>= and surfaces it through =GET /graph/markers/:node_id= returning files referencing the node.
+- [X] New tests cover scanning, multi-id markers, and the API route.
+- [X] cargo test/clippy/fmt/diff clean; MSRV 1.78.
+
+** Evidence
+- [2026-05-22 Fri 12:42] Codex implementer (gpt-5.5) used std-only recursive =read_dir= stack plus substring parsing for =orgasmic:= — no new workspace deps (regex/walkdir/ignore deliberately avoided).
+- [2026-05-22 Fri 12:42] Project root canonicalized once at scan start (CLAUDE.md =/var/= vs =/private/var/= pitfall). Scanned extensions: =.rs=, =.ts=, =.tsx=, =.js=, =.jsx=, =.py=, =.sh=, =.bash=, =.zsh=, =.yaml=, =.yml=, =.toml=. Skipped: =.git=, =target=, =node_modules=, =.orgasmic/snapshots=, =dist=, =build=, plus top-level =.gitignore= directory entries (best-effort). =.org= scanning deferred for v0.0.1 to avoid Notes-section false positives.
+- [2026-05-22 Fri 12:42] Data model: =IndexSnapshot.projects[*].markers: BTreeMap<String, Vec<PathBuf>>= keyed by normalized node id. Multi-id lines are split; =:opt_*= suffixes are stripped from the index key (option is a hint, not part of node identity); paths are project-relative and sorted.
+- [2026-05-22 Fri 12:42] New route: protected =GET /graph/markers/:node_id= → ={"node_id": "...", "files": [...]}=. Aggregates across all projects in the index. Returns 200 with empty =files= for unknown/unmarked ids (NOT 404 — empty is a valid hint).
+- [2026-05-22 Fri 12:42] New tests in =index.rs= and =api.rs=: =refresh_project_indexes_single_id_marker=, =rebuild_indexes_multi_id_marker=, =rebuild_strips_marker_option_suffix=, =marker_scan_skips_hardcoded_directories=, =marker_files_for_unknown_node_is_empty=, =graph_markers_route_returns_seeded_marker_files=.
+- [2026-05-22 Fri 12:42] Verification (from worktree + re-verified on main): cargo test --workspace 160/160 pass (was 153 post-TASK-ZPNQA; +6 from this task, +1 from TASK-XBT65); clippy --workspace --all-targets -D warnings clean; fmt --check clean; git diff --check clean. MSRV 1.78 preserved.
+- [2026-05-22 Fri 12:42] Branch =task-035-marker-indexing= (commit =b1fb586=) merged to =main= as =fc56a10=.
+
+** Worklog
+

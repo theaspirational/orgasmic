@@ -1,0 +1,56 @@
+#+title: orgasmic task TASK-BP5VB
+#+orgasmic_version: 2
+
+* DONE TASK-BP5VB Runtime-first install/init: one canonical path, retire agent hand-edit fallbacks (dec_ZQJPA doctrine half) :install:onboarding:skill:conventions:scaffold:
+:PROPERTIES:
+:ID:               TASK-BP5VB
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:WRITE_SCOPE:      shipped/skills/orgasmic/ shipped/prompt-studio/ .orgasmic/entry.org .orgasmic/conventions/ crates/orgasmic-core/src/projects.rs crates/orgasmic-core/tests/
+:READ_SCOPE:       shipped/ .orgasmic/conventions/ crates/orgasmic-core/src/ crates/orgasmic-cli/src/
+:TEST_CMD:         cargo test -p orgasmic-core
+:DEPENDS_ON:       TASK-G9KCN TASK-NP5H6
+:END:
+
+** Description
+dec_ZQJPA part (b): install/init converges on one runtime-first path and the
+fail-open agent-editing fallbacks are retired. Inventory of surfaces to change
+(audited 2026-06-12):
+
+- =entry.org= Write rules (+ scaffold mirror =shipped/skills/orgasmic/scaffold/
+  entry.org= ~lines 48-56): "If it fails: match existing Org structure" →
+  fail-fast: install/start the runtime, do not edit. Update the project map
+  line when TASK-2C3WZ renames task files.
+- =conventions/no-skill-installed.org= (~lines 38-43): direct goal/handoff
+  write grant → becomes an install pointer (read-only orientation allowed).
+- =conventions/orgasmic-tooling.org=: "Other =.orgasmic/= files: direct-edit
+  unless a command says otherwise" → CLI-only for agents.
+- =shipped/skills/orgasmic/references/init.md= (~5-8) + scaffold
+  =tasks/sprint.org= bootstrap heading (~33-36): "no daemon needed" bootstrap →
+  init installs/starts the runtime first; bootstrap edits run through it.
+- =references/recall-resume.md= "When the bootstrap writes" (~106-117): gate on
+  the runtime check.
+- =conventions/manager-implementer.org= (~line 7): direct-edit clause scoped to
+  source code only, org state stays daemon-mediated.
+- =references/install.md= wizard: simplify to the one canonical order —
+  install CLI+daemon → init → daemon-backed bootstrap; prune choice branches
+  that exist only to support runtime-less editing.
+
+DEPENDS_ON the write-surface tasks: prohibiting hand-edits before the verbs
+exist would deadlock state maintenance (dec_ZQJPA phasing clause).
+
+** Acceptance Criteria
+- [ ] No instruction surface (entry.org, conventions/, skill references,
+  scaffold mirrors, prompt-studio specs) permits an agent to hand-edit
+  =.orgasmic/*.org=; the missing-runtime route is install instructions.
+- [ ] =/orgasmic init= produces a project whose bootstrap task is executed
+  against a running daemon; the scaffold bootstrap heading no longer claims
+  daemon-free operation.
+- [ ] =scaffold_manifest_matches_shipped_directory= and scaffold-parity tests
+  green; compiled prompt bundles stay within dec_MX9RM token budgets.
+- [ ] Stranger-smoke flow doc (install → init → dispatch → close) matches the
+  new single path.
+
+** Evidence
+(populated at task close)
+

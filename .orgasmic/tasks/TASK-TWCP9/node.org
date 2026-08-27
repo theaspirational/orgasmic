@@ -1,0 +1,36 @@
+#+title: orgasmic task TASK-TWCP9
+#+orgasmic_version: 2
+
+* BACKLOG TASK-TWCP9 DECISION: keep the live ledger out of the worked tree — sibling dir / ledger branch / own worktree; workers never carry .orgasmic churn    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-TWCP9
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 7. The daemon writes `.orgasmic/tx/*.org` and `.orgasmic/tasks/*.org` into the main checkout every few minutes. Costs: `git checkout <branch>` refused until unauthored churn is committed; every worker branch carries ledger churn that must be stripped at merge; a reviewer cannot tell its writes from the daemon's.
+** Expected
+- Live ledger not in the tracked tree being worked on (sibling directory, dedicated branch, or its own worktree); `orgasmic ledger commit` as an explicit atomic action.
+- Worker worktrees do not contain the ledger (sparse checkout or .git/info/exclude).
+** Note
+This is a decision task (grill first). Overlaps the dec_E01MC node-kernel redesign (TASK-AP971 chain) — the per-node dir layout should be decided with ledger placement in mind.
+** Decision (owner, 2026-08-26 — FINAL)
+Orphan `orgasmic` ledger branch in the same repo (not a sibling dir, not a separate repo, not a central coordinator), shipped together with the dec_E01MC chain (TASK-AP971 implementation chain), not before it.
+- Branch shares no history with main; daemon keeps it checked out in a hidden worktree (e.g. ~/.orgasmic/<project>/ledger/); `.orgasmic/` leaves the main tree entirely; worker worktrees never contain the ledger. One combined cutover: the AP971.9 migrator gains a target-branch mode — never migrate twice.
+- One pen PER MACHINE, not one pen total. Composition with the AP971 per-node schema (naming: "node" stays the AP971 entity; machines are "machines"):
+  - Branch root keeps the AP971 layout unchanged (node dirs, journals, views).
+  - Node dirs are claim-gated: only the machine holding a node's claim writes that node's dir → node dirs stay single-writer, zero schema change.
+  - Project tx/ files become per-machine (`machines/<machine-id>/tx/YYYY-MM.org`); the activity projection is already file-order independent and folds the union.
+  - Claims live in per-machine append-only logs (`machines/<machine-id>/claims.org`).
+  - All paths a machine writes are disjoint from every other machine's → merges cannot conflict; push race = pull --rebase + retry.
+- Mutable shared files are the thing being removed; views (backlog/board) are daemon-written projections, gitignored, never merged (AP971.8). No interim single-machine version with mutable shared files.
+- Sync = the existing git remote (pull cadence ~30-60s, coalesced commits). Live cross-machine agent messaging is daemon-to-daemon (existing LAN/tunnel), advisory only, with every message also appended to the ledger as the durable record.
+- Task claims across machines: claim event (with advisory :WRITE_SCOPE: glob so overlap is visible; enforcement stays at review/merge) + first push wins; loser backs off on next pull; tie-break when both events are visible: earliest claim timestamp, then machine id. Double-claims surfaced in views, not prevented.
+- Event hygiene (from coordinator-proposal review, 2026-08-26): every event carries a globally unique id + actor + machine-id + timestamp; ingest deduplicates retries; rejected/undeliverable events are preserved for inspection, never silently dropped.
+- Rejected alternative: central coordinator with leases (server = SPOF, standing ops cost, breaks local-first; its offline mode reintroduces lease expiry/clock skew/generations). Revisit only if double-claim waste ever becomes real; a coordinator can layer on top of this ledger without changing the format.
+- Upgrade path if push contention on the single branch ever hurts: per-machine refs (refs/orgasmic/<machine-id>, git-bug style) kill push races entirely; v1 stays one branch + one hidden worktree.
+- Prior art: git-bug / git-appraise (per-writer append-only records in git, merged as a union).
+- Watch-outs: exclude the `orgasmic` branch from CI triggers; periodic checkpoint/squash so tiny commits don't bloat the repo.
+** Implementation chain (filed 2026-08-26)
+Extends the AP971 chain as items 12-15: TASK-LBRX7 (branch extraction ← SRBGS) → TASK-MSYN4 (machine identity + sync ← LBRX7, EPG6H) → TASK-CLM6W (claims + multi-machine fold ← MSYN4, 8AV8B) → TASK-D2DM3 (daemon-to-daemon live messaging ← CLM6W, P2/deferred).
+

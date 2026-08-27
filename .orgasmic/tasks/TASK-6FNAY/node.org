@@ -1,0 +1,85 @@
+#+title: orgasmic task TASK-6FNAY
+#+orgasmic_version: 2
+
+* DONE TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact :drivers:rmux:bug:production:
+:PROPERTIES:
+:ID: TASK-6FNAY
+:PRIORITY:    P1
+:END:
+
+Fix round for the reviewer BLOCK on TASK-8W30B (merged d60c4ed / d3fae4d).
+Reviewer: reviewer-codex-acp-stdio (acp-stdio / codex / unknown / unknown),
+run-20260726T110214. Findings are also in tx as reviewer.finding
+tx-20260726-orgasmic-2872..2876. The merged change is NOT reverted: measured
+release growth did go from +8 to 0 on the happy path. What follows is the
+failure path it did not make reliable.
+
+1. HIGH — the reaper can be cancelled before its fallback ever runs.
+`run_live_session` builds the SDK facade with a 5s default timeout;
+`reap_rmux_session` awaits `Session::kill()` before starting a separately
+bounded 5s CLI fallback; and `stop_and_join_driver_producer`
+(supervisor.rs:3983-3989) wraps the whole `release` in a third 5s timeout. A
+transport that is gone but does not fail fast eats the entire outer budget in
+the SDK attempt, and the fallback gets no guaranteed opportunity to start.
+
+The severe part is what cancellation costs. `release` sets `released = true` and
+does `self.session.take()` BEFORE the await, so when the outer timeout drops the
+future the only `Session` handle drops with it. The following `drop(control)`
+sees `session == None` and the Drop backstop cannot retry. That reproduces the
+original production symptom exactly: session, pty and harness survive release.
+Fix: one authoritative release budget with the SDK attempt strictly shorter than
+the total and time reserved for the CLI fallback, or a caller budget large enough
+for both. Do not `take()` the only handle before a cancellable await without a
+durable retry owner.
+
+2. MEDIUM — the reap error is still invisible. `release` returns `reap_result`,
+but supervisor.rs:3988 assigns the nested timeout result to `_`, discarding both
+`Ok(Err(DriverError::Transport(..)))` and `Err(Elapsed)`. `release_one` then
+removes the record, writes `Lifecycle::Release` and returns success. The
+invisible warn became an invisible Result. Fix: inspect both layers; keep
+producer/drain/lifecycle cleanup unconditional so an error can never strand a
+run, but emit an error with run and transport context after cleanup.
+
+3. MEDIUM — the CLI fallback can address the wrong daemon. It shells out to bare
+`rmux kill-session -t <stored string>`, but rmux-sdk 0.9.0 stores the resolved
+endpoint AND the sanitized protocol-owned name on `Session`, and its builder
+honours `RMUX_SDK_ENDPOINT`, while the CLI resolves `-S`/`-L`/`$RMUX`/default
+instead. A session acquired via a custom endpoint falls back against a different
+daemon: usually it just leaks, but if that daemon holds the same target name it
+kills the wrong session. The name happens to match today only because
+`make_run_id`/`RuntimeIdentity::new` emit safe components —
+`RuntimeIdentity::planned` accepts arbitrary strings and `run_live_session`
+copies `session_target` before `SessionName::new` sanitizes `.` and `:`. Fix:
+capture `session.name()` and `session.endpoint()` from the handle before the
+primary kill and pass the endpoint explicitly. Do not maintain a second, weaker
+identity.
+
+4. MEDIUM — a cancelled release loses its `RunComplete`. Confirmed, with the
+manager s no-strand reasoning upheld: explicit release keeps the RunRecord until
+the drain joins, then removes it and writes `Lifecycle::Release`, and a
+terminal-event-driven release already persisted its terminal event first. So no
+run is stranded — but the latch is set before the reap, Drop aborts the competing
+watcher, and the driver summary is simply lost. Fix: publish the release-owned
+`RunComplete` claim before the fallible reap, or make terminal publication
+cancellation-safe.
+
+5. MEDIUM — the regression test cannot gate anything. It returns success when the
+binary is missing/incompatible and again when acquire reports inert, and it calls
+`control.release` directly, so it cannot reach any of the four failures above.
+Keep it as a live smoke and add deterministic coverage for SDK failure, CLI
+fallback, cancellation, and endpoint/target propagation — including a
+supervisor-path regression that stalls the SDK request and proves the fallback
+runs and the session is gone after `Supervisor::release`.
+
+Out of scope: the known-red trio, and TASK-099T6.
+
+Acceptance:
+- a stalled SDK kill still results in a reaped session via the CLI fallback,
+  proven by a supervisor-path test that goes through the real 5s caller timeout
+- a reap failure appears in the daemon log with run and transport context, and
+  cleanup still happens unconditionally
+- the fallback targets the endpoint and name owned by the SDK handle
+- a cancelled release does not silently drop its RunComplete
+- at least one test fails, rather than skips, when rmux is absent in a lane
+  designated as a gate
+

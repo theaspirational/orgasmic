@@ -1,0 +1,37 @@
+#+title: orgasmic task TASK-ZYPJC.3
+#+orgasmic_version: 2
+
+* DONE TASK-ZYPJC.3 Per-page graph interaction and mobile-sheet pass :ui:graph:responsive:mobile:
+:PROPERTIES:
+:ID:               TASK-ZYPJC.3
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_M8JQT
+:PRODUCES:         ui/src/components/node-views/NodeGraph.tsx ui/src/components/DecisionsView.tsx ui/src/components/ArchitectureView.tsx ui/src/components/AdrView.tsx ui/src/components/SnapshotsView.tsx ui/src/components/ui/context-menu.tsx
+:WRITE_SCOPE:      ui/src/components/node-views/NodeGraph.tsx ui/src/components/{DecisionsView,ArchitectureView,AdrView,SnapshotsView}.tsx ui/src/components/ui/context-menu.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-047-review-report.md .orgasmic/decisions.org
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-ZYPJC
+:MERGE_SHA:        6862918
+:CODEX_COMMIT:     8c26232
+:END:
+
+** Description
+Addresses reviewer findings F-5 (medium bug), F-6 (medium design), F-7 (medium design). =NodeGraph= secondary edges from architecture nodes try to draw =decision -> architecture= edges even though the graph node set only contains architecture ids — those edges reference missing source nodes and React Flow throws missing-node warnings. The per-page graph only implements double-click to open a modal; dec_PA23Y also requires single-click 1-hop highlight, Enter on the focused node, and a right-click context menu. The dec_NZ9PS mobile matrix is only partially applied: the graph subview remains an inline fixed-height canvas instead of opening as a full-screen Sheet below =md=, and list-row chips/actions stay visible below =sm= instead of degrading.
+
+** Acceptance Criteria
+- [ ] *F-5 fix.* =NodeGraph= for architecture only emits secondary =:DECIDES:= back-edges when both endpoints exist in the rendered node set. Currently the source is a decision id not in the architecture node set — change the secondary edge to architecture → motivating-decision id only when that decision id is also in the node set (which it never is in the architecture-only subview); for the architecture subview, surface the motivating decision as a row chip in the side panel instead of a graph edge. No React Flow missing-node warnings.
+- [ ] *F-6 fix.* Per-page graph interactions:
+  - Single click on a node → 1-hop highlight (TASK-EBWZ9.3 cross-domain Graph pattern). Re-uses the same opacity-25% / opacity-100% logic.
+  - Enter key on focused node → opens the modal (the existing double-click behaviour).
+  - Right-click on a node → ContextMenu (radix) with "Open modal" + "Open in cross-domain Graph" entries. The latter navigates to =/projects/$projectId/graph= with =?focus=$nodeId= so the cross-domain graph can fitView on that node (cross-domain GraphView accepts =?focus= if it's wired; if not, just navigate without the param — flag in evidence).
+- [ ] *F-7 fix part 1.* Below =md=, the per-page graph subview opens as a full-screen Sheet (slides up from bottom) instead of rendering inline. The List/Graph toggle on mobile becomes a button that opens the Sheet. Mirrors TASK-EBWZ9.5's mobile Sheet pattern for the cross-domain graph detail.
+- [ ] *F-7 fix part 2.* Below =sm=, list-row chips that are not load-bearing (=kind=, =priority=, ADR badge for non-promoted decisions, snapshot label) hide. =useIsMobile()= hook already exists; reuse it. Row IDs + titles + status pills + Restore/Action buttons stay visible.
+- [ ] =cd ui && npm run build= passes; no React Flow missing-node warnings in console.
+- [ ] =git diff --check= clean.
+
+** Evidence
+- [2026-05-23 Sat 18:26] Shipped in bundled fix-implementer commit =8c26232= (merged =6862918=). =NodeGraph.tsx= +161/-31 guards every emitted edge endpoint against the rendered node id set (no more React Flow missing-node warnings; architecture subview surfaces the motivating decision as a side-panel chip instead of a missing-source edge), adds single-click 1-hop highlight (opacity-25%/100% pattern from TASK-EBWZ9.3), Enter-to-open on focused node, right-click radix ContextMenu with "Open modal" + "Open in cross-domain Graph" (the latter navigates to =/projects/$projectId/graph?focus=$nodeId=; cross-domain GraphView doesn't yet consume =?focus=, flagged as follow-up). Mobile (=<md=): per-page graph subview opens as a full-screen Sheet (slides from bottom); list-row non-load-bearing chips hide below =sm= (ADR source-decision chip; Snapshots label; Decisions ADR badge). New =ui/src/components/ui/context-menu.tsx= +265 (local shadcn/radix ContextMenu primitive).
+- Verification: =cd ui && npm run build= clean. NodeGraph chunk grew from 4.07 kB to 7.15 kB (interactions + ContextMenu wiring); still well under 500 kB budget for any single chunk.
+- Reviewer F-5 (medium bug), F-6 (medium design), F-7 (medium design) closed. Deferred follow-up: cross-domain GraphView =?focus= consumption for viewport fit.
+

@@ -1,0 +1,25 @@
+#+title: orgasmic task TASK-BX5SR.2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-BX5SR.2 Make cross-API writer idempotency identity collisions actionable instead of permanent 500s    :daemon:writer:
+:PROPERTIES:
+:ID: TASK-BX5SR.2
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**
+:LIVE_DAEMON_PROBE: retained-sync-live-20260813T013019
+:END:
+
+** Description
+Independent Claude review of TASK-BX5SR traced the historic `cached mutation lacks its recorded identity` error: `WriterHandle::transaction()` caches a matching response with `mutation_id: None`; a later `transaction_mutation()` using the same request id rejects it before enqueueing, maps it to a generic 500, and retries are permanently poisoned for the boot. The previous idempotency task landed on main but does not cover this transaction-to-transaction_mutation domain collision.
+
+Design and implement a correct cross-API idempotency rule. Either preserve enough identity for every cached transaction so the mismatch cannot occur, or return a typed actionable conflict that identifies the colliding request id and operations and tells the caller to mint a new key. Do not silently return an invented mutation id and do not weaken idempotency collision checks.
+
+Trace whether current `manager dispatch-close` can actually share this key path; test the production call chain, not a private writer-command imitation.
+
+** Acceptance
+- The historical transaction → transaction_mutation request-id sequence is deterministically covered at its public handle/API boundary.
+- Repeating the same request either returns the correct original identity or produces a stable actionable non-500 conflict.
+- A rejected collision is request-local; a subsequent independent writer write succeeds.
+- Dispatch-close is either proven to avoid this domain collision or corrected atomically without introducing duplicate tx/lifecycle effects.
+- Focused writer/API/CLI regressions and independent review pass.
+

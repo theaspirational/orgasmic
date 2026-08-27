@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_RX4DF
+#+orgasmic_version: 2
+
+* dec_RX4DF Can a project be scaffolded without installing the binary or daemon?    :scaffold:onboarding:skill:distribution:
+:PROPERTIES:
+:ID:            dec_RX4DF
+:GLOSSARY_REFS: term_CEQFS term_WQMJJ
+:DECIDED_AT:    [2026-06-07 Sun 14:30]
+:SOURCE:        shipped/skills/orgasmic/SKILL.md
+:END:
+** Context
+Adopting orgasmic in a repo (creating =.orgasmic/=) currently requires a full install: the =orgasmic= binary plus shipped content under =$ORGASMIC_HOME/orgasmic/shipped/=, because =orgasmic project init= resolves scaffold templates through the loader rule. But scaffolding has near-zero real dependencies — the templates are plain text and the only transform is three placeholder substitutions (=project init= does not touch the daemon; =--no-register= already skips the board). The project's whole stance is daemon-optional plain-text state, and the seed sprint already ships a self-contained bootstrap task tree (dec_ACD08) a plain agent can run. So the cold-start install requirement is artificial.
+** Decision
+Add an =init= subcommand to the shipped =/orgasmic= skill as the install-free entry point, distinct from =recall=/=resume= (which operate on an existing =.orgasmic/=). The scaffold templates are bundled inside the skill at =shipped/skills/orgasmic/scaffold/= — the single source of truth — so the skill is self-contained and works offline with no binary, daemon, or =$ORGASMIC_HOME=: the agent derives =PROJECT_NAME=/=PROJECT_ID=/=DEFAULT_BRANCH=, creates =.orgasmic/= + =tx/=, copies the bundled tree with the three placeholders rendered, refuses to clobber an existing =.orgasmic/=, then begins bootstrap =TASK-C9V29= (audit + grill). The Rust =init= resolves the same tree through a scaffold-specific resolver (=resolve_scaffold= in =orgasmic-core/src/projects.rs=): =user/project-scaffold/<rel>= still shadows per the loader rule (the skill-free key keeps the skill's internal layout out of the user-content contract), with the shipped fallback at =shipped/skills/orgasmic/scaffold/<rel>= (=SCAFFOLD_SHIPPED_DIR=). There is no =shipped/project-scaffold= path at all — the alias lives in code rather than a committed symlink, so there is nothing on disk to drift, no symlink-portability caveats, and no guard test needed. Chosen over a standalone =scripts/scaffold.sh= and over runtime GitHub fetches because the agent-native path dovetails with the bootstrap task and needs no network; a shell-script path remains an option if a non-agent/CI entry point is later wanted.
+** Consequences
+A coding agent with the skill can stand up a fully-formed =.orgasmic/= and drive the audit-and-interview bootstrap with nothing installed; the CLI/daemon become opt-in for the workbench, board, and supervised runs rather than prerequisites for onboarding. Scaffold edits happen in exactly one tree (=shipped/skills/orgasmic/scaffold/=); =doctor= and the test fixtures check that path directly, and the only remaining use of the =project-scaffold= name is the user-override directory key. The skill's "use only inside an orgasmic project" framing is relaxed: =init= is the bootstrap exception. README documents the no-install path. Open follow-up: a parallel =scripts/scaffold.sh= curl one-liner for humans/CI who are not driving an agent.
+

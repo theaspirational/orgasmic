@@ -1,0 +1,46 @@
+#+title: orgasmic task TASK-Q8JEV
+#+orgasmic_version: 2
+
+* BACKLOG TASK-Q8JEV The installed-harness spinner guard goes silent if Claude ships a sub-1-MiB launcher    :testing:daemon:
+:PROPERTIES:
+:DEPENDS_ON: TASK-4CSMY
+:ID: TASK-Q8JEV
+:PRIORITY: P3
+:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs
+:END:
+
+** Description
+
+=status_spinner_glyphs_cover_the_installed_claude_frame_set= ignores candidate
+binaries smaller than 1 MiB (=supervisor.rs:10540-10576=) and skips entirely
+when no qualifying binary exists (=:10718-10724=).
+
+Both choices are correct today and were deliberate: the floor stops a tiny
+=claude= PATH shim — which the rmux dispatch environment really does put ahead of
+the real binary (TASK-NTNK0) — from tripping the needle-absent FAILURE, and the
+skip avoids reddening every claude-less host including CI.
+
+The residual, in the round-4 reviewers words: if Anthropic later ships a real
+sub-1-MiB launcher rather than a symlink to the bundled executable, THIS AUDIT
+BECOMES SILENT. The guard would skip, the table would stop being checked against
+the harness, and the failure mode is the one TASK-4CSMY.2 exists to prevent — a
+stale allowlist that kills healthy workers — with nothing noticing.
+
+Measured on this host at review time: =~/.local/bin/claude= canonicalizes to a
+256,908,272-byte executable, so the floor does not skip it today.
+
+** Options, per the reviewer
+
+- a hermetic fixture: pin a captured copy of the frame arrays as test data so the
+  audit runs everywhere and the installed-binary check becomes a bonus;
+- a dedicated claude-present canary that fails loudly when the guard skips on a
+  host where claude IS installed but no candidate qualified;
+- revisit the floor: identify the product by something other than size.
+
+** Acceptance
+
+- The audit cannot go silent on a host where Claude Code is installed.
+- A tiny PATH shim still does not trip a false failure (do not regress
+  TASK-NTNK0s interaction).
+- Claude-less hosts, including CI, stay green without a ToolRequirement.
+

@@ -1,0 +1,14 @@
+#+title: orgasmic glossary term term_E0TAB
+#+orgasmic_version: 2
+
+* term_E0TAB Babysitter
+:PROPERTIES:
+:ID:                 term_E0TAB
+:CANONICAL:          babysitter
+:AVOID:              co-pilot, second implementer, reviewer
+:RELATES_TO:         term_3YTBK term_GMTWY term_DN08P term_KCGEH
+:DEFINITION:         A restricted companion run spawned beside a live implementer that receives summarized session chunks and may only poke, restart, escalate, or record a finding through its closed babysitter tool set; it cannot edit code or mutate other state. The babysitter auto-spawner coalesces implementer events and launches this run, writing to sessions/<run-id>.babysitter.jsonl.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:PRIMARY_LEAF:       arch_A53QX.5
+:END:
+

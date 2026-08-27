@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-SRBGS
+#+orgasmic_version: 2
+
+* IN_REVIEW TASK-SRBGS Migrator orgasmic project migrate; indexer reads node dirs; old state-file readers deleted :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON:  TASK-TP593 TASK-7A0H4
+:ID: TASK-SRBGS
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P1
+:END:
+
+** Description
+AP971.9: port scripts/ap971-migrate-proto.py (branch ap971-prototype) to orgasmic project migrate — one-shot, idempotent, refuses on a dirty git tree, --dry-run, writes <collection>/<ID>/{node.org,journal.org} for tasks (all six state files incl. done/cancelled), decisions, glossary; deletes the old files; bumps #+orgasmic_version to 2 on project.org (label only — no v1 compat layer, no v1 read path). The indexer reads collection dirs; iter_task_file_paths and every by-id full scan (index.rs, api.rs inbound-reference check, manager.rs read_task_lifecycle, identity_lint entry points, run-tests.sh globs) are rewritten or deleted. Singletons (handoff.org, goal.org, project.org) stay files. dispatch-records/ and tx/ untouched.
+** Acceptance
+- [ ] migrate runs on this repo: 873 nodes, 0 anomalies, byte-for-byte heading round trip
+- [ ] parse_errors 0 and dangling-edge lint green after migration (old ids resolve)
+- [ ] no reader of tasks/<state>.org, decisions.org, glossary.org remains in crates/ scripts/ verify/
+

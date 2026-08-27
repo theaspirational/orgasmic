@@ -1,0 +1,43 @@
+#+title: orgasmic task TASK-4YC8E
+#+orgasmic_version: 2
+
+* DONE TASK-4YC8E hermes reasoning_effort alias collides with the daemon's dual-key driver_config :drivers:bug:
+:PROPERTIES:
+:ID: TASK-4YC8E
+:PRIORITY: P1
+:END:
+
+`adapters/hermes.rs` declares
+
+    #[serde(default, alias = "effort")]
+    reasoning_effort: Option<String>
+
+while the daemon writes the value under BOTH keys at once (`api.rs`:
+`"effort": effort` and `"reasoning_effort": reasoning_effort`, lines 3573-3574;
+also 2329-2330). Serde then sees one field populated twice and fails
+deserialization, so `validate_config` returns `InvalidConfig` and the dispatch
+dies with
+
+    400 Bad Request: {"error":"driver configuration is invalid"}
+
+Measured on claude 2026-07-26: adding that exact alias to `ClaudeAcpConfig`
+reproduced this immediately, and removing it fixed it. Hermes carries the alias
+today, so a hermes dispatch that sets an effort should fail the same way.
+
+NOT VERIFIED for hermes itself — inferred from identical code and a reproduced
+failure in a sibling adapter, not from a hermes dispatch. Confirm before fixing:
+run a hermes acp-stdio dispatch with `--effort high` and check for the 400.
+
+If confirmed the fix is one line — drop `alias = "effort"`, since the daemon
+already writes `reasoning_effort`. Check codex too; it also carries
+`reasoning_effort` and needs the same read.
+
+Worth fixing beyond the crash: the error text names neither the field nor the
+adapter. `InvalidConfig(e.to_string())` has serde's message in hand and drops it
+on the floor at the API boundary. Surfacing it would have made this a ten-second
+diagnosis instead of a grep through api.rs.
+
+The dual-key write is itself questionable — one value under two names is what
+made an ordinary alias a landmine. Consider emitting only `reasoning_effort`
+once every adapter reads that key.
+

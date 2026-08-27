@@ -1,0 +1,102 @@
+# TASK-RMA18.1.1.1.1 — implementer summary
+
+All five findings closed. One commit on `task-rma18.1.1.1.1-impl`: `85c1c53`.
+
+## Changed
+
+- `crates/orgasmic-cli/tests/dispatch.rs` — NEW regression
+  `worktree_prune_refuses_a_repo_gone_worktree_whose_gitmodules_names_a_populated_directory`
+  (F3). `RepoGone` + `.gitmodules` + **no nested `.git`**: a real submodule is
+  added and `update --init`'d in the linked worktree, then its `.git` FILE is
+  deleted, so `gitmodules_paths` is the only record left. Git's own refusal is
+  measured **in that exact post-deletion state** (it still exits 128 over the
+  index gitlink), then the admin directory goes away and `--dry-run` pins
+  `RepoGone`. Drift-proofing: a local recursive walk asserts NO nested `.git`
+  survives, and the `KEPT` line is asserted to be the `.gitmodules` arm's
+  (`contains("`.gitmodules`")`) and NOT the nested-`.git` arm's
+  (`!contains("nested repository")`, `!contains("vendor/sub/.git")`) — so the
+  test fails if the wrong predicate refuses, which is exactly how the previous
+  fixture rotted.
+- `crates/orgasmic-cli/src/manager.rs`
+  - `worktree_submodule_refusal` (F2): `NoRepository` now sets `repo_gone`, and
+    the `nonempty_dir_under` refusal selects a repo-gone-aware message that names
+    `.gitmodules` as the surviving record and reuses the "`git worktree remove
+    --force` CANNOT run here" wording from the `nested_git` arm three lines
+    above. `submodule_advice`'s impossible conditional escape no longer reaches
+    that branch.
+  - `after_help` (F1 + F4): the repo-gone sentence now says `.gitmodules`
+    survives inside the tree and is still read there, that the nested-`.git`
+    walk runs ON TOP of it, drops "no such record survives"/"nothing else there
+    is checked"/"WEAKER", and names the over-refusal ("can KEEP a worktree over
+    a vendored repository git itself would have let you delete").
+  - Doc comment: added the paragraph reconciling "all three sources go quiet at
+    once" (true of finding A's fixture) with `.gitmodules` living in the
+    worktree and therefore surviving.
+- `crates/orgasmic-cli/tests/cli_parity.rs` (F5): no sentence containing
+  `"index"` may claim `"every branch"` / `"all branches"`; the unqualified
+  `"at any depth"` is banned outright with its own message naming `MAX_DEPTH`.
+  Doc comment states the residual limitation explicitly.
+- `verify/TASK-RMA18.1/{injection.patch,cmd}`, `verify/TASK-RMA18.1.1/{injection.patch,cmd}`
+  — re-authored: F2's fix moved context lines. **Every injected line is
+  byte-identical**; only `@@` headers and context changed (diff of the artifacts
+  shows no change to any `+`/`-` line). Both `cmd` files carry a dated
+  re-authoring note. Red re-measured, not carried over.
+
+## Verification gates
+
+| gate | result |
+|---|---|
+| new regression, **pre-fix** | **RED** — `KEPT … contains an initialized submodule at vendor/sub … — while the repository is still there — remove the worktree with \`git worktree remove --force\`` (F2 reproduced on the **production prune path**; the review only measured it at the predicate) |
+| new regression, post-fix | GREEN |
+| `cargo test -p orgasmic-cli --test dispatch worktree_prune_` | ok. **14 passed**, 0 failed (incl. `..._containing_a_submodule`, `..._holding_a_nested_repository`, `..._removes_a_worktree_whose_repo_is_gone`) |
+| `cargo test -p orgasmic-cli --test cli_parity` | ok. 7 passed, 0 failed |
+| `cargo test -p orgasmic-cli --bins manager::` | ok. **68 passed**, 0 failed |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo fmt --all --check` | exit 0 |
+| `orgasmic verify` × 5 | **ALL PASS**, real red-then-green replays, tree byte-identical: `TASK-RMA18`, `.1`, `.1.1`, `.1.1.1`, `.1.1-placement` (the gate the review explicitly did not run) |
+| `scripts/run-tests.sh -p orgasmic-cli` | **verdict: GREEN — no failures.** failures 0, crashed none, cargo exited 0, cfg-off passed, environ complete, host **calm** (rate 0.0621) |
+| shipped help | rendered from the built binary; corrected sentence confirmed |
+
+### The pin proven to bite (F5)
+
+Each false shape re-injected into the help, `cli_parity` run against it:
+
+| shape | result |
+|---|---|
+| 1 — false universal naming no branch ("… reads the worktree's own INDEX for gitlinks on **every branch**.") | **CAUGHT** (RED, exit 101) — new clause fires |
+| 2 — over-claim, reviewer's literal wording ("… of any type, **at any depth** and through unreadable directories") | **CAUGHT** (RED, exit 101) |
+| 2 — over-claim **reworded** ("however deeply nested and through every directory in the tree") | **PASSES — pin blind** |
+
+The third row is the disclosed limitation, stated in the test's doc comment:
+banning that wording closes the wording, not the class. Only a fixture can
+decide it, and none exists for either fail-open.
+
+Every cargo invocation ran under the syspolicyd watchdog (10s sampling, kill at
+≥400% held 60s). **Peak observed across all runs: 3.5%.** Nothing was killed.
+
+## Unmet criteria
+
+None. Acceptance 1–5 are all met.
+
+## Residual risk / intentional boundaries
+
+1. **The corrected sentence deliberately does NOT mention the walk's blind
+   spots** (`MAX_DEPTH = 64`, directories that fail to open). F4 names the
+   over-refusal as the operator-visible consequence and that is stated; the
+   narrow direction is left out under the brief's ruling 2 — I would rather
+   under-describe than write a clause whose exact truth I did not measure. The
+   review's C4 answer (the removal path bails symmetrically, so the outcome is a
+   `RemovalFailure`, never a silent deletion) makes the omission safe but is
+   still argued from source, not exercised.
+2. **`cli_parity` shape (2) remains open by construction** — see the table
+   above. Disclosed in the test's doc comment rather than implied closed.
+3. The new fixture deletes the submodule's `.git` by hand. That is a
+   constructed state, not one git produces on its own; it stands in for any
+   worktree whose `.gitmodules` names a populated directory with no repository
+   in it. Git's own refusal was measured in that state, so the parity premise is
+   real, not assumed.
+4. `MAX_DEPTH` and `chmod 000` fail-opens are still unexercised by any fixture
+   (carried over from the review — not in this round's scope).
+5. Non-Unix untested (`#[cfg(unix)]` throughout, unchanged).
+6. The workspace suite beyond `-p orgasmic-cli`, `orgasmic-daemon`, and UI
+   checks were not run — the brief's gate named `-p orgasmic-cli`.

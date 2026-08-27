@@ -1,0 +1,58 @@
+#+title: orgasmic task TASK-3NJ9K
+#+orgasmic_version: 2
+
+* DONE TASK-3NJ9K Stub-only driver resolution in daemon test profile
+:PROPERTIES:
+:ID: TASK-3NJ9K
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-daemon --lib
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:END:
+
+** Description
+
+During TASK-95SGV.2 a daemon test (commit =560eb77=, probed on main as
+=f215bb7=) called =spawn_worker_run= with a real =StageWorker { driver:
+"acp-stdio", harness: "hermes" }=. The author guarded the second call
+(after the injected refusal was released) with the assumption that the branch
+is *unreachable without a hermes binary*. On CI that holds; on a developer
+machine =hermes= is on =$PATH=, so every test execution spawned a real
+=hermes acp= subprocess and a billed ollama-cloud turn. The spawned agents
+outlived the test (run release does not reap the subprocess), became PPID-1
+orphans, mutated main, and re-ran the test — each run spawning another copy
+until the hermetic rewrite =184813f= merged as =b510b30= (spawn window
+07:22–07:35, 12+ real agent sessions).
+
+The class of defect: nothing in the daemon prevents a test from resolving a
+*real* driver/harness. Host-dependent assumptions convert into provider spawns
+silently.
+
+** Acceptance
+
+- In the daemon's test profile (=cfg(test)= and/or an explicit test-mode flag
+  the API fixtures set), driver/harness resolution must refuse to construct
+  any transport that can exec a real subprocess harness: only the stub driver
+  (and any purpose-built in-process fakes) are resolvable.
+- The refusal is loud: resolving =acp-stdio=, =rmux=, or any future real
+  driver under the test profile fails the test with an error naming the
+  driver and pointing at the stub, rather than silently substituting.
+- Production resolution paths are byte-for-byte unaffected; no runtime check
+  is added outside the test profile without justification.
+- A regression test proves the guard: a test that requests a real driver via
+  the ordinary dispatch surface must get the refusal, on any host, with and
+  without a =hermes= binary on =$PATH=.
+- Audit the existing daemon test suite for other =StageWorker= constructions
+  naming real drivers/harnesses and migrate them to the stub; list the
+  migrated sites in the worklog.
+- No test in the suite may depend on the presence *or* absence of a
+  provider binary on the host.
+
+** Prior Evidence
+
+Incident forensics: orphan spawn window matches the =f215bb7=-on-main window
+exactly; orphan env traced to the fix2 correction session; orphan prompts were
+the fixture task title verbatim. Unsafe construction: =560eb77=
+=crates/orgasmic-daemon/src/api.rs= lines ~21926 and ~22010. Hermetic rewrite:
+=184813f=, merged =b510b30=. Dispatch closed with containment record
+=tx-20260730-orgasmic-3992= (properties CONTAINMENT/ORPHAN_PGIDS/FORENSICS).
+

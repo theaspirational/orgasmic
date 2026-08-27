@@ -1,0 +1,21 @@
+#+title: orgasmic task TASK-GERBB
+#+orgasmic_version: 2
+
+* DONE TASK-GERBB Load freshly registered projects into the running daemon (watch on board refresh) :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-GERBB
+:PRIORITY: medium
+:END:
+
+** Description
+Battle-test F1: a freshly registered project 404s ("project not found") on every daemon-backed call until =orgasmic restart=, while the file-backed =orgasmic board= lists it fine — a flat contradiction that cost 3 failed calls plus the time to form the stale-daemon hypothesis. Code confirms a narrow gap: =project init= is file-only (crates/orgasmic-cli/src/main.rs:1155 → orgasmic-core/src/projects.rs:335); the board file IS watched and =refresh_board= (crates/orgasmic-daemon/src/watcher.rs:343, index.rs:455) reloads the project list — but nothing calls =watcher.watch_project= for the new root (per-project watches registered only at boot, lib.rs:273-277), so the new project's files go unwatched/unloaded until restart.
+
+Fix:
+- On board refresh, register the filesystem watch + index load for newly appearing projects (canonicalize paths per the /private/var vs /var gotcha in gotchas.org).
+- Make the 404 diagnostic for the residual window: when the id exists on the board but is not loaded, say so ("registered after daemon boot — reindex/restart") instead of a bare "project not found".
+
+** Acceptance Criteria
+- [ ] Integration test: =project init= against a running daemon → immediate =task update= succeeds, no restart.
+- [ ] File edits in the newly registered project trigger reindex (watch actually registered).
+- [ ] Board-listed-but-unloaded id → diagnostic 404 naming the cause and fix.
+

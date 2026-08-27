@@ -1,0 +1,53 @@
+#+title: orgasmic decision dec_WC1PW
+#+orgasmic_version: 2
+
+* dec_WC1PW Should the daemon auto-spawn workers on task-state transitions?    :daemon:supervisor:dispatch:adr:
+:PROPERTIES:
+:ID: dec_WC1PW
+:PARENT: dec_ASB1A
+:END:
+
+** Context
+The daemon had two independent worker-spawn paths: explicit manager dispatch
+(flip state, worktree, compiled brief, lease, launch) and the auto-spawn
+watcher — =maybe_emit_auto_spawn= fired on every =task.state_transitioned=
+into in_progress and summoned the task's =:WORKER:=. They never collided
+while CLI lifecycle flips were direct flock rewrites invisible to the tx
+stream; TASK-2C3WZ (2026-06-12) re-routed all flips through the daemon, so a
+dispatch's own flip began emitting exactly the event the watcher consumes.
+Production incident the same day (tx-0253/0254/0255): the watcher acquired
+the run lease before the dispatch that triggered it, the dispatch lost and
+rolled back, and the surviving auto-spawned implementer ran with cwd =
+PROJECT ROOT and the placeholder brief "Auto-spawn in_progress for
+TASK-SMFHY" — seven files into editing main before manual release (partial
+on branch =task-smfhy-rogue-salvage=). The NP5H6 guard had only made
+terminal/queue stages ineligible. Every subsequent dispatch needed a
+workaround: park an unresolvable =:WORKER:= for the dispatch window. The
+watcher's only legitimate scenario — a task entering in_progress with no
+manager driving — has no current user, and its launch path lacked worktree
+and brief composition by construction.
+** Decision
+Operator direction [2026-06-13]: delete the watcher chain outright rather
+than patch it — =maybe_emit_auto_spawn=, the =AutoSpawnRequested= event,
+=auto_spawn_consumer=, =handle_auto_spawn=, and the =auto_spawn= origin arm
+of the shared spawn pipeline. Explicit manager dispatch becomes the only
+path from a task transition to a running worker. The babysitter attach
+(=build_babysitter_auto_spawn=, part of explicit dispatch) is a different
+mechanism and stands.
+
+Revisit trigger: when reactive behavior is genuinely needed (actions as
+reactions to events such as state transitions), it returns as a DECLARATIVE
+event layer — rules written over the event/tx stream, in the spirit of event
+calculus; org structure converts naturally to prolog-style facts, so the
+rule language can be logic over org nodes and tx events rather than
+hardcoded consumers baked into the daemon. No interim half-guards: until
+that layer exists, nothing spawns workers implicitly.
+** Consequences
+The dispatch/auto-spawn race class is closed by construction, and the
+=:WORKER:=-parking dispatch workaround retires once the removal lands and
+the daemon restarts. A task flipped to in_progress without a dispatch now
+simply sits there visible on the board — accepted; no performer is summoned
+implicitly. TASK-9TFBD is reshaped from race-fix to watcher removal.
+Tests asserting watcher behavior are deleted with it; the babysitter
+auto-spawn tests stand.
+

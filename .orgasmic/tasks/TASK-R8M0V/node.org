@@ -1,0 +1,20 @@
+#+title: orgasmic task TASK-R8M0V
+#+orgasmic_version: 2
+
+* BACKLOG TASK-R8M0V Pin AP971.7 incremental-refresh acceptance: measure no project-wide reparse on comment POST
+:PROPERTIES:
+:ID: TASK-R8M0V
+:PRIORITY: P2
+:DEPENDS_ON: TASK-8AV8B
+:IMPLEMENTS: dec_E01MC
+:END:
+** Description
+TASK-8AV8B shipped its implementation without running or adding any tests (its worker read the brief's "no heavy suites" rule as "no tests"). Merging it surfaced four real defects, all fixed in 6c97e599 and now pinned by the existing daemon suite. What is still unverified is its measurement acceptance.
+
+Pin the two criteria no existing test asserts. `api::tests::sixteen_concurrent_api_writes_finish_within_budget_without_refresh_amplification` is the closest existing harness — reuse it rather than building a new one; `status.index_refresh.scans_total` is the counter that makes "no project-wide reparse" observable.
+
+The third original box (dispatch-wait no longer calls project_tx_entries on the poll path) is already satisfied structurally: `post_manager_dispatch_wait` reads `state.index.snapshot()`.
+** Acceptance
+- [ ] a comment POST is measured to add zero project-wide refresh scans
+- [ ] one test shows journal comments and tx run events interleaved in the activity feed
+

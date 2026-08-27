@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-1FV1N
+#+orgasmic_version: 2
+
+* DONE TASK-1FV1N TASK-AFE5Q fix round 6: durable cleanup transaction and child quiescence
+:PROPERTIES:
+:ID: TASK-1FV1N
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve final AFE5Q review findings after a734b11: durable ended-owner cleanup fencing held across deletion; fail-closed identity-bound no-follow cleanup; cancellation-atomic startup child ownership; reconcile finalize-only endpoint tests/warnings; close Cursor send race; correct artifact reservation ownership transfer.
+

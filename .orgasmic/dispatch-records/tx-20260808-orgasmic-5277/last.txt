@@ -1,0 +1,227 @@
+# TASK-RMA18 — worktree reclamation redesigned around a fd-anchored identity
+
+The TASK-M47E5.3 gate is **removed in source**. All six BLOCK SHIP findings are
+closed, all nine retained tests are un-ignored and green, and four new
+regressions plus a replayed `verify/TASK-RMA18/` artifact carry the acceptance.
+Nothing was installed: `~/.orgasmic/bin/` is untouched, no `daemon start/stop`,
+no `ORGASMIC_HOME` was ever set for an `orgasmic` invocation of mine.
+
+## Changed
+
+`crates/orgasmic-cli/src/manager.rs`, `crates/orgasmic-cli/tests/dispatch.rs`,
+`crates/orgasmic-daemon/src/supervisor.rs`, `verify/TASK-RMA18/{cmd,expect-red,injection.patch}`.
+One commit, `4d8253d`. No lockfile, catalog, or `.orgasmic/**` writes.
+
+### Finding 4 — no ancestor is resolved by pathname
+
+`AnchoredManagedRoot::open` now takes `(&Home, project_id)` and WALKS: the home
+directory is opened once as a **trust root**, then `worktrees` and `<project-id>`
+are each opened with `openat(..., O_NOFOLLOW | O_DIRECTORY)` from the previous
+handle. An ancestor symlink is a refusal that names the offending component, not
+a redirection.
+
+The trust root is a stated boundary, not an oversight: `~/.orgasmic` is where the
+operator points this runtime, and macOS puts `/var` and `/tmp` behind symlinks,
+so refusing every link above the home directory would refuse every temp-rooted
+fixture and some real installs. It is written down above the module.
+
+### Finding 5 — one identity, classified → reserved → deleted
+
+**The design decision and why it holds.** Identity is `(device, inode)`, taken
+from `fstat` on the handle a child was opened through, carried on
+`ManagedWorktree.identity`. It is the same identity at all three points because
+each point RE-PROVES it against a fresh `openat`/`fstatat` rather than trusting a
+name:
+
+- **Classified** — a child is opened once (`openat(root_fd, name, O_NOFOLLOW)`),
+  its identity recorded, and `.git`, size and every ownership comparison read
+  through THAT handle. `worktree_repo_state` takes a `&File`; `directory_bytes`
+  descends by `openat`. Live runs and open dispatch records are matched by asking
+  which inode their recorded path reaches now, not by string equality.
+- **Reserved** — the daemon fence is keyed on a path (that is what a recovery in
+  another process records), so the path is proved to resolve to the classified
+  identity immediately BEFORE the request, and proved again immediately AFTER the
+  reservation is granted. A rebind across the round-trip means the fence is
+  protecting something else, and the worktree is skipped.
+- **Deleted** — `remove_dir_all_at` re-opens the child by name and refuses unless
+  the handle's identity equals the recorded one, empties it through that handle,
+  and re-proves with `fstatat(AT_SYMLINK_NOFOLLOW)` immediately before the
+  enclosing `unlinkat(AT_REMOVEDIR)`.
+
+**`git worktree remove` no longer owns the deletion.** It is the destructive
+remover and it receives only a pathname, re-resolved inside a subprocess this
+process cannot fence, with no child inode captured or passed — there was no way
+to prove the tree git deleted was the tree that was classified and reserved. So
+git keeps the two jobs it is uniquely able to do (deciding the tree is clean, and
+clearing the admin entry via the `git worktree prune` the verb already ran at the
+end), and the removal happens through the anchored handle. Both of git's
+non-forced refusals are reproduced in `git_would_remove_worktree`: a **locked**
+worktree, and one whose `git status --porcelain` is non-empty. Salvage leaves the
+tree detached at the salvage commit and therefore clean, so this gate is passed
+only by trees whose contents are already captured.
+
+**The window that remains** is between the final `fstatat` and the final
+`unlinkat` — one syscall, and what fits in it is the removal of a directory ENTRY
+that must also be an empty directory at that instant. `unlinkat` names an entry,
+not an inode; POSIX offers nothing narrower.
+
+### Finding 6 — a pending admission is worktree-addressable (daemon)
+
+`Inner.leases` now stores `AdmittedRun { run_id, worktree_key, worktree_identity }`.
+`admit_live_run` records the worktree WITH the lease, so the window between the
+lease and the caller's `RunRecord` insert is addressable. `blocking_run_for_close`
+consults `pending_admission_in_worktree` and blocks on a match — regardless of the
+task-name guess, which is exactly what `worktree-prune` cannot rely on because it
+derives a task id from a directory name and `--worktree` may name any directory.
+The pending lookup matches on `(dev, ino)` where both sides resolve, so it
+survives a rename; the run-record comparison uses `same_worktree` (canonical path,
+then identity).
+
+### KEPT means untouched
+
+Three changes. `entry_names` clears `errno` before each `readdir` and reads it
+after a null, so a mid-stream failure is an ERROR instead of an end-of-stream
+(platform errno slot known for linux/android and the BSD family; elsewhere it
+falls back to the old reading, and the enclosing `rmdir` then fails `ENOTEMPTY`
+and the report says PARTIAL rather than KEPT). Removal threads a `touched` flag
+set by each successful unlink. `WorktreeRemovalOutcome.touched` drives a new
+`PARTIAL PATH=…` line; `KEPT` is now printed only for a worktree nothing was
+destroyed in.
+
+### The test-only hook is gone from release builds
+
+`worktree_prune_pause_after_guard` is `#[cfg(debug_assertions)]`, with an empty
+`#[cfg(not(debug_assertions))]` twin. Proved two ways, not asserted (below).
+
+### Nine retained tests
+
+All nine un-ignored and passing unchanged. **Two tests were deleted**, and both
+are TASK-M47E5.3's own gate tests, not part of the nine:
+`worktree_prune_is_gated_off_and_reclaims_nothing` and
+`dispatch_status_no_longer_advertises_reclaimable_worktrees`. They asserted the
+refusal this task's acceptance removes, on the same fixtures the un-ignored tests
+now assert the reclamation on; keeping them would have been asserting both
+directions of the same behaviour. The M47E5.3 gate review's item 2 (an
+empty-tempdir refusal fixture) is moot for the same reason — it was explicitly
+"only worth adding if a gated state persists".
+
+## Verification Gates
+
+| gate | result |
+| --- | --- |
+| `scripts/run-tests.sh -p orgasmic-cli` | **GREEN**, 0 failures, environ complete, no waiver |
+| `scripts/run-tests.sh -p orgasmic-daemon` | **RED — pre-existing, not this change** (see below) |
+| `cargo test -p orgasmic-cli --test cli_parity` | **GREEN**, 6 passed |
+| `cargo clippy --workspace --all-targets -- -D warnings` | **GREEN** (two findings this change introduced were fixed) |
+| `cargo fmt --all --check` | **GREEN** |
+| `orgasmic verify TASK-RMA18` | **PASS** — red matched the pinned signature, reverted byte-identical, green |
+
+### The daemon suite red, classified
+
+Three runs of `scripts/run-tests.sh -p orgasmic-daemon` on the current tree:
+
+1. `recovery_faults_kill_real_daemon_and_preserve_original_pane` (409 on replay)
+2. + 3. `a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed`
+   and `a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline`
+   ("the stub recorded its `sleep` pid")
+
+**Classification: pre-existing / host-load, with a direct control.** I reverted
+`crates/orgasmic-daemon/src/supervisor.rs` to `main` and ran the same suite: it
+reported **3 real failures**, including *both* probe-child tests plus
+`api::tests::recovery_reattaches_rmux_session_when_handle_exists`. The base tree
+is redder than mine on this host. Every failure passes in isolation, every one is
+a process-spawn/timing assertion, and none touches leases, close guards, or
+worktree reclamation. Host load was 8–21 throughout. Logs:
+`daemon-suite.log`, `daemon-suite2.log`, `daemon-suite3.log`, `daemon-base.log`
+under the session scratchpad.
+
+The two tests I added to the daemon pass:
+`a_run_admitted_but_not_yet_recorded_blocks_a_close_that_cannot_name_its_task`,
+`a_renamed_worktree_still_blocks_the_close_of_the_run_admitted_into_it`.
+
+### Regressions, with both directions shown
+
+Every new regression was run against the injected (pre-fix) tree and produced a
+red naming the mechanism, then against the fixed tree green.
+
+- **Ancestor symlink** — `worktree_prune_refuses_an_ancestor_symlink_and_every_sentinel_survives`.
+  Injected red: `victim/orgasmic/task-precious/keep-me.txt is gone`,
+  `PRUNE_SUMMARY RECLAIMED=2`. The fixture asserts `<home>/worktrees/orgasmic` is
+  NOT itself a symlink, which is what the round-1 regression could not catch.
+- **Substitution mid-operation, child** — `a_worktree_substituted_in_the_prune_gap_is_refused_and_the_impostor_survives`
+  swaps the directory at the reserved name while the prune is parked at its
+  post-reservation rendezvous. Injected red: `RECLAIMED PATH=…`,
+  `PRUNE_SUMMARY RECLAIMED=1`.
+- **Substitution mid-operation, root** — `an_anchored_root_renamed_under_the_prune_still_removes_only_from_the_real_root`
+  (unit) renames the root path to a victim between the anchor and the removal.
+  `a_child_substituted_between_classification_and_removal_is_refused` (unit)
+  covers the child at the primitive level and asserts `touched == false`.
+- **Live run, admitted but not recorded** — the supervisor unit test above.
+  Injection: delete the `pending_admission_in_worktree` block from
+  `blocking_run_for_close` and the reservation is granted over a live run.
+- **Live run, nonconforming `--worktree` name** —
+  `worktree_prune_refuses_a_live_run_in_a_nonconforming_worktree_name` dispatches
+  into `<managed-root>/scratch-dir`, tears `WORKTREE` out of the ledger, and
+  proves the refusal end to end.
+- **KEPT honesty** — `a_removal_that_stops_part_way_reports_partial_and_never_kept`.
+  Injected red: `KEPT PATH=…` printed for a worktree whose `a-first.txt` was
+  already gone.
+- **Release-build hook**, proved twice:
+  1. `the_worktree_prune_pause_hook_is_compiled_out_of_release_builds` asserts the
+     hook's presence tracks `debug_assertions`; it passes under both
+     `cargo test -p orgasmic-cli --bin orgasmic` and
+     `RUSTFLAGS="-C debug-assertions=off" cargo test …`, and in the latter it
+     calls the hook with the env var set and returns instead of parking.
+  2. Binary-level: `strings target/debug/orgasmic | grep -c ORGASMIC_WORKTREE_PRUNE_PAUSE_FILE`
+     → **1** with debug-assertions on, **0** with `-C debug-assertions=off`. The
+     string is not in the binary at all.
+
+  Why `debug-assertions=off` rather than a true `--release` build: a release build
+  runs `crates/orgasmic-daemon/build.rs`, which requires `npm --prefix ui run build`
+  (`ui/dist` is absent in this worktree and `npm install` was out of scope). The
+  repo's `[profile.release]` sets no `debug-assertions`, so it takes the cargo
+  default `false` — which is precisely the cfg the gate is written against, and
+  the binary check exercises it directly.
+
+## Unmet Criteria
+
+None of the acceptance items is unmet. Two scope notes, stated rather than
+skipped:
+
+- **The daemon fence key is still a canonical pathname** for reservations and
+  persisted close guards. The reviewers' "key the daemon fence on a stable
+  identity" was a design direction, not an acceptance item, and changing
+  `worktree_key` end to end would rewrite `PersistedCloseGuard`'s on-disk shape
+  and its boot rehydration. What I did instead: identity is carried on the LEASE
+  (the pending window, which is finding 6), the run-record comparison accepts
+  identity or path, and the CLI proves the path↔identity binding on both sides of
+  the reservation call.
+- **The billed test was never run** and `ORGASMIC_ALLOW_BILLED_TESTS` was never
+  set. `required_test_tooling_is_present` did not fail; no waiver was used, in
+  either suite ("environ: complete — no tool requirement was waived").
+
+## Residual Risk
+
+1. **The final `unlinkat` window** (finding 5, above). One syscall wide, and the
+   substitute must be an empty directory at that instant. Documented above
+   `remove_dir_all_at`.
+2. **A run whose worktree is renamed AFTER its `RunRecord` is inserted** is
+   matched by canonical path only, because the record's path no longer resolves
+   and there is nothing to take an inode from. The pending-admission window is
+   rename-proof; this one is not. Nothing in orgasmic renames a live worktree, and
+   closing it means putting identity on `RunRecord` — a wider daemon change than
+   this task's findings called for.
+3. **`git_would_remove_worktree` is my reproduction of git's non-forced refusal**,
+   not git's own code. If a future git adds a refusal reason, this will not learn
+   it. The two that exist today (locked, unclean including untracked) are covered,
+   and the trade is deliberate: git's version cannot be pointed at an inode.
+4. **The errno-slot fallback.** On a unix outside {linux, android, macos, ios,
+   freebsd, dragonfly} a mid-stream `readdir` failure still reads as
+   end-of-stream. It fails safe: the listing is short, the `rmdir` fails
+   `ENOTEMPTY`, and the report says PARTIAL — never KEPT.
+5. **The daemon suite is red on this host for reasons that predate this change**
+   (control run above). A verifier should reproduce that control before reading
+   the red as this task's.
+6. **The runtime was NOT reinstalled**, per the brief. `~/.orgasmic/bin/orgasmic`
+   still predates this verb's un-gating, so nothing an operator runs today reaches
+   the new code. That is the manager's call to make after an independent review.

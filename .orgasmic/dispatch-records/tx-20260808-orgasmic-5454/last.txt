@@ -1,0 +1,375 @@
+# TASK-2QK4P.1.1.1 — a predicate that could not look must not answer "false"
+
+Round four on one generating shape: **a `bool` that means "I verified and it is
+false" and also means "I could not check."** The deliverable asked for is the
+enumeration, so it leads.
+
+## Acceptance 1 — THE ENUMERATION (the completeness argument)
+
+Every predicate on the recovery-authority path returning `bool` or `Option`,
+with what it does when it *cannot observe*. Line numbers are post-fix.
+
+The path is what `POST /runs/:id/recover` and `GET /runs` reach when deciding
+recovery authority: `post_run_recover` → `recovery_status_inner` →
+`apply_recovery_claim_to_run` → `resolve_authoritative_recovery_claim` →
+`{ProjectOriginAuthority, index_recovery_origins_in_session,
+load_recovery_claim, verify_committed_claim_against_session,
+reconstruct_or_quarantine}`, plus boot reattach's routing hint.
+
+### A. Pure over already-observed bytes — cannot fail to observe. UNCHANGED.
+
+The envelopes were already read; a `false`/`None` here is a decided fact about
+their content. Every `serde_json::from_value::<Lifecycle>(..).ok()` inside these
+is the same: a line that does not deserialize as a lifecycle event *is* not one.
+
+| predicate | file:line | what `false`/`None` means |
+| --- | --- | --- |
+| `validate_safe_component` | recovery_claim.rs:349 | the string contains a separator / traversal — pure |
+| `recovery_claim_has_complete_plan` | :360 | a field of the in-memory claim is absent or empty |
+| `session_run_meta_project` | :1354 | these envelopes carry no `RunMeta` project |
+| `session_prompt_draft` | :1366 | these envelopes carry no unsent `PromptDraft` |
+| `recovery_origin_in_session` | :2379 | these envelopes carry no matching `RecoveryOrigin` |
+| `session_has_acquire` | :2409 | these envelopes carry no `Acquire` |
+| `claim_immutable_plan_matches_session` | :2419 | a field disagrees with the session it was read from |
+| `recovery_claim_snapshot_in_session` | :2562 | no embedded claim snapshot for this request |
+| `pending_session_prefix_matches_claim` | :2754 | the prefix disagrees with the pending plan (supervisor.rs:2217 reads it, and gets its envelopes from a `read_checked()` whose error it propagates) |
+| `matching_origin_links` / `uniquely_confirmed` | :1793, :2035 | derived from an `AuthoritativeOriginLinks::Complete` set only — the `Unobserved` arm returns before either is computed |
+
+### B. Fallible — CONFLATED, and now typed. 13 sites.
+
+New type: `ClaimEvidence::{Valid, Invalid, Unobserved(UnobservedSession)}`
+(recovery_claim.rs:1421) plus `RecoveryClaimError::Unobserved` and
+`RecoveryClaimError::ForeignSessionPath`. Classification helper:
+`session_read_evidence` (:1471) — `NotFound` is a **verified** absence
+(`Invalid`); every other `io` error, every parse failure and every device/inode
+swap is the observer failing (`Unobserved`); a path that is not a regular file
+directly inside the pinned sessions directory is `Invalid`, because that is a
+decided fact about content the claim supplied.
+
+| # | site | before: what a caller concluded from the negative | why that was wrong when the reason was "I could not look" | now |
+| --- | --- | --- | --- | --- |
+| 1 | `claim_has_valid_authority` :504 | "this claim is not authentic" | **F1 both directions.** An `authority_key` read failure became `false` | `ClaimEvidence` |
+| 2 | `authority_key`'s `Path::exists()` :419 | "the token file is not there" → `auth::load_or_generate` → **mints and WRITES a new token**, invalidating every `authority_tag` on the host | `exists()` swallows the stat error | `try_exists()?` |
+| 3 | `index_recovery_origins_in_session` authority check :1660 | `continue` → the link is **dropped** from a set still labelled `Complete` | **F1(a): an observation failure became ABSENCE.** One transient failure while indexing one of two authenticated links let the resolver return `Valid` on the survivor | returns `Unobserved{AuthorityKeyUnreadable}` |
+| 4 | `index_recovery_origins_in_session` path identity `.ok() != .ok()` :1687 | one side erroring dropped the link; **both** erroring compared `None == None` and *admitted* a link whose file identity was never established | fails open and closed at once | `Unobserved{SessionPathUnresolvable}` / `continue` only on a decided mismatch |
+| 5 | `SessionDirectory::name_for_path` :772 | `CorruptClaim` for "resolved elsewhere" *and* for "canonicalize failed" | the two are different facts | `ForeignSessionPath` vs `Io` |
+| 6 | `SessionDirectory::open_name_with_flags` non-regular-file :879 | `CorruptClaim` | it is decided | `ForeignSessionPath` |
+| 7 | `verify_committed_claim_against_session` :2605 | "invalid evidence" → resolver **quarantines** → `Missing` → `POST /recover` mints a competitor | **F1(b): an observation failure became INVALID EVIDENCE.** Opposite direction to (3), which is why one type change at one site could not catch both | `ClaimEvidence` |
+| 8 | `load_recovery_claim` authority arm :1158 | `CorruptClaim` — the exact error the resolver quarantines on | a transient key failure renamed a live rescue's claim | `RecoveryClaimError::Unobserved` |
+| 9 | `resolve_authoritative_recovery_claim` committed branch :2045 | `false` from (7) fell through to `quarantine_invalid_claim` | ditto | three-way match; `Unobserved` returns before the quarantine |
+| 10 | `reconstruct_or_quarantine` :2090 | `InvalidQuarantined` from either fallible check; final `load_recovery_claim(..)?` could reach `Missing` | `Missing` is permission to MINT | three-way; `Unobserved` returns |
+| 11 | `reconcile_stale_claim_temp` `read_regular(final).is_ok()` :972 | "no real claim exists, promote a temp over that name" | an unreadable final claim would be **overwritten** by a crash-interrupted temp | `NotFound` only |
+| 12 | `reconcile_stale_claim_temp` temp read/authority :989 | falls to the `else` arm, which **deletes** the temp | an unreadable key deleted a temp the next retry would have promoted | `NotFound` skips; other errors propagate `Unobserved` |
+| 13 | `pending_recovery_claim_owns_session` :1185 | "no pending recovery owns this session" → boot's generic reattach **appends `Reattach` into a prefix a pending claim owns** — not undoable | fail-OPEN | `ClaimEvidence`; api.rs:10731 treats `Unobserved` as ownership and skips the reattach |
+
+Plus, in the same class but outside `recovery_claim.rs`:
+
+| # | site | before | now |
+| --- | --- | --- | --- |
+| 14 | `apply_recovery_claim_to_run`'s second `verify_…` call, api.rs:12013 | `false` **left the recovery actions standing**, so an observation failure in the window between the resolver's read and this one offered "start a recovery run" for an origin that already has a live authenticated replacement | three-way; `Unobserved` suppresses via `suppress_unobserved_recovery` |
+| 15 | `apply_recovery_claim_to_run`'s `let Ok(resolved) = … else`, api.rs:11970 | silently emptied the action list with no reason recorded | same suppression path, reason recorded |
+| 16 | `scan_session_lifecycle_complete_reader`, session.rs:1478 | any malformed final line was forgiven | F4, below |
+
+(13 in `recovery_claim.rs` + 3 elsewhere. The commit line says 13 for the
+recovery-claim module; 16 sites total.)
+
+### C. Fallible — deliberately NOT changed, with the reason stated.
+
+- **`tmux_session_exists`** (orgasmic-drivers `modes/tmux.rs:879`) — collapses a
+  spawn failure into "no session". It is on the path
+  (`reconcile_pending_claim`), and it *is* the class. It is left alone because
+  its negative fails **closed**: `claim.spawn_started && !tmux_live` →
+  `DeadPlannedHandle`, a refusal that never quarantines, never mints and never
+  writes. Fixing it means giving the sync probe a `Result` (the async
+  `has_tmux_session` already has one) and threading it through
+  `reconcile_pending_claim`, which is a driver-API change outside this task.
+  **Residual: a transient tmux failure turns a live rescue into a permanent
+  `DeadPlannedHandle` refusal rather than a retryable one.**
+- **`#[cfg(not(unix))]` `Path::exists()`** in `load_recovery_claim` (:1279),
+  `quarantine_invalid_claim` (:1322) and the non-unix
+  `pending_recovery_claim_owns_session`. Unix is the shipped target and every
+  unix branch is classified; the non-unix fallbacks keep the old collapse.
+- **`recovery_origin_authority`** (api.rs:8834-8880) — `canonicalize()`,
+  `read_existing_project_identity()`, `SessionDirectory::open()`,
+  `read_checked()` all `.map_err(|_| bad_request(...))`. Every negative is a
+  **refusal**; none mints or quarantines. The defect here is only that a
+  transient failure is reported as 400 (your request is wrong) rather than 503
+  (retry). Not safety; not fixed this round.
+
+## Findings
+
+### F1 — reproduced first, red before the fix
+
+Both halves were built as running reproductions before the fix, as the brief
+required (the review derived them and built none).
+
+- **(a)** `an_authority_key_read_failure_cannot_hide_a_second_authenticated_replacement`
+  (recovery_claim.rs). Two daemon-HMAC-authenticated replacements for one
+  origin; every file readable; the enumeration completes; ONE `authority_key`
+  read fails. The fault is swept across read positions because `read_dir` order
+  is not ours to choose. **Red under the injection**: the resolver quarantined
+  the loaded claim and returned
+  `Reconstructed(RecoveryClaim { … replacement_run_id: "run-hidden-second" … })`
+  — the daemon silently changing which replacement holds the lease. It was
+  wider than "returns `Valid`".
+- **(b)** `a_read_failure_after_a_cached_complete_enumeration_never_quarantines`.
+  The enumeration completes and is **cached** first (asserted as a premise), so
+  none of round three's machinery is involved; then the replacement session, and
+  in a second pass the origin session, is made unreadable (`chmod 000`, real
+  fault, no hook). **Red under the injection**: `InvalidQuarantined`.
+- Test-only fault injection added for the key read only
+  (`arm_authority_key_fault`, keyed by token path so concurrent tests cannot
+  consume each other's arming). No filesystem fault can fail the *nth* read of
+  one file and not the others, and the finding is about position.
+
+### F2 — one POST, one enumeration
+
+`recovery_status_inner` now takes `&mut ProjectOriginAuthority` instead of
+building one. `post_run_recover` builds it once and hands it to both the
+inventory classification and the claim/mint decision.
+
+**Cost of every pass, reported:** `ProjectOriginAuthority::cost()` is written
+into `inventory.origin_index_files` / `origin_index_bytes_inspected` at the end
+of `recovery_status_inner`; every later `links_for` in the same POST is a cache
+hit costing zero, so that metric is now the decision's **complete** cost. Before
+this, the second pass was invisible to `cost()` and absent from the metrics.
+
+Endpoint-level scan-count test: `one_recover_post_enumerates_the_project_once`
+(api.rs), counting through `recovery_claim::origin_enumeration_passes` — a
+counter outside both authority objects, keyed by project root.
+`one_authority_serves_every_claim_in_a_project` cannot see this defect because
+it hands both callers the same object; the new test's red is `left: 2, right: 1`.
+
+### F3 — ordering, not relaxation
+
+Authority-independent validation (unknown action → 400, unnamed action with
+several available → 409, terminal-Failed `reattach_tmux` → 400) now runs before
+the completeness 503. The completeness check stays **immediately** before the
+claim branch, which is the first thing that can accept or mint authority.
+
+Two subtleties, both load-bearing:
+
+- Validation uses the **un-suppressed** action set. An unresolved enumeration
+  empties `recovery_actions`, so validating against that would just move the
+  defect. `RecoveredRun` gained `recovery_unobserved` and
+  `suppressed_recovery_actions` for exactly this.
+- An **empty** offered set is deliberately not validated early: it also means
+  "an authoritative committed claim suppressed the actions", and that request is
+  an **idempotent replay** which must answer with the existing replacement.
+  Missing this broke
+  `recovery_faults_kill_real_daemon_and_preserve_original_pane` on the first
+  attempt (400 "recovery action start_recovery_run is not valid") — caught and
+  fixed; 10/10 green after.
+
+`an_invalid_action_answers_400_even_while_the_enumeration_is_unresolved` asserts
+both directions, so an injection that merely deleted the refusal fails it too.
+
+### F4 — the tear shape is checked at the boundary
+
+`scan_session_lifecycle_complete_reader` now records whether the malformed line
+was newline-terminated and tolerates only a **non-terminated** final fragment.
+The regression uses the production tear shape (`{TEAR}` with no `\n`, where
+round three supplied `{TEAR}\n` — a shape the writer cannot produce as a torn
+append), plus a newline-terminated-corruption case that stays unresolved, plus a
+third case proving the tolerance is for the tear and not for "the last line".
+
+## Acceptance 3 — the pin the review defeated
+
+The old pin asserted `code.contains("Unobserved {\n        reason:
+UnobservedSession,")` — a **prefix**, so adding a `links` field after it kept the
+pin green — and inspected two declarations.
+
+- Renamed to `the_recovery_authority_types_cannot_spell_failure_as_a_decided_negative`.
+  It extracts each unresolved variant **whole** (brace-matched) and compares for
+  **equality** against the exact payload each type is allowed. Probed: with the
+  expected payload set to round three's prefix, the assertion fires and prints
+  `left: "Unobserved { reason: UnobservedSession, bytes_inspected: u64, }"` /
+  `right: "Unobserved { reason: UnobservedSession, }"`. It is not a prefix match.
+- Four declarations, not two: `IndexedRecoveryOrigins`,
+  `AuthoritativeOriginLinks`, `ClaimEvidence`, `ResolvedRecoveryClaim` (the last
+  gained `#[must_use]` so the pin can hold all four to one rule).
+- It also asserts the three named predicates have not gone back to `-> bool`.
+- **And it says plainly what a source-text pin cannot express**, in its own doc
+  comment: the property is "no predicate answers a decided negative when it
+  could not look", which is a claim about ~20 call sites, not a shape.
+  `no_observation_failure_on_the_authority_path_confirms_or_destroys` is the
+  **behavioural** pin — a table of five injected observation failures (unreadable
+  auth key, replacement, origin, sessions directory, torn sibling) against a
+  fixture that resolves `Valid` with nothing injected, demanding of each: never
+  `Valid`, never a quarantine, claim byte-identical, normal resolution after
+  repair.
+- The structural pin stays **GREEN** under this round's injection, deliberately:
+  the injection changes which variant the code constructs, not any type's shape.
+  A red pin there would mean it has started measuring behaviour and stopped
+  guarding structure, which is how round three's pin came to pass on its defect.
+
+## Acceptance 7 — the two regressions
+
+- `an_nth_authority_key_read_failure_never_quarantines_a_healthy_claim` — sweeps
+  the fault across read positions against a healthy claim; for every position
+  that fires, asserts `Unobserved(AuthorityKeyUnreadable)`, no quarantine, claim
+  file byte-identical; then repairs and asserts `Valid`. Also asserts the fault
+  fired at least once, so the sweep cannot pass vacuously.
+- `a_read_failure_after_a_cached_complete_enumeration_never_quarantines` —
+  asserts additionally that the session directory still holds exactly two files
+  ("origin plus one replacement, and nothing minted") and that the cached
+  enumeration was reused rather than rebuilt.
+
+"No new replacement" is also proved on the production path by
+`recover_refuses_to_mint_while_a_session_file_is_unreadable` (unchanged) and by
+the new F3 test's 503 arm.
+
+## Changed
+
+- `crates/orgasmic-daemon/src/recovery_claim.rs` — `ClaimEvidence`,
+  `UnobservedSession::{AuthorityKeyUnreadable, SessionPathUnresolvable}`,
+  `RecoveryClaimError::{Unobserved, ForeignSessionPath}`, `session_read_evidence`,
+  and the 13 predicate sites in the table above; test-only
+  `arm_authority_key_fault` / `origin_enumeration_passes`; four new tests; the
+  re-authored pin.
+- `crates/orgasmic-daemon/src/api.rs` — `recovery_status_inner` takes the
+  authority (F2); `post_run_recover` ordering (F3);
+  `RecoveredRun.{recovery_unobserved, suppressed_recovery_actions}`;
+  `suppress_unobserved_recovery`; `recovery_claim_load_error`;
+  `apply_recovery_claim_to_run` three-way; boot reattach ownership;
+  two new endpoint tests; `forged_recovery_claim_does_not_suppress_actions_without_session_proof`
+  fixture corrected (see below).
+- `crates/orgasmic-core/src/session.rs` — F4 scanner boundary + regression.
+- `verify/TASK-2QK4P.1.1.1{,-endpoint,-tear}/` — new artifacts.
+- `verify/TASK-2QK4P.1{,.1,.1-recover}/injection.patch` and two `expect-red`
+  count lines — re-authored onto this tree (the old patches no longer applied).
+
+**One existing test's fixture changed, deliberately and visibly.**
+`forged_recovery_claim_does_not_suppress_actions_without_session_proof` wrote
+`{}\n` as the forged replacement session. `{}` is lifecycle-RELEVANT to the
+scanner (`line_is_lifecycle_relevant` returns true for anything whose header is
+not `"kind":"driver_event"`) and fails to deserialize, so under F4 it became a
+newline-terminated malformed final line — i.e. UNREADABLE — and the whole
+project's enumeration went `Unobserved`, suppressing the actions. That is round
+three's ruling working, not this test's property failing: the test's property is
+"a committed claim with no session PROOF is not authoritative". The fixture is
+now a well-formed transcript envelope carrying no `RecoveryOrigin`, and a second
+phase was ADDED to the same test asserting that a `{}\n` file DOES suppress and
+reports `recovery_unobserved`, so the two facts stay pinned apart rather than one
+being quietly dropped.
+
+## Verification Gates
+
+| gate | result |
+| --- | --- |
+| `orgasmic verify TASK-2QK4P.1.1.1` | **PASS** — red-then-green, tree byte-identical |
+| `orgasmic verify TASK-2QK4P.1.1.1-endpoint` | **PASS** |
+| `orgasmic verify TASK-2QK4P.1.1.1-tear` | **PASS** |
+| `orgasmic verify TASK-2QK4P.1` | **PASS** (re-authored; re-measured, not carried over) |
+| `orgasmic verify TASK-2QK4P.1.1` | **PASS** (re-authored) |
+| `orgasmic verify TASK-2QK4P.1.1-recover` | **PASS** (re-authored) |
+| `cargo clippy --workspace --all-targets -- -D warnings` | **PASS**, exit 0, zero diagnostics |
+| `cargo fmt --all --check` | **PASS** |
+| `cargo test -p orgasmic-core` | **166 + 19 passed, 0 failed, 2 ignored** |
+| `recovery_claim::` (31 tests) | **31 passed** |
+| `recovery_faults_kill_real_daemon_and_preserve_original_pane` | **10/10 PASS** by repetition (9.3–10.2 s each) |
+| `scripts/run-tests.sh -p orgasmic-daemon` | **INCONCLUSIVE ×3 — see below** |
+
+**The three `orgasmic verify` artifacts that pre-date this round were RE-MEASURED,
+not carried over.** Their injection patches no longer applied to this tree and
+had to be re-authored; two `expect-red` count lines moved because this round adds
+regressions to the same binaries that also catch those injections. Every named
+`contains:` signature in all three still matches.
+
+### `scripts/run-tests.sh -p orgasmic-daemon` — the VERDICT block, quoted
+
+Run 1 found **one REAL failure**, `forged_recovery_claim_does_not_suppress_actions_without_session_proof`,
+caused by this round's F4 change; it is fixed (fixture corrected as described
+above) and green in runs 2 and 3. Runs 2 and 3 found **no REAL failure**. All
+three runs returned INCONCLUSIVE because the host measured DEGRADED.
+
+Run 3 (latest, verbatim head and tail):
+
+```
+  suite    : cargo test -p orgasmic-daemon --no-fail-fast -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events
+  registry : verify/flake-registry.toml (7 entries, every owner open)
+  billed   : legacy_drivers_and_explicit_pairs_emit_equivalent_start_events — NOT RUN (--skip applied to every invocation)
+  failures : 6
+  crashed  : none — every failing target reported a failure list
+  cargo    : exited 101 (0 all green, 101 libtest reported failures)
+  ignored  : 5 test(s) carrying #[ignore]
+  environ  : complete — no tool requirement was waived
+  host     : DEGRADED (threshold syspolicyd_rate>=1.50; load corroborating only)
+             before  load=7.65 syspolicyd_time=196:46.01
+             after   load=10.48 syspolicyd_time=206:51.64
+             delta   load=7.65 syspolicyd_cpu=605.6 wall_s=317
+             rate    1.9104
+
+LOAD-SENSITIVE (5) — isolation-green, unregistered, host was degraded:
+  api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds
+  supervisor::tests::a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed
+  supervisor::tests::a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline
+  supervisor::tests::process_subtree_cpu_probe_does_not_mistake_a_live_idle_child_for_work
+  supervisor::tests::process_subtree_cpu_probe_sees_a_real_cpu_burning_child
+      (each: isolation passed)
+
+FLAKE (1) — green in isolation, registered signature matched:
+  api::tests::recovery_reattaches_tmux_session_when_handle_exists  owner TASK-X0PV1
+
+verdict: INCONCLUSIVE — re-run when calm. Host was degraded (5 load-sensitive failure(s); not a registry excuse).
+```
+
+**Classification.** Not a regression: every listed failure is isolation-green,
+none is in a file this change touches except `explicit_reattach_rmux_…` (api.rs,
+untouched by this diff, and green alone), and none appeared in run 1's REAL list
+after the forged-test fix. The host could not be made calm — `ps` during the runs
+showed a 104% background Python process plus browser/Telegram activity that are
+the operator's, not a dispatch swarm, and `gotchas.org` records that this suite's
+own exec pattern is what drives the syspolicyd rate. **Per `project.org`,
+INCONCLUSIVE is neither green nor a code defect, so this gate is formally UNMET
+and needs one calm-host re-run.**
+
+The three new/changed endpoint tests are individually green inside those suite
+runs:
+`api::tests::an_invalid_action_answers_400_even_while_the_enumeration_is_unresolved ... ok`,
+`api::tests::forged_recovery_claim_does_not_suppress_actions_without_session_proof ... ok`,
+`api::tests::one_recover_post_enumerates_the_project_once ... ok`.
+
+**Watchdog.** Every cargo invocation ran under a syspolicyd watchdog sampling
+`ps -o pcpu= -p 520` every 10 s and killing the process group at ≥400% held 60 s.
+It never fired. Peaks: 17.3% (recovery_claim), 13.5% (core), 1.0–1.2% (clippy),
+2.4–5.3% (fault repetition), 316.8 / 328.6 / 362.2% (the three full-suite runs).
+
+## Unmet Criteria
+
+1. **`scripts/run-tests.sh -p orgasmic-daemon` GREEN.** Three attempts, three
+   INCONCLUSIVE on a degraded host; zero REAL failures in the two post-fix runs.
+   Needs one calm-host re-run. Evidence above.
+
+Everything else in acceptance 1–8 is met and evidenced above.
+
+## Residual Risk
+
+1. **F4 widens what suppresses recovery.** Any `.jsonl` in a project's sessions
+   directory whose final line is complete-but-malformed now makes that project's
+   enumeration `Unobserved` until the file is repaired — previously such a line
+   was forgiven at EOF. The refusal is non-destructive and retryable (503, no
+   quarantine), and acceptance 6 asked for exactly this, but it is a real
+   liveness change and it is what broke the forged-claim test. Note
+   `line_is_lifecycle_relevant` treats *any* line whose header is not
+   `"kind":"driver_event"` as relevant, so the class of files that can do this is
+   wider than "session envelopes".
+2. **`tmux_session_exists` is still the class**, deliberately unfixed (section C).
+   A transient tmux failure turns a live pending rescue into a permanent
+   `DeadPlannedHandle` refusal rather than a retryable one. Fail-closed, never
+   destructive; wants a follow-up that gives the sync probe a `Result`.
+3. **Boot reattach now skips on `Unobserved`.** An unreadable auth token at boot
+   makes `pending_recovery_claim_owns_session` unobserved for every candidate, so
+   no run in that project is reattached until the next boot. Fail-closed and
+   retried, but it is a behaviour change with a cost.
+4. **`RecoveredRun` gained two serialized fields.** `recovery_unobserved` and
+   `suppressed_recovery_actions` are additive and `skip_serializing_if`-guarded,
+   but the UI does not render them yet — an operator seeing empty actions still
+   has to read `reason` to learn why.
+5. **The non-unix branches keep the old collapse** (section C). Unix is the
+   shipped target; nothing in CI exercises the others.
+6. **The 340 ms full scan stands**, per the reviewer's ruling — F2 removed the
+   duplicate POST pass, not the pass itself. A completeness-generation design is
+   still wanted before release.
+7. **`remove_recovery_claim` still has no caller.** Left alone per the brief's
+   ruling 5; not a performance fix.

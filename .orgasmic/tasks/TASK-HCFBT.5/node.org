@@ -1,0 +1,60 @@
+#+title: orgasmic task TASK-HCFBT.5
+#+orgasmic_version: 2
+
+* DONE TASK-HCFBT.5 fix-subtask: heartbeat hardening — child.try_wait() liveness arm, recovery-counter heartbeat skip, interval floor :drivers:codex:acp:reliability:heartbeat:fix:
+:PROPERTIES:
+:ID:               TASK-HCFBT.5
+:PRIORITY:         P3
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/modes/acp_stdio.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-drivers/tests/**
+:TEST_CMD:         cargo test -p orgasmic-drivers; cargo test -p orgasmic-daemon
+:END:
+
+** Description
+Bundles the three non-blocking findings from the TASK-HCFBT.3 reviewer pass
+(verdict SHIP, =834038f=):
+
+1. *(F1, medium)* The heartbeat select arm in =run_acp_stdio= gates liveness on
+   transport EOF only. A codex peer wedged at the OS level with its stdout fd
+   still open ticks heartbeats indefinitely, degrading stall detection for
+   that case from ~600s to the 4h =max_run_duration= backstop. Add a
+   =child.try_wait()= select/poll arm so a dead-or-exited child stops
+   heartbeats even when the pipe lingers; regression test with a peer that
+   exits while a sibling holds the pipe open.
+2. *(F2, low)* The recovery mechanical-summary "driver events recorded"
+   counter (api.rs:4751) blanket-counts heartbeats; skip =type=="heartbeat"=
+   so long quiet runs don't over-report.
+3. *(F3, low)* =heartbeat_interval_ms= rejects 0 but accepts 1ms (busy-spin
+   risk); clamp to a documented floor (≥100ms) in the config plumbing.
+
+** Evidence
+F1 (child liveness): =run_acp_stdio='s heartbeat select arm now carries an
+=if child_alive= guard and polls =child.try_wait()= on every tick *before*
+emitting. =Ok(Some(_))= (exit) and =Err(_)= (status unknowable) both flip
+=child_alive=false=, stopping heartbeats; the existing EOF / terminal /
+command-close paths still reap the child via =child.wait()= at loop end (no new
+release path). Regression test
+=acp_stdio_heartbeats_stop_when_child_exits_with_pipe_held_open=: the mock peer
+backgrounds a =sleep 5= that inherits stdout (pipe never EOFs) then exits its
+main shell; the test asserts heartbeats flow while alive then go silent for
+>5 cadence windows. Verified it TIMES OUT/FAILS when the =try_wait= gate is
+stubbed to always-=Ok(None)=, and PASSES with the real gate. Cleanup reaps the
+peer process group (=kill -- -PID=, pid==pgid via the existing =setsid=
+=detach_subprocess=) with null stdio — no orphan leak (TASK-AJZCK.1 shape).
+
+F2 (recovery counter): =build_recovery_prompt= (api.rs) now =continue=s on
+=type=="heartbeat"= before incrementing =driver_events=, so the
+"driver events recorded" mechanical-summary line no longer over-reports on long
+quiet runs. Untyped driver events still count exactly as before (count moved out
+of the =if let Some(ty)= so only heartbeats are excluded).
+
+F3 (interval floor): added =HEARTBEAT_INTERVAL_FLOOR= (100ms);
+=heartbeat_interval()= clamps any configured =heartbeat_interval_ms= up to the
+floor (=.max(FLOOR)=). The existing quiet-turn test moved 60ms→100ms (which
+would otherwise have been clamped); both heartbeat tests now run at exactly the
+production floor, so the floor is exercised, not bypassed.
+
+Gates (all green): =cargo test -p orgasmic-drivers= (73 + 5 + 24 pass, incl. the
+new F1 test and the env-flaky =real_cursor_agent_stream_json_bridge…=);
+=cargo test -p orgasmic-daemon= (124 + 22 + 56 pass); =cargo clippy --workspace
+--all-targets -D warnings= clean; =cargo fmt --check= + =git diff --check= clean.
+

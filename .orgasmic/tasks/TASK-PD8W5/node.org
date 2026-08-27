@@ -1,0 +1,60 @@
+#+title: orgasmic task TASK-PD8W5
+#+orgasmic_version: 2
+
+* DONE TASK-PD8W5 Execute the property schema migration (dec_HJENQ steps 1-7, one tagged commit) :schema:migration:tasks:
+:PROPERTIES:
+:DEPENDS_ON: TASK-2C3WZ
+:ID: TASK-PD8W5
+:PRIORITY: P2
+:TEST_CMD: cargo test --workspace
+:WORKER: implementer-cursor
+:WRITE_SCOPE: scripts/ .orgasmic/ crates/orgasmic-core/src/ crates/orgasmic-daemon/src/ crates/orgasmic-cli/src/ crates/orgasmic-core/tests/ crates/orgasmic-daemon/tests/
+:END:
+
+** Description
+Drafted as TASK-PROP-MIGRATION inside dec_HJENQ (Consequences → follow-up
+tasks). Run dec_HJENQ migration steps 1-7 as a script-driven batch on the
+live corpus: drop :STATE:/:KIND:(tasks)/:LAST_UPDATED:/:PARENT_TASK:/
+:FIX_SUBTASK:, fold non-empty :BLOCKED_BY: into :DEPENDS_ON:, strip
+blank/default dispatch params. ONE commit tagged =property-migration=
+(dec_X72P5 method). Schema impact per the ADR: TaskHeading/TaskSummary
+field removals, manager lifecycle write path stops emitting
+:STATE:/:KIND:/:LAST_UPDATED:. TWO-PHASE like the id migration: worker
+authors + rehearses the script in its worktree; the manager executes on
+quiesced main.
+
+** Acceptance Criteria
+- [ ] Steps 1-7 land as one tagged =property-migration= commit; fixtures
+  and schema.rs/index.rs/write paths updated in the same commit.
+- [ ] cargo test --workspace no worse than the pre-existing set;
+  fixtures live-corpus reparse green; daemon reload + task list + UI
+  board state counts verified.
+- [ ] New headings post-migration carry only the slimmed property set
+  (per-key verdicts in dec_HJENQ).
+
+** Evidence
+- Authoring round: implementer-cursor (run-20260612T175048; commits
+  =bcec386= + =1beb388=, merged code+script only as =b62bad9= — rehearsal
+  corpus changes excluded at merge). Script: steps 1-7, --verify/--apply/
+  --dry-run/--self-test, idempotent double-apply.
+- Manager review-and-fix (4 commits): drawer lines now preserved verbatim
+  so the migration diff is exactly the dropped/merged lines (the worker
+  version re-serialized every drawer — 22k-line churn incl. tx files;
+  self-test now asserts formatting preservation and tx untouchability);
+  .orgasmic/tmp/ excluded from scans; rustfmt pass (worker's fmt PASS
+  claim was stale); worker-seed :KIND: corruption from the fixture
+  bulk-strip ({kind} template var dropped, implementer/babysitter kinds
+  swapped) — fixed 2 REAL dispatch_endpoint regressions the worker had
+  misclassified as parallel flakes (verified failing isolated on merged,
+  passing isolated at baseline 8f448fa).
+- LIVE EXECUTION: quiesced (0 runs), apply 4 files -1308/+8 (backlog/
+  cancelled/done/in_progress), verify OK, second apply 0 files, ONE
+  commit =9e353e8= tagged =property-migration=. tx/decisions/architecture
+  byte-untouched.
+- Smoke on rebuilt daemon (pid 93825): parse-errors EXACTLY 56, 235
+  tasks indexed, TASK-VJXXC backlog→todo→backlog cross-file round-trip —
+  rewritten drawer carries no :STATE:/:KIND:.
+- Pre-existing failures stand (3 dispatch_endpoint pid/subprocess +
+  flaky continuation_early_exit + integration auto_spawn/post_projects/
+  nested_worktree — all verified failing at baseline).
+

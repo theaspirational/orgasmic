@@ -1,0 +1,41 @@
+#+title: orgasmic task TASK-CPA74.1
+#+orgasmic_version: 2
+
+* DONE TASK-CPA74.1 README polish fix-subtask: port-config alignment + first-use ordering + Node engines + minor polish :docs:readme:fix:
+:PROPERTIES:
+:ID:               TASK-CPA74.1
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         README.md ui/package.json
+:WRITE_SCOPE:      README.md ui/package.json
+:READ_SCOPE:       /tmp/orgasmic-codex/task-055-review-report.md
+:TEST_CMD:         git diff --check
+:DEPENDS_ON:       TASK-CPA74
+:END:
+
+** Description
+6 findings from TASK-CPA74 reviewer (verdict has-issues no-blocks-ship). 3 MEDIUM affect fresh-user UX; 3 LOW polish. All foldable into one docs round.
+
+*F-1 (MEDIUM correctness)* — README instructs =orgasmic serve --port 8739= but =orgasmic init= writes =bind_port: 4848= in =$ORGASMIC_HOME/config.yaml= per =home.rs:120-123=. The CLI's =read_bind_port= (=daemon_client.rs:189-216=) reads config default, so post-serve =orgasmic status= / =doctor= hit :4848 while daemon is on :8739. Vite hardcodes :8739 so UI flow works; documented status step does not. Fix: add a one-liner after =orgasmic init= to set =bind_port: 8739= in config.yaml (or =export ORGASMIC_DAEMON_URL=http://127.0.0.1:8739=). Add Troubleshooting note that CLI + Vite must agree.
+
+*F-2 (MEDIUM correctness)* — First use step 3 (=orgasmic status=) runs BEFORE step 4 (=orgasmic serve=). On fresh install, =DaemonClient::from_home= requires a bearer token at =$ORGASMIC_HOME/user/auth/token=, which is created only by first successful =orgasmic serve= boot (=auth.rs:18-34=). Step 3 errors with "bearer token not found ... run orgasmic serve once to generate it". Fix: move =orgasmic status= to step 5 (after =orgasmic serve=), OR add a note that step 3 is expected to fail until after step 4 on first run.
+
+*F-3 (MEDIUM design / AC source)* — README cites Node version from =ui/package-lock.json= (Vite 6's =engines=). Brief AC said "Node from =ui/package.json= engines". =ui/package.json= has no =engines= field. Two acceptable fixes: (a) add =engines: { node: "^18.0.0 || ^20.0.0 || >=22.0.0" }= to =ui/package.json= and point README there (cleaner; future-proof), OR (b) reword README: "Vite 6 requires Node ^18 || ^20 || >=22 (see =vite= in =ui/package-lock.json=; no top-level =engines= in =ui/package.json= yet)." Recommend (a) since it's small.
+
+*F-4 (LOW correctness)* — Troubleshooting "Daemon won't start" → "confirm =$ORGASMIC_HOME/user/auth/token= exists". On a failed first start, the token CORRECTLY doesn't exist; checking it doesn't help diagnose. Fix: lead with =orgasmic doctor=; note token appears AFTER first successful =orgasmic serve=.
+
+*F-5 (LOW design)* — PATH one-liner hardcodes =~/.orgasmic= instead of respecting custom =$ORGASMIC_HOME=. Fix: use =$ORGASMIC_HOME/bin:$PATH= with a note on =export ORGASMIC_HOME=... for non-default.
+
+*F-6 (LOW docs)* — Troubleshooting missing port-conflict bullets (:8739 + :5180). Fix: add =lsof -i :8739= advice + Vite =--port= override + update tunnel YAML accordingly.
+
+** Acceptance Criteria
+- [ ] *F-1*: README First use section aligns CLI and Vite on the same port (either bump config default, set ORGASMIC_DAEMON_URL, OR add bind_port edit step).
+- [ ] *F-2*: First use ordering puts =orgasmic status= AFTER =orgasmic serve= (or adds expected-error caveat).
+- [ ] *F-3*: Either =ui/package.json= gets an =engines= field, OR README wording acknowledges =engines= is absent and cites the lockfile honestly.
+- [ ] *F-4* + *F-5* + *F-6*: Folded into the same docs pass.
+- [ ] =git diff --check= clean. Implementer commits the work themselves.
+
+** Notes
+:FIX_SUBTASK: t. Docs-only — disjoint WRITE_SCOPE (README.md + ui/package.json) from everything in flight.
+

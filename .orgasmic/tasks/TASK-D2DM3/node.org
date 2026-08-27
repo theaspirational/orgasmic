@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-D2DM3
+#+orgasmic_version: 2
+
+* BACKLOG TASK-D2DM3 Daemon-to-daemon live messaging over LAN/tunnel with ledger-durable record    :twcp9:distributed:
+:PROPERTIES:
+:ID: TASK-D2DM3
+:PRIORITY: P2
+:DEPENDS_ON: TASK-CLM6W
+:END:
+
+** Description
+TWCP9 decision, step 4 (deferred until multi-machine is actually deployed). Low-latency agent/daemon messaging over the existing LAN listener + cloudflared tunnel, advisory only: a delivered message never changes authoritative state by itself; every message is also appended to the sender's ledger log as the durable record. Peers discovered via `machines/<machine-id>/` metadata on the ledger branch. If the peer is unreachable, the ledger path is the fallback — no queue infrastructure.
+** Acceptance
+- [ ] message delivered daemon-to-daemon appears in both the receiver and the sender's ledger log
+- [ ] peer unreachable → no error surfaced to the worker; ledger append still happens
+- [ ] no authoritative state transition depends on live delivery (audit)
+

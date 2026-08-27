@@ -1,0 +1,48 @@
+#+title: orgasmic task TASK-GPY3H
+#+orgasmic_version: 2
+
+* DONE TASK-GPY3H supervisor probe-child family is unowned and turns any warm-host run RED
+:PROPERTIES:
+:ID: TASK-GPY3H
+:PRIORITY: P2
+:END:
+
+** Description
+=supervisor::tests::a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline=,
+=…a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed=,
+=…a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport=,
+and occasionally =api::tests::recovery_reattaches_rmux_session_when_handle_exists=
+fail on a warm host, pass in isolation every time, and are UNREGISTERED — so the
+wrapper reports them REAL and the run goes RED.
+
+Panics observed: =the stub recorded its `sleep` pid= and =the sweep must be
+bounded= — child spawn/reap latency.
+
+*Measured, with controls, during TASK-2QK4P.1.1.1.1.1* (round six): eleven runs,
+=syspolicyd= rate climbing 0.36 → 1.46 and not recovering after a five-minute
+idle; the author's own new API test under =#[ignore]= produced the SAME failures
+(so the change was not the cause), and the unmodified baseline in a sibling
+worktree was GREEN twice while interleaved. The manager then measured the same
+tree GREEN on a rested host at rate 0.1070, load 1.69
+(=tx-20260808-orgasmic-5536=).
+
+*This costs every future round an hour.* Three rounds in a row have burned time
+proving 'the host, not my change'.
+
+** Ruling from the round-six review
+=TASK-X0PV1= owns FOUR specifically enumerated TASK-STWVB parallelism modes and
+*should not silently absorb a different family.* Capture the exact panic
+signatures first, then decide between fixing the probe deadlines/coordination and
+adding SHORT-LIVED registry entries owned by this task. Do not add an unowned
+registry entry.
+
+** Acceptance
+1. Capture exact panic signatures and the load conditions that produce them.
+2. Decide: fix the deadline/coordination, or add time-boxed registry entries
+   owned by this task with a stated expiry.
+3. If fixing: the probe/sweep deadlines must not depend on child spawn latency
+   under load, or must state their bound and be tested at it.
+4. Related: =TASK-4BBA6= wants the syspolicyd watchdog inside =run-tests.sh=, and
+   =TASK-P4XKT= wants passing tests repeated. Both interact with this; say which
+   should land first.
+

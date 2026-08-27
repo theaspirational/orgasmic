@@ -1,0 +1,43 @@
+#+title: orgasmic task TASK-RQ270.3
+#+orgasmic_version: 2
+
+* DONE TASK-RQ270.3 Excision stage C — remove the architecture read model and land the lint carve-out
+:PROPERTIES:
+:ID: TASK-RQ270.3
+:PRIORITY: P1
+:END:
+
+** Description
+
+Stage C of the dec_HBK6A excision: *remove the architecture READ MODEL* — the
+daemon routes and index projection, the CLI read verbs, the UI surface — and land
+the dangling-edge lint carve-out that stage D depends on.
+
+Split into two dispatches because ~1,500 LOC across daemon, CLI and UI is more
+than one review can do well, and every rejection this excision has produced was a
+gap a large diff hid:
+
+- *TASK-RQ270.3.1* — the UI read surface. Landed first so main never contained a
+  UI calling a route the daemon had removed. Merged =18739ea=, APPROVED.
+- *TASK-RQ270.3.2* — the daemon read model, the CLI verbs, and the carve-out.
+
+** This node exists because of a manager error
+
+Both halves were minted as =TASK-RQ270.3.1= and =.3.2= without this parent ever
+being created. Task parentage is derived FROM THE ID GRAMMAR and from nothing
+else, so each child orphan-referenced an absent =TASK-RQ270.3= and the daemon
+raised two =orphan derived parent= parse errors.
+
+Found by the TASK-RQ270.3.2 implementer, which measured =parse_errors= as
+required, reported the criterion UNMET rather than rounding it to zero, and
+correctly declined to repair it — the fix is a daemon-managed task-ledger change,
+outside its =crates/**= scope and squarely the manager's.
+
+*The lesson: minting =X.N.M= silently asserts that =X.N= exists.* Nothing at
+creation time checks it; the board tells you afterwards, through the parse-error
+count, which is exactly why the count is worth measuring rather than assuming.
+
+** Acceptance
+
+Both halves landed and reviewed, and =parse_errors= back to 0.
+
