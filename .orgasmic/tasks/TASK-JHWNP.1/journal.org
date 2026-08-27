@@ -30,3 +30,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 5e5f1f27-402c-4f6e-87d2-5a6d3328fc56
 :END:
+
+* tx-20260827-orgasmic-6482 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260827-orgasmic-6482
+:TIME:    [2026-08-27 Thu 23:33:00]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JHWNP.1
+:TARGET: .orgasmic/tasks/TASK-JHWNP.1/node.org
+:REASON: fix round finalized 3503b86b; cross-family re-review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: bdb9d842-bce0-49f6-bbcf-a947fd8b5fd8
+:END:
