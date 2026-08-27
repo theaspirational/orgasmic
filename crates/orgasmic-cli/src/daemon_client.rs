@@ -579,6 +579,7 @@ mod tests {
             brief_content: "brief".into(),
             from_sha: "abc123".into(),
             worktree_path: PathBuf::from("/tmp/worktree"),
+            reuse_worktree: false,
             branch: "task-1-impl".into(),
             model_override: None,
             effort_override: None,

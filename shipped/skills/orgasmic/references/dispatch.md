@@ -26,8 +26,18 @@ Choosing the values: [`agent-selection.md`](agent-selection.md).
   the diff is reachable from `--from`.
 - Inside a worktree, `.orgasmic/` is a frozen snapshot. Verify graph state via
   the daemon, naming the project: `orgasmic task get --project <name> <ID>`.
-- A second round cannot reuse the derived branch name (`task-xxxxx-<kind>`
-  already exists) — pass an explicit `--branch`.
+- An aborted implementer close cleans up by default. To continue the same task
+  chain, close with `--no-worktree-remove`; that explicit flag keeps and locks
+  the checkout between rounds. The next implementer dispatch for the same task
+  set reuses it, but still needs a new `--branch` because the derived name
+  already exists. Task order does not matter.
+- To bypass a retained chain checkout, pair `--fresh-worktree` with
+  `--worktree <new-path>`. Prune skips a live between-round hold, but releases
+  and reclaims it once its tasks no longer permit another implementer round.
+- There is a small interrupt window after reuse unlocks the checkout and before
+  the daemon registers the next round. If Ctrl-C lands there, re-run the
+  dispatch before running `worktree-prune`; the checkout is temporarily
+  unclaimed and therefore reclaimable.
 
 ## Lifecycle
 
