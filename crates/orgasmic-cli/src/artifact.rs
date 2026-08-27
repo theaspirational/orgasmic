@@ -322,9 +322,7 @@ fn render_comments(detail: &serde_json::Value) -> serde_json::Value {
                 serde_json::json!({
                     "cid": c.get("cid"),
                     "author": c.get("author"),
-                    // ponytail: always null — the daemon's CommentRecord drops the
-                    // journal :TIME:; populate once the endpoint serves it.
-                    "time": serde_json::Value::Null,
+                    "time": c.get("time"),
                     "message": c.get("message"),
                     "anchor": anchor,
                     "consumed": c.get("consumed"),
@@ -382,6 +380,7 @@ mod tests {
                         {
                             "cid": "CID-open0001",
                             "author": "aspirational",
+                            "time": "[2026-08-27 Thu 18:00]",
                             "version": 1,
                             "anchor": "{\"questionKey\":\"q1\",\"answer\":\"yes\"}",
                             "resolution_target": "",
@@ -446,7 +445,7 @@ mod tests {
         let first = &entries[0];
         assert_eq!(first["cid"], "CID-open0001");
         assert_eq!(first["author"], "aspirational");
-        assert!(first["time"].is_null());
+        assert_eq!(first["time"], "[2026-08-27 Thu 18:00]");
         assert_eq!(first["message"], "yes");
         assert_eq!(first["anchor"]["questionKey"], "q1");
         assert_eq!(first["anchor"]["answer"], "yes");

@@ -101,6 +101,10 @@ pub struct ArtifactDetail {
 pub struct CommentRecord {
     pub cid: String,
     pub author: String,
+    /// Journal `:TIME:` of the comment. `#[serde(default)]` so payloads
+    /// serialized before the field existed keep parsing.
+    #[serde(default)]
+    pub time: String,
     pub version: u32,
     pub anchor: String,
     pub resolution_target: String,
@@ -587,6 +591,7 @@ pub fn parse_comments(content: &str) -> Vec<CommentRecord> {
         .map(|entry| CommentRecord {
             cid: entry.entry_id.clone(),
             author: entry.actor.clone(),
+            time: entry.time.clone(),
             version: entry
                 .extra("VERSION")
                 .and_then(|v| v.parse().ok())
@@ -840,7 +845,7 @@ mod tests {
     fn artifact_generator_spec_lists_every_block_type() {
         let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         loop {
-            if here.join(".orgasmic").is_dir() && here.join("shipped").is_dir() {
+            if here.join("shipped/entry/router.org").is_file() {
                 break;
             }
             assert!(
