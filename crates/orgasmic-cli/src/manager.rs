@@ -996,7 +996,14 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
                 // run retains its declared artifact paths (TASK-1FV1N).
                 reservation.commit();
             }
-            let reason = format!("daemon dispatch failed: {err}");
+            let mut reason = format!("daemon dispatch failed: {err}");
+            if ambiguous && plan.reuse_worktree {
+                // Fencing wins over warmth: the POST may have started a worker,
+                // so only the daemon may decide whether this reused tree is free.
+                reason.push_str(
+                    "; reused chain worktree was not re-locked and was handed to daemon cleanup because dispatch acceptance was ambiguous",
+                );
+            }
             let cleanup = if ambiguous {
                 // If the cleanup request can't reach the daemon either, do
                 // NOT fall back to local deletion: the original failure was
@@ -1269,7 +1276,10 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
 
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let client = DaemonClient::from_home_autostart(home)?;
+    // `aborted` means abandonment by default. Only the operator's explicit
+    // keep flag says another implementer round is coming.
     let keep_chain_worktree = args.status == DispatchCloseStatus::Aborted
+        && args.no_worktree_remove
         && open.kind == DispatchKind::Implementer.as_str()
         && open.worktree.as_deref().is_some_and(Path::is_dir);
     let remove_worktree = args.worktree_remove && !args.no_worktree_remove && !keep_chain_worktree;
@@ -3812,6 +3822,9 @@ struct ManagedWorktree {
     #[cfg(unix)]
     identity: anchored_dir::DirIdentity,
     disposition: WorktreeDisposition,
+    /// This is an expired orgasmic chain lock. Actual prune releases it only
+    /// after the daemon reservation and anchored identity checks are held.
+    release_chain_hold: bool,
     /// Recursive size, measured only for reclaimable entries. Sizing a held
     /// worktree would put a multi-GB directory walk on the hot path of a status
     /// verb to inform no decision.
@@ -3859,6 +3872,9 @@ impl ManagedWorktree {
     }
 
     fn why(&self) -> String {
+        if self.release_chain_hold {
+            return "chain hold has no pending implementer round".to_string();
+        }
         match &self.disposition {
             WorktreeDisposition::Unclaimed => "no open dispatch names it".to_string(),
             WorktreeDisposition::RepoGone { detail } => {
@@ -3938,6 +3954,14 @@ fn scan_managed_worktrees(
                 None => normalize_path(candidate) == normalized,
             }
         };
+        let lock_reason = registrations
+            .iter()
+            .find(|registration| registration.path == normalized)
+            .and_then(|registration| registration.lock_reason.as_deref());
+        let expired_chain_hold = lock_reason.is_some_and(|reason| {
+            reason.starts_with(CHAIN_WORKTREE_LOCK_PREFIX)
+                && !chain_hold_has_pending_round(project_root, reason)
+        });
         let mut disposition = if cwd_is_inside(
             cwd.as_deref(),
             cwd_normalized.as_deref(),
@@ -3963,11 +3987,7 @@ fn scan_managed_worktrees(
             WorktreeDisposition::Held {
                 detail: live_run_holds_detail(run),
             }
-        } else if let Some(reason) = registrations.iter().find_map(|registration| {
-            (registration.path == normalized)
-                .then_some(registration.lock_reason.as_deref())
-                .flatten()
-        }) {
+        } else if let Some(reason) = lock_reason.filter(|_| !expired_chain_hold) {
             WorktreeDisposition::Held {
                 detail: if reason.starts_with(CHAIN_WORKTREE_LOCK_PREFIX) {
                     format!(
@@ -4009,6 +4029,7 @@ fn scan_managed_worktrees(
             path,
             name,
             identity: child.identity,
+            release_chain_hold: expired_chain_hold && disposition_is_reclaimable(&disposition),
             disposition,
             bytes: walk.as_ref().map(|walk| walk.bytes),
             nested_git: walk.and_then(|walk| walk.nested_git),
@@ -5798,6 +5819,17 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
                 continue;
             }
         }
+        if worktree.release_chain_hold {
+            if let Err(err) = unlock_chain_worktree(&project_root, &worktree.path) {
+                finish_worktree_guard(&runtime, &client, &project_id, &task_property, &mut guard);
+                kept += 1;
+                println!(
+                    "KEPT PATH={} WHY=could not release expired chain hold: {err}",
+                    worktree.path.display()
+                );
+                continue;
+            }
+        }
         let bytes = worktree.bytes.unwrap_or(0);
         let outcome = match anchored_root.as_ref() {
             Some(root) => reclaim_managed_worktree(&project_root, root, worktree),
@@ -5974,7 +6006,8 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .find(|record| {
                 record.closed
                     && record.kind == DispatchKind::Implementer.as_str()
-                    && record.tasks == tasks
+                    && record.tasks.len() == tasks.len()
+                    && record.tasks.iter().all(|task| tasks.contains(task))
             })
             .and_then(|record| record.worktree)
             .map(|path| normalize_path(&path))
@@ -7154,15 +7187,16 @@ struct GitWorktreeRegistration {
 
 fn git_worktree_registrations(project_root: &Path) -> Result<Vec<GitWorktreeRegistration>> {
     Ok(
-        git_capture(project_root, ["worktree", "list", "--porcelain"])
+        git_capture(project_root, ["worktree", "list", "--porcelain", "-z"])
             .map_err(anyhow::Error::msg)?
-            .split("\n\n")
+            .split("\0\0")
             .filter_map(|record| {
                 let path = record
-                    .lines()
-                    .find_map(|line| line.strip_prefix("worktree "))?;
-                let lock_reason = record.lines().find_map(|line| {
-                    line.strip_prefix("locked")
+                    .split('\0')
+                    .find_map(|field| field.strip_prefix("worktree "))?;
+                let lock_reason = record.split('\0').find_map(|field| {
+                    field
+                        .strip_prefix("locked")
                         .map(|reason| reason.trim().to_string())
                 });
                 Some(GitWorktreeRegistration {
@@ -7189,6 +7223,25 @@ fn chain_worktree_lock_reason(tasks: &[String]) -> String {
         "{CHAIN_WORKTREE_LOCK_PREFIX} for {}",
         task_list_property(tasks)
     )
+}
+
+fn chain_hold_has_pending_round(project_root: &Path, reason: &str) -> bool {
+    let Some(tasks) = reason
+        .strip_prefix(CHAIN_WORKTREE_LOCK_PREFIX)
+        .and_then(|suffix| suffix.strip_prefix(" for "))
+        .map(split_task_list)
+        .filter(|tasks| !tasks.is_empty())
+    else {
+        return true;
+    };
+    let mut pending = true;
+    for task in tasks {
+        let Ok(task) = read_task_lifecycle(project_root, &task) else {
+            return true;
+        };
+        pending &= dispatchable_stage(DispatchKind::Implementer, task.stage);
+    }
+    pending
 }
 
 fn hold_chain_worktree(project_root: &Path, path: &Path, tasks: &[String]) -> Result<()> {
@@ -7261,7 +7314,7 @@ fn release_chain_worktree_holds(project_root: &Path, tasks: &[String]) {
         .filter(|record| {
             record.closed
                 && record.kind == DispatchKind::Implementer.as_str()
-                && record.tasks == tasks
+                && record.tasks.iter().any(|task| tasks.contains(task))
         })
         .filter_map(|record| record.worktree)
         .filter(|path| path.is_dir())
@@ -7407,6 +7460,18 @@ fn retain_reused_worktree_after_failed_dispatch(plan: &DispatchPlan) -> CleanupO
 
 fn create_worktree(project_root: &Path, path: &Path, branch: &str, from_sha: &str) -> Result<()> {
     if path.exists() {
+        if worktree_registration(project_root, path)
+            .ok()
+            .flatten()
+            .and_then(|registration| registration.lock_reason)
+            .is_some_and(|reason| reason.starts_with(CHAIN_WORKTREE_LOCK_PREFIX))
+        {
+            bail!(
+                "worktree path already exists: {} is held for an implementer chain; use \
+                 --fresh-worktree --worktree <new-path>",
+                path.display()
+            );
+        }
         bail!("worktree path already exists: {}", path.display());
     }
     let parent = path
@@ -9284,9 +9349,10 @@ fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransi
                     ));
                 }
             }
-            // A later dispatch start is also proof that the close's lifecycle
-            // leg is no longer owed: dispatch writes its lifecycle transition
-            // before the daemon can append manager.dispatch_started.
+            // The manager dispatch path writes the lifecycle transition before
+            // the daemon appends manager.dispatch_started. The reviewer-chain
+            // integration test and the unit case below both require this as
+            // the durable evidence that an older close no longer needs repair.
             "task.state_transitioned" | "manager.dispatch_started" => {
                 pending.retain(|(_, pending)| pending.task != task);
             }
@@ -11479,13 +11545,20 @@ mod tests {
                 "* TX 2026-07-29 Wed 11:00:00 task.state_transitioned {task}\n:PROPERTIES:\n:TX_ID:        tx-moved-{task}\n:TIME:         [2026-07-29 Wed 11:00:00]\n:TYPE:         task.state_transitioned\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n:END:\n"
             )
         };
+        let dispatched = |task: &str| {
+            format!(
+                "* TX 2026-07-29 Wed 11:00:00 manager.dispatch_started {task}\n:PROPERTIES:\n:TX_ID:        tx-next-{task}\n:TIME:         [2026-07-29 Wed 11:00:00]\n:TYPE:         manager.dispatch_started\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n:KIND:         reviewer\n:END:\n"
+            )
+        };
         std::fs::write(
             tx_dir.join("2026-07.org"),
             format!(
-                "#+title: tx\n#+orgasmic_version: 1\n\n{}\n{}\n{}\n{}",
+                "#+title: tx\n#+orgasmic_version: 1\n\n{}\n{}\n{}\n{}\n{}\n{}",
                 close("tx-1", "TASK-TORN", "in_progress", "in_review"),
                 close("tx-2", "TASK-LANDED", "in_progress", "in_review"),
                 transitioned("TASK-LANDED"),
+                close("tx-4", "TASK-REDISPATCHED", "in_progress", "in_review"),
+                dispatched("TASK-REDISPATCHED"),
                 // No LIFECYCLE_* at all: a close written before this task
                 // shipped carries no intent and is not repairable.
                 "* TX 2026-07-29 Wed 12:00:00 implementer.done TASK-LEGACY\n:PROPERTIES:\n:TX_ID:        tx-3\n:TIME:         [2026-07-29 Wed 12:00:00]\n:TYPE:         implementer.done\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-LEGACY\n:CLOSED_TX:    tx-start-legacy\n:END:\n",

@@ -295,6 +295,22 @@ check the rest of the invocation too.
    emits =implementer.done=, records YOUR merge sha, runs worktree/branch
    cleanup with the salvage path, and flips the lifecycle stage.
 
+   *An implementer chain is retained only by an explicit close flag.* An
+   aborted close means abandonment and performs the normal salvage + worktree
+   cleanup by default. When another implementer round is actually planned,
+   close with =--status aborted --no-worktree-remove=: that existing flag is
+   the chain signal, so the CLI keeps the checkout and takes a native git
+   worktree lock between rounds. Dispatch the same task set again with a new
+   =--branch=; task order does not matter, and only implementers reuse the
+   checkout. To opt out, pair =--fresh-worktree= with
+   =--worktree <new-path>= because the retained default path still exists.
+   The next dispatch unlocks before it registers with the daemon, leaving a
+   small Ctrl-C window where the checkout is unclaimed; if interrupted there,
+   re-run the dispatch before =worktree-prune=. A final implementer close
+   releases the hold, including a partial multi-task close. If the chain is
+   abandoned by cancelling or advancing its tasks instead, the next explicit
+   =worktree-prune= releases the expired hold and reclaims the checkout.
+
    *After close, the worker report lives at
    =<project_root>/.orgasmic/tasks/<ID>/dispatches/<started_tx>/report.md=*
    (TASK-QGWK7, TASK-QGWK7.1). Close *promotes* =last.txt= and a bounded
@@ -481,6 +497,10 @@ your nose. So the leak is reported for you and reclaimed only when you say so
   orphan close. Nothing deletes a worktree on a timer or at daemon boot; a
   worker's uncommitted output is the most easily destroyed thing in the loop
   (TASK-2BPWM, TASK-D0GA3) and no unattended process gets that authority.
+- An explicit implementer chain hold is also skipped while every task can enter
+  the next round. Once cancellation or another lifecycle move makes that round
+  impossible, this operator-run prune releases the native lock under the same
+  daemon reservation and reclaims the checkout.
 - A worktree whose REPO is gone is detected and removed directly, since
   =git worktree remove= has no repository to run from — and it says plainly
   that such a tree could not be salvaged.

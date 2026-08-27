@@ -1777,7 +1777,11 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
                 .contains("--fix-round-final is valid only for a task carrying :FIX_SUBTASK:"),
         "unexpected --fix-round-final response on a non-fix task: {not_a_fix_round_stderr}"
     );
-    run_orgasmic(
+    write(
+        &abort_worktree.join("uncommitted-abort-output.txt"),
+        "salvage me",
+    );
+    let abort_stdout = run_orgasmic(
         &home,
         &running,
         &project_root,
@@ -1796,6 +1800,12 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
         ],
     );
     assert_task_stage(&project_root, "TASK-ABORT", "TODO", "todo");
+    assert!(
+        abort_stdout.contains("cleanup: worktree salvaged sha=")
+            && abort_stdout.contains("worktree removed"),
+        "default abort must salvage and remove its worktree: {abort_stdout}"
+    );
+    assert!(!abort_worktree.exists());
     let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         manager.dispatch_aborted"));
     assert!(tx_raw.contains(":CLEANUP_STATUS: ok"));
@@ -3775,8 +3785,8 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
     let _ = running.join.await;
 }
 
-/// TASK-JHWNP: an aborted implementer round keeps the task-chain worktree, and
-/// the next implementer round switches that same checkout to its new branch.
+/// TASK-JHWNP: an explicitly retained implementer round keeps the task-chain
+/// worktree, and a reordered multi-task round reuses that same checkout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn implementer_round_reuses_the_chain_worktree_and_warm_cache() {
     let tmp = tempfile::tempdir().unwrap();
@@ -3807,7 +3817,9 @@ async fn implementer_round_reuses_the_chain_worktree_and_warm_cache() {
             "manager",
             "dispatch",
             "--task",
-            "TASK-DISPATCH",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
             "--kind",
             "implementer",
             "--mode",
@@ -3820,7 +3832,7 @@ async fn implementer_round_reuses_the_chain_worktree_and_warm_cache() {
             &head,
         ],
     );
-    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
+    let worktree = home.root.join("worktrees/orgasmic/task-bundle-a");
     let marker = worktree.join("warm-cache-marker");
     write(&marker, "warm compiler cache");
     run_orgasmic(
@@ -3832,11 +3844,14 @@ async fn implementer_round_reuses_the_chain_worktree_and_warm_cache() {
             "manager",
             "dispatch-close",
             "--task",
-            "TASK-DISPATCH",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
             "--started-tx",
             &started_tx_from_dispatch_stdout(&first),
             "--status",
             "aborted",
+            "--no-worktree-remove",
             "--reason",
             "continue in another implementer round",
         ],
@@ -3851,7 +3866,9 @@ async fn implementer_round_reuses_the_chain_worktree_and_warm_cache() {
             "manager",
             "dispatch",
             "--task",
-            "TASK-DISPATCH",
+            "TASK-BUNDLE-B",
+            "--task",
+            "TASK-BUNDLE-A",
             "--kind",
             "implementer",
             "--mode",
@@ -3866,7 +3883,7 @@ async fn implementer_round_reuses_the_chain_worktree_and_warm_cache() {
             "task-dispatch-impl-round-2",
         ],
     );
-    assert!(second.contains("dispatched: TASK-DISPATCH implementer pid="));
+    assert!(second.contains("dispatched: TASK-BUNDLE-B TASK-BUNDLE-A implementer pid="));
     assert_eq!(
         run_git(&worktree, &["branch", "--show-current"]),
         "task-dispatch-impl-round-2"
@@ -3937,6 +3954,7 @@ async fn implementer_round_refuses_a_dirty_chain_worktree() {
             &started_tx_from_dispatch_stdout(&first),
             "--status",
             "aborted",
+            "--no-worktree-remove",
             "--reason",
             "continue in another implementer round",
         ],
@@ -3974,6 +3992,36 @@ async fn implementer_round_refuses_a_dirty_chain_worktree() {
         "dirty reuse refusal must name the tree state and escape: {stderr}"
     );
     assert!(worktree.join("DIRTY.txt").is_file());
+
+    let fresh_default_path = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--branch",
+            "task-dispatch-impl-fresh-refused",
+            "--fresh-worktree",
+        ],
+    );
+    assert!(
+        fresh_default_path.contains("--fresh-worktree --worktree <new-path>"),
+        "existing chain path refusal must name the required pair: {fresh_default_path}"
+    );
 
     let fresh = tmp.path().join("fresh-worktree");
     let dispatched = run_orgasmic(
@@ -4014,10 +4062,10 @@ async fn implementer_round_refuses_a_dirty_chain_worktree() {
     let _ = running.join.await;
 }
 
-/// TASK-JHWNP: the native worktree lock is the between-round hold. Prune reads
-/// it as ownership, then can reclaim the checkout once a final close releases it.
+/// TASK-JHWNP.1 HIGH-1: prune keeps a live between-round hold, then releases
+/// and reclaims it once the task is cancelled and no next round is possible.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn worktree_prune_keeps_a_chain_hold_and_reclaims_after_final_close() {
+async fn aborted_chain_cancelled_task_prune_reclaims_worktree() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -4070,6 +4118,7 @@ async fn worktree_prune_keeps_a_chain_hold_and_reclaims_after_final_close() {
             &started_tx_from_dispatch_stdout(&first),
             "--status",
             "aborted",
+            "--no-worktree-remove",
             "--reason",
             "continue in another implementer round",
         ],
@@ -4089,47 +4138,19 @@ async fn worktree_prune_keeps_a_chain_hold_and_reclaims_after_final_close() {
     );
     assert!(worktree.is_dir());
 
-    let second = run_orgasmic(
-        &home,
-        &running,
-        &project_root,
-        &path_env,
-        &[
-            "manager",
-            "dispatch",
-            "--task",
-            "TASK-DISPATCH",
-            "--kind",
-            "implementer",
-            "--mode",
-            "ws",
-            "--harness",
-            "codex",
-            "--brief",
-            brief.to_str().unwrap(),
-            "--from",
-            &head,
-            "--branch",
-            "task-dispatch-impl-round-2",
-        ],
-    );
     run_orgasmic(
         &home,
         &running,
         &project_root,
         &path_env,
         &[
-            "manager",
-            "dispatch-close",
-            "--task",
+            "task",
+            "update",
             "TASK-DISPATCH",
-            "--started-tx",
-            &started_tx_from_dispatch_stdout(&second),
-            "--status",
-            "done",
-            "--merge-sha",
-            &head,
-            "--no-worktree-remove",
+            "--state",
+            "cancelled",
+            "--reason",
+            "chain abandoned",
         ],
     );
     let reclaimed = run_orgasmic(
@@ -4141,9 +4162,150 @@ async fn worktree_prune_keeps_a_chain_hold_and_reclaims_after_final_close() {
     );
     assert!(
         reclaimed.contains(&format!("RECLAIMED PATH={}", worktree.display())),
-        "final close must release the hold so prune can reclaim: {reclaimed}"
+        "cancelled chain must release its hold so prune can reclaim: {reclaimed}"
     );
     assert!(!worktree.exists());
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-JHWNP.1 HIGH-2: a multi-task chain may close one task at a time. Any
+/// final implementer close in the chain releases the whole native hold.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn multi_task_chain_closed_one_task_at_a_time_releases_hold() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/partial-chain-brief.md");
+    write(&brief, "partial chain brief");
+
+    let running = boot(home.clone()).await;
+    let first = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+        ],
+    );
+    let worktree = home.root.join("worktrees/orgasmic/task-bundle-a");
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--started-tx",
+            &started_tx_from_dispatch_stdout(&first),
+            "--status",
+            "aborted",
+            "--no-worktree-remove",
+            "--reason",
+            "continue in another implementer round",
+        ],
+    );
+    let second = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--branch",
+            "task-bundle-partial-chain-round-2",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&second);
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--started-tx",
+            &started_tx,
+            "--status",
+            "aborted",
+            "--no-worktree-remove",
+            "--reason",
+            "close first task",
+        ],
+    );
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--started-tx",
+            &started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--no-worktree-remove",
+        ],
+    );
+    assert!(worktree.is_dir());
+    let registration = run_git(&project_root, &["worktree", "list", "--porcelain"]);
+    assert!(
+        !registration.lines().any(|line| line.starts_with("locked")),
+        "partial final close must release the chain hold: {registration}"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -4212,6 +4374,7 @@ async fn reviewer_for_a_warm_implementer_chain_still_gets_a_fresh_worktree() {
             &started_tx_from_dispatch_stdout(&first),
             "--status",
             "aborted",
+            "--no-worktree-remove",
             "--reason",
             "continue in another implementer round",
         ],
