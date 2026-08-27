@@ -3775,6 +3775,527 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
     let _ = running.join.await;
 }
 
+/// TASK-JHWNP: an aborted implementer round keeps the task-chain worktree, and
+/// the next implementer round switches that same checkout to its new branch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn implementer_round_reuses_the_chain_worktree_and_warm_cache() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    write(
+        &project_root.join(".git/info/exclude"),
+        "warm-cache-marker\n",
+    );
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/chain-brief.md");
+    write(&brief, "chain round brief");
+
+    let running = boot(home.clone()).await;
+    let first = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+        ],
+    );
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
+    let marker = worktree.join("warm-cache-marker");
+    write(&marker, "warm compiler cache");
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx_from_dispatch_stdout(&first),
+            "--status",
+            "aborted",
+            "--reason",
+            "continue in another implementer round",
+        ],
+    );
+
+    let second = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--branch",
+            "task-dispatch-impl-round-2",
+        ],
+    );
+    assert!(second.contains("dispatched: TASK-DISPATCH implementer pid="));
+    assert_eq!(
+        run_git(&worktree, &["branch", "--show-current"]),
+        "task-dispatch-impl-round-2"
+    );
+    assert!(
+        marker.is_file(),
+        "round 2 must reuse {} without dropping ignored warm-cache state",
+        worktree.display()
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-JHWNP: reuse is fail-closed. A dirty prior round is neither overwritten
+/// nor silently replaced by a cold checkout, and the refusal names the opt-out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn implementer_round_refuses_a_dirty_chain_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/dirty-chain-brief.md");
+    write(&brief, "dirty chain brief");
+
+    let running = boot(home.clone()).await;
+    let first = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+        ],
+    );
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx_from_dispatch_stdout(&first),
+            "--status",
+            "aborted",
+            "--reason",
+            "continue in another implementer round",
+        ],
+    );
+    write(&worktree.join("DIRTY.txt"), "uncommitted round output");
+
+    let stderr = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--branch",
+            "task-dispatch-impl-round-2",
+        ],
+    );
+    assert!(
+        stderr.contains(&worktree.display().to_string())
+            && stderr.contains("dirty")
+            && stderr.contains("--fresh-worktree"),
+        "dirty reuse refusal must name the tree state and escape: {stderr}"
+    );
+    assert!(worktree.join("DIRTY.txt").is_file());
+
+    let fresh = tmp.path().join("fresh-worktree");
+    let dispatched = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--branch",
+            "task-dispatch-impl-fresh",
+            "--fresh-worktree",
+            "--worktree",
+            fresh.to_str().unwrap(),
+        ],
+    );
+    assert!(dispatched.contains("dispatched: TASK-DISPATCH implementer pid="));
+    assert!(fresh.is_dir());
+    assert!(
+        worktree.join("DIRTY.txt").is_file(),
+        "the explicit fresh checkout must not touch the refused chain tree"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-JHWNP: the native worktree lock is the between-round hold. Prune reads
+/// it as ownership, then can reclaim the checkout once a final close releases it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_keeps_a_chain_hold_and_reclaims_after_final_close() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/prune-chain-brief.md");
+    write(&brief, "prune chain brief");
+
+    let running = boot(home.clone()).await;
+    let first = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+        ],
+    );
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx_from_dispatch_stdout(&first),
+            "--status",
+            "aborted",
+            "--reason",
+            "continue in another implementer round",
+        ],
+    );
+
+    let held = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    assert!(
+        held.contains(&format!("SKIP PATH={}", worktree.display()))
+            && held.contains("next implementer round"),
+        "prune must read the between-round hold: {held}"
+    );
+    assert!(worktree.is_dir());
+
+    let second = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--branch",
+            "task-dispatch-impl-round-2",
+        ],
+    );
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx_from_dispatch_stdout(&second),
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--no-worktree-remove",
+        ],
+    );
+    let reclaimed = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    assert!(
+        reclaimed.contains(&format!("RECLAIMED PATH={}", worktree.display())),
+        "final close must release the hold so prune can reclaim: {reclaimed}"
+    );
+    assert!(!worktree.exists());
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-JHWNP: reviewer isolation remains a fresh-checkout invariant even when
+/// the same task already has a warm implementer chain checkout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reviewer_for_a_warm_implementer_chain_still_gets_a_fresh_worktree() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    write(
+        &project_root.join(".git/info/exclude"),
+        "warm-cache-marker\n",
+    );
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/reviewer-chain-brief.md");
+    write(&brief, "reviewer chain brief");
+
+    let running = boot(home.clone()).await;
+    let first = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+        ],
+    );
+    let implementer = home.root.join("worktrees/orgasmic/task-dispatch");
+    let marker = implementer.join("warm-cache-marker");
+    write(&marker, "warm compiler cache");
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx_from_dispatch_stdout(&first),
+            "--status",
+            "aborted",
+            "--reason",
+            "continue in another implementer round",
+        ],
+    );
+    let second = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--branch",
+            "task-dispatch-impl-round-2",
+        ],
+    );
+    assert!(marker.is_file(), "round 2 must be using the warm checkout");
+    let summary = tmp.path().join("summary.md");
+    write(&summary, "reported second round");
+    run_orgasmic(
+        &home,
+        &running,
+        &implementer,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary.to_str().unwrap(),
+            "--commit",
+        ],
+    );
+
+    let reviewer = home.root.join("worktrees/orgasmic/task-dispatch-review");
+    let review_brief = tmp.path().join("codex/reviewer-brief.md");
+    write(&review_brief, "review the committed second round");
+    let review = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "reviewer",
+            "--mode",
+            "stdio",
+            "--harness",
+            "codex",
+            "--brief",
+            review_brief.to_str().unwrap(),
+            "--from",
+            &run_git(&implementer, &["rev-parse", "HEAD"]),
+        ],
+    );
+    assert!(review.contains("dispatched: TASK-DISPATCH reviewer pid="));
+    assert!(reviewer.is_dir() && reviewer != implementer);
+    assert!(
+        !reviewer.join("warm-cache-marker").exists(),
+        "reviewer must prove the commit in a fresh checkout"
+    );
+    assert!(second.contains("dispatched: TASK-DISPATCH implementer pid="));
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// Regression for TASK-WTJ5V: when the CLI dispatch HTTP client times out after
 /// the daemon has already spawned the worker, rollback must be daemon-executed
 /// (release worker, then delete worktree + branch) — never CLI-local worktree
