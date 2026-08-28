@@ -2,7 +2,6 @@
 name: orgasmic
 description: 'Orgasmic project management: tasks, decisions, worker dispatch, runtime install/update.'
 triggers: ["/orgasmic", "/orgasmic install", "/orgasmic update", "/orgasmic init", "/orgasmic recall", "/orgasmic resume", "/recall", "/resume"]
-disable-model-invocation: true
 ---
 
 # orgasmic
