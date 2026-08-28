@@ -77,3 +77,18 @@
 :TO_STATE: in_progress
 :EVENT_ID: 1dd9b0ca-22c1-4709-a3d6-a05a95ab8c03
 :END:
+
+* tx-20260828-orgasmic-6494 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6494
+:TIME:    [2026-08-28 Fri 08:47:46]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-W97C8/node.org
+:REASON: edited task node TASK-W97C8
+:NODE_ID: TASK-W97C8
+:EVENT_ID: 3c2529e4-ebfe-4169-a8ed-5e594958de19
+:END:

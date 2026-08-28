@@ -27,3 +27,4 @@ At dispatch close, promote a small typed =evidence.json= into =dispatches/<tx>/=
 - =stdout.log= promoted only when non-empty; =stdout.log.bytes= removed.
 ** Worklog
 - [2026-08-28] Evidence projects reasoning/thinking from typed `ProviderRuntimeEvent::ContentDelta` events instead of adding `TextStream::Reasoning`. Dedicated chat runtimes already emit normalized content deltas, while the other modes retain `TextChunk::Assistant`; this avoids a session-schema variant that current drivers do not emit.
+[2026-08-28] Round 2 decision: narrative is Claude-only today because codex-chat session JSONL does not emit assistant/reasoning content deltas. Codex TextStream::System maps to reasoning_text but carries harness notices, not model thinking, so evidence excludes it rather than mislabeling notices; counts and pointers remain codex proof of work.
