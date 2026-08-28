@@ -400,6 +400,12 @@ fn manager_convention_names_post_close_report_path() {
         "step 4 must name where a closed dispatch's report lives"
     );
     assert!(
+        text.contains("tmp brief to =brief.md=")
+            && text.contains("compiled bundle to =compiled-prompt.md=")
+            && text.contains("does not exist before close"),
+        "the convention must describe the complete close-time record"
+    );
+    assert!(
         text.contains("Retention: keep forever"),
         "the retention policy must be stated, not a silent delete"
     );

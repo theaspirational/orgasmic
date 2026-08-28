@@ -250,7 +250,7 @@ check the rest of the invocation too.
      --brief <project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md \
      --reason "<one-line reason — surfaces in tx + run.created>"
    #+end_src
-   The CLI atomically: creates the per-task git worktree at =~/.orgasmic/worktrees/<project-id>/task-NNN= on branch =task-NNN-impl= based on HEAD (defaults; override the branch via =--branch=, the worktree path via =--worktree=, the base commit via =--from=). The worktree lives OUTSIDE the project deliberately (TASK-M47E5): macOS pins a TCC grant for a freshly built, ad-hoc-signed binary to that binary's cdhash, so a worker building inside a =~/Documents=-hosted project re-prompts the operator on every rebuild, and =~/.orgasmic= is unguarded. Only the SCRATCH moved — the dispatch RECORD (brief, =last.txt=, stdout log) still lands under =<project_root>/.orgasmic/tmp/dispatch/<task-stem>/=, so every path in this convention stays valid; writes the =manager.dispatch_started= pre-flight tx; spawns the worker via the daemon's =/dispatch= endpoint; emits a =run.created= tx with the run_id, pid, brief path, last path, stdout path, session jsonl target. The worker runs as a =codex app-server= process talking codex's own JSON-RPC 2.0 app-server protocol over stdio to the daemon. That is not ACP: orgasmic's =stdio= mode names the wire only, and the harness decides the protocol (TASK-XCJYC; see the glossary term =term_YX8AG= transport mode). Use =--dry-run= to print the resolved plan without launching anything; useful before non-trivial dispatches.
+   The CLI atomically: creates the per-task git worktree at =~/.orgasmic/worktrees/<project-id>/task-NNN= on branch =task-NNN-impl= based on HEAD (defaults; override the branch via =--branch=, the worktree path via =--worktree=, the base commit via =--from=). The worktree lives OUTSIDE the project deliberately (TASK-M47E5): macOS pins a TCC grant for a freshly built, ad-hoc-signed binary to that binary's cdhash, so a worker building inside a =~/Documents=-hosted project re-prompts the operator on every rebuild, and =~/.orgasmic= is unguarded. Only the SCRATCH moved — the dispatch RECORD (brief, compiled prompt, =last.txt=, stdout log) stays under =<project_root>/.orgasmic/tmp/dispatch/<task-stem>/= until close, so every path in this convention stays valid; writes the =manager.dispatch_started= pre-flight tx; spawns the worker via the daemon's =/dispatch= endpoint; emits a =run.created= tx with the run_id, pid, brief path, last path, stdout path, session jsonl target. The worker runs as a =codex app-server= process talking codex's own JSON-RPC 2.0 app-server protocol over stdio to the daemon. That is not ACP: orgasmic's =stdio= mode names the wire only, and the harness decides the protocol (TASK-XCJYC; see the glossary term =term_YX8AG= transport mode). Use =--dry-run= to print the resolved plan without launching anything; useful before non-trivial dispatches.
 3. *Wait.* Arm the blocking wait printed by =manager dispatch= immediately;
    background it when the harness needs a shell completion signal:
    =orgasmic manager dispatch-wait --started-tx <started_tx> &=. It exits 0
@@ -314,7 +314,9 @@ check the rest of the invocation too.
 
    *After close, the worker report lives at
    =<project_root>/.orgasmic/tasks/<ID>/dispatches/<started_tx>/report.md=*
-   (TASK-QGWK7, TASK-QGWK7.1). Close *promotes* =last.txt=, a typed
+   (TASK-QGWK7, TASK-QGWK7.1, TASK-W97C8.1). The tracked generation directory
+   does not exist before close. Close *promotes* the tmp brief to =brief.md=,
+   the compiled bundle to =compiled-prompt.md=, =last.txt= to =report.md=, a typed
    =evidence.json= distilled from the machine-local session JSONL, and a bounded
    =stdout.log= only when the harness actually printed something. They leave
    gitignored =tmp/= for that tracked directory, keyed by task and dispatch

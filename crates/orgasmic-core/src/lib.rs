@@ -58,15 +58,15 @@ pub use org::{
     OrgRewriter, PropertyDrawer, PropertyEntry,
 };
 pub use paths::{
-    collection_node_file_paths, dispatch_record_dir, dispatch_record_report_rel, dotorg_tasks_dir,
-    goal_file_path, goal_file_rel, handoff_file_path, lifecycle_stage_file_name,
-    project_dispatch_dir, project_sessions_dir, project_tmp_dir,
+    collection_node_file_paths, dispatch_compiled_prompt_path, dispatch_record_dir,
+    dispatch_record_report_rel, dotorg_tasks_dir, goal_file_path, goal_file_rel, handoff_file_path,
+    lifecycle_stage_file_name, project_dispatch_dir, project_sessions_dir, project_tmp_dir,
     promote_validated_dispatch_attempt, prune_dispatch_stem_after_worktree,
     prune_validated_dispatch_attempt, task_file_path, task_file_rel, task_node_file_path,
     validate_dispatch_cleanup_targets, validate_dispatch_promote_targets,
-    verify_dispatch_worktree_identity, DispatchAttemptArtifacts, PromoteOutcome, DEFAULT_TASK_FILE,
-    DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE, STDOUT_PROMOTE_MAX_BYTES, TASKS_DIR,
-    TASK_FILE_NAMES,
+    validate_dispatch_record_targets, verify_dispatch_worktree_identity, DispatchAttemptArtifacts,
+    PromoteOutcome, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE,
+    STDOUT_PROMOTE_MAX_BYTES, TASKS_DIR, TASK_FILE_NAMES,
 };
 pub use retired::{RetiredContent, RETIRED_CONTENT};
 pub use run_id::{compact_run_id_token, mint_run_id, run_id_timestamp_millis};
