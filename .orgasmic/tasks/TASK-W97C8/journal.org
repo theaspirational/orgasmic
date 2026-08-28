@@ -14,3 +14,19 @@
 :REASON: stdout.log is always 0 bytes for SDK harnesses (evidence flows through the session JSONL, not the terminal); a 0-byte marker misreads as 'no work happened'
 :EVENT_ID: acddb17f-245c-477a-93b7-e672ea5d6478
 :END:
+
+* tx-20260828-orgasmic-6489 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6489
+:TIME:    [2026-08-28 Fri 07:55:51]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8
+:TARGET: .orgasmic/tasks/TASK-W97C8/node.org
+:REASON: transition TASK-W97C8 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 11fc8886-4058-4f7c-8f96-574742b0ffaf
+:END:

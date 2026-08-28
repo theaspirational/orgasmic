@@ -4943,6 +4943,14 @@ Work:
 
 Either way the outcome is a recorded answer. The defect being fixed here is that a persistence-shaped flag sits in the launch path with no stated reason.
 
+* BACKLOG TASK-ZZ2S4 Re-mint 3 hand-created task IDs with non-Crockford letters (CLM6W, IXPD4, LBRX7)
+:PROPERTIES:
+:ID: TASK-ZZ2S4
+:PRIORITY: P3
+:END:
+
+TASK-CLM6W, TASK-IXPD4, TASK-LBRX7 (added in ledger commit 22b951f2, 2026-08-27) contain I/L, which the Crockford stem alphabet forbids — they were hand-minted, not daemon-minted. They are the whole remaining parse_errors=3 ("malformed identity id"). Referenced from TASK-AP971, TASK-AS0FS, TASK-D2DM3, TASK-MSYN4, TASK-TFXR2. Fix = re-mint each through the daemon and rewrite the references; needs a daemon-side rename path or a careful one-off migration, NOT hand edits.
+
 * IN_PROGRESS TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-TFXR2
@@ -4958,6 +4966,32 @@ Two port patterns: (a) old aggregate fixture paths (`.orgasmic/tasks/backlog.org
 - [ ] `cargo test -p orgasmic-daemon --lib` fully green
 - [ ] `cargo test -p orgasmic-cli` fully green
 - [ ] no test deleted; routing-table semantics (journal vs tx) preserved per AP971.5
+
+* IN_PROGRESS TASK-W97C8 Replace stdout.log with typed evidence.json in dispatch records
+:PROPERTIES:
+:ID: TASK-W97C8
+:PRIORITY: P2
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
+
+** Description
+The promoted dispatch record (=.orgasmic/tasks/TASK-X/dispatches/<tx>/=) stores =stdout.log= + =stdout.log.bytes= as raw evidence of the run (TASK-QGWK7.1). In practice every promoted attempt has =stdout.log.bytes = 0= because SDK-driven harnesses never write to stdout — the real evidence is the typed session JSONL (=tmp/sessions/dispatch-TASK-X-<role>-<ts>.jsonl=, =DriverEvent= stream) which every driver mode (sdk, stdio, acp) feeds. A 0-byte stdout marker is misleading: an agent reading the record can conclude no work happened.
+
+** Design
+At dispatch close, promote a small typed =evidence.json= into =dispatches/<tx>/= instead:
+- event count, tool-call count (proof of work as counts, not byte sizes)
+- session JSONL filename + size (raw file stays machine-local, out of git)
+- native harness transcript path + confidence from =transcript_finder= (dec_WDR5K)
+- model-generated narrative: project =TextChunk= events with =stream = Assistant= (and reasoning/thinking) into the evidence — NO raw =ToolCall= args / =ToolResult= outputs. =DriverEvent= already types these streams so this is a filter, not a parser.
+- keep the stdout head+tail excerpt ONLY when non-empty (crash insurance); drop the always-0 =stdout.log.bytes= marker.
+
+** Open point
+=TextStream= has no =Reasoning= variant (=crates/orgasmic-core/src/session.rs:1029=) — thinking text may arrive via =ProviderRuntimeEvent=. Scope whether to add =TextStream::Reasoning= or project from provider events.
+
+** Acceptance
+- Closed dispatch record contains =evidence.json= with counts, pointers, and assistant/reasoning text; no tool-call args or outputs.
+- Works for every driver mode; a run that did work can never produce an empty evidence file.
+- =stdout.log= promoted only when non-empty; =stdout.log.bytes= removed.
 
 * IN_REVIEW TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
 :PROPERTIES:
