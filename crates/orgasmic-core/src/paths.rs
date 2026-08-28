@@ -224,7 +224,10 @@ pub fn validate_dispatch_cleanup_targets(
         stdout_path.ok_or_else(|| "stdout_path required for dispatch cleanup".to_string())?;
     let worktree_handle = validate_dispatch_worktree(worktree_path)?;
     let (stem_dir, stem) = validate_dispatch_stem_dir(project_root, last)?;
-    validate_dispatch_artifact_pair(&stem_dir, &stem, last, stdout, Some(worktree_handle))
+    let mut artifacts =
+        validate_dispatch_artifact_pair(&stem_dir, &stem, last, stdout, Some(worktree_handle))?;
+    validate_dispatch_compiled_prompt(&mut artifacts, &stem_dir, last)?;
+    Ok(artifacts)
 }
 
 /// Validate the artifact pair for promotion when the worktree may already be
@@ -261,28 +264,36 @@ pub fn validate_dispatch_record_targets(
         }
         None => validate_dispatch_promote_targets(project_root, last_path, stdout_path)?,
     };
-    let brief = brief_path.ok_or_else(|| "brief_path required for dispatch promote".to_string())?;
     let last = last_path.ok_or_else(|| "last_path required for dispatch promote".to_string())?;
     let stem_dir = canonicalize_path(
         last.parent()
             .ok_or_else(|| "last_path has no parent stem dir".to_string())?,
     )?;
-    let brief_name = validate_dispatch_sidecar_file(&stem_dir, brief)?;
-    let compiled_prompt = dispatch_compiled_prompt_path(last)?;
-    let compiled_prompt_name = validate_dispatch_sidecar_file(&stem_dir, &compiled_prompt)?;
+    let brief_name = match brief_path {
+        Some(brief) => match std::fs::symlink_metadata(brief) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => return Err(err.to_string()),
+            Ok(_) => {
+                let expected = dispatch_brief_name(&artifacts.stem, brief)?;
+                validate_dispatch_sidecar_file(&stem_dir, brief, &expected)?
+            }
+        },
+        None => None,
+    };
     #[cfg(unix)]
     {
-        artifacts.brief_file = Some(open_artifact_in_stem_dir(
-            &artifacts.stem_dir_handle,
-            &brief_name,
-        )?);
-        artifacts.compiled_prompt_file = Some(open_artifact_in_stem_dir(
-            &artifacts.stem_dir_handle,
-            &compiled_prompt_name,
-        )?);
-        artifacts.brief_name = Some(brief_name);
-        artifacts.compiled_prompt_name = Some(compiled_prompt_name);
+        if let Some(brief_name) = brief_name {
+            match open_artifact_in_stem_dir(&artifacts.stem_dir_handle, &brief_name) {
+                Ok(file) => {
+                    artifacts.brief_name = Some(brief_name);
+                    artifacts.brief_file = Some(file);
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.to_string()),
+            }
+        }
     }
+    validate_dispatch_compiled_prompt(&mut artifacts, &stem_dir, last)?;
     Ok(artifacts)
 }
 
@@ -292,11 +303,57 @@ pub fn dispatch_compiled_prompt_path(last_path: &Path) -> Result<PathBuf, String
     let parent = last_path
         .parent()
         .ok_or_else(|| "last_path has no parent stem dir".to_string())?;
-    let stem = parent
+    let file = last_path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| "dispatch stem dir has no name".to_string())?;
-    Ok(parent.join(format!("{stem}-compiled-prompt.md")))
+        .ok_or_else(|| "last_path has no filename".to_string())?;
+    let prefix = file
+        .strip_suffix("-last.txt")
+        .ok_or_else(|| "last_path filename must end with -last.txt".to_string())?;
+    Ok(parent.join(format!("{prefix}-compiled-prompt.md")))
+}
+
+fn dispatch_brief_name(stem: &str, brief: &Path) -> Result<String, String> {
+    let name = brief
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "brief path has no filename".to_string())?;
+    let derived_stem = name
+        .strip_suffix("-brief.md")
+        .or_else(|| Path::new(name).file_stem().and_then(|value| value.to_str()))
+        .ok_or_else(|| "brief path has no stem".to_string())?;
+    if derived_stem != stem {
+        return Err(format!(
+            "brief {} does not match dispatch stem {stem}",
+            brief.display()
+        ));
+    }
+    Ok(name.to_string())
+}
+
+fn validate_dispatch_compiled_prompt(
+    artifacts: &mut DispatchAttemptArtifacts,
+    stem_dir: &Path,
+    last: &Path,
+) -> Result<(), String> {
+    let compiled_prompt = dispatch_compiled_prompt_path(last)?;
+    let expected = compiled_prompt
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "compiled prompt path has no filename".to_string())?;
+    let Some(name) = validate_dispatch_sidecar_file(stem_dir, &compiled_prompt, expected)? else {
+        return Ok(());
+    };
+    #[cfg(unix)]
+    match open_artifact_in_stem_dir(&artifacts.stem_dir_handle, &name) {
+        Ok(file) => {
+            artifacts.compiled_prompt_name = Some(name);
+            artifacts.compiled_prompt_file = Some(file);
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.to_string()),
+    }
+    Ok(())
 }
 
 fn validate_dispatch_stem_dir(
@@ -387,27 +444,29 @@ pub fn promote_validated_dispatch_attempt(
 
     #[cfg(unix)]
     {
-        let brief_file = artifacts
-            .brief_file
-            .as_ref()
-            .ok_or_else(|| "dispatch brief was not validated for promotion".to_string())?;
-        let compiled_prompt_file = artifacts
-            .compiled_prompt_file
-            .as_ref()
-            .ok_or_else(|| "compiled prompt was not validated for promotion".to_string())?;
-        if let Err(err) = copy_validated_artifact_to(&dest_dir.join("brief.md"), brief_file) {
-            return Ok(PromoteOutcome {
-                report_path: None,
-                error: Some(format!("promote brief.md: {err}")),
-            });
+        let mut errors = Vec::new();
+        if let Some(brief_file) = artifacts.brief_file.as_ref() {
+            if let Err(err) = copy_validated_artifact_to(&dest_dir.join("brief.md"), brief_file) {
+                return Ok(PromoteOutcome {
+                    report_path: None,
+                    error: Some(format!("promote brief.md: {err}")),
+                });
+            }
+        } else {
+            errors.push("brief.md missing from tmp".to_string());
         }
-        if let Err(err) =
-            copy_validated_artifact_to(&dest_dir.join("compiled-prompt.md"), compiled_prompt_file)
-        {
-            return Ok(PromoteOutcome {
-                report_path: None,
-                error: Some(format!("promote compiled-prompt.md: {err}")),
-            });
+        if let Some(compiled_prompt_file) = artifacts.compiled_prompt_file.as_ref() {
+            if let Err(err) = copy_validated_artifact_to(
+                &dest_dir.join("compiled-prompt.md"),
+                compiled_prompt_file,
+            ) {
+                return Ok(PromoteOutcome {
+                    report_path: None,
+                    error: Some(format!("promote compiled-prompt.md: {err}")),
+                });
+            }
+        } else {
+            errors.push("compiled-prompt.md missing from tmp".to_string());
         }
 
         let last_dest = dest_dir.join("report.md");
@@ -420,9 +479,10 @@ pub fn promote_validated_dispatch_attempt(
 
         let evidence_dest = dest_dir.join("evidence.json");
         if let Err(err) = write_promoted_bytes_to(&evidence_dest, evidence_json) {
+            errors.push(format!("promote evidence.json: {err}"));
             return Ok(PromoteOutcome {
                 report_path: Some(report_rel),
-                error: Some(format!("promote evidence.json: {err}")),
+                error: Some(errors.join("; ")),
             });
         }
 
@@ -438,15 +498,16 @@ pub fn promote_validated_dispatch_attempt(
                 unlink_validated_attempt_artifacts(artifacts)?;
                 Ok(PromoteOutcome {
                     report_path: Some(report_rel),
-                    error: None,
+                    error: (!errors.is_empty()).then(|| errors.join("; ")),
                 })
             }
             Err(err) => {
                 // last.txt is at the canonical path; name it. Leave tmp intact
                 // (no unlink) and scrub any mid-flight .promoting residue.
+                errors.push(format!("promote stdout.log: {err}"));
                 Ok(PromoteOutcome {
                     report_path: Some(report_rel),
-                    error: Some(format!("promote stdout.log: {err}")),
+                    error: Some(errors.join("; ")),
                 })
             }
         }
@@ -698,8 +759,10 @@ fn validate_dispatch_artifact_pair(
     }
     #[cfg(unix)]
     let (last_file, stdout_file) = {
-        let last_file = open_artifact_in_stem_dir(&stem_dir_handle, &last_name)?;
-        let stdout_file = open_artifact_in_stem_dir(&stem_dir_handle, &stdout_name)?;
+        let last_file = open_artifact_in_stem_dir(&stem_dir_handle, &last_name)
+            .map_err(|err| err.to_string())?;
+        let stdout_file = open_artifact_in_stem_dir(&stem_dir_handle, &stdout_name)
+            .map_err(|err| err.to_string())?;
         (last_file, stdout_file)
     };
     Ok(DispatchAttemptArtifacts {
@@ -760,15 +823,23 @@ fn same_file_identity(_left: &std::fs::File, _right: &std::fs::File) -> bool {
 fn open_artifact_in_stem_dir(
     stem_dir: &std::fs::File,
     name: &str,
-) -> Result<std::fs::File, String> {
+) -> std::io::Result<std::fs::File> {
     use std::ffi::CString;
     use std::os::unix::io::AsRawFd;
 
     if name.contains('/') || name.contains('\0') {
-        return Err(format!("invalid artifact name {name}"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid artifact name {name}"),
+        ));
     }
     let dir_fd = stem_dir.as_raw_fd();
-    let name_c = CString::new(name).map_err(|_| format!("invalid artifact name {name}"))?;
+    let name_c = CString::new(name).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid artifact name {name}"),
+        )
+    })?;
     let file_fd = unsafe {
         libc::openat(
             dir_fd,
@@ -777,7 +848,7 @@ fn open_artifact_in_stem_dir(
         )
     };
     if file_fd < 0 {
-        return Err(std::io::Error::last_os_error().to_string());
+        return Err(std::io::Error::last_os_error());
     }
     Ok(unsafe { std::fs::File::from_raw_fd(file_fd) })
 }
@@ -821,24 +892,38 @@ fn validate_dispatch_artifact_file(
     Ok(file_name.to_string())
 }
 
-fn validate_dispatch_sidecar_file(stem_dir: &Path, artifact: &Path) -> Result<String, String> {
+fn validate_dispatch_sidecar_file(
+    stem_dir: &Path,
+    artifact: &Path,
+    expected_name: &str,
+) -> Result<Option<String>, String> {
+    let meta = match std::fs::symlink_metadata(artifact) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.to_string()),
+    };
     if artifact
         .components()
         .any(|component| matches!(component, std::path::Component::ParentDir))
     {
         return Err(format!("path contains ..: {}", artifact.display()));
     }
-    let meta = std::fs::symlink_metadata(artifact).map_err(|err| err.to_string())?;
+    let file_name = artifact
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "artifact has no filename".to_string())?;
+    if file_name != expected_name {
+        return Err(format!(
+            "artifact {} does not have expected sidecar name {expected_name}",
+            artifact.display()
+        ));
+    }
     if meta.file_type().is_symlink() {
         return Err(format!("{} is a symlink", artifact.display()));
     }
     if !meta.is_file() {
         return Err(format!("{} is not a regular file", artifact.display()));
     }
-    let file_name = artifact
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "artifact has no filename".to_string())?;
     let parent = artifact
         .parent()
         .ok_or_else(|| format!("artifact {} has no parent", artifact.display()))?;
@@ -848,7 +933,7 @@ fn validate_dispatch_sidecar_file(stem_dir: &Path, artifact: &Path) -> Result<St
             artifact.display()
         ));
     }
-    Ok(file_name.to_string())
+    Ok(Some(file_name.to_string()))
 }
 
 #[cfg(unix)]
@@ -962,9 +1047,13 @@ mod tests {
 
     const EVIDENCE_JSON: &[u8] = br#"{"event_count":1,"tool_call_count":0}"#;
 
-    fn write_dispatch_record_sidecars(stem_dir: &Path, stem: &str) -> (PathBuf, PathBuf) {
+    fn write_dispatch_record_sidecars(
+        stem_dir: &Path,
+        stem: &str,
+        last: &Path,
+    ) -> (PathBuf, PathBuf) {
         let brief = stem_dir.join(format!("{stem}-brief.md"));
-        let compiled_prompt = stem_dir.join(format!("{stem}-compiled-prompt.md"));
+        let compiled_prompt = dispatch_compiled_prompt_path(last).unwrap();
         std::fs::write(&brief, "manager brief").unwrap();
         std::fs::write(&compiled_prompt, "compiled prompt").unwrap();
         (brief, compiled_prompt)
@@ -1037,16 +1126,20 @@ mod tests {
             stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
         let attempt_a_stdout =
             stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        let attempt_a_compiled = dispatch_compiled_prompt_path(&attempt_a_last).unwrap();
         let attempt_b_last =
             stem_dir.join("task-dispatch-bbbb1111cccc2222dddd3333eeee4444-last.txt");
         let attempt_b_stdout =
             stem_dir.join("task-dispatch-bbbb1111cccc2222dddd3333eeee4444-stdout.log");
+        let attempt_b_compiled = dispatch_compiled_prompt_path(&attempt_b_last).unwrap();
         let legacy_last = stem_dir.join("task-dispatch-last.txt");
         for path in [
             &attempt_a_last,
             &attempt_a_stdout,
+            &attempt_a_compiled,
             &attempt_b_last,
             &attempt_b_stdout,
+            &attempt_b_compiled,
             &legacy_last,
         ] {
             std::fs::write(path, "artifact").unwrap();
@@ -1062,8 +1155,10 @@ mod tests {
 
         assert!(!attempt_a_last.exists());
         assert!(!attempt_a_stdout.exists());
+        assert!(!attempt_a_compiled.exists());
         assert!(attempt_b_last.exists());
         assert!(attempt_b_stdout.exists());
+        assert!(attempt_b_compiled.exists());
         assert!(legacy_last.exists());
     }
 
@@ -1077,7 +1172,8 @@ mod tests {
         let worktree = stem_dir.join("worktree");
         let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
         let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
-        let (brief, compiled_prompt) = write_dispatch_record_sidecars(&stem_dir, "task-dispatch");
+        let (brief, compiled_prompt) =
+            write_dispatch_record_sidecars(&stem_dir, "task-dispatch", &last);
         std::fs::write(&last, "worker report survives close").unwrap();
         std::fs::write(&stdout, "harness stdout").unwrap();
 
@@ -1152,7 +1248,7 @@ mod tests {
         let worktree = stem_dir.join("worktree");
         let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
         let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
-        let (brief, _) = write_dispatch_record_sidecars(&stem_dir, "task-dispatch");
+        let (brief, _) = write_dispatch_record_sidecars(&stem_dir, "task-dispatch", &last);
         std::fs::write(&last, "summary").unwrap();
         std::fs::write(&stdout, "").unwrap();
 
@@ -1188,7 +1284,7 @@ mod tests {
         let worktree = stem_dir.join("worktree");
         let last = stem_dir.join("task-tail-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
         let stdout = stem_dir.join("task-tail-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
-        let (brief, _) = write_dispatch_record_sidecars(&stem_dir, "task-tail");
+        let (brief, _) = write_dispatch_record_sidecars(&stem_dir, "task-tail", &last);
         std::fs::write(&last, "summary").unwrap();
         let original_len = STDOUT_PROMOTE_MAX_BYTES + 100;
         let mut body = vec![b'a'; original_len as usize];
@@ -1250,7 +1346,8 @@ mod tests {
         let worktree = stem_dir.join("worktree");
         let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
         let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
-        let (brief, compiled_prompt) = write_dispatch_record_sidecars(&stem_dir, "task-dispatch");
+        let (brief, compiled_prompt) =
+            write_dispatch_record_sidecars(&stem_dir, "task-dispatch", &last);
         std::fs::write(&last, "kept report").unwrap();
         std::fs::write(&stdout, "harness").unwrap();
 
@@ -1320,7 +1417,7 @@ mod tests {
         std::fs::create_dir_all(&stem_dir).unwrap();
         let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
         let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
-        let (brief, _) = write_dispatch_record_sidecars(&stem_dir, "task-dispatch");
+        let (brief, _) = write_dispatch_record_sidecars(&stem_dir, "task-dispatch", &last);
         std::fs::write(&last, "summary").unwrap();
         std::fs::write(&stdout, "out").unwrap();
 
@@ -1455,6 +1552,57 @@ mod tests {
         .is_err());
         assert!(victim_last.exists());
         assert!(victim_stdout.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_dispatch_record_rejects_wrong_or_symlinked_brief_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        let worktree = stem_dir.join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
+        let stdout =
+            stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        let sibling_last =
+            stem_dir.join("task-dispatch-bbbb1111cccc2222dddd3333eeee4444-last.txt");
+        for path in [&last, &stdout, &sibling_last] {
+            std::fs::write(path, "artifact").unwrap();
+        }
+        let compiled_prompt = dispatch_compiled_prompt_path(&last).unwrap();
+        std::fs::write(&compiled_prompt, "bundle").unwrap();
+
+        assert!(
+            validate_dispatch_record_targets(
+                &project_root,
+                Some(&worktree),
+                Some(&sibling_last),
+                Some(&last),
+                Some(&stdout),
+            )
+            .err()
+            .unwrap()
+            .contains("does not match dispatch stem")
+        );
+
+        let brief = stem_dir.join("task-dispatch-brief.md");
+        let victim = stem_dir.join("victim.md");
+        std::fs::write(&victim, "victim").unwrap();
+        std::os::unix::fs::symlink(&victim, &brief).unwrap();
+        assert!(
+            validate_dispatch_record_targets(
+                &project_root,
+                Some(&worktree),
+                Some(&brief),
+                Some(&last),
+                Some(&stdout),
+            )
+            .err()
+            .unwrap()
+            .contains("is a symlink")
+        );
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "victim");
     }
 
     #[test]

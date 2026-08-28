@@ -12402,7 +12402,7 @@ mod tests {
     }
 
     #[test]
-    fn attempt_scoped_paths_isolate_consecutive_dispatches() {
+    fn attempt_scoped_paths_isolate_consecutive_dispatch_bundles() {
         let tmp = tempfile::tempdir().unwrap();
         let project_root = tmp.path().join("repo");
         let brief =
@@ -12413,10 +12413,23 @@ mod tests {
             dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt2").unwrap();
         assert_ne!(last1, last2);
         std::fs::create_dir_all(last1.parent().unwrap()).unwrap();
+        let compiled1 = orgasmic_core::dispatch_compiled_prompt_path(&last1).unwrap();
+        let compiled2 = orgasmic_core::dispatch_compiled_prompt_path(&last2).unwrap();
+        assert_ne!(compiled1, compiled2);
         std::fs::write(&last1, "attempt 1 report").unwrap();
+        std::fs::write(&compiled1, "attempt 1 bundle").unwrap();
+        std::fs::write(&compiled2, "attempt 2 bundle").unwrap();
         assert!(
             !last2.exists(),
             "attempt 2 waiter path must not observe attempt 1 report"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&compiled1).unwrap(),
+            "attempt 1 bundle"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&compiled2).unwrap(),
+            "attempt 2 bundle"
         );
     }
 
@@ -13294,6 +13307,59 @@ mod tests {
                 .find(|(key, _)| key == "REPORT_PATH")
                 .map(|(_, value)| value.as_str()),
             Some(report_path)
+        );
+    }
+
+    fn assert_dispatch_close_with_missing_sidecar(slug: &str, missing_name: &str) {
+        let fixture = dispatch_cleanup_fixture(slug);
+        let missing = match missing_name {
+            "brief.md" => &fixture.brief,
+            "compiled-prompt.md" => &fixture.compiled_prompt,
+            _ => unreachable!(),
+        };
+        std::fs::remove_file(missing).unwrap();
+        let open = dispatch_cleanup_record(&fixture, "TASK-MISSING-SIDECAR");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
+        assert_eq!(cleanup.status, CleanupStatus::Partial);
+        assert!(!fixture.worktree.exists(), "close must remove the worktree");
+        assert!(
+            cleanup
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&format!("{missing_name} missing from tmp")),
+            "missing sidecar must be recorded loudly: {:?}",
+            cleanup.error
+        );
+        let record_dir = fixture
+            .root
+            .join(cleanup.report_path.expect("report must still be promoted"))
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        for name in ["report.md", "evidence.json", "stdout.log"] {
+            assert!(record_dir.join(name).is_file(), "{name} must be promoted");
+        }
+        assert!(!record_dir.join(missing_name).exists());
+        let retained_name = if missing_name == "brief.md" {
+            "compiled-prompt.md"
+        } else {
+            "brief.md"
+        };
+        assert!(record_dir.join(retained_name).is_file());
+    }
+
+    #[test]
+    fn dispatch_close_completes_when_brief_sidecar_is_missing() {
+        assert_dispatch_close_with_missing_sidecar("task-missing-brief", "brief.md");
+    }
+
+    #[test]
+    fn dispatch_close_completes_when_compiled_prompt_sidecar_is_missing() {
+        assert_dispatch_close_with_missing_sidecar(
+            "task-missing-compiled",
+            "compiled-prompt.md",
         );
     }
 

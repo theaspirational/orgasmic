@@ -4548,6 +4548,16 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
             .exists(),
         "failed dispatch rollback must not leave a tracked dispatch record"
     );
+    assert!(
+        std::fs::read_dir(&stem_dir)
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with("-compiled-prompt.md")),
+        "failed dispatch rollback must prune its tmp compiled prompt"
+    );
 
     let lease_output = run_orgasmic_output(
         &home,
@@ -4905,25 +4915,20 @@ async fn dispatch_close_promotes_complete_record_only_at_close() {
         !compiled_prompt.exists(),
         "tmp compiled prompt should be promoted away"
     );
-    for name in [
-        "brief.md",
-        "compiled-prompt.md",
-        "report.md",
-        "evidence.json",
-    ] {
-        let in_history = run_git(
-            &project_root,
-            &[
-                "cat-file",
-                "-e",
-                &format!("HEAD:.orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/{name}"),
-            ],
-        );
-        assert!(
-            in_history.is_empty(),
-            "{name} must be in the close-time record commit"
-        );
-    }
+    let record_log = run_git(
+        &project_root,
+        &[
+            "log",
+            "--oneline",
+            "--",
+            &format!(".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}"),
+        ],
+    );
+    assert_eq!(
+        record_log.lines().count(),
+        1,
+        "the complete record must land in one close-time commit: {record_log}"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
