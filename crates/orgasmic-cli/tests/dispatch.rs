@@ -4549,13 +4549,11 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
         "failed dispatch rollback must not leave a tracked dispatch record"
     );
     assert!(
-        std::fs::read_dir(&stem_dir)
+        std::fs::read_dir(&stem_dir).unwrap().all(|entry| !entry
             .unwrap()
-            .all(|entry| !entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .ends_with("-compiled-prompt.md")),
+            .file_name()
+            .to_string_lossy()
+            .ends_with("-compiled-prompt.md")),
         "failed dispatch rollback must prune its tmp compiled prompt"
     );
 
@@ -12193,7 +12191,20 @@ async fn dispatch_close_still_salvages_and_removes_an_old_path_worktree() {
         "an old-path worktree must still be removed on close, got:\n{close_stdout}"
     );
     assert!(!old_path_worktree.exists(), "the old-path worktree is gone");
-    assert!(brief.is_file(), "the dispatch record survives the close");
+    // TASK-W97C8.1: close-time promote consumes the tmp brief; the record
+    // survives in the durable dispatch record, not the stem dir.
+    assert!(
+        !brief.exists(),
+        "the tmp brief is consumed by the close-time promote"
+    );
+    let record_brief = project_root
+        .join(".orgasmic/tasks/TASK-DISPATCH/dispatches")
+        .join(&started_tx)
+        .join("brief.md");
+    assert!(
+        record_brief.is_file(),
+        "the dispatch record survives the close"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
