@@ -123,9 +123,10 @@ registered block types, then submit it.
   - Diagram — the one diagram block (flowcharts, sequence diagrams, state
     machines, architecture, timelines-as-pictures, ...), rendered in a
     sandboxed, script-disabled iframe. Author it with the =diagram-design=
-    skill bundled with this runtime (installed at
-    =~/.agents/skills/diagram-design/=; source of truth
-    =vendor/diagram-design/skills/diagram-design/= in the orgasmic repo):
+    skill bundled inside the orgasmic runtime at
+    =~/.orgasmic/current/vendor/diagram-design/skills/diagram-design/=
+    (in a source checkout: =<checkout>/vendor/diagram-design/skills/
+    diagram-design/=; it is deliberately NOT installed as an agent skill):
     read its SKILL.md, pick the matching type reference from its 39
     editorial types, follow that layout spec plus its style guide, and emit
     self-contained inline SVG. Never emit Mermaid syntax — there is no
