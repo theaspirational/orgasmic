@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-W97C8
+#+orgasmic_version: 2
+
+* tx-20260828-orgasmic-6488 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6488
+:TIME:    [2026-08-28 Fri 07:31:45]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8
+:TARGET: .orgasmic/tasks/TASK-W97C8/node.org
+:REASON: stdout.log is always 0 bytes for SDK harnesses (evidence flows through the session JSONL, not the terminal); a 0-byte marker misreads as 'no work happened'
+:EVENT_ID: acddb17f-245c-477a-93b7-e672ea5d6478
+:END:
