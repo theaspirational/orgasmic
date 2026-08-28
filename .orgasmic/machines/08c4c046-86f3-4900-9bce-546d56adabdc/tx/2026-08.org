@@ -820,3 +820,18 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-W97C8/dispatches/tx-20260828-orgasmic-c75225ff-b159-4434-8088-a69a99c2a8f3/report.md
 :EVENT_ID:     4207d920-95f3-4658-ae02-e02ffc0cf67d
 :END:
+
+* TX 2026-08-28 Fri 09:29:48 manager.tier TASK-W97C8
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-2343aa9d-c77f-4e7f-a829-51ecb6cecb4e
+:TIME:         [2026-08-28 Fri 09:29:48]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8
+:REASON:       one-line clippy allow on the merge: promote_dispatch_artifacts_in_place grew to 8 args; house style is #[allow(clippy::too_many_arguments)]
+:TIER:         trivial
+:TRIGGERS:     none
+:EVENT_ID:     6bd5d3ed-d652-4377-8c1e-c5490cf44782
+:END:
