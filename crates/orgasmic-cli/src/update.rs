@@ -29,6 +29,7 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "shipped/schema/node-types/glossary.org",
     "shipped/schema/node-types/artifact.org",
     "shipped/prompt-studio/slots.org",
+    "shipped/prompt-studio/references/wireframe.md",
     "shipped/entry/router.org",
     "shipped/skills/orgasmic/SKILL.md",
     // Bundled (not installed as its own agent skill): the artifact-generator
@@ -1199,6 +1200,10 @@ mod tests {
             write(&root.join("shipped/schema/node-types").join(name), source);
         }
         write(&root.join("shipped/prompt-studio/slots.org"), "* Slots\n");
+        write(
+            &root.join("shipped/prompt-studio/references/wireframe.md"),
+            "# wireframe quality\n",
+        );
         write(&root.join("shipped/entry/router.org"), "* Entry\n");
         write(
             &root.join("shipped/skills/orgasmic/SKILL.md"),

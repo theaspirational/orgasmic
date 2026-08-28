@@ -103,7 +103,9 @@ registered block types, then submit it.
   - Wireframe — `surface` one of browser/desktop/mobile/popover/panel,
     `skeleton?` boolean; children: an HTML *fragment* (no html/body/script/
     style tags) written per the wireframe quality bar in
-    =~/.claude/skills/visual-plan/references/wireframe.md= (bare elements
+    =~/.orgasmic/current/shipped/prompt-studio/references/wireframe.md=
+    (in a source checkout: =<checkout>/shipped/prompt-studio/references/
+    wireframe.md=) (bare elements
     auto-themed, `.wf-card`/`.wf-pill`/`.wf-chip` helper classes, `--wf-*`
     tokens for any custom color, `data-icon="name"` for icons, never hex).
   - Canvas — children: one or more `<Screen surface="..." label="...">
