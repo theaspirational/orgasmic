@@ -1001,3 +1001,44 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-W97C8.1/dispatches/tx-20260828-orgasmic-b3c58aea-6467-4e14-84b6-16b5763c78c7/report.md
 :EVENT_ID:     a0e1e48b-7588-404c-b531-01f4761f0264
 :END:
+
+* TX 2026-08-28 Fri 09:55:02 reviewer.done TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-1944a71a-d2b3-464c-8574-6c60de3ccf41
+:TIME:         [2026-08-28 Fri 09:55:02]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:REASON:       F-1 HIGH: missing tmp sidecar blocks entire close (upgrade path); fix round follows
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: 46b015a3..d57d2824
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260828-orgasmic-b3c58aea-6467-4e14-84b6-16b5763c78c7
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-W97C8.1/dispatches/tx-20260828-orgasmic-b3c58aea-6467-4e14-84b6-16b5763c78c7/report.md
+:EVENT_ID:     5a2c1c0b-6786-493e-bded-fad04f791093
+:END:
+
+* TX 2026-08-28 Fri 09:55:02 manager.dispatch_aborted TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-29ef00b0-5df4-4e7e-bd88-0a13f8abdf56
+:TIME:         [2026-08-28 Fri 09:55:02]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:REASON:       review FINDINGS blocks ship; chain continues with fix round on task-w97c8.1-impl
+:CLOSED_TX:    tx-20260828-orgasmic-8a221331-bb25-404a-a232-e9e523ba51a8
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-w97c8.1
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-W97C8.1/dispatches/tx-20260828-orgasmic-8a221331-bb25-404a-a232-e9e523ba51a8/report.md
+:EVENT_ID:     75d6e66a-b415-4282-a193-0b15b003db1a
+:END:

@@ -269,3 +269,29 @@
 :TARGET:       .orgasmic/tasks/TASK-W97C8.1
 :EVENT_ID:     25181517-6c45-4e04-ab20-ad93dc1c3551
 :END:
+
+* TX 2026-08-28 Fri 09:55:02.184275 task.claim_released TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828095502-677b4908
+:TIME:         [2026-08-28 Fri 09:55:02.184275]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:TARGET:       .orgasmic/tasks/TASK-W97C8.1
+:EVENT_ID:     bcbff939-d444-4a56-b29b-7618a2022501
+:END:
+
+* TX 2026-08-28 Fri 09:55:03.027425 task.claim_released TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828095503-b46af378
+:TIME:         [2026-08-28 Fri 09:55:03.027425]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:TARGET:       .orgasmic/tasks/TASK-W97C8.1
+:EVENT_ID:     7b34cedd-862a-4da6-9e04-86a5d0400b29
+:END:
