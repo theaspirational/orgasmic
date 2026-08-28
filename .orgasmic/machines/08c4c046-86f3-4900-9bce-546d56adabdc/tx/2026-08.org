@@ -858,3 +858,58 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-W97C8/dispatches/tx-20260828-orgasmic-671a18ab-21c0-407a-830a-4246448d5885/report.md
 :EVENT_ID:     54f5c368-ff9a-4e0b-97af-e127c3fee350
 :END:
+
+* TX 2026-08-28 Fri 09:31:51 manager.dispatch_started TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-8a221331-bb25-404a-a232-e9e523ba51a8
+:TIME:         [2026-08-28 Fri 09:31:51]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-w97c8.1
+:BRANCH:       task-w97c8.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-w97c8.1/task-w97c8.1-brief.md
+:STARTED_AT:   [2026-08-28 Fri 09:31:51]
+:LIVENESS:     46b015a37986c0507c45e8ac04ad034865976619
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: close-time promote for brief.md + compiled-prompt.md; operator-selected model protocol (gpt-5.6-sol xhigh impl, opus-5 high review)
+:EVENT_ID:     a4ac58fa-b97d-48f8-8e53-4a1e2b2c65fb
+:END:
+
+* TX 2026-08-28 Fri 09:31:51 run.created TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-13c6c84d-260f-4659-b460-b3e6ca915383
+:TIME:         [2026-08-28 Fri 09:31:51]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-W97C8.1-implementer-20260828T093149.jsonl
+:REASON:       close-time promote for brief.md + compiled-prompt.md; operator-selected model protocol (gpt-5.6-sol xhigh impl, opus-5 high review)
+:RUN_ID:       run-01M13VC4GWE497DEPVB0Y8YQ56
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-w97c8.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-w97c8.1/task-w97c8.1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-w97c8.1/task-w97c8.1-0baf79efc18046028a02b2ca0326f63f-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-w97c8.1/task-w97c8.1-0baf79efc18046028a02b2ca0326f63f-stdout.log
+:DISPATCH_ATTEMPT: 0baf79efc18046028a02b2ca0326f63f
+:PID:          23416
+:DISPATCH_TX:  tx-20260828-orgasmic-8a221331-bb25-404a-a232-e9e523ba51a8
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:EVENT_ID:     61caeb29-b0e0-4ca3-a605-439c70daa047
+:END:
