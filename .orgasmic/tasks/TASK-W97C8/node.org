@@ -25,3 +25,5 @@ At dispatch close, promote a small typed =evidence.json= into =dispatches/<tx>/=
 - Closed dispatch record contains =evidence.json= with counts, pointers, and assistant/reasoning text; no tool-call args or outputs.
 - Works for every driver mode; a run that did work can never produce an empty evidence file.
 - =stdout.log= promoted only when non-empty; =stdout.log.bytes= removed.
+** Worklog
+- [2026-08-28] Evidence projects reasoning/thinking from typed `ProviderRuntimeEvent::ContentDelta` events instead of adding `TextStream::Reasoning`. Dedicated chat runtimes already emit normalized content deltas, while the other modes retain `TextChunk::Assistant`; this avoids a session-schema variant that current drivers do not emit.
