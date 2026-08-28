@@ -8073,6 +8073,7 @@ fn cleanup_dispatch(
 /// Takes the same cleanup lock as worktree-removing cleanup (TASK-QGWK7.1 F-3):
 /// promote unlinks the tmp inodes and must not race a recovery writer.
 // orgasmic:TASK-QGWK7.1
+#[allow(clippy::too_many_arguments)]
 fn promote_dispatch_artifacts_in_place(
     project_root: &Path,
     worktree: Option<&Path>,
