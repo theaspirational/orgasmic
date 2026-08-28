@@ -1042,3 +1042,58 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-W97C8.1/dispatches/tx-20260828-orgasmic-8a221331-bb25-404a-a232-e9e523ba51a8/report.md
 :EVENT_ID:     75d6e66a-b415-4282-a193-0b15b003db1a
 :END:
+
+* TX 2026-08-28 Fri 09:55:32 manager.dispatch_started TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-7a301a3a-121f-4965-a057-c9cab102582a
+:TIME:         [2026-08-28 Fri 09:55:32]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-w97c8.1
+:BRANCH:       task-w97c8.1-impl-r2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-w97c8.1-fix/task-w97c8.1-fix-brief.md
+:STARTED_AT:   [2026-08-28 Fri 09:55:32]
+:LIVENESS:     d57d2824cae8dd75eb7b7aa0cdcc845ab1496ce6
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: fix round 2 from d57d2824: F-1 close-blocking sidecars, F-2 attempt-scoping, F-3 name grammar, F-4/F-5
+:EVENT_ID:     a89dfa1b-d856-44dc-bcdb-ac8918f83b9c
+:END:
+
+* TX 2026-08-28 Fri 09:55:32 run.created TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-36a6e62d-abe9-4c94-98cf-244c0736a60c
+:TIME:         [2026-08-28 Fri 09:55:32]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-W97C8.1-implementer-20260828T095530.jsonl
+:REASON:       fix round 2 from d57d2824: F-1 close-blocking sidecars, F-2 attempt-scoping, F-3 name grammar, F-4/F-5
+:RUN_ID:       run-01M13WQGFP3E9CC2GGYBHDDJ7R
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-w97c8.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-w97c8.1-fix/task-w97c8.1-fix-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-w97c8.1-fix/task-w97c8.1-fix-88009e15b2e545149f9f62ed3e1cee12-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-w97c8.1-fix/task-w97c8.1-fix-88009e15b2e545149f9f62ed3e1cee12-stdout.log
+:DISPATCH_ATTEMPT: 88009e15b2e545149f9f62ed3e1cee12
+:PID:          9625
+:DISPATCH_TX:  tx-20260828-orgasmic-7a301a3a-121f-4965-a057-c9cab102582a
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:EVENT_ID:     f5e5b1ea-8f06-4029-828f-ab5c0d56dc89
+:END:

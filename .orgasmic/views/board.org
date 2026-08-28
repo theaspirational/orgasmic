@@ -4973,11 +4973,28 @@ Either way the outcome is a recorded answer. The defect being fixed here is that
 
 TASK-CLM6W, TASK-IXPD4, TASK-LBRX7 (added in ledger commit 22b951f2, 2026-08-27) contain I/L, which the Crockford stem alphabet forbids — they were hand-minted, not daemon-minted. They are the whole remaining parse_errors=3 ("malformed identity id"). Referenced from TASK-AP971, TASK-AS0FS, TASK-D2DM3, TASK-MSYN4, TASK-TFXR2. Fix = re-mint each through the daemon and rewrite the references; needs a daemon-side rename path or a careful one-off migration, NOT hand edits.
 
-* TODO TASK-W97C8.1 Move brief.md + compiled-prompt.md from dispatch-start to close-time promote
+* IN_PROGRESS TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
+:PROPERTIES:
+:ID: TASK-TFXR2
+:PRIORITY: P1
+:END:
+
+** Description
+Follow-up to TASK-IXPD4 (which covered index.rs only). Remaining red tests on the e01mc-integration branch still use the retired aggregate layout or pre-tx-split expectations:
+- `orgasmic-daemon --lib`: api::tests::{concurrent_task_creates_preserve_every_heading, concurrent_task_property_updates_preserve_every_write, decision_parent_contract_and_reparent_tx_are_enforced, parse_errors_route_attributes_project_and_reindex_clears_it, project_task_mutation_is_immediately_visible_with_project_tx}; watcher::tests::{changed_board_path_moves_watch_to_the_new_project_root, fs_event_triggers_project_refresh_after_atomic_task_file_rename, fs_event_triggers_project_refresh_after_cli_task_file_rename, temp_only_atomic_rewrite_event_refreshes_project}
+- `orgasmic-cli`: manager::tests::closes_architector_lifecycle_to_done
+Two port patterns: (a) old aggregate fixture paths (`.orgasmic/tasks/backlog.org` etc.) -> node dirs `.orgasmic/tasks/<ID>/node.org` with v2 headers (recipe: index.rs tests just ported by IXPD4); (b) tx-count/tx-content assertions on node-scoped events -> journal assertions per the AP971.5 routing table (task.created = journal entry #1; see the ap971_ tests and the artifact api tests fixed at dd74ea50). Preserve intent; no assertion weakening, no test deletion.
+** Acceptance
+- [ ] `cargo test -p orgasmic-daemon --lib` fully green
+- [ ] `cargo test -p orgasmic-cli` fully green
+- [ ] no test deleted; routing-table semantics (journal vs tx) preserved per AP971.5
+
+* IN_PROGRESS TASK-W97C8.1 Move brief.md + compiled-prompt.md from dispatch-start to close-time promote
 :PROPERTIES:
 :DEPENDS_ON: TASK-W97C8
 :ID: TASK-W97C8.1
 :PRIORITY: P2
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
 ** Description
@@ -5016,22 +5033,6 @@ Start-time durable writes break three properties the close-time design bought:
 - Partial promote failure keeps tmp copies intact (no loss).
 - Focused tests: start writes nothing durable; close promotes all files;
   rollback leaves no orphan dir.
-
-* IN_PROGRESS TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
-:PROPERTIES:
-:ID: TASK-TFXR2
-:PRIORITY: P1
-:END:
-
-** Description
-Follow-up to TASK-IXPD4 (which covered index.rs only). Remaining red tests on the e01mc-integration branch still use the retired aggregate layout or pre-tx-split expectations:
-- `orgasmic-daemon --lib`: api::tests::{concurrent_task_creates_preserve_every_heading, concurrent_task_property_updates_preserve_every_write, decision_parent_contract_and_reparent_tx_are_enforced, parse_errors_route_attributes_project_and_reindex_clears_it, project_task_mutation_is_immediately_visible_with_project_tx}; watcher::tests::{changed_board_path_moves_watch_to_the_new_project_root, fs_event_triggers_project_refresh_after_atomic_task_file_rename, fs_event_triggers_project_refresh_after_cli_task_file_rename, temp_only_atomic_rewrite_event_refreshes_project}
-- `orgasmic-cli`: manager::tests::closes_architector_lifecycle_to_done
-Two port patterns: (a) old aggregate fixture paths (`.orgasmic/tasks/backlog.org` etc.) -> node dirs `.orgasmic/tasks/<ID>/node.org` with v2 headers (recipe: index.rs tests just ported by IXPD4); (b) tx-count/tx-content assertions on node-scoped events -> journal assertions per the AP971.5 routing table (task.created = journal entry #1; see the ap971_ tests and the artifact api tests fixed at dd74ea50). Preserve intent; no assertion weakening, no test deletion.
-** Acceptance
-- [ ] `cargo test -p orgasmic-daemon --lib` fully green
-- [ ] `cargo test -p orgasmic-cli` fully green
-- [ ] no test deleted; routing-table semantics (journal vs tx) preserved per AP971.5
 
 * IN_REVIEW TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
 :PROPERTIES:
