@@ -380,8 +380,13 @@ check the rest of the invocation too.
    =evidence.json= is the ordinary proof of work: driver-event and tool-call
    counts; the session JSONL filename and size; the native harness transcript
    path and finder confidence when available; and assistant/reasoning narrative
-   in event order. It never copies tool-call arguments or tool-result output,
-   and the raw session JSONL remains machine-local. =stdout.log= is crash
+   in event order. =unparsed_events= and =bounded_events= name lossy or elided
+   session lines instead of turning one bad line into a false zero. Codex-chat
+   does not emit assistant/reasoning deltas today, so its narrative is empty;
+   counts and pointers remain its proof of work. Codex =TextStream::System=
+   carries harness notices, not model thinking, and is excluded from reasoning
+   evidence. It never copies tool-call arguments or tool-result output, and the
+   raw session JSONL remains machine-local. =stdout.log= is crash
    insurance only: empty files promote no marker at all; non-empty files promote
    at most a 64 KiB excerpt (plus ~180 bytes of banner), half from the head and
    half from the tail, with the original size and truncation named in the banner.
@@ -389,11 +394,13 @@ check the rest of the invocation too.
    =:REPORT_PATH:= always points at the summary, and is always
    project-relative — a =--property REPORT_PATH== outside the project root is
    refused rather than committed as a machine-specific path. *Retention: keep forever.*
+   At ~5,200–6,500 generations/year: =last.txt= ≈ 24–30 MB/yr (mean ~4.6 KB);
    =stdout.log= remains ≈ 0 typical and ≤ ~400 MB/yr worst case at the 64 KB
-   cap for ~5,200–6,500 generations/year; =evidence.json= replaces the 0-byte
-   marker and retains only counts, pointers, and model narrative. There is no
-   silent age-out at close. Do not paste the raw report into =done.org= — the
-   node keeps curated Evidence plus this pointer.
+   cap. =evidence.json= replaces the 0-byte marker and retains only counts,
+   pointers, and at most 64 KiB of model narrative; =narrative_truncated= says
+   when that cap was reached. There is no silent age-out at close. Do not paste
+   the raw report into =done.org= — the node keeps curated Evidence plus this
+   pointer.
 
    *=--started-tx= is mandatory whenever a dispatch is live* (TASK-6AYEJ.1,
    TASK-6AYEJ.2). It is the =TX_ID= of the =manager.dispatch_started= this close

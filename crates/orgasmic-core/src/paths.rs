@@ -433,8 +433,21 @@ fn copy_validated_artifact_to(dest: &Path, source: &std::fs::File) -> Result<(),
 fn write_promoted_bytes_to(dest: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
 
-    if bytes.is_empty() {
-        return Err("refusing empty dispatch evidence".into());
+    let evidence: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|err| format!("dispatch evidence is not valid JSON: {err}"))?;
+    let count = |field: &str| {
+        evidence
+            .get(field)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    let has_failure_reason = count("unparsed_events") > 0
+        || evidence
+            .pointer("/session/reason")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|reason| !reason.trim().is_empty());
+    if count("event_count") == 0 && count("tool_call_count") == 0 && !has_failure_reason {
+        return Err("refusing semantically empty dispatch evidence".into());
     }
     let tmp = dest.with_extension("promoting");
     let result = (|| {
@@ -815,6 +828,22 @@ mod tests {
     use super::*;
 
     const EVIDENCE_JSON: &[u8] = br#"{"event_count":1,"tool_call_count":0}"#;
+
+    #[cfg(unix)]
+    #[test]
+    fn promoted_evidence_requires_work_or_a_named_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("evidence.json");
+
+        let empty = br#"{"event_count":0,"tool_call_count":0,"unparsed_events":0,"session":{"status":"found"}}"#;
+        assert!(write_promoted_bytes_to(&dest, empty)
+            .unwrap_err()
+            .contains("semantically empty"));
+        let missing = br#"{"event_count":0,"tool_call_count":0,"unparsed_events":0,"session":{"status":"missing","reason":"session JSONL is missing"}}"#;
+        write_promoted_bytes_to(&dest, missing).unwrap();
+        let unparsed = br#"{"event_count":0,"tool_call_count":0,"unparsed_events":1,"session":{"status":"found"}}"#;
+        write_promoted_bytes_to(&dest, unparsed).unwrap();
+    }
 
     #[test]
     fn task_file_rel_matches_helpers() {

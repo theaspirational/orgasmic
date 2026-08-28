@@ -789,6 +789,9 @@ struct DispatchRecord {
     stdout_path: Option<PathBuf>,
     /// Machine-local session JSONL recorded as `TARGET` on `run.created`.
     session_path: Option<PathBuf>,
+    /// Run id carried by `session_path`; recovery may address a newer run whose
+    /// `run.created` has no target, so this can differ from `run_id`.
+    evidence_run_id: Option<String>,
     dispatch_attempt_token: Option<String>,
     /// The run this generation is currently addressed by — the dispatched run,
     /// or the newest recovery replacement of it (TASK-6AYEJ.2).
@@ -7967,7 +7970,7 @@ fn cleanup_dispatch(
                     expected_branch_oid.as_deref(),
                     Some(open.tx_id.as_str()),
                     open.session_path.as_deref(),
-                    open.run_id.as_deref(),
+                    open.evidence_run_id.as_deref(),
                 ) {
                     Ok(outcome) => {
                         worktree_removed = outcome.removed;
@@ -8010,7 +8013,7 @@ fn cleanup_dispatch(
             open.tasks.first().map(String::as_str).unwrap_or("task"),
             &open.tx_id,
             open.session_path.as_deref(),
-            open.run_id.as_deref(),
+            open.evidence_run_id.as_deref(),
         ) {
             Ok(outcome) => {
                 report_path = outcome.report_path;
@@ -8113,9 +8116,12 @@ fn promote_dispatch_artifacts_in_place(
 struct DispatchEvidence {
     event_count: u64,
     tool_call_count: u64,
+    unparsed_events: u64,
+    bounded_events: u64,
     session: DispatchSessionEvidence,
     native_transcript: TranscriptFindResult,
     narrative: Vec<DispatchEvidenceText>,
+    narrative_truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -8143,9 +8149,15 @@ struct DispatchEvidenceText {
 struct ParsedDispatchEvidence {
     event_count: u64,
     tool_call_count: u64,
+    unparsed_events: u64,
+    bounded_events: u64,
     narrative: Vec<DispatchEvidenceText>,
+    narrative_bytes: usize,
+    narrative_truncated: bool,
     lookup_envelopes: Vec<SessionEnvelope>,
 }
+
+const DISPATCH_NARRATIVE_MAX_BYTES: usize = 64 * 1024;
 
 /// Build the tracked, content-filtered evidence for one run from the exact
 /// machine-local `TARGET` recorded on its `run.created` tx.
@@ -8162,11 +8174,14 @@ fn build_dispatch_evidence(
             DispatchEvidence {
                 event_count: 0,
                 tool_call_count: 0,
+                unparsed_events: 0,
+                bounded_events: 0,
                 session: DispatchSessionEvidence::Missing {
                     reason: reason.clone(),
                 },
                 native_transcript: TranscriptFindResult::NotFound { reason },
                 narrative: Vec::new(),
+                narrative_truncated: false,
             }
         }
     };
@@ -8191,11 +8206,14 @@ fn dispatch_evidence_from_session(
             return DispatchEvidence {
                 event_count: 0,
                 tool_call_count: 0,
+                unparsed_events: 0,
+                bounded_events: 0,
                 session: DispatchSessionEvidence::Missing {
                     reason: reason.clone(),
                 },
                 native_transcript: TranscriptFindResult::NotFound { reason },
                 narrative: Vec::new(),
+                narrative_truncated: false,
             };
         }
         Err(err) => {
@@ -8219,12 +8237,15 @@ fn dispatch_evidence_from_session(
     DispatchEvidence {
         event_count: parsed.event_count,
         tool_call_count: parsed.tool_call_count,
+        unparsed_events: parsed.unparsed_events,
+        bounded_events: parsed.bounded_events,
         session: DispatchSessionEvidence::Found {
             filename,
             size_bytes,
         },
         native_transcript,
         narrative: parsed.narrative,
+        narrative_truncated: parsed.narrative_truncated,
     }
 }
 
@@ -8232,12 +8253,15 @@ fn unreadable_dispatch_evidence(filename: String, reason: String) -> DispatchEvi
     DispatchEvidence {
         event_count: 0,
         tool_call_count: 0,
+        unparsed_events: 0,
+        bounded_events: 0,
         session: DispatchSessionEvidence::Unreadable {
             filename,
             reason: reason.clone(),
         },
         native_transcript: TranscriptFindResult::NotFound { reason },
         narrative: Vec::new(),
+        narrative_truncated: false,
     }
 }
 
@@ -8247,13 +8271,24 @@ fn parse_dispatch_evidence(
 ) -> Result<ParsedDispatchEvidence, String> {
     let file = std::fs::File::open(session_path).map_err(|err| err.to_string())?;
     let mut parsed = ParsedDispatchEvidence::default();
-    for (line_index, line) in std::io::BufReader::new(file).lines().enumerate() {
-        let line = line.map_err(|err| format!("read line {}: {err}", line_index + 1))?;
+    for line in std::io::BufReader::new(file).lines() {
+        let line = match line {
+            Ok(line) => line,
+            Err(_) => {
+                parsed.unparsed_events += 1;
+                continue;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
-        let envelope: SessionEnvelope = serde_json::from_str(&line)
-            .map_err(|err| format!("parse line {}: {err}", line_index + 1))?;
+        let envelope: SessionEnvelope = match serde_json::from_str(&line) {
+            Ok(envelope) => envelope,
+            Err(_) => {
+                parsed.unparsed_events += 1;
+                continue;
+            }
+        };
         if run_id.is_some_and(|run_id| envelope.run_id != run_id) {
             continue;
         }
@@ -8261,10 +8296,24 @@ fn parse_dispatch_evidence(
             SessionEventKind::Lifecycle => parsed.lookup_envelopes.push(envelope),
             SessionEventKind::Note => {}
             SessionEventKind::DriverEvent => {
-                let event: DriverEvent =
-                    serde_json::from_value(envelope.event.clone()).map_err(|err| {
-                        format!("parse driver event on line {}: {err}", line_index + 1)
-                    })?;
+                if value_contains_bounded_marker(&envelope.event) {
+                    parsed.bounded_events += 1;
+                }
+                let event: DriverEvent = match serde_json::from_value(envelope.event.clone()) {
+                    Ok(event) => event,
+                    Err(_) => {
+                        parsed.unparsed_events += 1;
+                        if envelope
+                            .event
+                            .get("type")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("provider_runtime")
+                        {
+                            parsed.event_count += 1;
+                        }
+                        continue;
+                    }
+                };
                 if matches!(&event, DriverEvent::Ready { .. }) {
                     parsed.lookup_envelopes.push(envelope);
                 }
@@ -8281,26 +8330,22 @@ fn parse_dispatch_evidence(
                         chunk,
                         ..
                     } => push_dispatch_narrative(
-                        &mut parsed.narrative,
+                        &mut parsed,
                         DispatchEvidenceStream::Assistant,
                         &chunk,
                     ),
                     DriverEvent::ProviderRuntime { event } => match event.kind {
                         ProviderRuntimeEventKind::ItemStarted(item)
-                            if matches!(
+                            if !matches!(
                                 item.item_type.as_str(),
-                                "command_execution" | "tool_call" | "mcp_tool_call"
+                                "agent_message" | "agentMessage" | "reasoning"
                             ) =>
                         {
                             parsed.tool_call_count += 1;
                         }
                         ProviderRuntimeEventKind::ContentDelta(content) => {
                             if let Some(stream) = evidence_provider_stream(&content.stream_kind) {
-                                push_dispatch_narrative(
-                                    &mut parsed.narrative,
-                                    stream,
-                                    &content.delta,
-                                );
+                                push_dispatch_narrative(&mut parsed, stream, &content.delta);
                             }
                         }
                         _ => {}
@@ -8313,28 +8358,57 @@ fn parse_dispatch_evidence(
     Ok(parsed)
 }
 
+fn value_contains_bounded_marker(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Array(values) => values.iter().any(value_contains_bounded_marker),
+        serde_json::Value::Object(values) => {
+            values.contains_key("orgasmic_bounded")
+                || values.values().any(value_contains_bounded_marker)
+        }
+        _ => false,
+    }
+}
+
 fn evidence_provider_stream(stream_kind: &str) -> Option<DispatchEvidenceStream> {
     match stream_kind {
         "assistant" | "assistant_text" | "output_text" => Some(DispatchEvidenceStream::Assistant),
-        "reasoning" | "reasoning_text" | "reasoning_summary" | "thinking" => {
-            Some(DispatchEvidenceStream::Reasoning)
-        }
+        "reasoning" | "reasoning_summary" | "thinking" => Some(DispatchEvidenceStream::Reasoning),
         _ => None,
     }
 }
 
 fn push_dispatch_narrative(
-    narrative: &mut Vec<DispatchEvidenceText>,
+    parsed: &mut ParsedDispatchEvidence,
     stream: DispatchEvidenceStream,
     text: &str,
 ) {
-    if text.is_empty() {
+    if text.is_empty() || parsed.narrative_truncated {
         return;
     }
-    if let Some(last) = narrative.last_mut().filter(|last| last.stream == stream) {
+    let remaining = DISPATCH_NARRATIVE_MAX_BYTES.saturating_sub(parsed.narrative_bytes);
+    if remaining == 0 {
+        parsed.narrative_truncated = true;
+        return;
+    }
+    let original_len = text.len();
+    let mut end = remaining.min(original_len);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    parsed.narrative_truncated |= end < original_len;
+    if end == 0 {
+        return;
+    }
+    let text = &text[..end];
+    parsed.narrative_bytes += text.len();
+    if let Some(last) = parsed
+        .narrative
+        .last_mut()
+        .filter(|last| last.stream == stream)
+    {
         last.text.push_str(text);
     } else {
-        narrative.push(DispatchEvidenceText {
+        parsed.narrative.push(DispatchEvidenceText {
             stream,
             text: text.to_string(),
         });
@@ -10488,10 +10562,11 @@ fn overlapping_tasks(open_tasks: &[String], requested_tasks: &[String]) -> Vec<S
 /// ones; `dispatch-close` also needs the closed ones so a re-run is a no-op
 /// instead of "no open dispatch" (TASK-6AYEJ).
 fn scan_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
-    Ok(fold_dispatches(&read_tx_entries(project_root)?)
+    let entries = read_tx_entries(project_root)?;
+    Ok(fold_dispatches(&entries)
         .into_iter()
         .map(|dispatch| {
-            let mut record = dispatch_record_from_fold(dispatch);
+            let mut record = dispatch_record_from_fold(dispatch, &entries);
             // Tx records store project-relative paths (no user-specific
             // prefixes in committed files); resolve them back against the
             // project root for local use (ps matching, cleanup).
@@ -10509,10 +10584,29 @@ fn scan_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
         .collect())
 }
 
-fn dispatch_record_from_fold(dispatch: DispatchFold) -> DispatchRecord {
+fn dispatch_record_from_fold(dispatch: DispatchFold, entries: &[TxEntry]) -> DispatchRecord {
     let started = &dispatch.started;
     let run = dispatch.run.as_ref();
     let run_extra = |key| run.and_then(|entry| extra(entry, key));
+    let addressed_run = dispatch.addressed_run_id.as_deref().and_then(|run_id| {
+        entries
+            .iter()
+            .rev()
+            .find(|entry| entry.ty == "run.created" && extra(entry, "RUN_ID") == Some(run_id))
+    });
+    let (session_path, evidence_run_id) = match addressed_run.and_then(|entry| {
+        entry
+            .target
+            .as_deref()
+            .map(|target| (target, extra(entry, "RUN_ID")))
+    }) {
+        Some((target, run_id)) => (Some(PathBuf::from(target)), run_id.map(str::to_string)),
+        None => (
+            run.and_then(|entry| entry.target.as_deref())
+                .map(PathBuf::from),
+            run_extra("RUN_ID").map(str::to_string),
+        ),
+    };
     DispatchRecord {
         tx_id: started.tx_id.clone(),
         tasks: started
@@ -10528,7 +10622,8 @@ fn dispatch_record_from_fold(dispatch: DispatchFold) -> DispatchRecord {
         brief_path: extra_compat(started, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
         last_path: run_extra("LAST_PATH").map(PathBuf::from),
         stdout_path: run_extra("STDOUT_PATH").map(PathBuf::from),
-        session_path: run_extra("TARGET").map(PathBuf::from),
+        session_path,
+        evidence_run_id,
         dispatch_attempt_token: run_extra("DISPATCH_ATTEMPT").map(str::to_string),
         run_id: dispatch.addressed_run_id,
         run_ids: dispatch.run_ids,
@@ -10881,6 +10976,8 @@ mod tests {
         assert!(!json.is_empty());
         assert_eq!(value["event_count"], 0);
         assert_eq!(value["tool_call_count"], 0);
+        assert_eq!(value["unparsed_events"], 0);
+        assert_eq!(value["bounded_events"], 0);
         assert_eq!(value["session"]["status"], "found");
         assert_eq!(value["session"]["size_bytes"], 0);
     }
@@ -11016,6 +11113,9 @@ mod tests {
 
         assert_eq!(value["event_count"], 6);
         assert_eq!(value["tool_call_count"], 2);
+        assert_eq!(value["unparsed_events"], 0);
+        assert_eq!(value["bounded_events"], 0);
+        assert_eq!(value["narrative_truncated"], false);
         assert_eq!(value["session"]["status"], "found");
         assert_eq!(
             value["session"]["filename"],
@@ -11059,6 +11159,82 @@ mod tests {
         assert_eq!(value["native_transcript"]["status"], "not_found");
     }
 
+    // Real `orgasmic_bounded` shape from the round-1 reviewer session, plus a
+    // truncated final line: neither may discard the good events around it.
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_evidence_tallies_bounded_and_unparsed_events_lossily() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("bounded.jsonl");
+        let bounded = r#"{"seq":37,"time":"2026-08-28T08:25:59.322657Z","run_id":"run-01M13QK60ZXCQNPQ5AVKAVEZ29","runtime_id":"dc4a64ad-d081-4afb-bccb-86c79528e3e3","boot_id":"33366c6e-acca-451b-aceb-9229bea040ba","kind":"driver_event","event":{"event":{"orgasmic_bounded":{"bytes":23652,"reason":"subtree-size","retained_bytes":0,"sha256":"5bdb8e741913afa7537f44d7dd28c60d0dc32e47004feda0c41cc739539a96b0","source":"harness-native session transcript (vendor-owned; never copied by orgasmic)"}},"type":"provider_runtime"}}"#;
+        let item = evidence_envelope(
+            38,
+            SessionEventKind::DriverEvent,
+            serde_json::json!({
+                "type": "provider_runtime",
+                "event": {
+                    "eventId": "event-file-change",
+                    "provider": "codex",
+                    "threadId": "thread-1",
+                    "createdAt": "2026-08-28T12:00:02Z",
+                    "type": "item.started",
+                    "payload": {"itemType": "file_change"}
+                }
+            }),
+        );
+        std::fs::write(
+            &path,
+            format!(
+                "{bounded}\n{}\n{{\"seq\":39",
+                serde_json::to_string(&item).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let parsed = parse_dispatch_evidence(&path, None).unwrap();
+        assert_eq!(parsed.event_count, 2);
+        assert_eq!(parsed.tool_call_count, 1);
+        assert_eq!(parsed.bounded_events, 1);
+        assert_eq!(parsed.unparsed_events, 2);
+    }
+
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_evidence_caps_narrative_on_a_utf8_boundary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("narrative.jsonl");
+        write_evidence_session(
+            &path,
+            vec![evidence_envelope(
+                1,
+                SessionEventKind::DriverEvent,
+                serde_json::json!({
+                    "type": "text_chunk",
+                    "stream": "assistant",
+                    "chunk": format!("{}é", "a".repeat(DISPATCH_NARRATIVE_MAX_BYTES)),
+                    "seq": 1
+                }),
+            )],
+        );
+
+        let evidence = dispatch_evidence_from_session(&path, Some("run-evidence"), None);
+        let value = serde_json::to_value(evidence).unwrap();
+        assert_eq!(
+            value["narrative"][0]["text"].as_str().unwrap().len(),
+            DISPATCH_NARRATIVE_MAX_BYTES
+        );
+        assert_eq!(value["narrative_truncated"], true);
+    }
+
+    #[test]
+    fn codex_system_notices_are_not_reasoning_evidence() {
+        assert_eq!(evidence_provider_stream("reasoning_text"), None);
+        assert_eq!(
+            evidence_provider_stream("reasoning_summary"),
+            Some(DispatchEvidenceStream::Reasoning)
+        );
+    }
+
     #[test]
     fn dispatch_wait_timeout_parser_is_explicit_and_nonzero() {
         assert_eq!(parse_wait_duration("30s").unwrap(), Duration::from_secs(30));
@@ -11094,6 +11270,7 @@ mod tests {
             last_path: None,
             stdout_path: None,
             session_path: None,
+            evidence_run_id: None,
             dispatch_attempt_token: None,
             run_id: None,
             run_ids: BTreeSet::new(),
@@ -12351,6 +12528,87 @@ mod tests {
         .unwrap();
     }
 
+    // `parse_tx_file` lifts TARGET out of `extra`; the production fold must
+    // read the first-class field or every real close loses its session JSONL.
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_fold_reads_run_created_target_field() {
+        let source = format!(
+            "#+title: tx\n#+orgasmic_version: 1\n\n{}* TX 2026-07-26 Sun 10:01:00 run.created TASK-9\n:PROPERTIES:\n:TX_ID:        tx-run-9\n:TIME:         [2026-07-26 Sun 10:01:00]\n:TYPE:         run.created\n:ACTOR:        daemon\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-9\n:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-9-implementer.jsonl\n:ORIGIN:       cli_dispatch\n:DISPATCH_TX:  tx-start-9\n:RUN_ID:       run-9\n:KIND:         implementer\n:LAST_PATH:    .orgasmic/tmp/dispatch/task-9-last.txt\n:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-9-stdout.log\n:END:\n",
+            tx_started("tx-start-9", "TASK-9", "implementer", "10:00:00")
+        );
+        let entries = parse_tx_file(&source, "real-shaped-run-created.org").unwrap();
+        assert!(entries[1].extra.iter().all(|(key, _)| key != "TARGET"));
+        let dispatch = fold_dispatches(&entries).pop().unwrap();
+        let record = dispatch_record_from_fold(dispatch, &entries);
+
+        assert_eq!(
+            record.session_path.as_deref(),
+            Some(Path::new(
+                ".orgasmic/tmp/sessions/dispatch-TASK-9-implementer.jsonl"
+            ))
+        );
+        assert_eq!(record.evidence_run_id.as_deref(), Some("run-9"));
+    }
+
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_fold_prefers_addressed_session_then_falls_back_to_initial() {
+        let entry = |id: &str, ty: &str, target: Option<&str>, extra: &[(&str, &str)]| {
+            let mut entry = TxEntry::new(id, ty, "[2026-08-28 Fri 10:00:00]", "test", "host");
+            entry.project = Some("orgasmic".into());
+            entry.task = Some("TASK-9".into());
+            entry.target = target.map(str::to_string);
+            entry.extra = extra
+                .iter()
+                .map(|(key, value)| ((*key).into(), (*value).into()))
+                .collect();
+            entry
+        };
+        let started = entry(
+            "tx-start-9",
+            "manager.dispatch_started",
+            None,
+            &[("KIND", "implementer")],
+        );
+        let initial = entry(
+            "tx-run-a",
+            "run.created",
+            Some("initial.jsonl"),
+            &[
+                ("ORIGIN", "cli_dispatch"),
+                ("DISPATCH_TX", "tx-start-9"),
+                ("RUN_ID", "run-a"),
+            ],
+        );
+        let replacement = entry(
+            "tx-run-b",
+            "run.created",
+            Some("replacement.jsonl"),
+            &[
+                ("ORIGIN", "recovery"),
+                ("ORIGIN_RUN_ID", "run-a"),
+                ("RUN_ID", "run-b"),
+            ],
+        );
+        let mut entries = vec![started, initial, replacement];
+
+        let record = dispatch_record_from_fold(fold_dispatches(&entries).pop().unwrap(), &entries);
+        assert_eq!(
+            record.session_path.as_deref(),
+            Some(Path::new("replacement.jsonl"))
+        );
+        assert_eq!(record.evidence_run_id.as_deref(), Some("run-b"));
+
+        entries[2].target = None;
+        let record = dispatch_record_from_fold(fold_dispatches(&entries).pop().unwrap(), &entries);
+        assert_eq!(
+            record.session_path.as_deref(),
+            Some(Path::new("initial.jsonl"))
+        );
+        assert_eq!(record.evidence_run_id.as_deref(), Some("run-a"));
+    }
+
     /// TASK-6AYEJ.1, the ship blocker: closing the implementer moves the task
     /// to IN_REVIEW and a reviewer is opened for the SAME task, so a replayed
     /// implementer close must no-op against its own already-closed generation
@@ -12936,6 +13194,7 @@ mod tests {
         );
         open.session_path = Some(session_path);
         open.run_id = Some("run-evidence".into());
+        open.evidence_run_id = Some("run-evidence".into());
 
         let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
         assert_eq!(cleanup.status, CleanupStatus::Ok, "{:?}", cleanup.error);
