@@ -1,0 +1,22 @@
+#+title: orgasmic decision dec_T1RN0
+#+orgasmic_version: 2
+
+* dec_T1RN0 Orgasmic runtime is fully self-contained; ships exactly one agent skill
+:PROPERTIES:
+:ID: dec_T1RN0
+:END:
+
+**Decision**
+Orgasmic ships exactly one agent skill (orgasmic, symlinked into the agent skills dir by orgasmic update). Third-party or external content is bundled inside the runtime, never installed as its own skill, and no file in shipped/ may reference a path outside ~/.orgasmic.
+
+**Why**
+Installs on other machines must work without the author's personal skill setup. The artifact-generator prompt spec referenced ~/.claude/skills/visual-plan/references/wireframe.md — present only on the author's machine; on any other install the artifactor worker authored wireframes blind. Shipping extra skills also pollutes the user's global agent skills dir.
+
+**How**
+- diagram-design (github.com/cathrynlavery/diagram-design, MIT) is vendored via git subtree at vendor/diagram-design; prompt specs read it in place at ~/.orgasmic/current/vendor/diagram-design/skills/diagram-design/. Update: git subtree pull --prefix vendor/diagram-design https://github.com/cathrynlavery/diagram-design main --squash
+- wireframe.md quality bar snapshotted to shipped/prompt-studio/references/wireframe.md; spec repointed to the runtime path.
+- Both pinned in REQUIRED_RUNTIME_FILES (crates/orgasmic-cli/src/update.rs); vendor/ staged by scripts/package-runtime.sh.
+- Rule going forward: a worker prompt needing a reference doc gets a snapshot in shipped/; an external repo gets a subtree under vendor/ plus a REQUIRED_RUNTIME_FILES entry.
+
+**Context**
+Landed on branch diagram-design (commits d7c79d69, f0f5b0a3, ef677036) together with replacing the Mermaid/SequenceDiagram/FlowChart blocks by diagram-design editorial SVG through the Diagram block (registry 22 -> 19).
