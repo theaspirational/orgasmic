@@ -30,3 +30,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 2b5cc957-a7f4-48a7-8460-e75dc7bde935
 :END:
+
+* tx-20260828-orgasmic-6499 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6499
+:TIME:    [2026-08-28 Fri 09:47:07]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8.1
+:TARGET: .orgasmic/tasks/TASK-W97C8.1/node.org
+:REASON: transition TASK-W97C8.1 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: edf61b55-4042-4796-9a83-64e95edb478d
+:END:
