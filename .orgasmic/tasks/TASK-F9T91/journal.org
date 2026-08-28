@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-F9T91
+#+orgasmic_version: 2
+
+* tx-20260828-orgasmic-6505 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6505
+:TIME:    [2026-08-28 Fri 15:58:55]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-F9T91
+:TARGET: .orgasmic/tasks/TASK-F9T91/node.org
+:REASON: operator removed 1.1G of >2-week session JSONLs by hand on 2026-08-28; recurring policy belongs in the daemon
+:EVENT_ID: fa822a0a-da3a-49ab-8f4a-06a3991bf859
+:END:
