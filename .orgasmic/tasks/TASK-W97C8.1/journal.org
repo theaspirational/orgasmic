@@ -62,3 +62,16 @@
 :TO_STATE: in_progress
 :EVENT_ID: 6de6a0d8-7894-4594-886f-850978e64793
 :END:
+
+* tx-20260828-orgasmic-6501 worker.comment
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6501
+:TIME:    [2026-08-28 Fri 10:07:51]
+:TYPE:    worker.comment
+:ACTOR:   agent.implementer
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8.1
+:REASON: F-2: compiled-prompt paths now derive from each attempt's last.txt filename, removing the reviewed bundle collision for shared brief basenames; no brief-basename uniqueness rule was added.
+:EVENT_ID: 805d9c10-d493-415d-8fb0-33ad99b0f481
+:END:
