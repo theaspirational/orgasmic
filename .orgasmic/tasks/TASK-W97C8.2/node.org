@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-W97C8.2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-W97C8.2 evidence.json follow-ups: codex tool-count layering, narrative docs, stdout-vs-floor ordering
+:PROPERTIES:
+:ID: TASK-W97C8.2
+:PRIORITY: P3
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Round-2 review of TASK-W97C8 (report in =tasks/TASK-W97C8/dispatches/tx-20260828-orgasmic-c75225ff-b159-4434-8088-a69a99c2a8f3/report.md=) approved with three follow-ups:
+
+- *N1 (MED)* =manager.rs:8336-8343= — codex-chat emits TWO =item.started= per model tool call (model-issued =call_*= + runtime =exec-*=); the generic count counts both, ~1.9x over. Count only the model-issued layer (itemId prefix =call_= on codex; claude is single-layer =toolu_=), or rename the field =tool_item_count= and document the layered semantics. Add a fixture with a real =call_=/=exec-= pair.
+- *N2 (MED, docs)* =manager-dispatch.org:380-386= — narrative is a partial excerpt on EVERY driver (measured 141 B for a full claude review; claude assistant blocks arrive as =item.completed= with =data: null=). Say so in the convention; counts + session pointer + native transcript path are the load-bearing proof. Optionally file a runtime-side task for the missing =content.delta= events.
+- *N3 (LOW)* =paths.rs:335-344= — the semantic evidence floor's early return also skips =stdout.log= promotion; a harness that died before any driver event loses its crash log. Promote stdout before the floor or on its error path.
+
+Also settle review open question 1: are =bounded_events= / =unparsed_events= disjoint or overlapping? One convention sentence either way.
+
+** Acceptance
+- Codex tool count reflects model-issued calls only (or field renamed + documented), pinned by fixture.
+- Convention states measured narrative reality for all drivers.
+- Zero-event run still promotes its non-empty stdout excerpt.
+- Focused tests green; =shipped_conventions= gate stays green.
