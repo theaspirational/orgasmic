@@ -1,0 +1,25 @@
+#+title: orgasmic task TASK-W97C8.1.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-W97C8.1.1 close-time sidecar follow-ups: attempt-scoped brief, upgrade-era partial noise, copy-failure ordering, fmt
+:PROPERTIES:
+:ID: TASK-W97C8.1.1
+:PRIORITY: P3
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Round-2 review of TASK-W97C8.1 (report in =tasks/TASK-W97C8.1/dispatches/tx-20260828-orgasmic-64f0a2c8-3ac2-4158-9151-acc0df52feff/report.md=) approved with four LOW residuals:
+
+- *R-1* =manager.rs:10388= — brief.md is still stem-scoped while last/stdout/compiled-prompt are attempt-scoped; now that close unlinks the brief, two attempts sharing a stem promote last-written content then record a false =missing=. Name it ={stem}-{attempt_id}-brief.md= derived from last.txt (as =dispatch_compiled_prompt_path= now does); lets =dispatch_brief_name= drop its =file_stem()= fallback.
+- *R-2* — a dispatch open across the W97C8.1 upgrade closes with =CLEANUP_STATUS=partial= / =compiled-prompt.md missing from tmp= forever, though the record dir already holds the start-written file. Before reporting a sidecar missing, check =dest_dir.join(name)= exists; if so drop the error (also covers re-run of a partial close). Document the =partial= semantics in the convention.
+- *R-3* =paths.rs:448-470= — a sidecar COPY failure returns =report_path: None=, skipping report/evidence/stdout and the commit (empty-residue dir class). Copy report.md first; treat sidecar copy failure like sidecar absence (push error, continue).
+- *R-4* — =cargo fmt= the 5 branch-introduced hunks (=paths.rs:1563,1573,1591=, =manager.rs:13357=, =tests/dispatch.rs:4549=). Also: =validate_dispatch_record_targets= double-opens the compiled prompt when worktree is Some (one wasted openat).
+
+Settle review open question 1: is =partial= the right status for missing evidence-of-evidence, or should it be =ok= + warning? =cleanup_status_reports_failure= has no severity axis.
+
+** Acceptance
+- Brief attempt-scoped, pinned by a two-attempt distinctness test.
+- Upgrade-era close (dest file already present) reports no missing-sidecar error.
+- Sidecar copy failure never costs report/evidence/stdout or the commit.
+- Branch-introduced fmt hunks clean; focused suites + shipped_conventions green.

@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-W97C8.1.1
+#+orgasmic_version: 2
+
+* tx-20260828-orgasmic-6503 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6503
+:TIME:    [2026-08-28 Fri 10:21:53]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8.1.1
+:TARGET: .orgasmic/tasks/TASK-W97C8.1.1/node.org
+:REASON: W97C8.1 round-2 review approve-with-follow-ups: residuals R-1..R-4, all LOW
+:EVENT_ID: fcec35de-e08a-49c0-bffd-8c9bfdff4cae
+:END:
+
+* tx-20260828-orgasmic-6504 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6504
+:TIME:    [2026-08-28 Fri 10:21:53]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8.1.1
+:TARGET: .orgasmic/tasks/TASK-W97C8.1.1/node.org
+:REASON: update properties on TASK-W97C8.1.1
+:FIX_SUBTASK: t
+:EVENT_ID: e88fb473-1740-4de5-bb0d-a225975dcd36
+:END:
