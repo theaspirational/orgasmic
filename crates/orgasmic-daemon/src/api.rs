@@ -6257,14 +6257,14 @@ async fn post_task_dispatch(
     )
     .await?;
 
-    let evidence_dir = orgasmic_core::dispatch_record_dir(&project.root, &task_id, &dispatch_tx_id)
+    let compiled_prompt_path = orgasmic_core::dispatch_compiled_prompt_path(&req.last_path)
         .map_err(ApiError::bad_request)?;
-    std::fs::create_dir_all(&evidence_dir).map_err(|error| {
-        ApiError::internal(format!("create dispatch evidence directory: {error}"))
+    std::fs::write(&compiled_prompt_path, &bundle).map_err(|error| {
+        ApiError::internal(format!(
+            "write compiled dispatch prompt {}: {error}",
+            compiled_prompt_path.display()
+        ))
     })?;
-    std::fs::write(evidence_dir.join("brief.md"), &brief)
-        .and_then(|_| std::fs::write(evidence_dir.join("compiled-prompt.md"), &bundle))
-        .map_err(|error| ApiError::internal(format!("write dispatch evidence: {error}")))?;
 
     record_dispatch_created(
         &state,

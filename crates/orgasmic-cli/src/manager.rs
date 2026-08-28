@@ -7599,6 +7599,7 @@ fn acquire_dispatch_cleanup_lock(project_root: &Path) -> Result<DispatchCleanupL
 fn remove_worktree_if_present(
     project_root: &Path,
     path: &Path,
+    brief_path: Option<&Path>,
     last_path: Option<&Path>,
     stdout_path: Option<&Path>,
     task: &str,
@@ -7621,6 +7622,7 @@ fn remove_worktree_if_present(
     remove_worktree_required(
         project_root,
         path,
+        brief_path,
         last_path,
         stdout_path,
         task,
@@ -7636,6 +7638,7 @@ fn remove_worktree_if_present(
 fn remove_worktree_required(
     project_root: &Path,
     path: &Path,
+    brief_path: Option<&Path>,
     last_path: Option<&Path>,
     stdout_path: Option<&Path>,
     task: &str,
@@ -7648,6 +7651,7 @@ fn remove_worktree_required(
     remove_worktree_required_with_hook(
         project_root,
         path,
+        brief_path,
         last_path,
         stdout_path,
         task,
@@ -7664,6 +7668,7 @@ fn remove_worktree_required(
 fn remove_worktree_required_with_hook(
     project_root: &Path,
     path: &Path,
+    brief_path: Option<&Path>,
     last_path: Option<&Path>,
     stdout_path: Option<&Path>,
     task: &str,
@@ -7678,12 +7683,21 @@ fn remove_worktree_required_with_hook(
     if !path.exists() {
         bail!("worktree path missing: {}", path.display());
     }
-    let artifacts = orgasmic_core::validate_dispatch_cleanup_targets(
-        project_root,
-        path,
-        last_path,
-        stdout_path,
-    )
+    let artifacts = match started_tx {
+        Some(_) => orgasmic_core::validate_dispatch_record_targets(
+            project_root,
+            Some(path),
+            brief_path,
+            last_path,
+            stdout_path,
+        ),
+        None => orgasmic_core::validate_dispatch_cleanup_targets(
+            project_root,
+            path,
+            last_path,
+            stdout_path,
+        ),
+    }
     .map_err(|err| anyhow::anyhow!(err))?;
     orgasmic_core::verify_dispatch_worktree_identity(&artifacts, path)
         .map_err(|err| anyhow::anyhow!(err))?;
@@ -7855,6 +7869,7 @@ fn cleanup_created_resources(
     match remove_worktree_if_present(
         project_root,
         path,
+        None,
         Some(last_path),
         Some(stdout_path),
         task,
@@ -7922,6 +7937,7 @@ fn cleanup_dispatch(
     remove_worktree: bool,
     branch_delete: bool,
 ) -> CleanupOutcome {
+    let brief_path = resolve_project_path(project_root, open.brief_path.clone());
     let last_path = resolve_project_path(project_root, open.last_path.clone());
     let stdout_path = resolve_project_path(project_root, open.stdout_path.clone());
     let mut worktree_failed = false;
@@ -7963,6 +7979,7 @@ fn cleanup_dispatch(
                 match remove_worktree_required(
                     project_root,
                     worktree,
+                    brief_path.as_deref(),
                     last_path.as_deref(),
                     stdout_path.as_deref(),
                     &task_list_property(&open.tasks),
@@ -8008,6 +8025,7 @@ fn cleanup_dispatch(
         match promote_dispatch_artifacts_in_place(
             project_root,
             open.worktree.as_deref(),
+            brief_path.as_deref(),
             last,
             stdout,
             open.tasks.first().map(String::as_str).unwrap_or("task"),
@@ -8077,6 +8095,7 @@ fn cleanup_dispatch(
 fn promote_dispatch_artifacts_in_place(
     project_root: &Path,
     worktree: Option<&Path>,
+    brief_path: Option<&Path>,
     last_path: &Path,
     stdout_path: &Path,
     task_id: &str,
@@ -8089,19 +8108,13 @@ fn promote_dispatch_artifacts_in_place(
     if !last_path.exists() {
         return Err(format!("last_path missing: {}", last_path.display()));
     }
-    let artifacts = match worktree {
-        Some(worktree) if worktree.exists() => orgasmic_core::validate_dispatch_cleanup_targets(
-            project_root,
-            worktree,
-            Some(last_path),
-            Some(stdout_path),
-        )?,
-        _ => orgasmic_core::validate_dispatch_promote_targets(
-            project_root,
-            Some(last_path),
-            Some(stdout_path),
-        )?,
-    };
+    let artifacts = orgasmic_core::validate_dispatch_record_targets(
+        project_root,
+        worktree.filter(|worktree| worktree.exists()),
+        brief_path,
+        Some(last_path),
+        Some(stdout_path),
+    )?;
     promote_and_persist_dispatch_record(
         &artifacts,
         project_root,
@@ -12389,7 +12402,7 @@ mod tests {
     }
 
     #[test]
-    fn attempt_scoped_paths_isolate_consecutive_dispatches() {
+    fn attempt_scoped_paths_isolate_consecutive_dispatch_bundles() {
         let tmp = tempfile::tempdir().unwrap();
         let project_root = tmp.path().join("repo");
         let brief =
@@ -12400,10 +12413,23 @@ mod tests {
             dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt2").unwrap();
         assert_ne!(last1, last2);
         std::fs::create_dir_all(last1.parent().unwrap()).unwrap();
+        let compiled1 = orgasmic_core::dispatch_compiled_prompt_path(&last1).unwrap();
+        let compiled2 = orgasmic_core::dispatch_compiled_prompt_path(&last2).unwrap();
+        assert_ne!(compiled1, compiled2);
         std::fs::write(&last1, "attempt 1 report").unwrap();
+        std::fs::write(&compiled1, "attempt 1 bundle").unwrap();
+        std::fs::write(&compiled2, "attempt 2 bundle").unwrap();
         assert!(
             !last2.exists(),
             "attempt 2 waiter path must not observe attempt 1 report"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&compiled1).unwrap(),
+            "attempt 1 bundle"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&compiled2).unwrap(),
+            "attempt 2 bundle"
         );
     }
 
@@ -13016,6 +13042,8 @@ mod tests {
         root: PathBuf,
         worktree: PathBuf,
         branch: String,
+        brief: PathBuf,
+        compiled_prompt: PathBuf,
         last: PathBuf,
         stdout: PathBuf,
     }
@@ -13055,11 +13083,17 @@ mod tests {
             .status()
             .unwrap()
             .success());
-        let brief = dispatch_dir.join(format!("{slug}-impl-brief.md"));
-        let (_, last, stdout) =
-            dispatch_artifact_paths_for_attempt(&root, &brief, "aaaaaaaa11111111bbbbbbbb22222222")
-                .unwrap();
+        let brief_input = dispatch_dir.join(format!("{slug}-impl-brief.md"));
+        let (brief, last, stdout) = dispatch_artifact_paths_for_attempt(
+            &root,
+            &brief_input,
+            "aaaaaaaa11111111bbbbbbbb22222222",
+        )
+        .unwrap();
         std::fs::create_dir_all(last.parent().unwrap()).unwrap();
+        let compiled_prompt = orgasmic_core::dispatch_compiled_prompt_path(&last).unwrap();
+        std::fs::write(&brief, "brief\n").unwrap();
+        std::fs::write(&compiled_prompt, "compiled prompt\n").unwrap();
         std::fs::write(&last, "summary\n").unwrap();
         std::fs::write(&stdout, "output\n").unwrap();
         DispatchCleanupFixture {
@@ -13067,6 +13101,8 @@ mod tests {
             root,
             worktree,
             branch,
+            brief,
+            compiled_prompt,
             last,
             stdout,
         }
@@ -13079,6 +13115,7 @@ mod tests {
         open.kind = "implementer".to_string();
         open.worktree = Some(fixture.worktree.clone());
         open.branch = Some(fixture.branch.clone());
+        open.brief_path = Some(fixture.brief.clone());
         open.last_path = Some(fixture.last.clone());
         open.stdout_path = Some(fixture.stdout.clone());
         open
@@ -13230,8 +13267,21 @@ mod tests {
         assert_eq!(evidence["session"]["status"], "found");
         assert_eq!(evidence["event_count"], 1);
         assert_eq!(evidence["narrative"][0]["text"], "closed evidence");
+        assert_eq!(
+            std::fs::read_to_string(record_dir.join("brief.md")).unwrap(),
+            "brief\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(record_dir.join("compiled-prompt.md")).unwrap(),
+            "compiled prompt\n"
+        );
         assert!(record_dir.join("stdout.log").exists());
         assert!(!record_dir.join("stdout.log.bytes").exists());
+        assert!(!fixture.brief.exists(), "tmp brief must be promoted away");
+        assert!(
+            !fixture.compiled_prompt.exists(),
+            "tmp compiled prompt must be promoted away"
+        );
         assert!(!fixture.last.exists(), "tmp last.txt must be promoted away");
         assert!(
             !fixture.stdout.exists(),
@@ -13257,6 +13307,59 @@ mod tests {
                 .find(|(key, _)| key == "REPORT_PATH")
                 .map(|(_, value)| value.as_str()),
             Some(report_path)
+        );
+    }
+
+    fn assert_dispatch_close_with_missing_sidecar(slug: &str, missing_name: &str) {
+        let fixture = dispatch_cleanup_fixture(slug);
+        let missing = match missing_name {
+            "brief.md" => &fixture.brief,
+            "compiled-prompt.md" => &fixture.compiled_prompt,
+            _ => unreachable!(),
+        };
+        std::fs::remove_file(missing).unwrap();
+        let open = dispatch_cleanup_record(&fixture, "TASK-MISSING-SIDECAR");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
+        assert_eq!(cleanup.status, CleanupStatus::Partial);
+        assert!(!fixture.worktree.exists(), "close must remove the worktree");
+        assert!(
+            cleanup
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&format!("{missing_name} missing from tmp")),
+            "missing sidecar must be recorded loudly: {:?}",
+            cleanup.error
+        );
+        let record_dir = fixture
+            .root
+            .join(cleanup.report_path.expect("report must still be promoted"))
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        for name in ["report.md", "evidence.json", "stdout.log"] {
+            assert!(record_dir.join(name).is_file(), "{name} must be promoted");
+        }
+        assert!(!record_dir.join(missing_name).exists());
+        let retained_name = if missing_name == "brief.md" {
+            "compiled-prompt.md"
+        } else {
+            "brief.md"
+        };
+        assert!(record_dir.join(retained_name).is_file());
+    }
+
+    #[test]
+    fn dispatch_close_completes_when_brief_sidecar_is_missing() {
+        assert_dispatch_close_with_missing_sidecar("task-missing-brief", "brief.md");
+    }
+
+    #[test]
+    fn dispatch_close_completes_when_compiled_prompt_sidecar_is_missing() {
+        assert_dispatch_close_with_missing_sidecar(
+            "task-missing-compiled",
+            "compiled-prompt.md",
         );
     }
 
@@ -14227,6 +14330,7 @@ mod tests {
             let result = promote_dispatch_artifacts_in_place(
                 &root,
                 worktree.as_deref(),
+                Some(&fixture.brief),
                 &last,
                 &stdout,
                 "TASK-LOCK",
@@ -14418,6 +14522,7 @@ mod tests {
         let removal = remove_worktree_required_with_hook(
             &fixture.root,
             &fixture.worktree,
+            Some(&fixture.brief),
             Some(&fixture.last),
             Some(&fixture.stdout),
             "TASK-SALVAGE-LATE-WRITER",

@@ -4542,6 +4542,22 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
         !branch_exists(&project_root, branch),
         "daemon cleanup should remove branch after CLI timeout"
     );
+    assert!(
+        !project_root
+            .join(".orgasmic/tasks/TASK-DISPATCH/dispatches")
+            .exists(),
+        "failed dispatch rollback must not leave a tracked dispatch record"
+    );
+    assert!(
+        std::fs::read_dir(&stem_dir)
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with("-compiled-prompt.md")),
+        "failed dispatch rollback must prune its tmp compiled prompt"
+    );
 
     let lease_output = run_orgasmic_output(
         &home,
@@ -4731,11 +4747,10 @@ async fn dispatch_default_worktree_keeps_parent_git_status_clean() {
     let _ = running.join.await;
 }
 
-/// Closing a dispatch promotes the selected attempt's report out of gitignored
-/// tmp into a tracked path keyed by the dispatch generation, while retaining
-/// the brief and sibling attempts (TASK-QGWK7).
+/// The tracked dispatch record is absent at start and complete after close;
+/// unrelated attempt artifacts remain in tmp (TASK-W97C8.1).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn dispatch_close_prunes_stem_dir_leaving_brief() {
+async fn dispatch_close_promotes_complete_record_only_at_close() {
     let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -4778,6 +4793,13 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
         ],
     );
     let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    let record_dir = project_root.join(format!(
+        ".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}"
+    ));
+    assert!(
+        !record_dir.exists(),
+        "dispatch start must not create a tracked record directory"
+    );
     // TASK-M47E5: the scratch lives under the home; the stem dir keeps only the
     // RECORD, which close promotes out of tmp/ (TASK-QGWK7).
     let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
@@ -4790,6 +4812,11 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
     let attempt_stdout = resolve_project_path(
         &project_root,
         &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "STDOUT_PATH"),
+    );
+    let compiled_prompt = orgasmic_core::dispatch_compiled_prompt_path(&attempt_last).unwrap();
+    assert!(
+        compiled_prompt.is_file(),
+        "start must keep the bundle in tmp"
     );
     write(&attempt_last, "worker summary");
     write(&attempt_stdout, "worker stdout");
@@ -4834,12 +4861,8 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
         !attempt_stdout.exists(),
         "selected attempt stdout.log should leave tmp/ on close"
     );
-    let promoted_last = project_root.join(format!(
-        ".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/report.md"
-    ));
-    let promoted_stdout = project_root.join(format!(
-        ".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}/stdout.log"
-    ));
+    let promoted_last = record_dir.join("report.md");
+    let promoted_stdout = record_dir.join("stdout.log");
     assert!(
         promoted_last.exists(),
         "after close the report must still be readable from the path the tx names: {}",
@@ -4853,6 +4876,17 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
         promoted_stdout.exists(),
         "stdout.log is promoted beside last.txt as harness evidence"
     );
+    assert_eq!(
+        std::fs::read_to_string(record_dir.join("brief.md")).unwrap(),
+        "stem cleanup brief"
+    );
+    assert!(
+        std::fs::read_to_string(record_dir.join("compiled-prompt.md"))
+            .unwrap()
+            .starts_with("orgasmic compiled prompt\n"),
+        "the compiled bundle must be promoted beside the brief"
+    );
+    assert!(record_dir.join("evidence.json").is_file());
     let close_tx = tx_log(&project_root);
     assert!(
         close_tx.contains(&format!(
@@ -4876,7 +4910,25 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
         legacy_stdout.exists(),
         "legacy stdout.log must survive when not selected"
     );
-    assert!(brief.is_file(), "brief should be retained after close");
+    assert!(!brief.exists(), "tmp brief should be promoted away");
+    assert!(
+        !compiled_prompt.exists(),
+        "tmp compiled prompt should be promoted away"
+    );
+    let record_log = run_git(
+        &project_root,
+        &[
+            "log",
+            "--oneline",
+            "--",
+            &format!(".orgasmic/tasks/TASK-DISPATCH/dispatches/{started_tx}"),
+        ],
+    );
+    assert_eq!(
+        record_log.lines().count(),
+        1,
+        "the complete record must land in one close-time commit: {record_log}"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
