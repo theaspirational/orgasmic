@@ -37,8 +37,8 @@ pub use id::{
     is_valid_greenfield_task_id, is_valid_greenfield_term_id, is_valid_task_path_id,
     looks_like_legacy_numeric_task, mint_node_id as mint_node_id_for_class,
     node_id_class_by_prefix, parse_parent_value, split_cross_project_reference,
-    validate_parent_exists, validate_parent_pointer,
-    validate_parent_tree, NodeIdClass, ParentTree, ParentTreeError, ParentTreeNode, CROCKFORD,
+    validate_parent_exists, validate_parent_pointer, validate_parent_tree, NodeIdClass, ParentTree,
+    ParentTreeError, ParentTreeNode, CROCKFORD,
 };
 pub use id_repair::{repair_id_collisions, repair_id_collisions_with_incoming, IdRepairError};
 pub use identity_lint::{

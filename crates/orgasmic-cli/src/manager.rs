@@ -5992,8 +5992,8 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             // checkout the manager is dispatching from, and refuse when that
             // is itself the ledger.
             let cwd = std::env::current_dir().context("cwd")?;
-            let head_branch = git_capture(&cwd, ["symbolic-ref", "-q", "--short", "HEAD"])
-                .unwrap_or_default();
+            let head_branch =
+                git_capture(&cwd, ["symbolic-ref", "-q", "--short", "HEAD"]).unwrap_or_default();
             if head_branch.trim() == "orgasmic" {
                 bail!(
                     "refusing to dispatch from the `orgasmic` ledger branch; \
@@ -7548,9 +7548,7 @@ fn init_worktree_submodules(path: &Path) {
                 "--recursive",
             ],
         ) {
-            eprintln!(
-                "warning: worktree submodule init failed (sub-repo dirs stay empty): {err}"
-            );
+            eprintln!("warning: worktree submodule init failed (sub-repo dirs stay empty): {err}");
         }
     }
 }
@@ -13357,10 +13355,7 @@ mod tests {
 
     #[test]
     fn dispatch_close_completes_when_compiled_prompt_sidecar_is_missing() {
-        assert_dispatch_close_with_missing_sidecar(
-            "task-missing-compiled",
-            "compiled-prompt.md",
-        );
+        assert_dispatch_close_with_missing_sidecar("task-missing-compiled", "compiled-prompt.md");
     }
 
     // orgasmic:TASK-QGWK7

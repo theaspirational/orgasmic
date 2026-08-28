@@ -1454,17 +1454,12 @@ mod tests {
                 "{spec_id} must include the shared command-session policy exactly once"
             );
             assert_eq!(
-                compiled
-                    .text
-                    .matches("Long-running commands:")
-                    .count(),
+                compiled.text.matches("Long-running commands:").count(),
                 1,
                 "{spec_id} must render the command-session policy exactly once"
             );
             assert!(
-                compiled
-                    .text
-                    .contains("After two polls with no progress"),
+                compiled.text.contains("After two polls with no progress"),
                 "{spec_id} must render the bounded polling rule"
             );
             assert!(

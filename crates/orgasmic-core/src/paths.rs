@@ -1563,45 +1563,39 @@ mod tests {
         let worktree = stem_dir.join("worktree");
         std::fs::create_dir_all(&worktree).unwrap();
         let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
-        let stdout =
-            stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
-        let sibling_last =
-            stem_dir.join("task-dispatch-bbbb1111cccc2222dddd3333eeee4444-last.txt");
+        let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        let sibling_last = stem_dir.join("task-dispatch-bbbb1111cccc2222dddd3333eeee4444-last.txt");
         for path in [&last, &stdout, &sibling_last] {
             std::fs::write(path, "artifact").unwrap();
         }
         let compiled_prompt = dispatch_compiled_prompt_path(&last).unwrap();
         std::fs::write(&compiled_prompt, "bundle").unwrap();
 
-        assert!(
-            validate_dispatch_record_targets(
-                &project_root,
-                Some(&worktree),
-                Some(&sibling_last),
-                Some(&last),
-                Some(&stdout),
-            )
-            .err()
-            .unwrap()
-            .contains("does not match dispatch stem")
-        );
+        assert!(validate_dispatch_record_targets(
+            &project_root,
+            Some(&worktree),
+            Some(&sibling_last),
+            Some(&last),
+            Some(&stdout),
+        )
+        .err()
+        .unwrap()
+        .contains("does not match dispatch stem"));
 
         let brief = stem_dir.join("task-dispatch-brief.md");
         let victim = stem_dir.join("victim.md");
         std::fs::write(&victim, "victim").unwrap();
         std::os::unix::fs::symlink(&victim, &brief).unwrap();
-        assert!(
-            validate_dispatch_record_targets(
-                &project_root,
-                Some(&worktree),
-                Some(&brief),
-                Some(&last),
-                Some(&stdout),
-            )
-            .err()
-            .unwrap()
-            .contains("is a symlink")
-        );
+        assert!(validate_dispatch_record_targets(
+            &project_root,
+            Some(&worktree),
+            Some(&brief),
+            Some(&last),
+            Some(&stdout),
+        )
+        .err()
+        .unwrap()
+        .contains("is a symlink"));
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "victim");
     }
 

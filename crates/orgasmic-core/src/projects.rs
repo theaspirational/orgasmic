@@ -212,7 +212,6 @@ pub fn init_project(
     Ok(written)
 }
 
-
 fn render(template: &str, inputs: &ScaffoldInputs) -> String {
     template
         .replace("{{PROJECT_NAME}}", &inputs.project_name)

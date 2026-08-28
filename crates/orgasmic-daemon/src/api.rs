@@ -31241,7 +31241,10 @@ pub(crate) mod tests {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
         let message = body["error"].as_str().unwrap_or_default();
-        assert!(message.contains("project `other` has no node `TASK-GONE0`"), "{message}");
+        assert!(
+            message.contains("project `other` has no node `TASK-GONE0`"),
+            "{message}"
+        );
 
         // Project absent from this machine's board: rejected.
         let resp = client

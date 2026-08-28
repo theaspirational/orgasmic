@@ -1863,7 +1863,9 @@ fn print_entry_fast_route(project_root: Option<&Path>, fingerprint: &str) {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "-".to_string())
     );
-    println!("RULES manager work is opt-in via the /orgasmic skill; workers follow their dispatch brief");
+    println!(
+        "RULES manager work is opt-in via the /orgasmic skill; workers follow their dispatch brief"
+    );
     println!("STATE use orgasmic CLI/daemon writes; never hand-edit .orgasmic state");
     println!("FULL orgasmic entry --full");
     println!("RECHECK orgasmic entry --ack {fingerprint}");
