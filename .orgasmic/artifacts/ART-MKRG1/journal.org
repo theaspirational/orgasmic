@@ -1,0 +1,15 @@
+#+title: orgasmic journal ART-MKRG1
+#+orgasmic_version: 2
+
+* tx-20260828-orgasmic-6507 artifact.submitted
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6507
+:TIME:    [2026-08-28 Fri 23:40:47]
+:TYPE:    artifact.submitted
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:ARTIFACT_ID: ART-MKRG1
+:VERSION: 1
+:EVENT_ID: fb6ccc72-389c-4b21-8b32-57ae947f9ebe
+:END:
