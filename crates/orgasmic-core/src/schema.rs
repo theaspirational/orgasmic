@@ -211,6 +211,7 @@ pub struct TaskHeading<'a> {
     pub produces: Vec<&'a str>,
     pub implements: Vec<&'a str>,
     pub depends_on: Vec<&'a str>,
+    pub blocked_by: Vec<&'a str>,
     pub test_cmd: Option<&'a str>,
     pub sandbox_permissions: Option<SandboxAllowlist>,
     pub description: Option<String>,
@@ -273,6 +274,7 @@ impl<'a> TaskHeading<'a> {
             produces: tokenize(heading.property("PRODUCES")),
             implements: tokenize(heading.property("IMPLEMENTS")),
             depends_on: tokenize(heading.property("DEPENDS_ON")),
+            blocked_by: tokenize(heading.property("BLOCKED_BY")),
             test_cmd: heading.property("TEST_CMD"),
             sandbox_permissions: heading
                 .property("SANDBOX_PERMISSIONS")

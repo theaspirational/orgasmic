@@ -17,6 +17,11 @@ detail lives on run records as performer-owned `<performer>.<verb>` sub-states.
 Blocked-ness is `:BLOCKED_BY:` plus a `<performer>.blocked` run sub-state; it is
 rendered as a badge, not a lifecycle column.
 
+A manual transition to DONE requires a non-empty =** Evidence= section on the
+task (a run id, review verdict, test output, commit) — a task does not close on
+a bare claim. Dispatch-close is exempt: its dispatch record is the evidence.
+CANCELLED needs no evidence.
+
 ** Heading properties
 - :FIX_SUBTASK: optional boolean. The manager sets =:FIX_SUBTASK: t= only on
   subtasks filed to address reviewer findings; true-ish values are =t=, =true=,

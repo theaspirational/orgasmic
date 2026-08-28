@@ -59,6 +59,10 @@ pub struct TaskSummary {
     pub lifecycle_stage: LifecycleStage,
     pub parent_task: Option<String>,
     pub depends_on: Vec<String>,
+    /// Blocked-ness is a badge, not a lifecycle column (shipped
+    /// state-machine.org rule); the UI already renders `blocked_by`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub blocked_by: Vec<String>,
     pub implements: Vec<String>,
     pub produces: Vec<String>,
     pub read_scope: Vec<String>,
@@ -4070,6 +4074,7 @@ fn parse_task(
         lifecycle_stage: view.lifecycle_stage,
         parent_task: view.parent_task,
         depends_on: own_vec(&view.depends_on),
+        blocked_by: own_vec(&view.blocked_by),
         implements: own_vec(&view.implements),
         produces: own_vec(&view.produces),
         read_scope: own_vec(&view.read_scope),
@@ -5757,7 +5762,7 @@ mod tests {
         for (id, body) in [
             (
                 "TASK-001",
-                "* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-A TASK-B\n:END:\n",
+                "* BACKLOG TASK-001 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:DEPENDS_ON:       TASK-A TASK-B\n:BLOCKED_BY:       TASK-B\n:END:\n",
             ),
             (
                 "TASK-A",
@@ -5784,6 +5789,8 @@ mod tests {
             vec!["TASK-A".to_string(), "TASK-B".to_string()]
         );
         assert_eq!(project.tasks[1].depends_on, Vec::<String>::new());
+        assert_eq!(project.tasks[0].blocked_by, vec!["TASK-B".to_string()]);
+        assert_eq!(project.tasks[1].blocked_by, Vec::<String>::new());
         let stats = index.catalog().await.remove(0).task_stats.unwrap();
         assert_eq!(stats.blocked, 1);
 

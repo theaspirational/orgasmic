@@ -16906,6 +16906,7 @@ fn split_dispatch_scope(value: &str) -> Vec<&str> {
 /// consumes, and rejecting those would be a different, larger decision than the
 /// one TASK-HXSW0 was filed for.
 const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+    "BLOCKED_BY",
     "DEPENDS_ON",
     "IMPLEMENTS",
     "MODEL",
@@ -18339,6 +18340,25 @@ async fn update_task_state(
             from_state.as_str(),
             to_state.as_str()
         )));
+    }
+    // ART-04FYD: a task does not close on a bare claim. `done` requires the
+    // task's own Evidence section to carry at least one proof line (a run id,
+    // review verdict, test output, commit). A repair replays an already
+    // recorded close, and dispatch-close carries its dispatch record as
+    // evidence — both stay outside this gate.
+    if to_state == LifecycleStage::Done && !repair_allowed {
+        let has_evidence = project
+            .task_bodies
+            .get(task_id)
+            .is_some_and(|body| !body.evidence.is_empty());
+        if !has_evidence {
+            return Err(ApiError::bad_request(format!(
+                "closing {task_id} requires recorded evidence and its Evidence section is \
+                 empty. Record proof (a run id, review verdict, test output, commit) with \
+                 `orgasmic node body set {task_id} --section Evidence --create --body \"…\"`, \
+                 then close again."
+            )));
+        }
     }
     let from_path = task.source_file.clone();
     let source_display = from_path.to_string_lossy().to_string();
@@ -21447,6 +21467,7 @@ pub(crate) mod tests {
             lifecycle_stage: LifecycleStage::InProgress,
             parent_task: None,
             depends_on: Vec::new(),
+            blocked_by: Vec::new(),
             implements: Vec::new(),
             produces: Vec::new(),
             read_scope: vec![read_scope.to_string()],
@@ -21560,6 +21581,7 @@ pub(crate) mod tests {
             lifecycle_stage: LifecycleStage::InProgress,
             parent_task: None,
             depends_on: Vec::new(),
+            blocked_by: Vec::new(),
             implements: Vec::new(),
             produces: Vec::new(),
             read_scope: Vec::new(),
@@ -29367,6 +29389,7 @@ pub(crate) mod tests {
             lifecycle_stage: orgasmic_core::LifecycleStage::Backlog,
             parent_task: None,
             depends_on: Vec::new(),
+            blocked_by: Vec::new(),
             implements: Vec::new(),
             produces: Vec::new(),
             read_scope: Vec::new(),
@@ -29803,6 +29826,7 @@ pub(crate) mod tests {
             lifecycle_stage: LifecycleStage::InProgress,
             parent_task: None,
             depends_on: Vec::new(),
+            blocked_by: Vec::new(),
             implements: Vec::new(),
             produces: Vec::new(),
             read_scope: Vec::new(),
@@ -29824,6 +29848,7 @@ pub(crate) mod tests {
             lifecycle_stage: LifecycleStage::InProgress,
             parent_task: None,
             depends_on: Vec::new(),
+            blocked_by: Vec::new(),
             implements: Vec::new(),
             produces: Vec::new(),
             read_scope: Vec::new(),
@@ -32685,6 +32710,94 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert!(blocked_star.status().is_success());
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// ART-04FYD idea 2: `done` is refused while the task's Evidence section
+    /// is empty, and allowed once it carries proof. Cancellation stays free.
+    #[tokio::test]
+    async fn task_close_requires_a_nonempty_evidence_section() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let create = |title: &str, body: &str| {
+            let payload = serde_json::json!({ "title": title, "body": body });
+            let client = client.clone();
+            let url = format!("{base}/api/projects/orgasmic/tasks");
+            let token = token.clone();
+            async move {
+                let resp: Value = client
+                    .post(url)
+                    .bearer_auth(&token)
+                    .json(&payload)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                resp["id"].as_str().expect("minted task id").to_string()
+            }
+        };
+        let transition = |task_id: &str, state: &str| {
+            let client = client.clone();
+            let url = format!("{base}/api/projects/orgasmic/tasks/{task_id}");
+            let token = token.clone();
+            let payload = serde_json::json!({ "state": state });
+            async move {
+                client
+                    .post(url)
+                    .bearer_auth(&token)
+                    .json(&payload)
+                    .send()
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let bare = create("Closes on a bare claim", "** Description\nNo proof.\n").await;
+        let proven = create(
+            "Closes on recorded proof",
+            "** Description\nHas proof.\n** Evidence\n- reviewer verdict: clean (tx_XYZ)\n",
+        )
+        .await;
+        for task in [&bare, &proven] {
+            for state in ["in_progress", "in_review"] {
+                let moved = transition(task, state).await;
+                assert!(moved.status().is_success(), "walk {task} to {state}");
+            }
+        }
+
+        let refused = transition(&bare, "done").await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let message = refused.text().await.unwrap();
+        assert!(
+            message.contains("Evidence") && message.contains("node body set"),
+            "refusal must name the section and the write door: {message}"
+        );
+
+        let closed = transition(&proven, "done").await;
+        assert!(closed.status().is_success(), "evidence-backed close");
+        let on_disk = std::fs::read_to_string(task_node_file_path(&project_root, &proven)).unwrap();
+        assert!(on_disk.contains(&format!("* DONE {proven}")));
+
+        // The bare task is not wedged: cancellation needs no evidence.
+        let cancelled = transition(&bare, "cancelled").await;
+        assert!(
+            cancelled.status().is_success(),
+            "cancel stays evidence-free"
+        );
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
