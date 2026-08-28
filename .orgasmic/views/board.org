@@ -4989,6 +4989,50 @@ Two port patterns: (a) old aggregate fixture paths (`.orgasmic/tasks/backlog.org
 - [ ] `cargo test -p orgasmic-cli` fully green
 - [ ] no test deleted; routing-table semantics (journal vs tx) preserved per AP971.5
 
+* IN_PROGRESS TASK-W97C8.1 Move brief.md + compiled-prompt.md from dispatch-start to close-time promote
+:PROPERTIES:
+:DEPENDS_ON: TASK-W97C8
+:ID: TASK-W97C8.1
+:PRIORITY: P2
+:END:
+
+** Description
+The daemon writes =brief.md= and =compiled-prompt.md= into the durable
+=.orgasmic/tasks/TASK-X/dispatches/<tx>/= directory at dispatch START
+(=crates/orgasmic-daemon/src/api.rs= ~6260, right after
+=record_dispatch_started=). Everything else in that record (report.md,
+evidence) lands at CLOSE via =promote_validated_dispatch_attempt= +
+=commit_promoted_dispatch_record=.
+
+Start-time durable writes break three properties the close-time design bought:
+1. Rollback is no longer free — a failed/rolled-back dispatch leaves an orphan
+   =dispatches/<tx>/= folder in the tracked tree that no cleanup owns.
+2. Half-records exist — a folder with only a brief is ambiguous: running,
+   died mid-flight, or promote failed.
+3. Two durable-writer moments instead of one (concurrent-writer discipline).
+
+** Design
+- Dispatch start (daemon): write =compiled-prompt.md= (the bundle) into the
+  gitignored tmp dispatch stem next to the run's =last.txt=/=stdout.log=
+  (the CLI already places the brief at =<stem>-brief.md=). Delete the
+  start-time evidence-dir write block.
+- Close (promote path): copy brief + compiled-prompt into
+  =dispatches/<tx>/= alongside =report.md=, under the same validated-handle
+  discipline as =DispatchAttemptArtifacts=; add them to the unlink-after-
+  every-copy-succeeded set. Failed-dispatch rollback keeps its tmp-only
+  prune — nothing durable to clean.
+- The record folder now appears complete-or-not-at-all at close, in the one
+  path-scoped record commit.
+
+** Acceptance
+- No file under =dispatches/<tx>/= exists before close; after a successful
+  close the folder holds brief.md, compiled-prompt.md, report.md (+ evidence
+  per TASK-W97C8) in one commit.
+- Failed/rolled-back dispatch leaves NO =dispatches/<tx>/= folder.
+- Partial promote failure keeps tmp copies intact (no loss).
+- Focused tests: start writes nothing durable; close promotes all files;
+  rollback leaves no orphan dir.
+
 * IN_REVIEW TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-7A0H4
@@ -5276,51 +5320,6 @@ At dispatch close, promote a small typed =evidence.json= into =dispatches/<tx>/=
 ** Worklog
 - [2026-08-28] Evidence projects reasoning/thinking from typed `ProviderRuntimeEvent::ContentDelta` events instead of adding `TextStream::Reasoning`. Dedicated chat runtimes already emit normalized content deltas, while the other modes retain `TextChunk::Assistant`; this avoids a session-schema variant that current drivers do not emit.
 [2026-08-28] Round 2 decision: narrative is Claude-only today because codex-chat session JSONL does not emit assistant/reasoning content deltas. Codex TextStream::System maps to reasoning_text but carries harness notices, not model thinking, so evidence excludes it rather than mislabeling notices; counts and pointers remain codex proof of work.
-
-* IN_REVIEW TASK-W97C8.1 Move brief.md + compiled-prompt.md from dispatch-start to close-time promote
-:PROPERTIES:
-:DEPENDS_ON: TASK-W97C8
-:ID: TASK-W97C8.1
-:PRIORITY: P2
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:END:
-
-** Description
-The daemon writes =brief.md= and =compiled-prompt.md= into the durable
-=.orgasmic/tasks/TASK-X/dispatches/<tx>/= directory at dispatch START
-(=crates/orgasmic-daemon/src/api.rs= ~6260, right after
-=record_dispatch_started=). Everything else in that record (report.md,
-evidence) lands at CLOSE via =promote_validated_dispatch_attempt= +
-=commit_promoted_dispatch_record=.
-
-Start-time durable writes break three properties the close-time design bought:
-1. Rollback is no longer free — a failed/rolled-back dispatch leaves an orphan
-   =dispatches/<tx>/= folder in the tracked tree that no cleanup owns.
-2. Half-records exist — a folder with only a brief is ambiguous: running,
-   died mid-flight, or promote failed.
-3. Two durable-writer moments instead of one (concurrent-writer discipline).
-
-** Design
-- Dispatch start (daemon): write =compiled-prompt.md= (the bundle) into the
-  gitignored tmp dispatch stem next to the run's =last.txt=/=stdout.log=
-  (the CLI already places the brief at =<stem>-brief.md=). Delete the
-  start-time evidence-dir write block.
-- Close (promote path): copy brief + compiled-prompt into
-  =dispatches/<tx>/= alongside =report.md=, under the same validated-handle
-  discipline as =DispatchAttemptArtifacts=; add them to the unlink-after-
-  every-copy-succeeded set. Failed-dispatch rollback keeps its tmp-only
-  prune — nothing durable to clean.
-- The record folder now appears complete-or-not-at-all at close, in the one
-  path-scoped record commit.
-
-** Acceptance
-- No file under =dispatches/<tx>/= exists before close; after a successful
-  close the folder holds brief.md, compiled-prompt.md, report.md (+ evidence
-  per TASK-W97C8) in one commit.
-- Failed/rolled-back dispatch leaves NO =dispatches/<tx>/= folder.
-- Partial promote failure keeps tmp copies intact (no loss).
-- Focused tests: start writes nothing durable; close promotes all files;
-  rollback leaves no orphan dir.
 
 * DONE TASK-0J0AV Prompt-only artifacts: make subject nodes optional :artifacts:daemon:
 :PROPERTIES:
