@@ -102,7 +102,7 @@ describe('parseArtifactMdx', () => {
     expect(names).toContain('Table');
   });
 
-  it('parses the all-blocks fixture with all 22 registered tags represented at some depth, no throw', () => {
+  it('parses the all-blocks fixture with all 19 registered tags represented at some depth, no throw', () => {
     expect(() => parseArtifactMdx(ALL_BLOCKS_MDX)).not.toThrow();
     const nodes = parseArtifactMdx(ALL_BLOCKS_MDX);
 

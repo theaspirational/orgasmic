@@ -4,7 +4,7 @@ import { renderNodes } from './index';
 
 /** A titled grouping container — the one container block with no structural
  * wrapper tag of its own; its children are rendered through the same
- * top-level dispatch (any of the 22 blocks, or prose, may nest here). */
+ * top-level dispatch (any of the 19 blocks, or prose, may nest here). */
 export function Section({ node }: { node: Extract<MdxNode, { kind: 'element' }> }) {
   const title = asOptionalString(node.props.title);
   return (

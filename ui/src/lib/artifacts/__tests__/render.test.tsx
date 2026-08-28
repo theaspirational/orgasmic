@@ -1,33 +1,16 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// shiki/mermaid are dynamic-imported from ui/blocks; vi.mock does not
-// reliably intercept a dynamic import of a pre-bundled node_modules package
-// under Vite's dep optimizer, so these tests exercise the real libraries
-// (both work fine in jsdom: shiki is pure string tokenization, and mermaid's
-// own parser/error-diagram path never throws uncaught). useTheme is mocked
-// because it requires a mounted ThemeProvider this test doesn't need.
+// shiki is dynamic-imported from ui/blocks; vi.mock does not reliably
+// intercept a dynamic import of a pre-bundled node_modules package under
+// Vite's dep optimizer, so these tests exercise the real library (pure
+// string tokenization, fine in jsdom). useTheme is mocked because it
+// requires a mounted ThemeProvider this test doesn't need.
 vi.mock('@/lib/theme', () => ({
   useTheme: () => ({ preference: 'system', resolved: 'paper', setPreference: vi.fn() }),
 }));
-
-// jsdom has no SVG layout engine (no getBBox/getComputedTextLength), which
-// mermaid's dagre-based layout needs to measure node/label boxes. Polyfill
-// with a fixed box — good enough for "did it render", not pixel-accurate.
-if (typeof SVGElement !== 'undefined') {
-  const proto = SVGElement.prototype as unknown as {
-    getBBox?: () => DOMRect;
-    getComputedTextLength?: () => number;
-  };
-  if (!proto.getBBox) {
-    proto.getBBox = () => ({ x: 0, y: 0, width: 100, height: 20, top: 0, left: 0, right: 0, bottom: 0, toJSON: () => '' }) as DOMRect;
-  }
-  if (!proto.getComputedTextLength) {
-    proto.getComputedTextLength = () => 60;
-  }
-}
 
 afterEach(() => cleanup());
 
@@ -75,15 +58,17 @@ describe('ArtifactRenderer (fixture render smoke test)', () => {
     expect(wireframe?.innerHTML).toContain('Appearance');
   });
 
-  it('mounts a real Mermaid SVG for the diagram blocks (Mermaid + SequenceDiagram + FlowChart)', async () => {
+  it('renders the SVG Diagram block into a sandboxed iframe with its <style> lifted into the srcdoc', () => {
     const { container } = render(<ArtifactRenderer content={ALL_BLOCKS_MDX} />);
-    await waitFor(
-      () => {
-        const svgs = container.querySelectorAll('.mermaid-diagram svg');
-        expect(svgs.length).toBe(3);
-      },
-      { timeout: 5000 },
-    );
+    const iframes = Array.from(container.querySelectorAll('iframe'));
+    const diagram = iframes.find((el) => (el.getAttribute('srcdoc') ?? '').includes('dd-arrow'));
+    expect(diagram).toBeTruthy();
+    const srcDoc = diagram?.getAttribute('srcdoc') ?? '';
+    // The <style> child is lifted out of the fragment (the sanitizer forbids
+    // it inline) and re-emitted as author CSS in the iframe head.
+    expect(srcDoc).toContain('.dd-label');
+    expect(srcDoc).toContain('text-anchor');
+    expect(diagram?.getAttribute('sandbox')).toBe('');
   });
 
   it('renders the Prototype block inside a sandboxed iframe with no allow-same-origin', () => {

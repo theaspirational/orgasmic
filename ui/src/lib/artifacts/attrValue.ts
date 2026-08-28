@@ -4,7 +4,7 @@
 // identifiers, unquoted object keys, trailing commas) plus one extra literal
 // form MDX authors need for multi-line raw content — a backtick template
 // string, taken as a literal string with no `${}` interpolation. That last
-// form is how Code/Wireframe/Diagram/Prototype/Mermaid bodies carry arbitrary
+// form is how Code/Wireframe/Diagram/Prototype bodies carry arbitrary
 // text (including a literal `</Code>`-like substring) safely inside an
 // attribute rather than as JSX children, where it would be ambiguous with
 // tag boundaries.

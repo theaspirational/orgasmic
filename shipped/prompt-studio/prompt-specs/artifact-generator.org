@@ -42,11 +42,11 @@ registered block types, then submit it.
   subject nodes' Org content and graph neighborhood alone are rarely enough
   to write specific, correct diagrams, file trees, or code blocks — find the
   real files, symbols, and data shapes the artifact needs to describe.
-- Block vocabulary (exactly these 22 top-level component types; case-sensitive
+- Block vocabulary (exactly these 19 top-level component types; case-sensitive
   PascalCase tag names; anything else at the top level is rejected): RichText,
   Diagram, Code, AnnotatedCode, Table, Callout, Checklist, FileTree,
   DataModel, QuestionForm, Wireframe, Canvas, Prototype, Tabs, Columns,
-  Section, Image, SequenceDiagram, FlowChart, Mermaid, Timeline,
+  Section, Image, Timeline,
   EntityRelationship. This is the three-way agreement with the UI renderer
   (=ui/src/lib/artifacts/blocks/=) and its fixture
   (=ui/src/lib/artifacts/__fixtures__/all-blocks.mdx=): if a generated
@@ -62,14 +62,13 @@ registered block types, then submit it.
     displayed content (e.g. a code sample that itself prints `</Code>`).
     Inside a backtick attribute that substring is just characters in a
     string, so it renders correctly.
-  - `Wireframe`/`Screen`/`Diagram`'s `html` and
-    `Mermaid`/`SequenceDiagram`/`FlowChart`'s `source` MUST be children, NOT a
+  - `Wireframe`/`Screen`/`Diagram`'s `html` MUST be children, NOT a
     backtick attribute — the opposite rule. The daemon's own submit-time
     validator (`crates/orgasmic-daemon/src/artifacts.rs::scan_tag_header`)
     tracks `"`/`'` quote state byte-by-byte while scanning an opening tag's
     attribute list so it can tell where that tag ends, but it has no concept
     of backticks: a self-closing tag whose attribute value is a multi-line
-    HTML/Mermaid blob (real markup and diagram syntax are full of `>` and
+    HTML/SVG blob (real markup is full of `>` and
     quote characters) can desync that tracker and make the daemon misdetect
     where the tag ends, rejecting an otherwise-valid submit with an "unclosed
     tag" error. Put this content as children instead — the daemon finds a
@@ -121,15 +120,21 @@ registered block types, then submit it.
   - Section — `title?`; children: nested blocks or prose.
   - Image — `src` (`https://...` or a `data:image/...;base64,` URI — no other
     scheme is rendered), `alt?`, `caption?`.
-  - SequenceDiagram — children: the participants/messages body only; the
-    `sequenceDiagram` header line is implied (added if missing).
-  - FlowChart — children: the node/edge body only, `direction?` (default
-    `TD`); the `graph <direction>` header is implied (added if missing).
-  - Mermaid — children: full Mermaid source including its own header line
-    (any diagram kind — used when no dedicated block fits).
-  - Diagram — `caption?`, `css?` (a short attribute is fine — CSS rarely
-    carries the `>`/quote density that trips the daemon's header scan);
-    children: the HTML fragment (same reasoning as Wireframe).
+  - Diagram — the one diagram block (flowcharts, sequence diagrams, state
+    machines, architecture, timelines-as-pictures, ...), rendered in a
+    sandboxed, script-disabled iframe. Author it with the =diagram-design=
+    skill bundled with this runtime (installed at
+    =~/.agents/skills/diagram-design/=; source of truth
+    =vendor/diagram-design/skills/diagram-design/= in the orgasmic repo):
+    read its SKILL.md, pick the matching type reference from its 39
+    editorial types, follow that layout spec plus its style guide, and emit
+    self-contained inline SVG. Never emit Mermaid syntax — there is no
+    Mermaid renderer. Skip the skill's brand-onboarding/style-guide gate
+    (this run has no operator): proceed with its shipped default tokens.
+    Attributes: `caption?`, `height?` (px, default 256), `css?`; children:
+    the SVG/HTML fragment (same reasoning as Wireframe). A `<style>` block
+    inside the children is allowed — the renderer lifts it into the frame's
+    head. No `<script>`, no external requests, no external fonts.
   - Timeline — `items={[{date:"...", label:"...", body:"..."}]}` (date/body
     optional, rendered as a vertical time-ordered list).
 - Content nested inside a registered block's own body is opaque to the

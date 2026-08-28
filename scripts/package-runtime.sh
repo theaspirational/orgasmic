@@ -204,6 +204,7 @@ if [[ "$IS_DARWIN_TARGET" == "1" && -n "${ORGASMIC_CODESIGN_IDENTITY:-}" ]] && c
 fi
 
 cp -R "$ROOT/shipped" "$STAGE/shipped"
+cp -R "$ROOT/vendor" "$STAGE/vendor"
 cp "$ROOT/README.md" "$STAGE/docs/README.md"
 cp "$ROOT/CONTRIBUTING.md" "$STAGE/docs/CONTRIBUTING.md"
 

@@ -1,16 +1,16 @@
-// Render oracle + primary render-test input (TASK-T25XQ). Exercises all 22
+// Render oracle + primary render-test input (TASK-T25XQ). Exercises all 19
 // registered block types, including the structural edge cases the daemon's
 // own validator cannot handle: a nested Columns/Tabs, and a Code body
 // carrying a literal `</Code>`-shaped substring (safe here because it is
 // authored as a backtick template-literal attribute, never as JSX children —
 // see the "Raw-text convention" note in artifact-generator.org).
 //
-// Wireframe/Screen/Diagram html and Mermaid/SequenceDiagram/FlowChart source
-// are authored as CHILDREN, not attributes — verified live against the real
-// daemon submit gate (crates/orgasmic-daemon/src/artifacts.rs::scan_tag_header):
+// Wireframe/Screen/Diagram html is authored as CHILDREN, not attributes —
+// verified live against the real daemon submit gate
+// (crates/orgasmic-daemon/src/artifacts.rs::scan_tag_header):
 // it tracks `"`/`'` quote state byte-by-byte while scanning an opening tag's
 // attribute list but has no concept of backticks, so a self-closing tag whose
-// attribute value is a multi-line HTML/Mermaid blob (many embedded `>`/quote
+// attribute value is a multi-line HTML blob (many embedded `>`/quote
 // characters) can desync that tracker and misdetect the tag's own end. A short
 // plain-attribute header (`surface="panel"`) plus body content found via a
 // simple `</Name>` substring search — which children get — sidesteps that
@@ -145,28 +145,26 @@ children: this block's own source text contains a literal closing tag.
 </div>
 </Diagram>
 
-<Mermaid>
-flowchart LR
-  A[Boot] --> B{Override stored?}
-  B -- yes --> C[Apply stored theme]
-  B -- no --> D[Apply system preference]
-</Mermaid>
-
-<SequenceDiagram>
-participant U as User
-participant S as Settings Panel
-participant A as API
-U->>S: Toggle theme
-S->>A: PATCH /widgets/:id/theme
-A-->>S: 200 OK
-S-->>U: Reflect new theme
-</SequenceDiagram>
-
-<FlowChart direction="TD">
-Start([Open settings]) --> Choose[Pick theme]
-Choose --> Save[PATCH override]
-Save --> Done([Widget re-renders])
-</FlowChart>
+<Diagram caption="Override decision (diagram-design editorial SVG)" height={220}>
+<style>
+.dd-label { font-family: var(--sans); font-size: 13px; font-weight: 600; }
+</style>
+<svg viewBox="0 0 620 160" role="img" aria-label="Theme override decision flow">
+  <defs>
+    <marker id="dd-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <rect x="20" y="58" width="140" height="44" rx="8" fill="none" stroke="currentColor" stroke-width="1.5" />
+  <text x="90" y="85" text-anchor="middle" class="dd-label" fill="currentColor">Boot</text>
+  <line x1="160" y1="80" x2="230" y2="80" stroke="currentColor" stroke-width="1.5" marker-end="url(#dd-arrow)" />
+  <rect x="234" y="58" width="160" height="44" rx="8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3" />
+  <text x="314" y="85" text-anchor="middle" class="dd-label" fill="currentColor">Override stored?</text>
+  <line x1="394" y1="80" x2="464" y2="80" stroke="currentColor" stroke-width="1.5" marker-end="url(#dd-arrow)" />
+  <rect x="468" y="58" width="132" height="44" rx="8" fill="none" stroke="currentColor" stroke-width="1.5" />
+  <text x="534" y="85" text-anchor="middle" class="dd-label" fill="currentColor">Apply theme</text>
+</svg>
+</Diagram>
 
 <Timeline items={[
   { date: "2026-06-30", label: "Design review", body: "Confirmed per-widget override over a global setting." },

@@ -19,12 +19,12 @@
 //    lives inside a backtick string the tag-boundary scanner treats as one
 //    opaque token (see attrValue.ts / findMatchingBrace below), never as
 //    characters the children scanner walks. Code/AnnotatedCode/Wireframe/
-//    Diagram/Prototype/Mermaid/SequenceDiagram/FlowChart all read their raw
-//    text body from a named prop first and fall back to children text only
-//    when the prop is absent (safe for short, unambiguous content).
+//    Diagram/Prototype all read their raw text body from a named prop first
+//    and fall back to children text only when the prop is absent (safe for
+//    short, unambiguous content).
 //
 // No JSX/JS is ever evaluated: attribute expressions go through the
-// constrained JSON5-lite grammar in attrValue.ts, and only the 22 registered
+// constrained JSON5-lite grammar in attrValue.ts, and only the 19 registered
 // block names (plus the Column/Tab/Screen structural wrappers, recognized
 // solely inside their expected parent) are ever instantiated as components.
 // A parse failure at any node — malformed tag, unterminated attribute,

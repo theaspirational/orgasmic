@@ -14,12 +14,12 @@ use crate::daemon_client::DaemonClient;
 use crate::home::Home;
 
 /// Where the full per-block shapes and the raw-text conventions (opposite
-/// rules for `Code`'s `code={`...`}` attribute vs. `Wireframe`/`Mermaid`'s
+/// rules for `Code`'s `code={`...`}` attribute vs. `Wireframe`/`Diagram`'s
 /// children) are authored — the source `artifact blocks --full` points at
 /// rather than duplicating (TASK-SPBTA), so the two can't drift apart.
 pub(crate) const BLOCK_CONTRACT_SPEC_PATH: &str =
     "shipped/prompt-studio/prompt-specs/artifact-generator.org";
-/// Fixture exercising all 22 registered block types with real shapes.
+/// Fixture exercising all 19 registered block types with real shapes.
 pub(crate) const BLOCK_CONTRACT_FIXTURE_PATH: &str =
     "ui/src/lib/artifacts/__fixtures__/all-blocks.ts";
 
@@ -138,7 +138,7 @@ fn cmd_blocks(full: bool) -> Result<()> {
         println!();
         println!("Per-block shapes, attributes, and the raw-text conventions (the");
         println!("opposite rules for Code's `code={{`...`}}` attribute vs.");
-        println!("Wireframe/Mermaid/SequenceDiagram/FlowChart's children) are the");
+        println!("Wireframe/Diagram's children) are the");
         println!("same contract the artifact generator prompt reads from — not");
         println!("duplicated here so the two can't drift apart:");
         println!("  {BLOCK_CONTRACT_SPEC_PATH}");

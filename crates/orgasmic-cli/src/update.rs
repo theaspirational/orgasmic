@@ -31,6 +31,7 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "shipped/prompt-studio/slots.org",
     "shipped/entry/router.org",
     "shipped/skills/orgasmic/SKILL.md",
+    "vendor/diagram-design/skills/diagram-design/SKILL.md",
 ];
 
 // dec_B4147 retention amendment: after a successful runtime swap, keep the
@@ -723,50 +724,62 @@ fn rollback_bundle_swap(
     Ok(())
 }
 
+/// Skills the runtime ships and symlinks into the agent skills dir on every
+/// update: (skill name, path inside the runtime). diagram-design is vendored
+/// from https://github.com/cathrynlavery/diagram-design via `git subtree`
+/// (update with `git subtree pull --prefix vendor/diagram-design
+/// https://github.com/cathrynlavery/diagram-design main --squash`).
+const SHIPPED_AGENT_SKILLS: &[(&str, &str)] = &[
+    ("orgasmic", "shipped/skills/orgasmic"),
+    ("diagram-design", "vendor/diagram-design/skills/diagram-design"),
+];
+
 fn refresh_agent_skill(home: &Home) -> Result<()> {
-    let src = home.current_runtime().join("shipped/skills/orgasmic");
-    if !src.join("SKILL.md").is_file() {
-        bail!("runtime missing shipped skill: {}", src.display());
-    }
-    let skills_dir = agent_skills_dir()?;
-    std::fs::create_dir_all(&skills_dir)
-        .with_context(|| format!("create {}", skills_dir.display()))?;
-    let dest = skills_dir.join("orgasmic");
-    if let Ok(meta) = std::fs::symlink_metadata(&dest) {
-        if meta.file_type().is_symlink() {
-            // Atomic symlink replacement below will handle managed symlinks.
-        } else if meta.is_file() {
-            bail!(
-                "{} exists as a file; refusing to replace it with the orgasmic skill symlink",
-                dest.display()
-            );
-        } else if is_orgasmic_skill_copy(&dest) {
-            let backup = dest.with_extension(format!("bak-{}", timestamp_secs()));
-            std::fs::rename(&dest, &backup).with_context(|| {
-                format!(
-                    "move stale skill copy {} to {}",
-                    dest.display(),
-                    backup.display()
-                )
-            })?;
-        } else {
-            bail!(
-                "{} exists and is not an orgasmic skill symlink/copy; refusing to replace it",
-                dest.display()
-            );
+    for (name, runtime_path) in SHIPPED_AGENT_SKILLS {
+        let src = home.current_runtime().join(runtime_path);
+        if !src.join("SKILL.md").is_file() {
+            bail!("runtime missing shipped skill: {}", src.display());
         }
+        let skills_dir = agent_skills_dir()?;
+        std::fs::create_dir_all(&skills_dir)
+            .with_context(|| format!("create {}", skills_dir.display()))?;
+        let dest = skills_dir.join(name);
+        if let Ok(meta) = std::fs::symlink_metadata(&dest) {
+            if meta.file_type().is_symlink() {
+                // Atomic symlink replacement below will handle managed symlinks.
+            } else if meta.is_file() {
+                bail!(
+                    "{} exists as a file; refusing to replace it with the {name} skill symlink",
+                    dest.display()
+                );
+            } else if is_shipped_skill_copy(&dest, name) {
+                let backup = dest.with_extension(format!("bak-{}", timestamp_secs()));
+                std::fs::rename(&dest, &backup).with_context(|| {
+                    format!(
+                        "move stale skill copy {} to {}",
+                        dest.display(),
+                        backup.display()
+                    )
+                })?;
+            } else {
+                bail!(
+                    "{} exists and is not a {name} skill symlink/copy; refusing to replace it",
+                    dest.display()
+                );
+            }
+        }
+        replace_symlink(&dest, &src)?;
     }
-    replace_symlink(&dest, &src)?;
     Ok(())
 }
 
-fn is_orgasmic_skill_copy(path: &Path) -> bool {
+fn is_shipped_skill_copy(path: &Path, name: &str) -> bool {
     let Ok(raw) = std::fs::read_to_string(path.join("SKILL.md")) else {
         return false;
     };
     raw.lines()
         .take(8)
-        .any(|line| line.trim() == "name: orgasmic")
+        .any(|line| line.trim() == format!("name: {name}"))
 }
 
 fn agent_skills_dir() -> Result<PathBuf> {
@@ -1197,6 +1210,10 @@ mod tests {
         write(
             &root.join("shipped/skills/orgasmic/SKILL.md"),
             "---\nname: orgasmic\n---\n",
+        );
+        write(
+            &root.join("vendor/diagram-design/skills/diagram-design/SKILL.md"),
+            "---\nname: diagram-design\n---\n",
         );
     }
 
