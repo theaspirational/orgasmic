@@ -216,3 +216,16 @@
 :TARGET:       .orgasmic/tasks/TASK-W97C8
 :EVENT_ID:     04f09b51-c1dd-4151-958a-066db8f60333
 :END:
+
+* TX 2026-08-28 Fri 09:06:49.383640 task.claim_released TASK-W97C8
+:PROPERTIES:
+:TX_ID:        tx-20260828090649-98f5bff7
+:TIME:         [2026-08-28 Fri 09:06:49.383640]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8
+:TARGET:       .orgasmic/tasks/TASK-W97C8
+:EVENT_ID:     52f15973-1b70-47ea-8dd3-2d37ffee9b21
+:END:
