@@ -1206,3 +1206,18 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-W97C8.1/dispatches/tx-20260828-orgasmic-64f0a2c8-3ac2-4158-9151-acc0df52feff/report.md
 :EVENT_ID:     339cee06-be78-4838-95e6-8a96b7bc4c32
 :END:
+
+* TX 2026-08-28 Fri 10:40:58 manager.tier TASK-W97C8.1
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-a1459ebb-9e20-4bc4-b32f-ec34adf5cfd5
+:TIME:         [2026-08-28 Fri 10:40:58]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8.1
+:REASON:       stale test assertion on merge: dispatch_close_still_salvages test asserts pre-W97C8.1 tmp-brief retention; update to assert the promoted record
+:TIER:         trivial
+:TRIGGERS:     none
+:EVENT_ID:     94a265ae-e5cd-415a-94c2-1409deb7acfe
+:END:
