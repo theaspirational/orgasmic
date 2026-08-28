@@ -210,8 +210,9 @@ Append a `manager.dispatch_started` tx with `:TASK:`, `:KIND:`
 
 If you die before the dispatch finishes, the next manager:
 1. Sees the pre-flight tx in recall.
-2. Checks worktree state (`git -C <worktree> log`), brief, stdout log
-   (`ls <project_root>/.orgasmic/tmp/dispatch/` — one subfolder per task, e.g. `task-NNN-impl/`), and live process (`ps -ef | grep codex`).
+2. Checks worktree state (`git -C <worktree> log`), brief, session JSONL, the
+   optional stdout crash log (`ls <project_root>/.orgasmic/tmp/dispatch/` — one
+   subfolder per task, e.g. `task-NNN-impl/`), and live process (`ps -ef | grep codex`).
 3. Decides: resume integration (merge + record `implementer.done`) if the
    codex finished, or abort (worktree cleanup + record
    `manager.dispatch_aborted`) if the brief is stale or the worktree
@@ -313,11 +314,13 @@ check the rest of the invocation too.
 
    *After close, the worker report lives at
    =<project_root>/.orgasmic/tasks/<ID>/dispatches/<started_tx>/report.md=*
-   (TASK-QGWK7, TASK-QGWK7.1). Close *promotes* =last.txt= and a bounded
-   =stdout.log= out of gitignored =tmp/= into that tracked directory, keyed by
-   task and dispatch GENERATION (=started_tx=), so a chain of six dispatches
-   keeps six distinct records. The close tx (and the worker's =*.reported= tx)
-   carries =:REPORT_PATH:= naming =report.md=. Close also
+   (TASK-QGWK7, TASK-QGWK7.1). Close *promotes* =last.txt=, a typed
+   =evidence.json= distilled from the machine-local session JSONL, and a bounded
+   =stdout.log= only when the harness actually printed something. They leave
+   gitignored =tmp/= for that tracked directory, keyed by task and dispatch
+   GENERATION (=started_tx=), so a chain of six dispatches keeps six distinct
+   records. The close tx (and the worker's =*.reported= tx) carries
+   =:REPORT_PATH:= naming =report.md=. Close also
    *commits* that directory, on its own, as =chore(orgasmic): dispatch record
    <started_tx>= (TASK-QGWK7.1.1). Durability then does not depend on which
    =git add= form a later state chore uses, nor on the manager remembering to
@@ -373,25 +376,24 @@ check the rest of the invocation too.
    the branch you are standing on when you re-run*, not on the branch the failed
    close resolved (measured), and the =re-persisted:= line names that ref — so
    re-running a close from an unrelated branch is a known move, and if you care
-   which branch carries the record, check it out before the re-run. The harness
-   =stdout.log= sits beside the summary as falsifiable evidence: empty files
-   promote no =stdout.log= (but still a =stdout.log.bytes= of =0=, so "printed
-   nothing" is distinguishable from "never promoted"); larger files promote a
-   64 KiB excerpt (plus ~180 bytes of banner, which ride on top of the cap),
-   half from the head and half from the tail, with a banner line
-   naming the truncation and the original byte count in =stdout.log.bytes=.
-   =stdout.log.bytes= is therefore two statements, told apart by its VALUE: a
-   =0= with no =stdout.log= means the harness printed nothing, while a NON-ZERO
-   count with no =stdout.log= means the promote failed between the two renames
-   — the excerpt is missing, and the close's =CLEANUP_ERROR= names it.
+   which branch carries the record, check it out before the re-run.
+   =evidence.json= is the ordinary proof of work: driver-event and tool-call
+   counts; the session JSONL filename and size; the native harness transcript
+   path and finder confidence when available; and assistant/reasoning narrative
+   in event order. It never copies tool-call arguments or tool-result output,
+   and the raw session JSONL remains machine-local. =stdout.log= is crash
+   insurance only: empty files promote no marker at all; non-empty files promote
+   at most a 64 KiB excerpt (plus ~180 bytes of banner), half from the head and
+   half from the tail, with the original size and truncation named in the banner.
+   There is no =stdout.log.bytes= sidecar.
    =:REPORT_PATH:= always points at the summary, and is always
    project-relative — a =--property REPORT_PATH== outside the project root is
-   refused rather than committed as a machine-specific path. *Retention: keep forever, with measured year-one growth.*
-   At ~5,200–6,500 generations/year on this project: =last.txt= ≈ 24–30 MB/yr
-   (mean ~4.6 KB); =stdout.log= ≈ 0 typical on tmux (empty panes skipped) and
-   ≤ ~400 MB/yr worst case at the 64 KB cap. There is no silent age-out at
-   close. Do not paste the raw report into =done.org= — the node keeps curated
-   Evidence plus this pointer.
+   refused rather than committed as a machine-specific path. *Retention: keep forever.*
+   =stdout.log= remains ≈ 0 typical and ≤ ~400 MB/yr worst case at the 64 KB
+   cap for ~5,200–6,500 generations/year; =evidence.json= replaces the 0-byte
+   marker and retains only counts, pointers, and model narrative. There is no
+   silent age-out at close. Do not paste the raw report into =done.org= — the
+   node keeps curated Evidence plus this pointer.
 
    *=--started-tx= is mandatory whenever a dispatch is live* (TASK-6AYEJ.1,
    TASK-6AYEJ.2). It is the =TX_ID= of the =manager.dispatch_started= this close

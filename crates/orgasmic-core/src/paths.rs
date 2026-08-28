@@ -125,7 +125,7 @@ pub fn dispatch_record_dir(
 
 /// Repo-relative path recorded as `:REPORT_PATH:` on the close (and optionally
 /// `*.reported`) tx. Always names `report.md` — the worker summary — not the
-/// harness `stdout.log` that sits beside it.
+/// typed `evidence.json` or optional harness `stdout.log` beside it.
 pub fn dispatch_record_report_rel(task_id: &str, started_tx: &str) -> Result<String, String> {
     let task_id = sanitize_started_tx(task_id)?;
     let started_tx = sanitize_started_tx(started_tx)?;
@@ -150,8 +150,7 @@ fn sanitize_started_tx(started_tx: &str) -> Result<&str, String> {
 }
 
 /// Max bytes of harness `stdout.log` promoted into permanent git history
-/// (TASK-QGWK7.1). The original byte count is recorded beside the promoted
-/// excerpt so truncation is visible.
+/// (TASK-QGWK7.1). Truncation is named inside the promoted excerpt.
 pub const STDOUT_PROMOTE_MAX_BYTES: u64 = 64 * 1024;
 
 /// A truncated excerpt keeps this many bytes from the HEAD of the log and
@@ -164,18 +163,17 @@ pub const STDOUT_PROMOTE_MAX_BYTES: u64 = 64 * 1024;
 const STDOUT_PROMOTE_HEAD_BYTES: u64 = STDOUT_PROMOTE_MAX_BYTES / 2;
 
 /// First line of a truncated promoted `stdout.log`, so truncation is visible
-/// IN the file rather than only by comparing it against `stdout.log.bytes`
-/// (TASK-QGWK7.1.1 M-3).
+/// in the file itself (TASK-QGWK7.1.1 M-3).
 #[cfg(unix)]
 const STDOUT_TRUNCATION_BANNER: &str = "[orgasmic] stdout.log truncated by dispatch-close";
 
 /// Outcome of promoting a validated attempt's artifacts (TASK-QGWK7.1).
 ///
 /// `report_path` is set whenever `last.txt` landed at the canonical location,
-/// even if `stdout.log` promotion failed afterward — a half-succeeded promote
-/// must still name what it kept. `error` carries non-fatal promote problems
-/// for the close tx's `CLEANUP_ERROR` channel; it never means the report was
-/// destroyed (unlink runs only after every intended copy succeeds).
+/// even if evidence or stdout promotion failed afterward — a half-succeeded
+/// promote must still name what it kept. `error` carries non-fatal promote
+/// problems for the close tx's `CLEANUP_ERROR` channel; it never means the
+/// report was destroyed (unlink runs only after every intended copy succeeds).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromoteOutcome {
     pub report_path: Option<String>,
@@ -302,24 +300,23 @@ pub fn prune_validated_dispatch_attempt(
     unlink_validated_attempt_pair(artifacts)
 }
 
-/// Move the validated attempt's `last.txt` and (bounded) `stdout.log` out of
-/// gitignored `tmp/` into `.orgasmic/tasks/TASK-X/dispatches/<started_tx>/`, then
-/// unlink the tmp copies when every intended copy succeeded.
+/// Move the validated attempt's `last.txt`, typed session evidence, and any
+/// non-empty bounded `stdout.log` out of gitignored `tmp/` into
+/// `.orgasmic/tasks/TASK-X/dispatches/<started_tx>/`, then unlink the tmp copies
+/// when every intended copy succeeded.
 ///
-/// `last.txt` is always promoted in full. `stdout.log` keeps falsifiability
-/// without unbounded git growth (TASK-QGWK7.1): empty files promote no
-/// `stdout.log`; larger files promote a [`STDOUT_PROMOTE_MAX_BYTES`] excerpt
-/// (head + tail, with a banner naming the truncation). `stdout.log.bytes` is
-/// written for EVERY promoted attempt, including the empty one, so "the
-/// harness printed nothing" is distinguishable from "stdout was never
-/// promoted" (TASK-QGWK7.1.1 M-3). Retention numbers live in the
-/// manager-dispatch convention.
-// orgasmic:TASK-QGWK7,TASK-QGWK7.1
+/// `last.txt` and `evidence.json` are always promoted in full. `stdout.log`
+/// remains crash insurance without unbounded git growth (TASK-QGWK7.1): empty
+/// files promote nothing; larger files promote a [`STDOUT_PROMOTE_MAX_BYTES`]
+/// excerpt (head + tail, with a banner naming the original size and
+/// truncation). Retention numbers live in the manager-dispatch convention.
+// orgasmic:TASK-QGWK7,TASK-QGWK7.1,TASK-W97C8
 pub fn promote_validated_dispatch_attempt(
     artifacts: &DispatchAttemptArtifacts,
     project_root: &Path,
     task_id: &str,
     started_tx: &str,
+    evidence_json: &[u8],
 ) -> Result<PromoteOutcome, String> {
     let report_rel = dispatch_record_report_rel(task_id, started_tx)?;
     let dest_dir = dispatch_record_dir(project_root, task_id, started_tx)?;
@@ -335,11 +332,17 @@ pub fn promote_validated_dispatch_attempt(
             });
         }
 
+        let evidence_dest = dest_dir.join("evidence.json");
+        if let Err(err) = write_promoted_bytes_to(&evidence_dest, evidence_json) {
+            return Ok(PromoteOutcome {
+                report_path: Some(report_rel),
+                error: Some(format!("promote evidence.json: {err}")),
+            });
+        }
+
         let stdout_dest = dest_dir.join("stdout.log");
-        let stdout_bytes_dest = dest_dir.join("stdout.log.bytes");
         match copy_validated_stdout_excerpt_to(
             &stdout_dest,
-            &stdout_bytes_dest,
             &artifacts.stdout_file,
             STDOUT_PROMOTE_MAX_BYTES,
         ) {
@@ -425,23 +428,38 @@ fn copy_validated_artifact_to(dest: &Path, source: &std::fs::File) -> Result<(),
     result
 }
 
+/// Atomically write generated evidence beside promoted artifacts.
+#[cfg(unix)]
+fn write_promoted_bytes_to(dest: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
+    if bytes.is_empty() {
+        return Err("refusing empty dispatch evidence".into());
+    }
+    let tmp = dest.with_extension("promoting");
+    let result = (|| {
+        let mut out = std::fs::File::create(&tmp).map_err(|err| err.to_string())?;
+        out.write_all(bytes).map_err(|err| err.to_string())?;
+        out.sync_all().map_err(|err| err.to_string())?;
+        drop(out);
+        std::fs::rename(&tmp, dest).map_err(|err| err.to_string())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// Promote a bounded excerpt of `stdout.log`. Returns the original byte count.
 ///
-/// A 0-byte source promotes no `stdout.log` — but it still writes
-/// `stdout.log.bytes` (`0`), so a reader can tell "the harness printed nothing"
-/// from "stdout was never promoted" (TASK-QGWK7.1.1 M-3). Over the cap, the
-/// excerpt is `banner + first half + elision marker + last half`
-/// (TASK-QGWK7.1.1 M-4): the banner makes truncation visible in the file
-/// itself, and keeping the head as well keeps the evidence of a harness that
+/// A 0-byte source promotes no `stdout.log`. Over the cap, the excerpt is
+/// `banner + first half + elision marker + last half` (TASK-QGWK7.1.1 M-4):
+/// the banner carries the original size and makes truncation visible in the
+/// file itself, while keeping the head preserves evidence of a harness that
 /// died early and then printed retry noise.
-///
-/// The sidecar is renamed into place BEFORE `stdout.log`, so a failure between
-/// the two renames can leave a byte count with no excerpt but never a
-/// truncated excerpt with no byte count.
 #[cfg(unix)]
 fn copy_validated_stdout_excerpt_to(
     dest: &Path,
-    bytes_sidecar: &Path,
     source: &std::fs::File,
     max_bytes: u64,
 ) -> Result<u64, String> {
@@ -449,17 +467,15 @@ fn copy_validated_stdout_excerpt_to(
 
     let original_len = source.metadata().map_err(|err| err.to_string())?.len();
     let tmp = dest.with_extension("promoting");
-    let bytes_tmp = bytes_sidecar.with_extension("promoting");
     let result = (|| {
-        {
-            let mut bytes_out = std::fs::File::create(&bytes_tmp).map_err(|err| err.to_string())?;
-            write!(bytes_out, "{original_len}").map_err(|err| err.to_string())?;
-            bytes_out.sync_all().map_err(|err| err.to_string())?;
-        }
         if original_len == 0 {
-            // Empty tmux panes are the common case; do not track a useless
-            // blob. The sidecar alone says the attempt was promoted.
-            std::fs::rename(&bytes_tmp, bytes_sidecar).map_err(|err| err.to_string())?;
+            // Empty harness stdout is the common case; evidence.json says the
+            // attempt was promoted, so retain no empty marker or stale excerpt.
+            match std::fs::remove_file(dest) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.to_string()),
+            }
             return Ok(0);
         }
 
@@ -486,13 +502,11 @@ fn copy_validated_stdout_excerpt_to(
         }
         out.sync_all().map_err(|err| err.to_string())?;
         drop(out);
-        std::fs::rename(&bytes_tmp, bytes_sidecar).map_err(|err| err.to_string())?;
         std::fs::rename(&tmp, dest).map_err(|err| err.to_string())?;
         Ok(original_len)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
-        let _ = std::fs::remove_file(&bytes_tmp);
     }
     result
 }
@@ -800,6 +814,8 @@ fn canonicalize_path(path: &Path) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    const EVIDENCE_JSON: &[u8] = br#"{"event_count":1,"tool_call_count":0}"#;
+
     #[test]
     fn task_file_rel_matches_helpers() {
         let root = Path::new("/repo");
@@ -898,9 +914,14 @@ mod tests {
             validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
                 .unwrap();
         let started_tx = "tx-20260806-orgasmic-4916";
-        let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, "TASK-X", started_tx)
-                .unwrap();
+        let outcome = promote_validated_dispatch_attempt(
+            &artifacts,
+            &project_root,
+            "TASK-X",
+            started_tx,
+            EVIDENCE_JSON,
+        )
+        .unwrap();
 
         assert_eq!(
             outcome.report_path.as_deref(),
@@ -924,16 +945,17 @@ mod tests {
             "harness stdout"
         );
         assert_eq!(
-            std::fs::read_to_string(record_dir.join("stdout.log.bytes")).unwrap(),
-            "14"
+            std::fs::read(record_dir.join("evidence.json")).unwrap(),
+            EVIDENCE_JSON
         );
+        assert!(!record_dir.join("stdout.log.bytes").exists());
         assert!(!last.exists(), "tmp last.txt must be moved, not copied");
         assert!(!stdout.exists(), "tmp stdout.log must be moved, not copied");
     }
 
     // orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
     #[test]
-    fn promote_skips_empty_stdout_and_bounds_tail_with_visible_byte_count() {
+    fn promote_skips_empty_stdout_and_bounds_tail_with_visible_banner() {
         let tmp = tempfile::tempdir().unwrap();
         let project_root = tmp.path().join("repo");
         let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
@@ -952,6 +974,7 @@ mod tests {
             &project_root,
             "TASK-X",
             "tx-empty-stdout",
+            EVIDENCE_JSON,
         )
         .unwrap();
         assert_eq!(outcome.error, None);
@@ -961,14 +984,8 @@ mod tests {
             !record_dir.join("stdout.log").exists(),
             "0-byte stdout.log must not be promoted"
         );
-        // TASK-QGWK7.1.1 M-3: "the harness printed nothing" must be readable
-        // off the record, not inferred from an absent file that also means
-        // "stdout was never promoted".
-        assert_eq!(
-            std::fs::read_to_string(record_dir.join("stdout.log.bytes")).unwrap(),
-            "0",
-            "an empty promoted stdout must still be distinguishable from an unpromoted one"
-        );
+        assert!(record_dir.join("evidence.json").exists());
+        assert!(!record_dir.join("stdout.log.bytes").exists());
 
         // Fresh attempt for the bounded-tail case.
         let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-tail");
@@ -990,14 +1007,14 @@ mod tests {
             &project_root,
             "TASK-X",
             "tx-tail-stdout",
+            EVIDENCE_JSON,
         )
         .unwrap();
         assert_eq!(outcome.error, None);
         let record_dir = project_root.join(".orgasmic/tasks/TASK-X/dispatches/tx-tail-stdout");
         let promoted = std::fs::read(record_dir.join("stdout.log")).unwrap();
         let text = String::from_utf8_lossy(&promoted);
-        // TASK-QGWK7.1.1 M-3: truncation is stated IN the excerpt, not only
-        // recoverable by comparing its length against the sidecar.
+        // TASK-QGWK7.1.1 M-3: truncation is stated in the excerpt itself.
         assert!(
             text.starts_with(STDOUT_TRUNCATION_BANNER),
             "a truncated excerpt must say so on its first line: {:?}",
@@ -1019,11 +1036,7 @@ mod tests {
             banner_bytes < 200,
             "banners must not meaningfully widen the 64 KB cap: {banner_bytes}"
         );
-        assert_eq!(
-            std::fs::read_to_string(record_dir.join("stdout.log.bytes")).unwrap(),
-            original_len.to_string(),
-            "truncation must be visible via the original byte count sidecar"
-        );
+        assert!(!record_dir.join("stdout.log.bytes").exists());
     }
 
     // orgasmic:TASK-QGWK7.1
@@ -1041,22 +1054,31 @@ mod tests {
 
         let dest_dir = project_root.join(".orgasmic/tasks/TASK-X/dispatches/tx-half");
         std::fs::create_dir_all(&dest_dir).unwrap();
-        // Block the stdout rename so last.txt lands and stdout fails.
-        std::fs::create_dir(dest_dir.join("stdout.log")).unwrap();
+        // Block the evidence rename so report.md lands and evidence fails.
+        std::fs::create_dir(dest_dir.join("evidence.json")).unwrap();
 
         let artifacts =
             validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
                 .unwrap();
-        let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, "TASK-X", "tx-half")
-                .unwrap();
+        let outcome = promote_validated_dispatch_attempt(
+            &artifacts,
+            &project_root,
+            "TASK-X",
+            "tx-half",
+            EVIDENCE_JSON,
+        )
+        .unwrap();
         assert_eq!(
             outcome.report_path.as_deref(),
             Some(".orgasmic/tasks/TASK-X/dispatches/tx-half/report.md")
         );
         assert!(
-            outcome.error.as_deref().unwrap_or("").contains("stdout"),
-            "stdout failure must be reported: {:?}",
+            outcome
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("evidence.json"),
+            "evidence failure must be reported: {:?}",
             outcome.error
         );
         assert!(dest_dir.join("report.md").exists());
@@ -1088,9 +1110,14 @@ mod tests {
 
         let artifacts =
             validate_dispatch_promote_targets(&project_root, Some(&last), Some(&stdout)).unwrap();
-        let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, "TASK-X", "tx-no-wt")
-                .unwrap();
+        let outcome = promote_validated_dispatch_attempt(
+            &artifacts,
+            &project_root,
+            "TASK-X",
+            "tx-no-wt",
+            EVIDENCE_JSON,
+        )
+        .unwrap();
         assert_eq!(outcome.error, None);
         assert_eq!(
             outcome.report_path.as_deref(),
