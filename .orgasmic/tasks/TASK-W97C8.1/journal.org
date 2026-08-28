@@ -75,3 +75,19 @@
 :REASON: F-2: compiled-prompt paths now derive from each attempt's last.txt filename, removing the reviewed bundle collision for shared brief basenames; no brief-basename uniqueness rule was added.
 :EVENT_ID: 805d9c10-d493-415d-8fb0-33ad99b0f481
 :END:
+
+* tx-20260828-orgasmic-6502 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6502
+:TIME:    [2026-08-28 Fri 10:11:10]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8.1
+:TARGET: .orgasmic/tasks/TASK-W97C8.1/node.org
+:REASON: transition TASK-W97C8.1 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 8cc40fb4-e08f-4a49-b58e-09d6660366ec
+:END:
