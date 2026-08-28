@@ -637,3 +637,77 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-W97C8/dispatches/tx-20260828-orgasmic-9ca2c312-45ad-45ab-b671-753b98706eac/report.md
 :EVENT_ID:     415eeed0-dad6-4171-8987-dcef91a6757c
 :END:
+
+* TX 2026-08-28 Fri 08:38:38 manager.dispatch_aborted TASK-W97C8
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-ab18ba61-43e4-46ea-ace9-5ecb67382d62
+:TIME:         [2026-08-28 Fri 08:38:38]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8
+:REASON:       review round 1: FINDINGS blocks ship (F1/F2 cut the data wires); chain continues with fix round on task-w97c8-impl
+:CLOSED_TX:    tx-20260828-orgasmic-03361e7d-c8c4-4a60-8e15-a1eea06afb34
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-w97c8
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-W97C8/dispatches/tx-20260828-orgasmic-03361e7d-c8c4-4a60-8e15-a1eea06afb34/report.md
+:EVENT_ID:     4647e668-c06e-4c11-9cbf-b96c9f6f86bc
+:END:
+
+* TX 2026-08-28 Fri 08:38:50 manager.dispatch_started TASK-W97C8
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-671a18ab-21c0-407a-830a-4246448d5885
+:TIME:         [2026-08-28 Fri 08:38:50]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-w97c8
+:BRANCH:       task-w97c8-impl-r2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-w97c8-fix/task-w97c8-fix-brief.md
+:STARTED_AT:   [2026-08-28 Fri 08:38:50]
+:LIVENESS:     bc4ee26d731d243dda18dc1d54851e9edea7cda9
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: fix round 2 from round-1 tip bc4ee26d: address review FINDINGS F1-F9
+:EVENT_ID:     aa8efafa-d4a8-4587-917b-fdea4c0e649d
+:END:
+
+* TX 2026-08-28 Fri 08:38:50 run.created TASK-W97C8
+:PROPERTIES:
+:TX_ID:        tx-20260828-orgasmic-0c734b6e-e9ef-484a-a481-fc3a18e0903a
+:TIME:         [2026-08-28 Fri 08:38:50]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-W97C8
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-W97C8-implementer-20260828T083849.jsonl
+:REASON:       fix round 2 from round-1 tip bc4ee26d: address review FINDINGS F1-F9
+:RUN_ID:       run-01M13RB39HB3QSW0MHWZ4119GP
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-w97c8
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-w97c8-fix/task-w97c8-fix-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-w97c8-fix/task-w97c8-fix-f286ce595a60408dae7904a7c11dcb6d-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-w97c8-fix/task-w97c8-fix-f286ce595a60408dae7904a7c11dcb6d-stdout.log
+:DISPATCH_ATTEMPT: f286ce595a60408dae7904a7c11dcb6d
+:PID:          96520
+:DISPATCH_TX:  tx-20260828-orgasmic-671a18ab-21c0-407a-830a-4246448d5885
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:EVENT_ID:     b7234a18-3426-499b-b1ad-402510eec679
+:END:
