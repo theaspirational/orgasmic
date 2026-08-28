@@ -4406,6 +4406,28 @@ Start-time durable writes break three properties the close-time design bought:
 - Focused tests: start writes nothing durable; close promotes all files;
   rollback leaves no orphan dir.
 
+* BACKLOG TASK-W97C8.2 evidence.json follow-ups: codex tool-count layering, narrative docs, stdout-vs-floor ordering
+:PROPERTIES:
+:ID: TASK-W97C8.2
+:PRIORITY: P3
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Round-2 review of TASK-W97C8 (report in =tasks/TASK-W97C8/dispatches/tx-20260828-orgasmic-c75225ff-b159-4434-8088-a69a99c2a8f3/report.md=) approved with three follow-ups:
+
+- *N1 (MED)* =manager.rs:8336-8343= — codex-chat emits TWO =item.started= per model tool call (model-issued =call_*= + runtime =exec-*=); the generic count counts both, ~1.9x over. Count only the model-issued layer (itemId prefix =call_= on codex; claude is single-layer =toolu_=), or rename the field =tool_item_count= and document the layered semantics. Add a fixture with a real =call_=/=exec-= pair.
+- *N2 (MED, docs)* =manager-dispatch.org:380-386= — narrative is a partial excerpt on EVERY driver (measured 141 B for a full claude review; claude assistant blocks arrive as =item.completed= with =data: null=). Say so in the convention; counts + session pointer + native transcript path are the load-bearing proof. Optionally file a runtime-side task for the missing =content.delta= events.
+- *N3 (LOW)* =paths.rs:335-344= — the semantic evidence floor's early return also skips =stdout.log= promotion; a harness that died before any driver event loses its crash log. Promote stdout before the floor or on its error path.
+
+Also settle review open question 1: are =bounded_events= / =unparsed_events= disjoint or overlapping? One convention sentence either way.
+
+** Acceptance
+- Codex tool count reflects model-issued calls only (or field renamed + documented), pinned by fixture.
+- Convention states measured narrative reality for all drivers.
+- Zero-event run still promotes its non-empty stdout excerpt.
+- Focused tests green; =shipped_conventions= gate stays green.
+
 * BACKLOG TASK-WPC6G gotchas.org is off the node write surface, so every entry in it is a rule-violating hand edit    :runtime:cli:process:
 :PROPERTIES:
 :ID: TASK-WPC6G
@@ -5011,34 +5033,6 @@ Two port patterns: (a) old aggregate fixture paths (`.orgasmic/tasks/backlog.org
 - [ ] `cargo test -p orgasmic-cli` fully green
 - [ ] no test deleted; routing-table semantics (journal vs tx) preserved per AP971.5
 
-* IN_PROGRESS TASK-W97C8 Replace stdout.log with typed evidence.json in dispatch records
-:PROPERTIES:
-:ID: TASK-W97C8
-:PRIORITY: P2
-:END:
-
-** Description
-The promoted dispatch record (=.orgasmic/tasks/TASK-X/dispatches/<tx>/=) stores =stdout.log= + =stdout.log.bytes= as raw evidence of the run (TASK-QGWK7.1). In practice every promoted attempt has =stdout.log.bytes = 0= because SDK-driven harnesses never write to stdout — the real evidence is the typed session JSONL (=tmp/sessions/dispatch-TASK-X-<role>-<ts>.jsonl=, =DriverEvent= stream) which every driver mode (sdk, stdio, acp) feeds. A 0-byte stdout marker is misleading: an agent reading the record can conclude no work happened.
-
-** Design
-At dispatch close, promote a small typed =evidence.json= into =dispatches/<tx>/= instead:
-- event count, tool-call count (proof of work as counts, not byte sizes)
-- session JSONL filename + size (raw file stays machine-local, out of git)
-- native harness transcript path + confidence from =transcript_finder= (dec_WDR5K)
-- model-generated narrative: project =TextChunk= events with =stream = Assistant= (and reasoning/thinking) into the evidence — NO raw =ToolCall= args / =ToolResult= outputs. =DriverEvent= already types these streams so this is a filter, not a parser.
-- keep the stdout head+tail excerpt ONLY when non-empty (crash insurance); drop the always-0 =stdout.log.bytes= marker.
-
-** Open point
-=TextStream= has no =Reasoning= variant (=crates/orgasmic-core/src/session.rs:1029=) — thinking text may arrive via =ProviderRuntimeEvent=. Scope whether to add =TextStream::Reasoning= or project from provider events.
-
-** Acceptance
-- Closed dispatch record contains =evidence.json= with counts, pointers, and assistant/reasoning text; no tool-call args or outputs.
-- Works for every driver mode; a run that did work can never produce an empty evidence file.
-- =stdout.log= promoted only when non-empty; =stdout.log.bytes= removed.
-** Worklog
-- [2026-08-28] Evidence projects reasoning/thinking from typed `ProviderRuntimeEvent::ContentDelta` events instead of adding `TextStream::Reasoning`. Dedicated chat runtimes already emit normalized content deltas, while the other modes retain `TextChunk::Assistant`; this avoids a session-schema variant that current drivers do not emit.
-[2026-08-28] Round 2 decision: narrative is Claude-only today because codex-chat session JSONL does not emit assistant/reasoning content deltas. Codex TextStream::System maps to reasoning_text but carries harness notices, not model thinking, so evidence excludes it rather than mislabeling notices; counts and pointers remain codex proof of work.
-
 * IN_REVIEW TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-7A0H4
@@ -5298,6 +5292,34 @@ AP971.1/.6: land crates/orgasmic-core/src/node_kernel.rs from the ap971-prototyp
 - [ ] kernel unit tests + the real_data parse test pass
 - [ ] writer ops exist with OCC and denylist enforcement, covered by tests
 - [ ] schema doc shipped
+
+* IN_REVIEW TASK-W97C8 Replace stdout.log with typed evidence.json in dispatch records
+:PROPERTIES:
+:ID: TASK-W97C8
+:PRIORITY: P2
+:END:
+
+** Description
+The promoted dispatch record (=.orgasmic/tasks/TASK-X/dispatches/<tx>/=) stores =stdout.log= + =stdout.log.bytes= as raw evidence of the run (TASK-QGWK7.1). In practice every promoted attempt has =stdout.log.bytes = 0= because SDK-driven harnesses never write to stdout — the real evidence is the typed session JSONL (=tmp/sessions/dispatch-TASK-X-<role>-<ts>.jsonl=, =DriverEvent= stream) which every driver mode (sdk, stdio, acp) feeds. A 0-byte stdout marker is misleading: an agent reading the record can conclude no work happened.
+
+** Design
+At dispatch close, promote a small typed =evidence.json= into =dispatches/<tx>/= instead:
+- event count, tool-call count (proof of work as counts, not byte sizes)
+- session JSONL filename + size (raw file stays machine-local, out of git)
+- native harness transcript path + confidence from =transcript_finder= (dec_WDR5K)
+- model-generated narrative: project =TextChunk= events with =stream = Assistant= (and reasoning/thinking) into the evidence — NO raw =ToolCall= args / =ToolResult= outputs. =DriverEvent= already types these streams so this is a filter, not a parser.
+- keep the stdout head+tail excerpt ONLY when non-empty (crash insurance); drop the always-0 =stdout.log.bytes= marker.
+
+** Open point
+=TextStream= has no =Reasoning= variant (=crates/orgasmic-core/src/session.rs:1029=) — thinking text may arrive via =ProviderRuntimeEvent=. Scope whether to add =TextStream::Reasoning= or project from provider events.
+
+** Acceptance
+- Closed dispatch record contains =evidence.json= with counts, pointers, and assistant/reasoning text; no tool-call args or outputs.
+- Works for every driver mode; a run that did work can never produce an empty evidence file.
+- =stdout.log= promoted only when non-empty; =stdout.log.bytes= removed.
+** Worklog
+- [2026-08-28] Evidence projects reasoning/thinking from typed `ProviderRuntimeEvent::ContentDelta` events instead of adding `TextStream::Reasoning`. Dedicated chat runtimes already emit normalized content deltas, while the other modes retain `TextChunk::Assistant`; this avoids a session-schema variant that current drivers do not emit.
+[2026-08-28] Round 2 decision: narrative is Claude-only today because codex-chat session JSONL does not emit assistant/reasoning content deltas. Codex TextStream::System maps to reasoning_text but carries harness notices, not model thinking, so evidence excludes it rather than mislabeling notices; counts and pointers remain codex proof of work.
 
 * DONE TASK-0J0AV Prompt-only artifacts: make subject nodes optional :artifacts:daemon:
 :PROPERTIES:

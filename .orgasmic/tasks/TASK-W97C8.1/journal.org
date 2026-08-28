@@ -14,3 +14,19 @@
 :REASON: start-time writes into the tracked dispatches/<tx>/ dir violate the close-time record rule: failed/rolled-back dispatches orphan folders, and a reader cannot tell a half-record from a dead run
 :EVENT_ID: 1694404b-74a4-489d-ad36-6db725499f4b
 :END:
+
+* tx-20260828-orgasmic-6498 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260828-orgasmic-6498
+:TIME:    [2026-08-28 Fri 09:31:49]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8.1
+:TARGET: .orgasmic/tasks/TASK-W97C8.1/node.org
+:REASON: transition TASK-W97C8.1 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 2b5cc957-a7f4-48a7-8460-e75dc7bde935
+:END:
