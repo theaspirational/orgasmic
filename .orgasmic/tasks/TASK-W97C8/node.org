@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-W97C8
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-W97C8 Replace stdout.log with typed evidence.json in dispatch records
+* IN_PROGRESS TASK-W97C8 Replace stdout.log with typed evidence.json in dispatch records
 :PROPERTIES:
 :ID: TASK-W97C8
 :PRIORITY: P2
