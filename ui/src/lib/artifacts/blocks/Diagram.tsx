@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import type { MdxNode } from '../types';
 import { textBody } from '../parseMdx';
 import { sanitizeHtmlFragment } from '../sanitize';
-import { asOptionalString, asString } from './propUtils';
+import { asNumber, asOptionalString, asString } from './propUtils';
 
 const DIAGRAM_TOKENS = [
   '--wf-ink',
@@ -49,12 +49,32 @@ html, body { margin: 0; padding: 12px; background: var(--wf-paper); color: var(-
 </head><body>${sanitizedHtml}</body></html>`;
 }
 
+/** Diagram-design output (the diagram-design skill vendored at
+ * vendor/diagram-design) arrives as an SVG/HTML fragment carrying its own
+ * `<style>` blocks. The sanitizer forbids `<style>` tags, so lift them out
+ * first and feed their content to the iframe alongside the `css` attribute —
+ * same trust level either way, since both only ever style a sandboxed,
+ * script-disabled frame. */
+const STYLE_BLOCK = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+
 export function Diagram({ node }: { node: Extract<MdxNode, { kind: 'element' }> }) {
   const rawHtml = textBody(node, 'html');
   const css = asString(node.props.css);
   const caption = asOptionalString(node.props.caption);
-  const sanitized = useMemo(() => sanitizeHtmlFragment(rawHtml), [rawHtml]);
-  const srcDoc = useMemo(() => buildDiagramSrcDoc(sanitized, css), [sanitized, css]);
+  const height = asNumber(node.props.height, 256);
+  const { fragment, extractedCss } = useMemo(() => {
+    let lifted = '';
+    const fragment = rawHtml.replace(STYLE_BLOCK, (_match, body: string) => {
+      lifted += `\n${body}`;
+      return '';
+    });
+    return { fragment, extractedCss: lifted };
+  }, [rawHtml]);
+  const sanitized = useMemo(() => sanitizeHtmlFragment(fragment), [fragment]);
+  const srcDoc = useMemo(
+    () => buildDiagramSrcDoc(sanitized, `${css}${extractedCss}`),
+    [sanitized, css, extractedCss],
+  );
 
   if (!rawHtml.trim()) return null;
 
@@ -64,7 +84,8 @@ export function Diagram({ node }: { node: Extract<MdxNode, { kind: 'element' }> 
         title={caption ?? 'Diagram'}
         srcDoc={srcDoc}
         sandbox=""
-        className="h-64 w-full resize-y overflow-auto rounded-lg border bg-card"
+        style={{ height }}
+        className="w-full resize-y overflow-auto rounded-lg border bg-card"
       />
       {caption ? <figcaption className="text-center text-xs text-muted-foreground">{caption}</figcaption> : null}
     </figure>

@@ -39,6 +39,7 @@ const ALLOWED_TAGS = [
   'button', 'input', 'label', 'select', 'option', 'textarea', 'fieldset', 'legend',
   'img',
   'svg', 'path', 'circle', 'rect', 'line', 'g', 'polyline', 'polygon', 'defs', 'marker', 'text', 'tspan', 'ellipse',
+  'clipPath', 'mask', 'pattern', 'linearGradient', 'radialGradient', 'stop', 'symbol', 'title', 'desc',
 ];
 
 const ALLOWED_ATTR = [
@@ -48,6 +49,13 @@ const ALLOWED_ATTR = [
   'aria-label', 'aria-hidden', 'aria-checked', 'role',
   'width', 'height', 'viewBox', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin',
   'd', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'points', 'transform', 'marker-end',
+  // Presentation/text attributes the diagram-design skill's editorial SVG
+  // output relies on (typography, dashed connectors, markers, paint servers).
+  'marker-start', 'marker-mid', 'markerWidth', 'markerHeight', 'refX', 'refY', 'orient', 'markerUnits',
+  'text-anchor', 'dominant-baseline', 'font-family', 'font-size', 'font-weight', 'font-style', 'letter-spacing',
+  'opacity', 'fill-opacity', 'stroke-opacity', 'stroke-dasharray', 'stroke-dashoffset', 'fill-rule', 'clip-rule',
+  'dx', 'dy', 'paint-order', 'vector-effect', 'preserveAspectRatio', 'clip-path',
+  'offset', 'stop-color', 'stop-opacity', 'gradientUnits', 'gradientTransform', 'patternUnits',
 ];
 
 const FORBID_TAGS = ['script', 'style', 'iframe', 'link', 'object', 'embed', 'base', 'meta', 'head', 'html', 'body', 'form'];

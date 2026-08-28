@@ -42,9 +42,6 @@ pub const BLOCK_TYPES: &[&str] = &[
     "Columns",
     "Section",
     "Image",
-    "SequenceDiagram",
-    "FlowChart",
-    "Mermaid",
     "Timeline",
     "EntityRelationship",
 ];
@@ -832,8 +829,8 @@ mod tests {
     }
 
     #[test]
-    fn block_registry_has_22_entries() {
-        assert_eq!(BLOCK_TYPES.len(), 22);
+    fn block_registry_has_19_entries() {
+        assert_eq!(BLOCK_TYPES.len(), 19);
     }
 
     /// The artifact-generator prompt spec's block-vocabulary reference is

@@ -1,7 +1,7 @@
 // AST for parsed Agent-Native artifact.mdx content. See parseMdx.ts for the
 // parser and blocks/index.tsx for the renderer that consumes this tree.
 
-/** The 22 registered top-level block names, mirrored from
+/** The 19 registered top-level block names, mirrored from
  * crates/orgasmic-daemon/src/artifacts.rs::BLOCK_TYPES. */
 export const BLOCK_TYPES = [
   'RichText',
@@ -21,9 +21,6 @@ export const BLOCK_TYPES = [
   'Columns',
   'Section',
   'Image',
-  'SequenceDiagram',
-  'FlowChart',
-  'Mermaid',
   'Timeline',
   'EntityRelationship',
 ] as const;

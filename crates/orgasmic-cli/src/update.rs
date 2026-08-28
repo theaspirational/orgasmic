@@ -29,8 +29,15 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "shipped/schema/node-types/glossary.org",
     "shipped/schema/node-types/artifact.org",
     "shipped/prompt-studio/slots.org",
+    "shipped/prompt-studio/references/wireframe.md",
     "shipped/entry/router.org",
     "shipped/skills/orgasmic/SKILL.md",
+    // Bundled (not installed as its own agent skill): the artifact-generator
+    // prompt spec reads this in place from the runtime. Vendored from
+    // https://github.com/cathrynlavery/diagram-design via `git subtree`
+    // (update with `git subtree pull --prefix vendor/diagram-design
+    // https://github.com/cathrynlavery/diagram-design main --squash`).
+    "vendor/diagram-design/skills/diagram-design/SKILL.md",
 ];
 
 // dec_B4147 retention amendment: after a successful runtime swap, keep the
@@ -1193,10 +1200,18 @@ mod tests {
             write(&root.join("shipped/schema/node-types").join(name), source);
         }
         write(&root.join("shipped/prompt-studio/slots.org"), "* Slots\n");
+        write(
+            &root.join("shipped/prompt-studio/references/wireframe.md"),
+            "# wireframe quality\n",
+        );
         write(&root.join("shipped/entry/router.org"), "* Entry\n");
         write(
             &root.join("shipped/skills/orgasmic/SKILL.md"),
             "---\nname: orgasmic\n---\n",
+        );
+        write(
+            &root.join("vendor/diagram-design/skills/diagram-design/SKILL.md"),
+            "---\nname: diagram-design\n---\n",
         );
     }
 

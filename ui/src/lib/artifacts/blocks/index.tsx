@@ -12,15 +12,12 @@ import { DataModel } from './DataModel';
 import { Diagram } from './Diagram';
 import { EntityRelationship } from './EntityRelationship';
 import { FileTree } from './FileTree';
-import { FlowChart } from './FlowChart';
 import { Image } from './Image';
 import { Markdown } from './Markdown';
-import { Mermaid } from './Mermaid';
 import { Prototype } from './Prototype';
 import { QuestionForm } from './QuestionForm';
 import { RichText } from './RichText';
 import { Section } from './Section';
-import { SequenceDiagram } from './SequenceDiagram';
 import { Table } from './Table';
 import { Tabs } from './Tabs';
 import { Timeline } from './Timeline';
@@ -29,10 +26,10 @@ import { Wireframe } from './Wireframe';
 
 type BlockComponent = ComponentType<{ node: Extract<MdxNode, { kind: 'element' }> }>;
 
-/** The 22 registered block names mapped to their renderer — this table plus
+/** The 19 registered block names mapped to their renderer — this table plus
  * the BLOCK_TYPES const in types.ts plus the fixture in __fixtures__ are the
  * three-way agreement this task pins (renderer / prompt spec / fixture must
- * all describe the same 22 shapes). */
+ * all describe the same 19 shapes). */
 const REGISTRY: Record<string, BlockComponent> = {
   RichText,
   Diagram,
@@ -51,9 +48,6 @@ const REGISTRY: Record<string, BlockComponent> = {
   Columns,
   Section,
   Image,
-  SequenceDiagram,
-  FlowChart,
-  Mermaid,
   Timeline,
   EntityRelationship,
 };
