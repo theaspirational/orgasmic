@@ -423,11 +423,12 @@ fn manager_convention_names_post_close_report_path() {
         "the prose must say why staging alone was not enough"
     );
     // TASK-QGWK7.1.1.1 F-7 / F-4: three properties of the record commit a
-    // manager cannot derive from the files, and one sidecar value that means
-    // two different things.
+    // manager cannot derive from the files, plus the typed evidence contract.
     assert!(
-        text.contains("means the promote failed between the two renames"),
-        "the prose must say what a non-zero stdout.log.bytes with no stdout.log means"
+        text.contains("=evidence.json=")
+            && text.contains("=unparsed_events=")
+            && text.contains("=narrative_truncated="),
+        "the prose must name the evidence file, lossy-event tally, and narrative cap flag"
     );
     assert!(
         text.contains("are UNSIGNED"),

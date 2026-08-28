@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{self, AtomicBool};
@@ -16,8 +17,12 @@ use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
     fold_dispatches, goal_file_path, parse_tx_file, project_dispatch_dir, projects, read_claims,
-    read_session_file, task_node_file_path, DispatchFold, Lifecycle, LifecycleStage, OrgFile,
-    ProjectFile, RuntimeIdentity, SessionEventKind, TaskHeading, TxEntry,
+    read_session_file, task_node_file_path, DispatchFold, DriverEvent, Lifecycle, LifecycleStage,
+    OrgFile, ProjectFile, ProviderRuntimeEventKind, RuntimeIdentity, SessionEnvelope,
+    SessionEventKind, TaskHeading, TextStream, TxEntry,
+};
+use orgasmic_drivers::{
+    find_native_transcript, lookup_from_envelopes, TranscriptFindResult, TranscriptRoots,
 };
 // orgasmic:task_ZKZBF.2 — the ONE key-shape rule (this used to be a verbatim
 // copy of core's; a copy drifting is how the drawer check and the ledger
@@ -782,6 +787,11 @@ struct DispatchRecord {
     brief_path: Option<PathBuf>,
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    /// Machine-local session JSONL recorded as `TARGET` on `run.created`.
+    session_path: Option<PathBuf>,
+    /// Run id carried by `session_path`; recovery may address a newer run whose
+    /// `run.created` has no target, so this can differ from `run_id`.
+    evidence_run_id: Option<String>,
     dispatch_attempt_token: Option<String>,
     /// The run this generation is currently addressed by — the dispatched run,
     /// or the newest recovery replacement of it (TASK-6AYEJ.2).
@@ -7595,6 +7605,8 @@ fn remove_worktree_if_present(
     branch: Option<&str>,
     expected_branch_oid: Option<&str>,
     started_tx: Option<&str>,
+    session_path: Option<&Path>,
+    run_id: Option<&str>,
 ) -> Result<WorktreeRemovalOutcome> {
     if !path.exists() {
         return Ok(WorktreeRemovalOutcome {
@@ -7615,6 +7627,8 @@ fn remove_worktree_if_present(
         branch,
         expected_branch_oid,
         started_tx,
+        session_path,
+        run_id,
     )
 }
 
@@ -7628,6 +7642,8 @@ fn remove_worktree_required(
     branch: Option<&str>,
     expected_branch_oid: Option<&str>,
     started_tx: Option<&str>,
+    session_path: Option<&Path>,
+    run_id: Option<&str>,
 ) -> Result<WorktreeRemovalOutcome> {
     remove_worktree_required_with_hook(
         project_root,
@@ -7638,6 +7654,8 @@ fn remove_worktree_required(
         branch,
         expected_branch_oid,
         started_tx,
+        session_path,
+        run_id,
         |_| {},
     )
 }
@@ -7652,6 +7670,8 @@ fn remove_worktree_required_with_hook(
     branch: Option<&str>,
     expected_branch_oid: Option<&str>,
     started_tx: Option<&str>,
+    session_path: Option<&Path>,
+    run_id: Option<&str>,
     before_remove: impl FnOnce(&Path),
 ) -> Result<WorktreeRemovalOutcome> {
     let _cleanup_lock = acquire_dispatch_cleanup_lock(project_root)?;
@@ -7732,6 +7752,8 @@ fn remove_worktree_required_with_hook(
                 task_id,
                 started_tx,
                 path,
+                session_path,
+                run_id,
             ) {
                 Ok(outcome) => (outcome.report_path, outcome.error, None),
                 Err(err) => (
@@ -7839,6 +7861,8 @@ fn cleanup_created_resources(
         Some(branch),
         expected_branch_oid.as_deref(),
         None,
+        None,
+        None,
     ) {
         Ok(outcome) => {
             worktree_removed = outcome.removed;
@@ -7945,6 +7969,8 @@ fn cleanup_dispatch(
                     open.branch.as_deref(),
                     expected_branch_oid.as_deref(),
                     Some(open.tx_id.as_str()),
+                    open.session_path.as_deref(),
+                    open.evidence_run_id.as_deref(),
                 ) {
                     Ok(outcome) => {
                         worktree_removed = outcome.removed;
@@ -7986,6 +8012,8 @@ fn cleanup_dispatch(
             stdout,
             open.tasks.first().map(String::as_str).unwrap_or("task"),
             &open.tx_id,
+            open.session_path.as_deref(),
+            open.evidence_run_id.as_deref(),
         ) {
             Ok(outcome) => {
                 report_path = outcome.report_path;
@@ -8052,6 +8080,8 @@ fn promote_dispatch_artifacts_in_place(
     stdout_path: &Path,
     task_id: &str,
     started_tx: &str,
+    session_path: Option<&Path>,
+    run_id: Option<&str>,
 ) -> Result<orgasmic_core::PromoteOutcome, String> {
     let _cleanup_lock =
         acquire_dispatch_cleanup_lock(project_root).map_err(|err| err.to_string())?;
@@ -8071,7 +8101,318 @@ fn promote_dispatch_artifacts_in_place(
             Some(stdout_path),
         )?,
     };
-    promote_and_persist_dispatch_record(&artifacts, project_root, task_id, started_tx, last_path)
+    promote_and_persist_dispatch_record(
+        &artifacts,
+        project_root,
+        task_id,
+        started_tx,
+        last_path,
+        session_path,
+        run_id,
+    )
+}
+
+#[derive(Debug, Serialize)]
+struct DispatchEvidence {
+    event_count: u64,
+    tool_call_count: u64,
+    unparsed_events: u64,
+    bounded_events: u64,
+    session: DispatchSessionEvidence,
+    native_transcript: TranscriptFindResult,
+    narrative: Vec<DispatchEvidenceText>,
+    narrative_truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum DispatchSessionEvidence {
+    Found { filename: String, size_bytes: u64 },
+    Missing { reason: String },
+    Unreadable { filename: String, reason: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DispatchEvidenceStream {
+    Assistant,
+    Reasoning,
+}
+
+#[derive(Debug, Serialize)]
+struct DispatchEvidenceText {
+    stream: DispatchEvidenceStream,
+    text: String,
+}
+
+#[derive(Default)]
+struct ParsedDispatchEvidence {
+    event_count: u64,
+    tool_call_count: u64,
+    unparsed_events: u64,
+    bounded_events: u64,
+    narrative: Vec<DispatchEvidenceText>,
+    narrative_bytes: usize,
+    narrative_truncated: bool,
+    lookup_envelopes: Vec<SessionEnvelope>,
+}
+
+const DISPATCH_NARRATIVE_MAX_BYTES: usize = 64 * 1024;
+
+/// Build the tracked, content-filtered evidence for one run from the exact
+/// machine-local `TARGET` recorded on its `run.created` tx.
+// orgasmic:TASK-W97C8
+fn build_dispatch_evidence(
+    session_path: Option<&Path>,
+    run_id: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let roots = TranscriptRoots::from_env_home();
+    let evidence = match session_path {
+        Some(path) => dispatch_evidence_from_session(path, run_id, roots.as_ref()),
+        None => {
+            let reason = "dispatch record has no session JSONL target".to_string();
+            DispatchEvidence {
+                event_count: 0,
+                tool_call_count: 0,
+                unparsed_events: 0,
+                bounded_events: 0,
+                session: DispatchSessionEvidence::Missing {
+                    reason: reason.clone(),
+                },
+                native_transcript: TranscriptFindResult::NotFound { reason },
+                narrative: Vec::new(),
+                narrative_truncated: false,
+            }
+        }
+    };
+    let mut json = serde_json::to_vec_pretty(&evidence).map_err(|err| err.to_string())?;
+    json.push(b'\n');
+    Ok(json)
+}
+
+fn dispatch_evidence_from_session(
+    session_path: &Path,
+    run_id: Option<&str>,
+    roots: Option<&TranscriptRoots>,
+) -> DispatchEvidence {
+    let filename = session_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "session.jsonl".to_string());
+    let size_bytes = match std::fs::metadata(session_path) {
+        Ok(metadata) => metadata.len(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let reason = format!("session JSONL {filename} is missing");
+            return DispatchEvidence {
+                event_count: 0,
+                tool_call_count: 0,
+                unparsed_events: 0,
+                bounded_events: 0,
+                session: DispatchSessionEvidence::Missing {
+                    reason: reason.clone(),
+                },
+                native_transcript: TranscriptFindResult::NotFound { reason },
+                narrative: Vec::new(),
+                narrative_truncated: false,
+            };
+        }
+        Err(err) => {
+            let reason = format!("read session metadata: {err}");
+            return unreadable_dispatch_evidence(filename, reason);
+        }
+    };
+    let parsed = match parse_dispatch_evidence(session_path, run_id) {
+        Ok(parsed) => parsed,
+        Err(reason) => return unreadable_dispatch_evidence(filename, reason),
+    };
+    let native_transcript = match (lookup_from_envelopes(&parsed.lookup_envelopes), roots) {
+        (Some(lookup), Some(roots)) => find_native_transcript(&lookup, roots),
+        (None, _) => TranscriptFindResult::NotFound {
+            reason: "session JSONL has no native transcript lookup metadata".into(),
+        },
+        (_, None) => TranscriptFindResult::NotFound {
+            reason: "HOME is unset; native transcript roots are unavailable".into(),
+        },
+    };
+    DispatchEvidence {
+        event_count: parsed.event_count,
+        tool_call_count: parsed.tool_call_count,
+        unparsed_events: parsed.unparsed_events,
+        bounded_events: parsed.bounded_events,
+        session: DispatchSessionEvidence::Found {
+            filename,
+            size_bytes,
+        },
+        native_transcript,
+        narrative: parsed.narrative,
+        narrative_truncated: parsed.narrative_truncated,
+    }
+}
+
+fn unreadable_dispatch_evidence(filename: String, reason: String) -> DispatchEvidence {
+    DispatchEvidence {
+        event_count: 0,
+        tool_call_count: 0,
+        unparsed_events: 0,
+        bounded_events: 0,
+        session: DispatchSessionEvidence::Unreadable {
+            filename,
+            reason: reason.clone(),
+        },
+        native_transcript: TranscriptFindResult::NotFound { reason },
+        narrative: Vec::new(),
+        narrative_truncated: false,
+    }
+}
+
+fn parse_dispatch_evidence(
+    session_path: &Path,
+    run_id: Option<&str>,
+) -> Result<ParsedDispatchEvidence, String> {
+    let file = std::fs::File::open(session_path).map_err(|err| err.to_string())?;
+    let mut parsed = ParsedDispatchEvidence::default();
+    for line in std::io::BufReader::new(file).lines() {
+        let line = match line {
+            Ok(line) => line,
+            Err(_) => {
+                parsed.unparsed_events += 1;
+                continue;
+            }
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let envelope: SessionEnvelope = match serde_json::from_str(&line) {
+            Ok(envelope) => envelope,
+            Err(_) => {
+                parsed.unparsed_events += 1;
+                continue;
+            }
+        };
+        if run_id.is_some_and(|run_id| envelope.run_id != run_id) {
+            continue;
+        }
+        match envelope.kind {
+            SessionEventKind::Lifecycle => parsed.lookup_envelopes.push(envelope),
+            SessionEventKind::Note => {}
+            SessionEventKind::DriverEvent => {
+                if value_contains_bounded_marker(&envelope.event) {
+                    parsed.bounded_events += 1;
+                }
+                let event: DriverEvent = match serde_json::from_value(envelope.event.clone()) {
+                    Ok(event) => event,
+                    Err(_) => {
+                        parsed.unparsed_events += 1;
+                        if envelope
+                            .event
+                            .get("type")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("provider_runtime")
+                        {
+                            parsed.event_count += 1;
+                        }
+                        continue;
+                    }
+                };
+                if matches!(&event, DriverEvent::Ready { .. }) {
+                    parsed.lookup_envelopes.push(envelope);
+                }
+                if !matches!(
+                    &event,
+                    DriverEvent::Heartbeat { .. } | DriverEvent::PaneActivity { .. }
+                ) {
+                    parsed.event_count += 1;
+                }
+                match event {
+                    DriverEvent::ToolCall { .. } => parsed.tool_call_count += 1,
+                    DriverEvent::TextChunk {
+                        stream: TextStream::Assistant,
+                        chunk,
+                        ..
+                    } => push_dispatch_narrative(
+                        &mut parsed,
+                        DispatchEvidenceStream::Assistant,
+                        &chunk,
+                    ),
+                    DriverEvent::ProviderRuntime { event } => match event.kind {
+                        ProviderRuntimeEventKind::ItemStarted(item)
+                            if !matches!(
+                                item.item_type.as_str(),
+                                "agent_message" | "agentMessage" | "reasoning"
+                            ) =>
+                        {
+                            parsed.tool_call_count += 1;
+                        }
+                        ProviderRuntimeEventKind::ContentDelta(content) => {
+                            if let Some(stream) = evidence_provider_stream(&content.stream_kind) {
+                                push_dispatch_narrative(&mut parsed, stream, &content.delta);
+                            }
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(parsed)
+}
+
+fn value_contains_bounded_marker(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Array(values) => values.iter().any(value_contains_bounded_marker),
+        serde_json::Value::Object(values) => {
+            values.contains_key("orgasmic_bounded")
+                || values.values().any(value_contains_bounded_marker)
+        }
+        _ => false,
+    }
+}
+
+fn evidence_provider_stream(stream_kind: &str) -> Option<DispatchEvidenceStream> {
+    match stream_kind {
+        "assistant" | "assistant_text" | "output_text" => Some(DispatchEvidenceStream::Assistant),
+        "reasoning" | "reasoning_summary" | "thinking" => Some(DispatchEvidenceStream::Reasoning),
+        _ => None,
+    }
+}
+
+fn push_dispatch_narrative(
+    parsed: &mut ParsedDispatchEvidence,
+    stream: DispatchEvidenceStream,
+    text: &str,
+) {
+    if text.is_empty() || parsed.narrative_truncated {
+        return;
+    }
+    let remaining = DISPATCH_NARRATIVE_MAX_BYTES.saturating_sub(parsed.narrative_bytes);
+    if remaining == 0 {
+        parsed.narrative_truncated = true;
+        return;
+    }
+    let original_len = text.len();
+    let mut end = remaining.min(original_len);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    parsed.narrative_truncated |= end < original_len;
+    if end == 0 {
+        return;
+    }
+    let text = &text[..end];
+    parsed.narrative_bytes += text.len();
+    if let Some(last) = parsed
+        .narrative
+        .last_mut()
+        .filter(|last| last.stream == stream)
+    {
+        last.text.push_str(text);
+    } else {
+        parsed.narrative.push(DispatchEvidenceText {
+            stream,
+            text: text.to_string(),
+        });
+    }
 }
 
 /// Promote validated artifacts, then put the promoted directory into git
@@ -8084,12 +8425,16 @@ fn promote_and_persist_dispatch_record(
     task_id: &str,
     started_tx: &str,
     label_path: &Path,
+    session_path: Option<&Path>,
+    run_id: Option<&str>,
 ) -> Result<orgasmic_core::PromoteOutcome, String> {
+    let evidence_json = build_dispatch_evidence(session_path, run_id)?;
     let mut outcome = orgasmic_core::promote_validated_dispatch_attempt(
         artifacts,
         project_root,
         task_id,
         started_tx,
+        &evidence_json,
     )?;
     if outcome.report_path.is_some() {
         if let Err(err) = commit_promoted_dispatch_record(project_root, task_id, started_tx) {
@@ -10217,14 +10562,19 @@ fn overlapping_tasks(open_tasks: &[String], requested_tasks: &[String]) -> Vec<S
 /// ones; `dispatch-close` also needs the closed ones so a re-run is a no-op
 /// instead of "no open dispatch" (TASK-6AYEJ).
 fn scan_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
-    Ok(fold_dispatches(&read_tx_entries(project_root)?)
+    let entries = read_tx_entries(project_root)?;
+    Ok(fold_dispatches(&entries)
         .into_iter()
         .map(|dispatch| {
-            let mut record = dispatch_record_from_fold(dispatch);
+            let mut record = dispatch_record_from_fold(dispatch, &entries);
             // Tx records store project-relative paths (no user-specific
             // prefixes in committed files); resolve them back against the
             // project root for local use (ps matching, cleanup).
-            for path in [&mut record.worktree, &mut record.brief_path] {
+            for path in [
+                &mut record.worktree,
+                &mut record.brief_path,
+                &mut record.session_path,
+            ] {
                 if let Some(path) = path.as_mut().filter(|path| path.is_relative()) {
                     *path = project_root.join(&path);
                 }
@@ -10234,10 +10584,29 @@ fn scan_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
         .collect())
 }
 
-fn dispatch_record_from_fold(dispatch: DispatchFold) -> DispatchRecord {
+fn dispatch_record_from_fold(dispatch: DispatchFold, entries: &[TxEntry]) -> DispatchRecord {
     let started = &dispatch.started;
     let run = dispatch.run.as_ref();
     let run_extra = |key| run.and_then(|entry| extra(entry, key));
+    let addressed_run = dispatch.addressed_run_id.as_deref().and_then(|run_id| {
+        entries
+            .iter()
+            .rev()
+            .find(|entry| entry.ty == "run.created" && extra(entry, "RUN_ID") == Some(run_id))
+    });
+    let (session_path, evidence_run_id) = match addressed_run.and_then(|entry| {
+        entry
+            .target
+            .as_deref()
+            .map(|target| (target, extra(entry, "RUN_ID")))
+    }) {
+        Some((target, run_id)) => (Some(PathBuf::from(target)), run_id.map(str::to_string)),
+        None => (
+            run.and_then(|entry| entry.target.as_deref())
+                .map(PathBuf::from),
+            run_extra("RUN_ID").map(str::to_string),
+        ),
+    };
     DispatchRecord {
         tx_id: started.tx_id.clone(),
         tasks: started
@@ -10253,6 +10622,8 @@ fn dispatch_record_from_fold(dispatch: DispatchFold) -> DispatchRecord {
         brief_path: extra_compat(started, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
         last_path: run_extra("LAST_PATH").map(PathBuf::from),
         stdout_path: run_extra("STDOUT_PATH").map(PathBuf::from),
+        session_path,
+        evidence_run_id,
         dispatch_attempt_token: run_extra("DISPATCH_ATTEMPT").map(str::to_string),
         run_id: dispatch.addressed_run_id,
         run_ids: dispatch.run_ids,
@@ -10561,6 +10932,309 @@ fn path_segment(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn write_evidence_session(path: &Path, envelopes: Vec<SessionEnvelope>) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut jsonl = envelopes
+            .into_iter()
+            .map(|envelope| serde_json::to_string(&envelope).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !jsonl.is_empty() {
+            jsonl.push('\n');
+        }
+        std::fs::write(path, jsonl).unwrap();
+    }
+
+    fn evidence_envelope(
+        seq: u64,
+        kind: SessionEventKind,
+        event: serde_json::Value,
+    ) -> SessionEnvelope {
+        SessionEnvelope {
+            seq,
+            time: chrono::Utc::now(),
+            run_id: "run-evidence".into(),
+            runtime_id: "runtime-evidence".into(),
+            boot_id: "boot-evidence".into(),
+            kind,
+            event,
+        }
+    }
+
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_evidence_empty_session_file_is_typed_and_nonempty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("empty.jsonl");
+        std::fs::write(&path, "").unwrap();
+        let roots = TranscriptRoots::from_home(tmp.path());
+
+        let evidence = dispatch_evidence_from_session(&path, Some("run-evidence"), Some(&roots));
+        let json = serde_json::to_vec(&evidence).unwrap();
+        let value = serde_json::to_value(evidence).unwrap();
+
+        assert!(!json.is_empty());
+        assert_eq!(value["event_count"], 0);
+        assert_eq!(value["tool_call_count"], 0);
+        assert_eq!(value["unparsed_events"], 0);
+        assert_eq!(value["bounded_events"], 0);
+        assert_eq!(value["session"]["status"], "found");
+        assert_eq!(value["session"]["size_bytes"], 0);
+    }
+
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_evidence_projects_work_without_tool_payloads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("project");
+        let session_path = project_root.join(
+            ".orgasmic/tmp/sessions/dispatch-TASK-EVIDENCE-implementer-20260828T120000.jsonl",
+        );
+        let roots = TranscriptRoots::from_home(tmp.path());
+        std::fs::create_dir_all(&roots.claude_projects).unwrap();
+        let native_path = roots.claude_projects.join("native.jsonl");
+        std::fs::write(&native_path, "{}\n").unwrap();
+        write_evidence_session(
+            &session_path,
+            vec![
+                evidence_envelope(
+                    0,
+                    SessionEventKind::Lifecycle,
+                    serde_json::json!({
+                        "phase": "run_meta",
+                        "transport": "stdio",
+                        "harness": "claude",
+                        "worktree": "/tmp/worktree",
+                        "driver_config": {}
+                    }),
+                ),
+                evidence_envelope(
+                    1,
+                    SessionEventKind::Lifecycle,
+                    serde_json::json!({
+                        "phase": "native_runtime",
+                        "provider": "claude",
+                        "session_id": "native-session",
+                        "session_path": native_path,
+                        "launch_argv": [],
+                        "resume_argv": []
+                    }),
+                ),
+                evidence_envelope(
+                    1,
+                    SessionEventKind::DriverEvent,
+                    serde_json::json!({
+                        "type": "text_chunk",
+                        "stream": "assistant",
+                        "chunk": "answer",
+                        "seq": 1
+                    }),
+                ),
+                evidence_envelope(
+                    2,
+                    SessionEventKind::DriverEvent,
+                    serde_json::json!({
+                        "type": "tool_call",
+                        "call_id": "call-1",
+                        "name": "shell",
+                        "args": {"secret_arg": "must-not-leak"},
+                        "seq": 2
+                    }),
+                ),
+                evidence_envelope(
+                    3,
+                    SessionEventKind::DriverEvent,
+                    serde_json::json!({
+                        "type": "tool_result",
+                        "call_id": "call-1",
+                        "ok": true,
+                        "output": {"secret_output": "must-not-leak"},
+                        "seq": 3
+                    }),
+                ),
+                evidence_envelope(
+                    4,
+                    SessionEventKind::DriverEvent,
+                    serde_json::json!({
+                        "type": "provider_runtime",
+                        "event": {
+                            "eventId": "event-1",
+                            "provider": "codex",
+                            "threadId": "thread-1",
+                            "createdAt": "2026-08-28T12:00:00Z",
+                            "type": "content.delta",
+                            "payload": {"streamKind": "reasoning", "delta": "think"}
+                        }
+                    }),
+                ),
+                evidence_envelope(
+                    5,
+                    SessionEventKind::DriverEvent,
+                    serde_json::json!({
+                        "type": "provider_runtime",
+                        "event": {
+                            "eventId": "event-2",
+                            "provider": "codex",
+                            "threadId": "thread-1",
+                            "createdAt": "2026-08-28T12:00:01Z",
+                            "type": "content.delta",
+                            "payload": {"streamKind": "assistant_text", "delta": "done"}
+                        }
+                    }),
+                ),
+                evidence_envelope(
+                    6,
+                    SessionEventKind::DriverEvent,
+                    serde_json::json!({
+                        "type": "provider_runtime",
+                        "event": {
+                            "eventId": "event-3",
+                            "provider": "codex",
+                            "threadId": "thread-1",
+                            "createdAt": "2026-08-28T12:00:02Z",
+                            "type": "item.started",
+                            "payload": {"itemType": "command_execution"}
+                        }
+                    }),
+                ),
+                evidence_envelope(
+                    7,
+                    SessionEventKind::DriverEvent,
+                    serde_json::json!({"type": "heartbeat", "seq": 7}),
+                ),
+            ],
+        );
+
+        let evidence =
+            dispatch_evidence_from_session(&session_path, Some("run-evidence"), Some(&roots));
+        let json = serde_json::to_vec_pretty(&evidence).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        let serialized = String::from_utf8(json).unwrap();
+
+        assert_eq!(value["event_count"], 6);
+        assert_eq!(value["tool_call_count"], 2);
+        assert_eq!(value["unparsed_events"], 0);
+        assert_eq!(value["bounded_events"], 0);
+        assert_eq!(value["narrative_truncated"], false);
+        assert_eq!(value["session"]["status"], "found");
+        assert_eq!(
+            value["session"]["filename"],
+            "dispatch-TASK-EVIDENCE-implementer-20260828T120000.jsonl"
+        );
+        assert_eq!(value["native_transcript"]["status"], "found");
+        assert_eq!(value["native_transcript"]["confidence"], "high");
+        assert_eq!(
+            value["native_transcript"]["path"],
+            native_path
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(value["narrative"][0]["stream"], "assistant");
+        assert_eq!(value["narrative"][0]["text"], "answer");
+        assert_eq!(value["narrative"][1]["stream"], "reasoning");
+        assert_eq!(value["narrative"][1]["text"], "think");
+        assert_eq!(value["narrative"][2]["stream"], "assistant");
+        assert_eq!(value["narrative"][2]["text"], "done");
+        assert!(!serialized.contains("secret_arg"));
+        assert!(!serialized.contains("must-not-leak"));
+        assert!(!serialized.contains("secret_output"));
+    }
+
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_evidence_missing_session_file_is_nonempty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("missing.jsonl");
+        let roots = TranscriptRoots::from_home(tmp.path());
+
+        let evidence = dispatch_evidence_from_session(&path, Some("run-evidence"), Some(&roots));
+        let json = serde_json::to_vec(&evidence).unwrap();
+        let value = serde_json::to_value(evidence).unwrap();
+
+        assert!(!json.is_empty());
+        assert_eq!(value["event_count"], 0);
+        assert_eq!(value["session"]["status"], "missing");
+        assert_eq!(value["native_transcript"]["status"], "not_found");
+    }
+
+    // Real `orgasmic_bounded` shape from the round-1 reviewer session, plus a
+    // truncated final line: neither may discard the good events around it.
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_evidence_tallies_bounded_and_unparsed_events_lossily() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("bounded.jsonl");
+        let bounded = r#"{"seq":37,"time":"2026-08-28T08:25:59.322657Z","run_id":"run-01M13QK60ZXCQNPQ5AVKAVEZ29","runtime_id":"dc4a64ad-d081-4afb-bccb-86c79528e3e3","boot_id":"33366c6e-acca-451b-aceb-9229bea040ba","kind":"driver_event","event":{"event":{"orgasmic_bounded":{"bytes":23652,"reason":"subtree-size","retained_bytes":0,"sha256":"5bdb8e741913afa7537f44d7dd28c60d0dc32e47004feda0c41cc739539a96b0","source":"harness-native session transcript (vendor-owned; never copied by orgasmic)"}},"type":"provider_runtime"}}"#;
+        let item = evidence_envelope(
+            38,
+            SessionEventKind::DriverEvent,
+            serde_json::json!({
+                "type": "provider_runtime",
+                "event": {
+                    "eventId": "event-file-change",
+                    "provider": "codex",
+                    "threadId": "thread-1",
+                    "createdAt": "2026-08-28T12:00:02Z",
+                    "type": "item.started",
+                    "payload": {"itemType": "file_change"}
+                }
+            }),
+        );
+        std::fs::write(
+            &path,
+            format!(
+                "{bounded}\n{}\n{{\"seq\":39",
+                serde_json::to_string(&item).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let parsed = parse_dispatch_evidence(&path, None).unwrap();
+        assert_eq!(parsed.event_count, 2);
+        assert_eq!(parsed.tool_call_count, 1);
+        assert_eq!(parsed.bounded_events, 1);
+        assert_eq!(parsed.unparsed_events, 2);
+    }
+
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_evidence_caps_narrative_on_a_utf8_boundary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("narrative.jsonl");
+        write_evidence_session(
+            &path,
+            vec![evidence_envelope(
+                1,
+                SessionEventKind::DriverEvent,
+                serde_json::json!({
+                    "type": "text_chunk",
+                    "stream": "assistant",
+                    "chunk": format!("{}é", "a".repeat(DISPATCH_NARRATIVE_MAX_BYTES)),
+                    "seq": 1
+                }),
+            )],
+        );
+
+        let evidence = dispatch_evidence_from_session(&path, Some("run-evidence"), None);
+        let value = serde_json::to_value(evidence).unwrap();
+        assert_eq!(
+            value["narrative"][0]["text"].as_str().unwrap().len(),
+            DISPATCH_NARRATIVE_MAX_BYTES
+        );
+        assert_eq!(value["narrative_truncated"], true);
+    }
+
+    #[test]
+    fn codex_system_notices_are_not_reasoning_evidence() {
+        assert_eq!(evidence_provider_stream("reasoning_text"), None);
+        assert_eq!(
+            evidence_provider_stream("reasoning_summary"),
+            Some(DispatchEvidenceStream::Reasoning)
+        );
+    }
+
     #[test]
     fn dispatch_wait_timeout_parser_is_explicit_and_nonzero() {
         assert_eq!(parse_wait_duration("30s").unwrap(), Duration::from_secs(30));
@@ -10595,6 +11269,8 @@ mod tests {
             brief_path: None,
             last_path: None,
             stdout_path: None,
+            session_path: None,
+            evidence_run_id: None,
             dispatch_attempt_token: None,
             run_id: None,
             run_ids: BTreeSet::new(),
@@ -11852,6 +12528,87 @@ mod tests {
         .unwrap();
     }
 
+    // `parse_tx_file` lifts TARGET out of `extra`; the production fold must
+    // read the first-class field or every real close loses its session JSONL.
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_fold_reads_run_created_target_field() {
+        let source = format!(
+            "#+title: tx\n#+orgasmic_version: 1\n\n{}* TX 2026-07-26 Sun 10:01:00 run.created TASK-9\n:PROPERTIES:\n:TX_ID:        tx-run-9\n:TIME:         [2026-07-26 Sun 10:01:00]\n:TYPE:         run.created\n:ACTOR:        daemon\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-9\n:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-9-implementer.jsonl\n:ORIGIN:       cli_dispatch\n:DISPATCH_TX:  tx-start-9\n:RUN_ID:       run-9\n:KIND:         implementer\n:LAST_PATH:    .orgasmic/tmp/dispatch/task-9-last.txt\n:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-9-stdout.log\n:END:\n",
+            tx_started("tx-start-9", "TASK-9", "implementer", "10:00:00")
+        );
+        let entries = parse_tx_file(&source, "real-shaped-run-created.org").unwrap();
+        assert!(entries[1].extra.iter().all(|(key, _)| key != "TARGET"));
+        let dispatch = fold_dispatches(&entries).pop().unwrap();
+        let record = dispatch_record_from_fold(dispatch, &entries);
+
+        assert_eq!(
+            record.session_path.as_deref(),
+            Some(Path::new(
+                ".orgasmic/tmp/sessions/dispatch-TASK-9-implementer.jsonl"
+            ))
+        );
+        assert_eq!(record.evidence_run_id.as_deref(), Some("run-9"));
+    }
+
+    // orgasmic:TASK-W97C8
+    #[test]
+    fn dispatch_fold_prefers_addressed_session_then_falls_back_to_initial() {
+        let entry = |id: &str, ty: &str, target: Option<&str>, extra: &[(&str, &str)]| {
+            let mut entry = TxEntry::new(id, ty, "[2026-08-28 Fri 10:00:00]", "test", "host");
+            entry.project = Some("orgasmic".into());
+            entry.task = Some("TASK-9".into());
+            entry.target = target.map(str::to_string);
+            entry.extra = extra
+                .iter()
+                .map(|(key, value)| ((*key).into(), (*value).into()))
+                .collect();
+            entry
+        };
+        let started = entry(
+            "tx-start-9",
+            "manager.dispatch_started",
+            None,
+            &[("KIND", "implementer")],
+        );
+        let initial = entry(
+            "tx-run-a",
+            "run.created",
+            Some("initial.jsonl"),
+            &[
+                ("ORIGIN", "cli_dispatch"),
+                ("DISPATCH_TX", "tx-start-9"),
+                ("RUN_ID", "run-a"),
+            ],
+        );
+        let replacement = entry(
+            "tx-run-b",
+            "run.created",
+            Some("replacement.jsonl"),
+            &[
+                ("ORIGIN", "recovery"),
+                ("ORIGIN_RUN_ID", "run-a"),
+                ("RUN_ID", "run-b"),
+            ],
+        );
+        let mut entries = vec![started, initial, replacement];
+
+        let record = dispatch_record_from_fold(fold_dispatches(&entries).pop().unwrap(), &entries);
+        assert_eq!(
+            record.session_path.as_deref(),
+            Some(Path::new("replacement.jsonl"))
+        );
+        assert_eq!(record.evidence_run_id.as_deref(), Some("run-b"));
+
+        entries[2].target = None;
+        let record = dispatch_record_from_fold(fold_dispatches(&entries).pop().unwrap(), &entries);
+        assert_eq!(
+            record.session_path.as_deref(),
+            Some(Path::new("initial.jsonl"))
+        );
+        assert_eq!(record.evidence_run_id.as_deref(), Some("run-a"));
+    }
+
     /// TASK-6AYEJ.1, the ship blocker: closing the implementer moves the task
     /// to IN_REVIEW and a reviewer is opened for the SAME task, so a replayed
     /// implementer close must no-op against its own already-closed generation
@@ -12418,7 +13175,26 @@ mod tests {
     fn dispatch_close_clean_worktree_has_no_salvage_side_effects() {
         let fixture = dispatch_cleanup_fixture("task-clean");
         let before = resolve_branch_oid(&fixture.root, &fixture.branch).unwrap();
-        let open = dispatch_cleanup_record(&fixture, "TASK-CLEAN");
+        let mut open = dispatch_cleanup_record(&fixture, "TASK-CLEAN");
+        let session_path = fixture
+            .root
+            .join(".orgasmic/tmp/sessions/dispatch-TASK-CLEAN-implementer.jsonl");
+        write_evidence_session(
+            &session_path,
+            vec![evidence_envelope(
+                1,
+                SessionEventKind::DriverEvent,
+                serde_json::json!({
+                    "type": "text_chunk",
+                    "stream": "assistant",
+                    "chunk": "closed evidence",
+                    "seq": 1
+                }),
+            )],
+        );
+        open.session_path = Some(session_path);
+        open.run_id = Some("run-evidence".into());
+        open.evidence_run_id = Some("run-evidence".into());
 
         let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
         assert_eq!(cleanup.status, CleanupStatus::Ok, "{:?}", cleanup.error);
@@ -12441,6 +13217,20 @@ mod tests {
             fixture.root.join(report_path).exists(),
             "after close the report must still be readable from the path the tx names"
         );
+        let record_dir = fixture
+            .root
+            .join(report_path)
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let evidence: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(record_dir.join("evidence.json")).unwrap())
+                .unwrap();
+        assert_eq!(evidence["session"]["status"], "found");
+        assert_eq!(evidence["event_count"], 1);
+        assert_eq!(evidence["narrative"][0]["text"], "closed evidence");
+        assert!(record_dir.join("stdout.log").exists());
+        assert!(!record_dir.join("stdout.log.bytes").exists());
         assert!(!fixture.last.exists(), "tmp last.txt must be promoted away");
         assert!(
             !fixture.stdout.exists(),
@@ -12644,7 +13434,10 @@ mod tests {
         git_ok(root, &["add", "vendor/sub"]);
         git_ok(root, &["commit", "-qm", "bump gitlink"]);
         git_ok(root, &["checkout", "-q", "main"]);
-        git_ok(root, &["merge", "--no-ff", "-qm", "merge side", "task-side"]);
+        git_ok(
+            root,
+            &["merge", "--no-ff", "-qm", "merge side", "task-side"],
+        );
     }
 
     /// The worker-shaped mistake: a commit made only inside the checkout,
@@ -13437,6 +14230,8 @@ mod tests {
                 &stdout,
                 "TASK-LOCK",
                 &tx_id,
+                None,
+                None,
             );
             done_tx.send(result).unwrap();
         });
@@ -13628,6 +14423,8 @@ mod tests {
             Some(&fixture.branch),
             Some(&expected_oid),
             Some("tx-start-salvage-late-writer"),
+            None,
+            None,
             |path| std::fs::write(path.join("late-writer.txt"), "late\n").unwrap(),
         )
         .unwrap();

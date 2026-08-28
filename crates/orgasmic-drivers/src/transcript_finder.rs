@@ -201,6 +201,7 @@ fn normalize_harness(raw: &str) -> String {
     let t = raw.trim().to_ascii_lowercase();
     match t.as_str() {
         "cursor" => "cursor-agent".into(),
+        "codex-chat" => "codex".into(),
         other => other.to_string(),
     }
 }
@@ -915,6 +916,11 @@ mod tests {
         fs::create_dir_all(&roots.cursor_projects).unwrap();
         fs::create_dir_all(&roots.hermes_sessions).unwrap();
         roots
+    }
+
+    #[test]
+    fn codex_chat_uses_the_codex_transcript_adapter() {
+        assert_eq!(normalize_harness("codex-chat"), "codex");
     }
 
     #[test]
