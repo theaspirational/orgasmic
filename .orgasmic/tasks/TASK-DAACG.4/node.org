@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DAACG.4
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-DAACG.4 Blind cross-review — claude · anthropic · claude-haiku-4-5-20251001 · effort low
+* DONE TASK-DAACG.4 Blind cross-review — claude · anthropic · claude-haiku-4-5-20251001 · effort low
 :PROPERTIES:
 :ID: TASK-DAACG.4
 :READ_SCOPE: other participants' report paths named in dispatch brief
@@ -13,3 +13,6 @@ Review only the other participants' promoted extraction reports. This is a fresh
 
 ** Acceptance Criteria
 - [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
+** Evidence
+- Promoted dispatch report: TASK-DAACG.4 generation tx-20260829-orgasmic-9a99dea6-23dd-4020-a1bb-7ef1f831eb33
+- Report path: .orgasmic/tasks/TASK-DAACG.4/dispatches/tx-20260829-orgasmic-9a99dea6-23dd-4020-a1bb-7ef1f831eb33/report.md
