@@ -523,3 +523,29 @@
 :WRITE_SCOPE:  none; dispatch report only
 :EVENT_ID:     8beaa720-2298-406c-a85e-ed6eab6b55ce
 :END:
+
+* TX 2026-08-29 Sat 12:11:03.380146 task.claim_released TASK-2XT9J.1
+:PROPERTIES:
+:TX_ID:        tx-20260829121103-3240b2c2
+:TIME:         [2026-08-29 Sat 12:11:03.380146]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.1
+:TARGET:       .orgasmic/tasks/TASK-2XT9J.1
+:EVENT_ID:     c884a497-9528-418b-8026-ea6fde7783b8
+:END:
+
+* TX 2026-08-29 Sat 12:11:04.401707 task.claim_released TASK-2XT9J.2
+:PROPERTIES:
+:TX_ID:        tx-20260829121104-d173084c
+:TIME:         [2026-08-29 Sat 12:11:04.401707]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.2
+:TARGET:       .orgasmic/tasks/TASK-2XT9J.2
+:EVENT_ID:     caaaf921-3b76-4936-9ede-fe04cfcdcbaa
+:END:

@@ -1795,3 +1795,74 @@
 :EFFORT_OVERRIDE: low
 :EVENT_ID:     7bf219b9-534b-4ac1-bacb-a0715aa44d45
 :END:
+
+* TX 2026-08-29 Sat 12:11:01 manager.dispatch_orphaned TASK-2XT9J.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-352680ae-75bb-42b2-a12d-d4572636e42d
+:TIME:         [2026-08-29 Sat 12:11:01]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.2
+:TARGET:       ledgers/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-2XT9J.2-implementer-20260829T115930.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-01M16P78QJB9YQFZPBVAG3MV45
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2xt9j.2
+:EVENT_ID:     6312f365-c7af-48e9-9c46-654c4447fe1a
+:END:
+
+* TX 2026-08-29 Sat 12:11:02 manager.dispatch_orphaned TASK-2XT9J.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-74cd7bc2-0c7e-4d03-8a50-af4d2d7fe6f3
+:TIME:         [2026-08-29 Sat 12:11:02]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.1
+:TARGET:       ledgers/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-2XT9J.1-implementer-20260829T115927.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-01M16P75ZAZWDPEVNRWDMXN0K1
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2xt9j.1
+:EVENT_ID:     d1499998-241f-4634-b12c-e36c6865e7e5
+:END:
+
+* TX 2026-08-29 Sat 12:11:03 manager.dispatch_aborted TASK-2XT9J.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-4e46b8f1-7720-4885-b4d9-aa18edca6d76
+:TIME:         [2026-08-29 Sat 12:11:03]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.1
+:REASON:       multi-model orchestrator failed
+:CLOSED_TX:    tx-20260829-orgasmic-c9c5a018-46b5-4e1d-bbb8-d0092322333e
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2xt9j.1
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-2XT9J.1/dispatches/tx-20260829-orgasmic-c9c5a018-46b5-4e1d-bbb8-d0092322333e/report.md
+:EVENT_ID:     928f0f5d-5e42-47a6-a92b-150084bb5125
+:END:
+
+* TX 2026-08-29 Sat 12:11:04 manager.dispatch_aborted TASK-2XT9J.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-1b0a3b7a-eb1d-4eec-9ae9-624141fb02d5
+:TIME:         [2026-08-29 Sat 12:11:04]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.2
+:REASON:       multi-model orchestrator failed
+:CLOSED_TX:    tx-20260829-orgasmic-4c82d257-4e62-4273-8f1c-3c47670b39ab
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2xt9j.2
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: partial
+:CLEANUP_ERROR: report: brief.md missing from tmp
+:REPORT_PATH:  .orgasmic/tasks/TASK-2XT9J.2/dispatches/tx-20260829-orgasmic-4c82d257-4e62-4273-8f1c-3c47670b39ab/report.md
+:EVENT_ID:     074112fc-9b53-4e91-87ab-ab10f0e2f97a
+:END:
