@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-KK4DA.3
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-KK4DA.3 Blind cross-review — codex · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-KK4DA.3
+:READ_SCOPE: other participants' report paths named in dispatch brief
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
+
+** Acceptance Criteria
+- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
