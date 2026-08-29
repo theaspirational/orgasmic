@@ -802,7 +802,7 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-fn section_titles(mdx: &str) -> Vec<String> {
+fn section_titles(mdx: &str) -> Vec<(usize, String)> {
     let mut titles = Vec::new();
     let mut offset = 0;
     while let Some(found) = mdx[offset..].find("<Section") {
@@ -818,7 +818,7 @@ fn section_titles(mdx: &str) -> Vec<String> {
                 rest.find('"').map(|end| rest[..end].to_string())
             })
             .unwrap_or_default();
-        titles.push(title);
+        titles.push((start, title));
         offset = start + end_offset + 1;
     }
     titles
@@ -863,18 +863,13 @@ fn assemble_artifact(
         .replace(DIAGRAM_PLACEHOLDER, &image);
 
     let sections = section_titles(&mdx);
-    if sections.first().map(String::as_str) != Some("Question") {
+    if sections.first().map(|(_, title)| title.as_str()) != Some("Question") {
         bail!("Question must be the first Section");
     }
-    let question_prefix = "<Section title=\"Question\">\n<RichText>\n";
-    let question_suffix = "\n</RichText>\n</Section>";
-    let exact_question = mdx.find(question_prefix).and_then(|start| {
-        let content_start = start + question_prefix.len();
-        mdx[content_start..]
-            .find(question_suffix)
-            .map(|end| &mdx[content_start..content_start + end])
-    });
-    if exact_question != Some(escaped_question.as_str()) {
+    let question_offset = sections
+        .iter()
+        .find_map(|(offset, title)| (title == "Question").then_some(*offset));
+    if question_offset.is_none_or(|offset| !mdx[offset..].starts_with(&question_section)) {
         bail!("Question section does not match the input question verbatim");
     }
     let required = [
@@ -885,7 +880,7 @@ fn assemble_artifact(
     ];
     let missing = required
         .into_iter()
-        .filter(|required| !sections.iter().any(|section| section == required))
+        .filter(|required| !sections.iter().any(|(_, section)| section == *required))
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         bail!("curator draft is missing required sections: {missing:?}");
@@ -1224,6 +1219,7 @@ fn wait_barrier(home: &Home, dispatches: &[Dispatch], timeout: Duration) -> Resu
         .iter()
         .map(|dispatch| dispatch.started_tx.clone())
         .collect::<Vec<_>>();
+    // Deliberately dropped Python's liveness probe: retry once unconditionally, then leave unknown generations open.
     for attempt in 0..2 {
         match manager::dispatch_wait_quiet(
             home,
@@ -1914,6 +1910,18 @@ mod tests {
     }
 
     #[test]
+    fn base64_matches_known_vectors() {
+        for (raw, encoded) in [
+            (&b""[..], ""),
+            (&b"f"[..], "Zg=="),
+            (&b"fo"[..], "Zm8="),
+            (&b"foo"[..], "Zm9v"),
+        ] {
+            assert_eq!(base64_encode(raw), encoded);
+        }
+    }
+
+    #[test]
     fn assembly_preserves_hostile_question_and_enforces_task_boundaries() {
         let (_, extraction, reviews) = reports(2);
         let raw_tasks = extraction
@@ -1953,5 +1961,16 @@ mod tests {
         );
         assert!(!task_is_present("TASK-X.11", "TASK-X.1"));
         assert!(task_is_present("TASK-X.1 ", "TASK-X.1"));
+
+        let decoy = draft.replace(
+            QUESTION_PLACEHOLDER,
+            &format!(
+                "<Section  title=\"Question\">\n<RichText>\nfake question\n</RichText>\n</Section>\n{QUESTION_PLACEHOLDER}"
+            ),
+        );
+        assert!(assemble_artifact(&decoy, question, "generated", &raw_tasks)
+            .unwrap_err()
+            .to_string()
+            .contains("Question section does not match the input question verbatim"));
     }
 }

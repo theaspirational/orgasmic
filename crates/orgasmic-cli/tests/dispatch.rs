@@ -1227,6 +1227,55 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
         "unexpected close error: {close_stderr}"
     );
 
+    let close_prefix = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-NO-MERGE",
+        "--started-tx",
+        second_started_tx.as_str(),
+    ];
+    for (args, expected) in [
+        (
+            &["--status", "aborted", "--report-only"] as &[&str],
+            "--report-only is valid only when closing an implementer dispatch as done",
+        ),
+        (
+            &[
+                "--status",
+                "done",
+                "--report-only",
+                "--merge-sha",
+                "X",
+            ],
+            "--report-only does not take --merge-sha: no source merge exists",
+        ),
+        (
+            &[
+                "--status",
+                "done",
+                "--merge-sha",
+                head.as_str(),
+                "--property",
+                "REPORT_ONLY=true",
+            ],
+            "--property REPORT_ONLY=true cannot set manager-owned close property REPORT_ONLY; use --report-only instead",
+        ),
+    ] {
+        let stderr = run_orgasmic_failure(
+            &home,
+            &running,
+            &project_root,
+            &path_env,
+            &[&close_prefix[..], args].concat(),
+        );
+        assert!(stderr.contains(expected), "unexpected close error: {stderr}");
+        assert!(
+            second_worktree.exists(),
+            "report-only refusal must happen before worktree cleanup"
+        );
+    }
+
     let report_only_close = run_orgasmic(
         &home,
         &running,
