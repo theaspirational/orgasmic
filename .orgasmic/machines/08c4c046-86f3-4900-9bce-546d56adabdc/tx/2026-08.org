@@ -3294,3 +3294,19 @@
 :EFFORT_OVERRIDE: xhigh
 :EVENT_ID:     32303160-0fb3-44b6-847a-64fa0d1cdec2
 :END:
+
+* TX 2026-08-29 Sat 17:11:05 manager.dispatch_orphaned TASK-FBSZ2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-b67d689a-b787-4edb-9051-363b510d1fb9
+:TIME:         [2026-08-29 Sat 17:11:05]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FBSZ2
+:TARGET:       ledgers/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-FBSZ2-implementer-20260829T165624.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-01M1776WVSEG2325VXVHCMBXA5
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fbsz2
+:EVENT_ID:     168242e3-357c-421c-b2fe-a7d71a2f6ddf
+:END:
