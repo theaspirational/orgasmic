@@ -1,0 +1,22 @@
+{
+  "event_count": 1502,
+  "tool_call_count": 17,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-932SH.3-implementer-20260829T211218.jsonl",
+    "size_bytes": 447021
+  },
+  "native_transcript": {
+    "status": "not_found",
+    "reason": "hermes session file for id 'ef87cf8b-9325-4a79-989d-dee64d458d3f' not found under /Users/aspirational/.hermes/sessions"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "\n\nNow let me read `project.org` and `gotchas.org` as the spec instructs.\n\nI have everything I need. I've read the task record, `project.org`, `gotchas.org`, and the one report I'm assigned to review (TASK-932SH.2, gemini-3.7-flash). Now I'll write the delta report and finalize.\n\nReport is written. Now I'll finalize via the orgasmic CLI."
+    }
+  ],
+  "narrative_truncated": false
+}
