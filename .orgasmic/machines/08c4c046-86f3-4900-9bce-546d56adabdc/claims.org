@@ -711,3 +711,17 @@
 :TARGET:       .orgasmic/tasks/TASK-KK4DA.4
 :EVENT_ID:     c1eee9dd-3ae5-434c-a9a0-c39bdd89af03
 :END:
+
+* TX 2026-08-29 Sat 12:58:02.226906 task.claimed TASK-KK4DA.5
+:PROPERTIES:
+:TX_ID:        tx-20260829125802-9a479d00
+:TIME:         [2026-08-29 Sat 12:58:02.226906]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-KK4DA.5
+:TARGET:       .orgasmic/tasks/TASK-KK4DA.5
+:WRITE_SCOPE:  artifact store via orgasmic artifact submit only
+:EVENT_ID:     8cdf0309-05b3-4d2b-9c02-45352c29f0e0
+:END:

@@ -5256,19 +5256,6 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
 
-* TODO TASK-KK4DA.4 Blind cross-review — claude · anthropic · claude-haiku-4-5-20251001 · effort low
-:PROPERTIES:
-:ID: TASK-KK4DA.4
-:READ_SCOPE: other participants' report paths named in dispatch brief
-:WRITE_SCOPE: none; dispatch report only
-:END:
-
-** Description
-Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
-
-** Acceptance Criteria
-- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
-
 * TODO TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-NMV4P.1
@@ -5359,6 +5346,21 @@ Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthro
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+
+* IN_PROGRESS TASK-KK4DA.5 Curate artifact — codex · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-KK4DA.5
+:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
+:WRITE_SCOPE: artifact store via orgasmic artifact submit only
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:CLAIM_WRITE_SCOPE: artifact store via orgasmic artifact submit only
+:END:
+
+** Description
+Read all promoted extraction and cross-review reports, submit one final MDX artifact, and report its id.
+
+** Acceptance Criteria
+- [ ] The submitted artifact matches the multi-model final-artifact contract and names every raw-report task.
 
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
@@ -21397,6 +21399,22 @@ Review only the other participants' promoted extraction reports. This is a fresh
 ** Evidence
 - Promoted dispatch report: TASK-KK4DA.3 generation tx-20260829-orgasmic-9df0e611-8e51-46b8-9dde-7c8c8d7c0032
 - Report path: .orgasmic/tasks/TASK-KK4DA.3/dispatches/tx-20260829-orgasmic-9df0e611-8e51-46b8-9dde-7c8c8d7c0032/report.md
+
+* DONE TASK-KK4DA.4 Blind cross-review — claude · anthropic · claude-haiku-4-5-20251001 · effort low
+:PROPERTIES:
+:ID: TASK-KK4DA.4
+:READ_SCOPE: other participants' report paths named in dispatch brief
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
+
+** Acceptance Criteria
+- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
+** Evidence
+- Promoted dispatch report: TASK-KK4DA.4 generation tx-20260829-orgasmic-ca43763c-1196-47d2-9a85-a53cc30e2b13
+- Report path: .orgasmic/tasks/TASK-KK4DA.4/dispatches/tx-20260829-orgasmic-ca43763c-1196-47d2-9a85-a53cc30e2b13/report.md
 
 * DONE TASK-KKBTP pin the credential decision preflight admitted, and stop blocking the runtime in acquire
 :PROPERTIES:
