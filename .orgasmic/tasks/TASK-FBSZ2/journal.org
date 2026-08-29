@@ -206,3 +206,34 @@
 :TO_STATE: in_review
 :EVENT_ID: 071b31a1-2ecb-4c31-957f-8656fae98fa7
 :END:
+
+* tx-20260829-orgasmic-6668 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6668
+:TIME:    [2026-08-29 Sat 19:00:11]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: edited task node TASK-FBSZ2
+:NODE_ID: TASK-FBSZ2
+:EVENT_ID: b9f9ad3b-79be-4fc1-9579-ab47bf77ee5c
+:END:
+
+* tx-20260829-orgasmic-6669 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6669
+:TIME:    [2026-08-29 Sat 19:00:11]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: port merged, review APPROVE, smoke ART-PT7ZX
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 1be612f2-4e3a-466b-bee0-00d0673eb621
+:END:

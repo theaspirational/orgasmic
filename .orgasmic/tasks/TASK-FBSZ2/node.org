@@ -1,8 +1,10 @@
 #+title: orgasmic task TASK-FBSZ2
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
+* DONE TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
 :PROPERTIES:
 :ID: TASK-FBSZ2
 :PRIORITY: P2
 :END:
+** Evidence
+Merges: b8723a5c (native extract verb + report-only close, review APPROVE by claude-fable-5 gen tx-45c4c0ed) and 2c8c81f3 (review fix directions 1-4, red-proofed decoy-Question regression). Smoke: native binary run TASK-8XXEC -> ART-PT7ZX v1, all stage closes implementer.done REPORT_ONLY=true. Gates: cargo test -p orgasmic-cli (274 unit + extract::tests 6/6 incl Python SVG parity fixture), clippy -D warnings, fmt.
