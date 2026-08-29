@@ -4024,3 +4024,58 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-FBSZ2/dispatches/tx-20260829-orgasmic-986ab4a2-a270-4a2b-b637-6fdf839d830c/report.md
 :EVENT_ID:     fbbd8a78-5d62-4a72-999c-01f0188052fd
 :END:
+
+* TX 2026-08-29 Sat 20:53:09 manager.dispatch_started TASK-FAS8R
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-51ccdb36-35f3-4b61-8f45-7847bd5854cb
+:TIME:         [2026-08-29 Sat 20:53:09]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FAS8R
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fas8r
+:BRANCH:       task-fas8r-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-FAS8R/brief-TASK-FAS8R.md
+:STARTED_AT:   [2026-08-29 Sat 20:53:09]
+:LIVENESS:     2c8c81f35e08f4e9cb056b0a946f2baea103c6d8
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: Rename extract to forum umbrella with mode subcommands per operator naming decision
+:EVENT_ID:     df5c7574-d410-47e5-a1ab-8e26b39cda7b
+:END:
+
+* TX 2026-08-29 Sat 20:53:10 run.created TASK-FAS8R
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-04d3bf11-aaa9-4ef6-9d74-3d227d798f3e
+:TIME:         [2026-08-29 Sat 20:53:10]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FAS8R
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FAS8R-implementer-20260829T205308.jsonl
+:REASON:       Rename extract to forum umbrella with mode subcommands per operator naming decision
+:RUN_ID:       run-01M17MRC35MQHY7DGHK45VH8BB
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fas8r
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-FAS8R/brief-TASK-FAS8R.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-FAS8R/brief-TASK-FAS8R-e4e702e49e0442fda49776a585b38a72-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-FAS8R/brief-TASK-FAS8R-e4e702e49e0442fda49776a585b38a72-stdout.log
+:DISPATCH_ATTEMPT: e4e702e49e0442fda49776a585b38a72
+:PID:          97535
+:DISPATCH_TX:  tx-20260829-orgasmic-51ccdb36-35f3-4b61-8f45-7847bd5854cb
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:EVENT_ID:     c1b01fb9-1318-4ff1-83c9-5b3359939a2f
+:END:

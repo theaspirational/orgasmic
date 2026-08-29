@@ -276,6 +276,12 @@ From TASK-4YC8E (2026-07-29): runtime_options.rs:12 declares #[serde(default, al
 
 From TASK-J1XCB (2026-07-29), one 4x64-thread round, one sighting each, all green in isolation: supervisor::tests::implementer_release_cascades_to_auto_spawned_babysitter and implementer_release_twice_is_idempotent_for_cascade (RunNotFound unwraps at supervisor.rs:10425/10614) and babysitter_release_before_implementer_release_is_idempotent ('implementer remains live after babysitter release', :10519). Looks like one cascade-release family racing under starvation harsher than a real gate — J1XCB flagged its harness (4 copies x 64 threads on 10 cores) as possibly not gate-realistic. Diagnose with that caveat: reproduce at gate-realistic concurrency first; if only the extreme harness bites, say so and bound the scope accordingly. Fix at the synchronization if real (R74E8).
 
+* BACKLOG TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target    :feature:
+:PROPERTIES:
+:ID: TASK-295X1
+:PRIORITY: P2
+:END:
+
 * BACKLOG TASK-2B215 hermes records no NativeRuntime, so its transcripts are neither resumable nor attributable    :drivers:hermes:sessions:evidence:
 :PROPERTIES:
 :ID: TASK-2B215
@@ -5332,10 +5338,10 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
-* IN_PROGRESS TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
+* IN_PROGRESS TASK-FAS8R Reshape multi-model surface: rename 'orgasmic extract' to 'orgasmic forum' with mode subcommands (ask; critique later) :feature:
 :PROPERTIES:
-:ID: TASK-FBSZ2
-:PRIORITY: P2
+:ID: TASK-FAS8R
+:PRIORITY: P1
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
@@ -15906,6 +15912,15 @@ Wire daemon's tracing-subscriber to honor =RUST_LOG=. Look at =crates/orgasmic-c
 
 ** Reviewer pass
 **SKIPPED per =:FIX_SUBTASK: t= one-round-of-fixes discipline.** TASK-FB8CK.4 had its reviewer pass; 045.6 is the fix-subtask. Manager live-verified per the brief's acceptance gate.
+
+* DONE TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
+:PROPERTIES:
+:ID: TASK-FBSZ2
+:PRIORITY: P2
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
+** Evidence
+Merges: b8723a5c (native extract verb + report-only close, review APPROVE by claude-fable-5 gen tx-45c4c0ed) and 2c8c81f3 (review fix directions 1-4, red-proofed decoy-Question regression). Smoke: native binary run TASK-8XXEC -> ART-PT7ZX v1, all stage closes implementer.done REPORT_ONLY=true. Gates: cargo test -p orgasmic-cli (274 unit + extract::tests 6/6 incl Python SVG parity fixture), clippy -D warnings, fmt.
 
 * DONE TASK-FG7FD Upgrade rmux to 0.9 and harden macOS daemon lifecycle :drivers:rmux:macos:hardening:
 :PROPERTIES:
