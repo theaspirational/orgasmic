@@ -13,3 +13,182 @@ Answer the parent run question independently. This is report-only; do not edit p
 
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
+** Evidence
+# Extraction Report: Append-Only Event Records vs In-Place Mutable State for Local-First Developer Tools
+
+## Participant
+
+hermes · openai · gpt-5.6-luna · effort low
+
+## Direct Answer
+
+A local-first developer tool should prefer append-only event records over in-place mutable state when the tool must preserve an auditable history of what happened, survive crash/restart without losing or corrupting that history, and allow recovery reasoning after partial failures. It should prefer in-place mutable state for current presentation — the "what is true right now" surface — because reconstructing the current state from an ever-growing event log on every read becomes prohibitively expensive as the log grows, and ergonomic editing of working content (task bodies, decision prose, user-authored templates) demands direct file access.
+
+The two patterns are not alternatives but complements: append-only event logs are the durable authority for *what happened*, while mutable in-place files are the derived or edited *current state*. The orgasmic codebase embodies this split directly: transaction log entries (`tx.rs`) and session JSONL files (`session.rs`) are append-only audit artifacts, while `node.org` files hold the current heading/body state and are rewritten in place through the daemon writer, and `views/` are fully disposable derived aggregates rebuilt from the nodes.
+
+Snapshots or compaction are required when these failure modes appear:
+
+1. **Unbounded growth** — the append-only log grows without limit, making reads and recovery progressively slower.
+2. **Rebuild cost exceeding read latency budget** — folding the entire event log to derive current state takes longer than the UI or recovery path can tolerate.
+3. **Derived-state corruption** — a cached projection (like a run catalog) becomes inconsistent with the authoritative event log and must be safely rebuilt.
+4. **Irreversible maintenance** — reclaiming space by deleting old log records requires proving the deletion is safe from the current bytes, not from a stale cache, or the only record of what a worker did is lost.
+5. **Cross-process or cross-machine concurrent mutation** — multiple writers need a serialization authority that an append-only log alone does not provide without a single-writer daemon.
+
+## Claims and Evidence
+
+### Claim 1: Append-only event logs provide crash-safe audit trails that survive partial writes
+
+**Confidence:** High (verified in code)
+
+The tx writer opens files in append mode with a single serialized handle per file. Every entry is a self-contained Org heading with a property drawer — no free body, no nested structure that could be half-written. The writer validates and round-trips each entry *before* a byte reaches disk: `assert_round_trip` composes, re-parses, and compares the entry, refusing anything that would not read back identically.
+
+Evidence: `crates/orgasmic-core/src/tx.rs:4-6` — "Tx files are append-only audit artifacts. Every entry is an Org top-level heading immediately followed by a property drawer and nothing else." The round-trip guard is at `tx.rs:346-386`: "a ledger that only accepts what it can read back cannot be bricked by its own writer."
+
+**Verification:** Read `crates/orgasmic-core/src/tx.rs` lines 1–65 and 329–386.
+
+### Claim 2: A single serialized writer is the authoritative concurrency model, not file-level locking
+
+**Confidence:** High (verified in code)
+
+The daemon owns one `WriterHandle` that processes all mutations through a single mpsc channel, giving total write ordering. Tx appends, session appends, and file rewrites all go through this one queue. The design comment states: "Every mutation goes through one mpsc channel, so write ordering is total and append handles never race."
+
+Evidence: `crates/orgasmic-daemon/src/writer.rs:5-13`. The decision record `dec_WH9PD` states: "The daemon serializes tx, sessions, graph files, snapshots, and generated artifacts, while selected working files remain directly editable through RPC and advisory flock."
+
+**Verification:** Read `crates/orgasmic-daemon/src/writer.rs` lines 1–30; `dec_WH9PD` Context + Decision.
+
+### Claim 3: Session JSONL is append-only with per-line fsync for durability, but lifecycle truth clusters at both ends, not the middle
+
+**Confidence:** High (verified in code + gotchas.org)
+
+Each session JSONL line is a self-contained JSON object, flushed and fsync'd on every append (`session.rs:264-267`). However, the gotchas record a critical finding: on a real 198-file board with 2.239 GiB of session JSONL, the vast majority of bytes were `text_chunk` driver events with no lifecycle meaning. Lifecycle truth (`acquire`, `run_meta`, `ready` at the start; `release`, terminal events at the end) clusters in the first and last few KiB. This is why `scan_session_lifecycle` reads only a bounded prefix/tail window instead of the whole file.
+
+Evidence: `crates/orgasmic-core/src/session.rs:149-272` (append-only writer with per-line fsync); `gotchas.org` "Session JSONL is transcript-shaped, and lifecycle lives at both ends" — "Lifecycle truth clusters at both ends of a file: `acquire`, `run_meta`, `native_runtime` and the first `ready` sit within the first tens of KiB, and `release` and the terminal driver event sit within the last few KiB."
+
+**Verification:** Read `session.rs:228-272`; search `gotchas.org` for "Session JSONL is transcript-shaped."
+
+### Claim 4: Compaction (space reclamation from append-only logs) must re-derive deletion authority from current bytes, never from a derived cache
+
+**Confidence:** High (verified in code + decision record)
+
+The run-history compaction system (`run_history.rs`) is the codebase's concrete answer to "which failure modes require snapshots or compaction." Session JSONL files accumulate rendered TUI payload and oversized tool outputs. The compaction transaction re-derives every fact that authorizes deletion from the session file's *current bytes* at planning time and again immediately before the file is touched. The catalog (a durable snapshot) provides only the candidate path list — never deletion authority.
+
+Evidence: `crates/orgasmic-daemon/src/run_history.rs:14-25` — "Where authority cannot be proven from the current bytes, refuse rather than delete (dec_BBPW4). A refused compaction costs a re-scan; a wrong one costs the only record of what a worker did." `dec_BBPW4` item 1: "The catalog stays a cache. Maintenance uses it for ONE thing: the candidate path list."
+
+**Verification:** Read `run_history.rs:1-62`; `dec_BBPW4` items 1–2.
+
+### Claim 5: A durable snapshot (run-catalog.json) is safe to ship only because it is derived state that can always be discarded and rebuilt
+
+**Confidence:** High (verified in code)
+
+The run catalog is a compact per-run record validated by file identity (device/inode/length/mtime). Its authority comment is explicit: "The catalog is derived state and never authority. Session JSONL decides; the catalog only remembers what a bounded read of it already said. Every failure mode therefore has the same answer — discard and rebuild." The snapshot format is versioned (`CATALOG_VERSION = 2`); a version mismatch causes discard and re-indexing rather than trusting an unknown record shape.
+
+Evidence: `crates/orgasmic-daemon/src/run_catalog.rs:37-43` — "The catalog is **derived state and never authority**... Every failure mode therefore has the same answer — discard and rebuild." Version handling at `run_catalog.rs:57-67`.
+
+**Verification:** Read `run_catalog.rs:1-80`.
+
+### Claim 6: Mutable in-place state is appropriate for current-content files that humans edit ergonomically
+
+**Confidence:** High (verified in decision record)
+
+`dec_WH9PD` explicitly chose role-based write authority rather than append-only everywhere: "Append-only everywhere gives strong audit semantics but poor ergonomics for tasks, prompts, and templates; direct edits everywhere give simple files but weak auditability and race protection for graph state." The split: the daemon serializes audit-critical files (tx, sessions, graph state) while working content (task bodies, user-authored templates) remains directly editable through RPC with advisory flock.
+
+Evidence: `dec_WH9PD` Context and Decision sections.
+
+**Verification:** Read `dec_WH9PD` node.org.
+
+### Claim 7: Per-line fsync on append-only files creates a performance ceiling that demands bounded reads and compaction
+
+**Confidence:** Medium-High (verified in code + gotchas.org)
+
+`SessionWriter::append` calls `flush()` + `sync_all()` on every single line (`session.rs:266-267`). This guarantees durability but the gotchas record that "building a multi-megabyte fixture through it takes tens of seconds." The 2.239 GiB real-world board incident directly motivated both the bounded-window lifecycle scanner and the compaction system. A per-payload byte cap (`DRIVER_EVENT_PAYLOAD_CAP_BYTES = 16 KiB`) was introduced to bound what enters the append-only log, and rendered TUI payload is refused entirely rather than bounded.
+
+Evidence: `session.rs:266` (`self.file.sync_all()?`); `session.rs:331-410` (retention tiers and payload cap); `gotchas.org` — "SessionWriter::append does flush + sync_all on every line, so building a multi-megabyte fixture through it takes tens of seconds."
+
+**Verification:** Read `session.rs:228-272` and `session.rs:331-410`.
+
+### Claim 8: Node directories combine both patterns: mutable current-state file + append-only journal
+
+**Confidence:** High (verified in code + decision record)
+
+The node kernel (`dec_E01MC`) gives every entity type a directory with `node.org` (the current content, rewritten in place) and `journal.org` (append-only events: comments, state changes, regenerations). This is the explicit synthesis: the mutable file holds "what is true now" and the append-only journal holds "what happened." State changes are property edits in the small mutable file; the journal records that and why a regeneration happened. Prior version history lives in git, not in the mutable file.
+
+Evidence: `crates/orgasmic-core/src/node_kernel.rs:1-12` — "A node is a directory holding `node.org` (the current content) and `journal.org` (append-only entries)." `dec_E01MC` Decision: "node.org holds only the current version — git history holds prior versions and the journal records that and why a regeneration happened."
+
+**Verification:** Read `node_kernel.rs:1-48`; `dec_E01MC` Decision section.
+
+## Unique or Easily Missed Findings
+
+### 1. The append-only log can brick itself if a malformed entry is written
+
+The tx format is deliberately property-drawer-only with single-line values. A newline written verbatim into a property drawer terminates it early, pushing remaining properties outside the drawer — and the append-only log stops parsing for *every reader, including the repair verbs*. This is why `validate()` and `assert_round_trip()` run before any byte is written. This failure mode is specific to append-only logs with structured formats: a corrupt entry does not just lose itself, it can make the entire log unreadable from that point forward, including by the tools that would fix it.
+
+Evidence: `tx.rs:330-338` — "A newline written verbatim into the drawer ends it early: the remaining properties land outside, and the append-only ledger stops parsing for *every* reader — including the verbs an operator would use to repair it."
+
+### 2. macOS append-mode files are not readable by the same descriptor
+
+On macOS, `OpenOptions::new().append(true)` returns `EBADF` on read. An append-only writer cannot seek/read its own descriptor to decide on a leading blank line. The fix (encoded in `arch_BVH7M.2`) is to read the file with `std::fs::read` *before* opening the append handle. This is a platform-specific gotcha that affects append-only event record design on macOS specifically.
+
+Evidence: `gotchas.org` — "macOS append-mode files are not readable... `OpenOptions::new().append(true)` returns `EBADF` on read."
+
+### 3. The compaction transaction is a journalled state machine, not a simple delete
+
+Compaction does not simply delete old records. It archives the original bytes, builds a replacement from those same bytes, stages it in a sibling file, journals the staged image's digest, re-verifies the live file has not moved, then renames. Every journal write is fsync'd and every rename is followed by a parent-directory fsync. Rollback restores every archived original and refuses any destination that does not hold a byte image the transaction recorded. This level of care is necessary because compaction is the one operation that can destroy the append-only log's own evidence.
+
+Evidence: `run_history.rs:27-52` — the five-step transaction shape with durable journalling.
+
+### 4. A tombstone (terminal run verdict) must live in a durable file outside the disposable cache
+
+A subtle finding from `dec_BBPW4`: "the catalog is disposable derived state" and "a tombstone never revives" could not both be true if the tombstone lived only in the cache. Prune → tombstone → catalog loss → path reuse could re-derive `Verified` from a same-project checkout at the recorded path, and a dead run would become an attach candidate again. The fix: terminal verdicts need a durable source OUTSIDE the thing that is allowed to be thrown away. This is a non-obvious interaction between compaction (cache disposal) and recovery (terminal state permanence).
+
+Evidence: `run_catalog.rs:72-81` — "A terminal verdict needs a durable source OUTSIDE the thing that is allowed to be thrown away, so it has one."
+
+### 5. Derived views are fully disposable and rebuilt on demand
+
+`views.rs` rebuilds aggregate views (board.org, glossary.org, decisions.org) from node directories on every call, writing only if the content changed. These are throwaway projections — directories are truth, views are disposable. This means the read path for "list all tasks" does not consult a mutable aggregate file but re-derives from the authoritative per-node files. The tradeoff is explicit in `dec_E01MC`: "reading a whole collection now needs derived read views (directories are truth, views are throwaway)."
+
+Evidence: `crates/orgasmic-core/src/views.rs:26-45`; `dec_E01MC` Consequences.
+
+### 6. Payload bounding is a first-class concern in append-only session logs
+
+The session writer does not just append — it bounds every `driver_event` payload through a three-tier cap: per-payload (16 KiB), per-subtree (digest if the bounded children still exceed cap), and per-event (digest largest-first until the whole serialized event fits). Structural keys (`type`, `call_id`, `name`, `ok`, `seq`) are the last thing lost, never the first. This is because an append-only log without bounding becomes unbounded growth that no compaction can tame cheaply.
+
+Evidence: `session.rs:424-496` — `bound_driver_event_payload` with three-tier bounding.
+
+## Uncertainties and Contradictions Within This Report
+
+1. **Snapshots vs compaction distinction is blurry in the codebase.** The run-catalog is called a "snapshot" (`CATALOG_REL_PATH`, `CATALOG_VERSION`) but it functions as a derived cache, not a point-in-time snapshot of the event log. The compaction system archives original bytes (which is snapshot-like) but its purpose is space reclamation (which is compaction). The terminology overlaps; I have used "snapshot" for the durable catalog file and "compaction" for the space-reclamation transaction, following the codebase's own naming.
+
+2. **The report draws primarily from one codebase (orgasmic).** The question is general ("a local-first developer tool"), but the strongest evidence comes from orgasmic's own implementation. The patterns described (event sourcing, CQRS, durable audit logs) are well-established in broader systems design, but I have not independently verified claims about other tools (e.g., git's object model, SQLite's WAL, Linear's event log) against primary sources in this report.
+
+3. **The "when to prefer" framing may understate that the choice is rarely binary.** The orgasmic case shows a hybrid: append-only for audit/session, mutable for current content, derived for projections. A purely append-only tool would face severe ergonomics penalties for human-edited content; a purely mutable tool would lose audit capability. The answer "prefer append-only when..." should be read as "use append-only for the audit/durability layer when..."
+
+4. **The per-line fsync performance claim is measured, not benchmarked here.** The gotchas entry reports tens of seconds for multi-megabyte fixtures and a 2.239 GiB real-world board, but I did not re-run these measurements. The design response (bounded reads, payload caps, compaction) is verified in code; the raw performance numbers are taken from the project's own recorded measurements.
+
+## Verification Targets
+
+1. **Append-only tx format with round-trip guard:** `crates/orgasmic-core/src/tx.rs:329-386` — read `assert_round_trip` and `validate` methods.
+2. **Single-writer serialization:** `crates/orgasmic-daemon/src/writer.rs:1-30` — read the module doc comment.
+3. **Session JSONL append with per-line fsync:** `crates/orgasmic-core/src/session.rs:228-272` — read `SessionWriter::append`.
+4. **Compaction re-derives authority from current bytes:** `crates/orgasmic-daemon/src/run_history.rs:14-52` — read the module doc comment.
+5. **Catalog is derived, never authority:** `crates/orgasmic-daemon/src/run_catalog.rs:37-43` — read the authority section.
+6. **Node kernel hybrid pattern:** `crates/orgasmic-core/src/node_kernel.rs:1-48` — read the module doc comment.
+7. **Decision rationale for the split:** `dec_WH9PD` (file authority), `dec_R75SW` (format choice), `dec_E01MC` (node kernel), `dec_BBPW4` (compaction authority).
+8. **Payload bounding:** `crates/orgasmic-core/src/session.rs:424-496` — read `bound_driver_event_payload`.
+
+## Sources Consulted
+
+1. `crates/orgasmic-core/src/tx.rs` — append-only tx ledger writer and format (read lines 1–500)
+2. `crates/orgasmic-core/src/session.rs` — append-only JSONL session writer with payload bounding (read lines 1–500)
+3. `crates/orgasmic-daemon/src/writer.rs` — single serialized writer for all mutations (read lines 1–500)
+4. `crates/orgasmic-daemon/src/run_catalog.rs` — compact derived run catalog, disposable and rebuildable (read lines 1–80)
+5. `crates/orgasmic-daemon/src/run_history.rs` — compaction transaction with byte-level authority re-derivation (read lines 1–120)
+6. `crates/orgasmic-core/src/node_kernel.rs` — hybrid node directory schema (read lines 1–80)
+7. `crates/orgasmic-core/src/views.rs` — disposable derived aggregate views (read lines 1–80)
+8. `crates/orgasmic-daemon/src/ledger_sync.rs` — git transport for ledger worktree (read lines 1–60)
+9. `.orgasmic/decisions/dec_WH9PD/node.org` — file write authority decision
+10. `.orgasmic/decisions/dec_R75SW/node.org` — audit log and transcript format decision
+11. `.orgasmic/decisions/dec_E01MC/node.org` — unified node kernel decision
+12. `.orgasmic/decisions/dec_BBPW4/node.org` — run-history maintenance authority decision
+13. `.orgasmic/decisions/dec_WDR5K/node.org` — worker template retirement (transcript/harness-native truth)
+14. `.orgasmic/gotchas.org` — durable code-level traps including session JSONL shape, macOS append-mode, and compaction pitfalls
+15. `.orgasmic/project.org` — project mission, operating constraints, and verification rules
