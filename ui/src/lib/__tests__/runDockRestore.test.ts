@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createElement, useEffect } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { restorableStoredTabs, RunDockProvider, useRunDock } from '../runDock';
 import type { RunSummary } from '../types';
@@ -47,22 +47,62 @@ function LateSyncProbe({ runs, runId }: { runs: RunSummary[]; runId: string }) {
 }
 
 function OpenChatProbe() {
-  const { activeTabId, open, openChat } = useRunDock();
+  const { activeTabId, height, open, openChat, setHeight } = useRunDock();
   return createElement(
     'div',
     null,
     createElement('button', { onClick: openChat }, 'Open chat'),
+    createElement('button', { onClick: () => setHeight(0.5) }, 'Set half height'),
     createElement('output', { 'aria-label': 'active dock surface' }, activeTabId ?? 'none'),
     createElement('output', { 'aria-label': 'dock open' }, String(open)),
+    createElement('output', { 'aria-label': 'dock height' }, String(height)),
+  );
+}
+
+function setMobileViewport(matches: boolean) {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn(() => ({
+      matches,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
   );
 }
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe('persisted Run Dock restore eligibility', () => {
+  it('opens full-screen on mobile without overwriting the remembered desktop height', () => {
+    window.localStorage.setItem('orgasmic.rundock.height.v1', '0.4');
+    setMobileViewport(true);
+    render(createElement(RunDockProvider, null, createElement(OpenChatProbe)));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set half height' }));
+    expect(screen.getByLabelText('dock height').textContent).toBe('0.5');
+    expect(window.localStorage.getItem('orgasmic.rundock.height.v1')).toBe('0.4');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
+    expect(screen.getByLabelText('dock height').textContent).toBe('1');
+    expect(window.localStorage.getItem('orgasmic.rundock.height.v1')).toBe('0.4');
+  });
+
+  it('restores and updates the remembered height on desktop', () => {
+    window.localStorage.setItem('orgasmic.rundock.height.v1', '0.4');
+    setMobileViewport(false);
+    render(createElement(RunDockProvider, null, createElement(OpenChatProbe)));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
+    expect(screen.getByLabelText('dock height').textContent).toBe('0.4');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set half height' }));
+    expect(window.localStorage.getItem('orgasmic.rundock.height.v1')).toBe('0.5');
+  });
+
   it('opens Chat as a pinned surface without creating a run tab', () => {
     render(createElement(RunDockProvider, null, createElement(OpenChatProbe)));
 

@@ -4,6 +4,7 @@ import {
   ChevronDown,
   History,
   Loader2,
+  Maximize2,
   MessageCircle,
   Plus,
   Power,
@@ -162,11 +163,13 @@ export function DockTaskbar({
   chatActive,
   buttons,
   activeTabId,
+  maximized,
   onTerminalLaunch,
   onChatOpen,
   onSelect,
   onStop,
   onDismiss,
+  onMaximize,
   onMinimize,
   onRestore,
   resizeHandlers,
@@ -179,11 +182,13 @@ export function DockTaskbar({
   chatActive: boolean;
   buttons: TaskbarRunButton[];
   activeTabId: string | null;
+  maximized: boolean;
   onTerminalLaunch: () => void;
   onChatOpen: () => void;
   onSelect: (button: TaskbarRunButton) => void;
   onStop: (button: TaskbarRunButton) => void;
   onDismiss: (button: TaskbarRunButton) => void;
+  onMaximize: () => void;
   onMinimize: () => void;
   /** Raises the last surface when the collapsed dock background is clicked. */
   onRestore: () => void;
@@ -309,10 +314,24 @@ export function DockTaskbar({
         {open ? (
           <>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+            {!maximized ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11 sm:size-8"
+                aria-label="Expand dock to full screen"
+                title="Expand dock to full screen"
+                onClick={onMaximize}
+              >
+                <Maximize2 />
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
+              className="size-11 sm:size-7"
               aria-label="Minimize dock"
               title="Minimize dock"
               onClick={onMinimize}

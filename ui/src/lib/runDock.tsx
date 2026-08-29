@@ -18,6 +18,15 @@ const OPEN_TABS_KEY = 'orgasmic.rundock.open-tabs.v1';
 const OPEN_KEY = 'orgasmic.rundock.open.v1';
 const ACTIVE_TAB_KEY = 'orgasmic.rundock.active-tab.v1';
 const HEIGHT_KEY = 'orgasmic.rundock.height.v1';
+const MOBILE_DOCK_MEDIA = '(max-width: 639px)';
+
+function isMobileDockViewport(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(MOBILE_DOCK_MEDIA).matches
+  );
+}
 
 /** The project chat is a pinned dock surface rather than a disposable run tab. */
 export const CHAT_TAB_ID = 'chat';
@@ -48,7 +57,7 @@ type RunDockContextValue = {
   activeTabId: string | null;
   setHeight: (height: number) => void;
   setActiveTab: (tabId: string) => void;
-  /** Raise a run: select it and show the panel at the remembered height. */
+  /** Raise a run: full-screen on mobile, remembered height on desktop. */
   openRun: (options: OpenRunOptions) => void;
   /** Raise the project's pinned native-provider chat surface. */
   openChat: () => void;
@@ -113,6 +122,7 @@ function readStoredActiveTab(): string | null {
 
 function readStoredHeight(): number {
   if (typeof window === 'undefined') return DEFAULT_DOCK_HEIGHT;
+  if (isMobileDockViewport()) return DEFAULT_DOCK_HEIGHT;
   const raw = window.localStorage.getItem(HEIGHT_KEY);
   const parsed = raw === null ? Number.NaN : Number(raw);
   // An unresized dock opens full-screen; a dragged one reopens where the user
@@ -144,8 +154,16 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
   const setHeight = useCallback((next: number) => {
     const clamped = clampDockHeight(next);
     setHeightState(clamped);
-    if (typeof window !== 'undefined')
+    // Mobile height is session-only: every raise starts full-screen, and a
+    // phone drag must not replace the desktop height remembered in this key.
+    if (typeof window !== 'undefined' && !isMobileDockViewport())
       window.localStorage.setItem(HEIGHT_KEY, String(clamped));
+  }, []);
+
+  const raise = useCallback(() => {
+    if (isMobileDockViewport()) setHeightState(DEFAULT_DOCK_HEIGHT);
+    setOpen(true);
+    if (typeof window !== 'undefined') window.localStorage.setItem(OPEN_KEY, '1');
   }, []);
 
   const minimize = useCallback(() => {
@@ -245,17 +263,15 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       if (!isRunDockEligible(liveRun ?? { driver })) return;
       setTabs((prev) => applyWorkerTabUpdate(prev, runId, draftPrompt));
       setActiveTabId(runId);
-      setOpen(true);
-      if (typeof window !== 'undefined') window.localStorage.setItem(OPEN_KEY, '1');
+      raise();
     },
-    [setActiveTabId],
+    [raise, setActiveTabId],
   );
 
   const openChat = useCallback(() => {
     setActiveTabId(CHAT_TAB_ID);
-    setOpen(true);
-    if (typeof window !== 'undefined') window.localStorage.setItem(OPEN_KEY, '1');
-  }, [setActiveTabId]);
+    raise();
+  }, [raise, setActiveTabId]);
 
   const closeTab = useCallback(
     (tabId: string) => {

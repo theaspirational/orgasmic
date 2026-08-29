@@ -24,7 +24,11 @@ import {
 } from '@/lib/api';
 import { useContainedWheelRef } from '@/lib/containedWheel';
 import { CHAT_TAB_ID, useRunDock } from '@/lib/runDock';
-import { dockHeightFromDrag, DOCK_DRAG_THRESHOLD_PX } from '@/lib/runDockUtils';
+import {
+  dockHeightFromDrag,
+  DOCK_DRAG_THRESHOLD_PX,
+  MAX_DOCK_HEIGHT,
+} from '@/lib/runDockUtils';
 import { runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RunSummary } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -170,6 +174,7 @@ export function RunDock() {
   const chatRun = projectRuns.managers.find(isNativeChatRun) ?? null;
   const occupiedManager = projectRuns.managers.find((run) => !isNativeChatRun(run)) ?? null;
   const chatActive = activeTabId === CHAT_TAB_ID && open;
+  const maximized = height >= MAX_DOCK_HEIGHT;
 
   const raiseLastTab = useCallback(() => {
     if (activeTabId === CHAT_TAB_ID) {
@@ -451,18 +456,18 @@ export function RunDock() {
         // down to the screen edge. box-content grows the panel by the inset so
         // content stays uncropped; a full-height dock keeps border-box and pads
         // inward within the viewport. No-op off-Android.
-        open && height >= 1 ? 'box-border' : 'box-content',
+        open && maximized ? 'box-border' : 'box-content',
       )}
       style={{
         // The taskbar is always visible; the panel adds its fraction on top.
-        height: open ? `max(3rem, ${(height * 100).toFixed(2)}vh)` : '3rem',
+        height: open ? `max(3rem, ${(height * 100).toFixed(2)}dvh)` : '3rem',
         paddingBottom: 'var(--safe-bottom)',
         paddingLeft: 'var(--safe-left)',
         paddingRight: 'var(--safe-right)',
-        ...(open && height >= 1 ? { paddingTop: 'var(--safe-top)' } : null),
+        ...(open && maximized ? { paddingTop: 'var(--safe-top)' } : null),
       }}
-      role={open && height >= 1 ? 'dialog' : undefined}
-      aria-modal={open && height >= 1 ? true : undefined}
+      role={open && maximized ? 'dialog' : undefined}
+      aria-modal={open && maximized ? true : undefined}
       aria-label="Run Dock"
     >
       <DockTaskbar
@@ -472,6 +477,7 @@ export function RunDock() {
         chatActive={chatActive}
         buttons={taskbarButtons}
         activeTabId={activeTabId}
+        maximized={maximized}
         onTerminalLaunch={() => void handleTerminalLaunch()}
         onChatOpen={() => {
           if (chatActive) minimize();
@@ -480,6 +486,7 @@ export function RunDock() {
         onSelect={handleSelectButton}
         onStop={(button) => void handleStopRun(button)}
         onDismiss={(button) => closeTab(button.tabId)}
+        onMaximize={() => setHeight(MAX_DOCK_HEIGHT)}
         onMinimize={minimize}
         onRestore={raiseLastTab}
         resizeHandlers={resizeHandlers}

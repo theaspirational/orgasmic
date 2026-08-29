@@ -242,6 +242,22 @@ afterEach(() => {
 });
 
 describe('AppShell protected-route auth gate', () => {
+  it('keeps routed content beneath an opaque project-tabs header', async () => {
+    installFetch((path) => {
+      if (path === '/api/auth/whoami') {
+        return jsonResponse({ authenticated: true, boot_id: 'boot-test' });
+      }
+      return undefined;
+    });
+
+    const { container } = renderShell();
+
+    await screen.findByText('Protected artifact loaded');
+    const header = container.querySelector('header');
+    expect(header).toHaveClass('z-20', 'bg-background', 'sm:bg-background/85');
+    expect(header).not.toHaveClass('bg-background/85');
+  });
+
   it('keeps the deep-linked route fetch unmounted until a first member login finishes, then loads without reload', async () => {
     pendingMe = defer<Response>();
     installFetch();

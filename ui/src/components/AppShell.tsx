@@ -395,7 +395,7 @@ export function AppShell() {
         </Sidebar>
         <SidebarInset>
           <header
-            className="sticky top-0 z-10 flex items-center gap-2 border-b bg-background/85 backdrop-blur"
+            className="sticky top-0 z-20 flex items-center gap-2 border-b bg-background sm:bg-background/85 sm:backdrop-blur"
             style={{
               // Edge-to-edge on Android: keep the bar clear of the status bar
               // (and a side notch in landscape) while its background still

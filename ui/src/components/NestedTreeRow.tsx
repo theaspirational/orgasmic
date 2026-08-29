@@ -117,40 +117,49 @@ export function NestedTreeRow({
         label={`${nodeKind} id ${nodeId}`}
         className="absolute top-0.5 z-10 h-4 origin-top-left scale-[0.6] rounded-sm bg-background px-1 text-[10px] leading-none text-muted-foreground left-[var(--tree-row-left-mobile)] sm:left-[var(--tree-row-left-desktop)]"
       />
-      <div
-        {...openProps}
-        role="button"
-        tabIndex={0}
-        aria-label={openLabel}
-        onClick={onOpen}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return;
-          event.preventDefault();
-          onOpen();
-        }}
-        className="flex min-h-11 w-full items-start gap-2 pb-1 pr-10 pt-4 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none pl-[var(--tree-row-left-mobile)] sm:pl-[var(--tree-row-left-desktop)]"
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span
-              className={cn(
-                'min-w-0 text-[13px] font-medium leading-4',
-                titleLines === 2 ? 'line-clamp-2' : 'truncate',
-              )}
-            >
-              {title}
-            </span>
-            {titleAdornment}
-          </div>
-          {secondary ? (
-            <div className="truncate text-[10px] leading-3.5 text-muted-foreground">
-              {secondary}
+      <div className={cn('flex w-full items-start', corner && 'flex-col sm:flex-row')}>
+        <div
+          {...openProps}
+          role="button"
+          tabIndex={0}
+          aria-label={openLabel}
+          onClick={onOpen}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            onOpen();
+          }}
+          className={cn(
+            'flex min-h-11 min-w-0 flex-1 items-start gap-2 pb-1 pt-4 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none pl-[var(--tree-row-left-mobile)] sm:pl-[var(--tree-row-left-desktop)]',
+            corner ? 'pr-4 sm:pr-2' : 'pr-10',
+          )}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={cn(
+                  'min-w-0 text-[13px] font-medium leading-4',
+                  titleLines === 2 ? 'line-clamp-2' : 'truncate',
+                )}
+              >
+                {title}
+              </span>
+              {titleAdornment}
             </div>
-          ) : null}
+            {secondary ? (
+              <div className="truncate text-[10px] leading-3.5 text-muted-foreground">
+                {secondary}
+              </div>
+            ) : null}
+          </div>
+          {meta ? <div className="flex shrink-0 items-center gap-1">{meta}</div> : null}
         </div>
-        {meta ? <div className="flex shrink-0 items-center gap-1">{meta}</div> : null}
+        {corner ? (
+          <div className="z-10 flex w-full shrink-0 justify-end pb-1 pl-[var(--tree-row-left-mobile)] pr-4 sm:w-auto sm:pb-0 sm:pl-0 sm:pr-6 sm:pt-1">
+            {corner}
+          </div>
+        ) : null}
       </div>
-      {corner ? <div className="absolute right-4 top-1 sm:right-6">{corner}</div> : null}
       {action ? (
         <div
           className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center"

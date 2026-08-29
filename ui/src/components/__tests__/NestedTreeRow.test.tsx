@@ -85,4 +85,23 @@ describe('NestedTreeRow', () => {
       'line-clamp-2',
     );
   });
+
+  it('keeps a wide corner control in flow without overlaying the title', () => {
+    render(
+      <NestedTreeRow
+        depth={2}
+        nodeId="TASK-O2JJW.2"
+        nodeKind="task"
+        title="Extract — hermes · google gemini 3 flash chrome"
+        corner={<span>Implementer-hermes-studio · working</span>}
+        onOpen={vi.fn()}
+        openLabel="Open TASK-O2JJW.2"
+      />,
+    );
+
+    const corner = screen.getByText('Implementer-hermes-studio · working').parentElement;
+    expect(corner).toHaveClass('shrink-0');
+    expect(corner).not.toHaveClass('absolute');
+    expect(corner?.parentElement).toHaveClass('flex', 'flex-col', 'sm:flex-row');
+  });
 });
