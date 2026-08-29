@@ -1359,3 +1359,16 @@
 :TARGET:       .orgasmic/tasks/TASK-295X1
 :EVENT_ID:     418ca708-4601-4411-ae15-dd4c872cb505
 :END:
+
+* TX 2026-08-29 Sat 23:38:35.831949 task.claimed TASK-295X1
+:PROPERTIES:
+:TX_ID:        tx-20260829233835-8fb8acd2
+:TIME:         [2026-08-29 Sat 23:38:35.831949]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-295X1
+:TARGET:       .orgasmic/tasks/TASK-295X1
+:EVENT_ID:     4bb2a585-6b12-4e9a-b82a-9100d8d5f5fd
+:END:

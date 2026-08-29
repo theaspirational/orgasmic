@@ -5310,15 +5310,6 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
-* IN_PROGRESS TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target :feature:
-:PROPERTIES:
-:ID: TASK-295X1
-:PRIORITY: P2
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:END:
-** Description
-Add the second forum mode: `orgasmic forum critique` — N models blindly critique a supplied target document, cross-review each other's critiques (self-excluding), and a curator synthesizes a prioritized verdict artifact. Reuses forum ask machinery: dispatch pipeline, deterministic SVG, placeholder assembly, About-this-run footer, headline titling.
-
 * IN_PROGRESS TASK-2XT9J Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-2XT9J
@@ -5386,6 +5377,15 @@ Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthro
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+
+* IN_REVIEW TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target :feature:
+:PROPERTIES:
+:ID: TASK-295X1
+:PRIORITY: P2
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
+** Description
+Add the second forum mode: `orgasmic forum critique` — N models blindly critique a supplied target document, cross-review each other's critiques (self-excluding), and a curator synthesizes a prioritized verdict artifact. Reuses forum ask machinery: dispatch pipeline, deterministic SVG, placeholder assembly, About-this-run footer, headline titling.
 
 * IN_REVIEW TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
 :PROPERTIES:
