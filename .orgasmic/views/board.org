@@ -2883,6 +2883,19 @@ to close, surviving in the two places the new audit cannot reach.
 
 From TASK-BCYMM (2026-07-29): the pre-suite sighting showed the exec -a worker-server child OUTLIVING a group TERM that took its siblings — BCYMM's fixture reap is immune (unconditional KILL), but production's subprocess_stream_json::reap_process_group TERMs a group containing exactly this process shape (cursor-agent's node worker-server) and waits on the LEADER as its liveness proxy. Measure whether the 2s grace can return early while a worker-server descendant is still alive; if yes, the wait should cover the group (poll the pgid member count, or KILL unconditionally after grace like the test twin). Small, measurement-first.
 
+* BACKLOG TASK-NMV4P.2 Extract — hermes · google · gemini-3.7-flash · effort low
+:PROPERTIES:
+:ID: TASK-NMV4P.2
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+
 * BACKLOG TASK-NTNK0 The rmux shim's tmux shadowing is documented but not defaulted, and two workers lost tmux coverage to it in one session    :drivers:rmux:testing:dispatch:
 :PROPERTIES:
 :ID: TASK-NTNK0
@@ -5217,6 +5230,19 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
 
+* TODO TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-NMV4P.1
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+
 * IN_PROGRESS TASK-02JJW Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-02JJW
@@ -5253,21 +5279,6 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
-
-* IN_PROGRESS TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
-:PROPERTIES:
-:ID: TASK-NMV4P.1
-:READ_SCOPE: question in dispatch brief; public or repository sources as needed
-:WRITE_SCOPE: none; dispatch report only
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:CLAIM_WRITE_SCOPE: none; dispatch report only
-:END:
-
-** Description
-Answer the parent run question independently. This is report-only; do not edit project source.
-
-** Acceptance Criteria
-- [ ] A standalone evidence-led extraction report is promoted.
 
 * IN_PROGRESS TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
 :PROPERTIES:

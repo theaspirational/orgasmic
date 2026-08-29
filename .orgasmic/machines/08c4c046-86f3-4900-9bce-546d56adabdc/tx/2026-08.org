@@ -1665,3 +1665,22 @@
 :EFFORT_OVERRIDE: low
 :EVENT_ID:     4f7e289a-d635-49b1-81a7-586ec3fce233
 :END:
+
+* TX 2026-08-29 Sat 11:27:51 manager.dispatch_aborted TASK-NMV4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-c44f50e5-1c7a-4cae-8d2e-e5b6c7da305f
+:TIME:         [2026-08-29 Sat 11:27:51]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-NMV4P.1
+:REASON:       round-2 smoke attempt interrupted when orchestrator process was reaped
+:CLOSED_TX:    tx-20260829-orgasmic-c5bd58fb-68b7-4338-90c2-c77fcf40b7f7
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-nmv4p.1
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-NMV4P.1/dispatches/tx-20260829-orgasmic-c5bd58fb-68b7-4338-90c2-c77fcf40b7f7/report.md
+:EVENT_ID:     21ad5ef4-d4ef-47ef-ad43-019443ae2441
+:END:
