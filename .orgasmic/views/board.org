@@ -5347,35 +5347,35 @@ Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthro
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
-* IN_PROGRESS TASK-DAACG.1 Extract — codex · openai · gpt-5.6-luna · effort low
+* IN_PROGRESS TASK-DAACG.3 Blind cross-review — codex · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
-:ID: TASK-DAACG.1
-:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:ID: TASK-DAACG.3
+:READ_SCOPE: other participants' report paths named in dispatch brief
 :WRITE_SCOPE: none; dispatch report only
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :CLAIM_WRITE_SCOPE: none; dispatch report only
 :END:
 
 ** Description
-Answer the parent run question independently. This is report-only; do not edit project source.
+Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
 
 ** Acceptance Criteria
-- [ ] A standalone evidence-led extraction report is promoted.
+- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
 
-* IN_PROGRESS TASK-DAACG.2 Extract — claude · anthropic · claude-haiku-4-5-20251001 · effort low
+* IN_PROGRESS TASK-DAACG.4 Blind cross-review — claude · anthropic · claude-haiku-4-5-20251001 · effort low
 :PROPERTIES:
-:ID: TASK-DAACG.2
-:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:ID: TASK-DAACG.4
+:READ_SCOPE: other participants' report paths named in dispatch brief
 :WRITE_SCOPE: none; dispatch report only
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :CLAIM_WRITE_SCOPE: none; dispatch report only
 :END:
 
 ** Description
-Answer the parent run question independently. This is report-only; do not edit project source.
+Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
 
 ** Acceptance Criteria
-- [ ] A standalone evidence-led extraction report is promoted.
+- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
 
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
@@ -14045,6 +14045,38 @@ Implement the event-triggered manager surface and layer-specific pipeline tasks 
 - [2026-05-21 Thu 22:38] Added CLI subcommands for templates, prompts, skills, manager actions, questions, and layer-stage endpoints.
 - [2026-05-21 Thu 22:42] Fixed two smoke-found mismatches: prompt lookup now tolerates file id versus task state, and convention hydration maps underscore slot ids to kebab-case bundle filenames while injecting nested convention sections.
 - [2026-05-21 Thu 22:44] Rebuilt, restarted the daemon on =127.0.0.1:8739=, ran native CLI smoke, and completed the verification pass.
+
+* DONE TASK-DAACG.1 Extract — codex · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-DAACG.1
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+** Evidence
+- Promoted dispatch report: TASK-DAACG.1 generation tx-20260829-orgasmic-755f9cb1-cffa-441d-9d1f-dd266e78e29d
+- Report path: .orgasmic/tasks/TASK-DAACG.1/dispatches/tx-20260829-orgasmic-755f9cb1-cffa-441d-9d1f-dd266e78e29d/report.md
+
+* DONE TASK-DAACG.2 Extract — claude · anthropic · claude-haiku-4-5-20251001 · effort low
+:PROPERTIES:
+:ID: TASK-DAACG.2
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+** Evidence
+- Promoted dispatch report: TASK-DAACG.2 generation tx-20260829-orgasmic-b41115d2-7413-4c00-ab8a-d5b0313ffbbd
+- Report path: .orgasmic/tasks/TASK-DAACG.2/dispatches/tx-20260829-orgasmic-b41115d2-7413-4c00-ab8a-d5b0313ffbbd/report.md
 
 * DONE TASK-DFEDX Polish phase 1 slice 2: ApiError public-message audit — apply TASK-PYW86 sanitization pattern to remaining daemon endpoints :daemon:security:hardening:audit:apierror:
 :PROPERTIES:

@@ -1,0 +1,23 @@
+{
+  "event_count": 171,
+  "tool_call_count": 5,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-DAACG.2-implementer-20260829T155101.jsonl",
+    "size_bytes": 234949
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'm reading the task and generating an extraction report on event sourcing vs. mutable state for local-first tools.Now I'll write the extraction report on event sourcing vs. mutable state for local-first tools.Finalizing the dispatch now."
+    }
+  ],
+  "narrative_truncated": false
+}

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DAACG.2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-DAACG.2 Extract — claude · anthropic · claude-haiku-4-5-20251001 · effort low
+* DONE TASK-DAACG.2 Extract — claude · anthropic · claude-haiku-4-5-20251001 · effort low
 :PROPERTIES:
 :ID: TASK-DAACG.2
 :READ_SCOPE: question in dispatch brief; public or repository sources as needed
@@ -13,3 +13,6 @@ Answer the parent run question independently. This is report-only; do not edit p
 
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
+** Evidence
+- Promoted dispatch report: TASK-DAACG.2 generation tx-20260829-orgasmic-b41115d2-7413-4c00-ab8a-d5b0313ffbbd
+- Report path: .orgasmic/tasks/TASK-DAACG.2/dispatches/tx-20260829-orgasmic-b41115d2-7413-4c00-ab8a-d5b0313ffbbd/report.md

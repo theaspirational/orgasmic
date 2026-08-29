@@ -2724,3 +2724,153 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-DAACG.1/dispatches/tx-20260829-orgasmic-755f9cb1-cffa-441d-9d1f-dd266e78e29d/report.md
 :EVENT_ID:     06a4474d-5e5b-45cb-ad73-d6a54b20631d
 :END:
+
+* TX 2026-08-29 Sat 15:51:59 manager.dispatch_aborted TASK-DAACG.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-ef72def8-a4d5-45ba-ad56-238333206fe3
+:TIME:         [2026-08-29 Sat 15:51:59]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.1
+:REASON:       successful report-only run; no source merge exists
+:CLOSED_TX:    tx-20260829-orgasmic-755f9cb1-cffa-441d-9d1f-dd266e78e29d
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.1
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-DAACG.1/dispatches/tx-20260829-orgasmic-755f9cb1-cffa-441d-9d1f-dd266e78e29d/report.md
+:EVENT_ID:     0bc2d27f-bbff-4fc3-8a43-568663a075a1
+:END:
+
+
+* TX 2026-08-29 Sat 15:52:02 manager.dispatch_aborted TASK-DAACG.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-a3105634-2fe3-43c4-bedd-5d320bc0f4dc
+:TIME:         [2026-08-29 Sat 15:52:02]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.2
+:REASON:       successful report-only run; no source merge exists
+:CLOSED_TX:    tx-20260829-orgasmic-b41115d2-7413-4c00-ab8a-d5b0313ffbbd
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.2
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: partial
+:CLEANUP_ERROR: report: brief.md missing from tmp; commit promoted dispatch record for /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.2: a git rebase is in progress, so the record was promoted to disk but not committed — it must not land in the middle of an operation you have not finished, on a branch whose shape you are still deciding; re-run this close once the rebase finishes
+:REPORT_PATH:  .orgasmic/tasks/TASK-DAACG.2/dispatches/tx-20260829-orgasmic-b41115d2-7413-4c00-ab8a-d5b0313ffbbd/report.md
+:EVENT_ID:     15187958-1862-47ce-8313-2bde84ddb86c
+:END:
+
+* TX 2026-08-29 Sat 15:52:06 manager.dispatch_started TASK-DAACG.3
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-b3f766b5-d6a0-40dd-b064-e779b7c5d5d3
+:TIME:         [2026-08-29 Sat 15:52:06]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.3
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.3
+:BRANCH:       mm-daacg-review-1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/cross-review-1/cross-review-1.md
+:STARTED_AT:   [2026-08-29 Sat 15:52:06]
+:LIVENESS:     0f46d34fe4fe193fadab9167ef9eb60aaf7ebcbc
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-luna
+:EFFORT:       low
+:REASON_INITIAL: blind cross-review of other model reports
+:EVENT_ID:     128efff7-f48c-4ecb-a308-40c8c7fd20fb
+:END:
+
+* TX 2026-08-29 Sat 15:52:06 run.created TASK-DAACG.3
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-1e006d4c-5c30-4859-8f6b-3110ba44a812
+:TIME:         [2026-08-29 Sat 15:52:06]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-DAACG.3-implementer-20260829T155205.jsonl
+:REASON:       blind cross-review of other model reports
+:RUN_ID:       run-01M173H4FB4KEA27MKR90NSE9A
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/cross-review-1/cross-review-1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/cross-review-1/cross-review-1-4762e2c0282a42b78e49be1cac07714b-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/cross-review-1/cross-review-1-4762e2c0282a42b78e49be1cac07714b-stdout.log
+:DISPATCH_ATTEMPT: 4762e2c0282a42b78e49be1cac07714b
+:PID:          42434
+:DISPATCH_TX:  tx-20260829-orgasmic-b3f766b5-d6a0-40dd-b064-e779b7c5d5d3
+:MODEL_OVERRIDE: gpt-5.6-luna
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     415f9adb-10fa-4632-b5a5-00d2b5aec33a
+:END:
+
+* TX 2026-08-29 Sat 15:52:08 manager.dispatch_started TASK-DAACG.4
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-9a99dea6-23dd-4020-a1bb-7ef1f831eb33
+:TIME:         [2026-08-29 Sat 15:52:08]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.4
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.4
+:BRANCH:       mm-daacg-review-2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/cross-review-2/cross-review-2.md
+:STARTED_AT:   [2026-08-29 Sat 15:52:08]
+:LIVENESS:     0f46d34fe4fe193fadab9167ef9eb60aaf7ebcbc
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        claude-haiku-4-5-20251001
+:EFFORT:       low
+:REASON_INITIAL: blind cross-review of other model reports
+:EVENT_ID:     db6cb6fe-8f1a-4ef5-b5bb-558af6f7a1a6
+:END:
+
+* TX 2026-08-29 Sat 15:52:09 run.created TASK-DAACG.4
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-da98c1da-217c-4855-9191-7d85e0304741
+:TIME:         [2026-08-29 Sat 15:52:09]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.4
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-DAACG.4-implementer-20260829T155208.jsonl
+:REASON:       blind cross-review of other model reports
+:RUN_ID:       run-01M173H7C71H13DBEJ24RC5Q6G
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-sdk-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.4
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/cross-review-2/cross-review-2.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/cross-review-2/cross-review-2-8c82ed35a3504527914255828c4f6d48-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/cross-review-2/cross-review-2-8c82ed35a3504527914255828c4f6d48-stdout.log
+:DISPATCH_ATTEMPT: 8c82ed35a3504527914255828c4f6d48
+:PID:          44051
+:DISPATCH_TX:  tx-20260829-orgasmic-9a99dea6-23dd-4020-a1bb-7ef1f831eb33
+:MODEL_OVERRIDE: claude-haiku-4-5-20251001
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     65c47604-a5ed-4be6-8641-cb306034a9b4
+:END:
