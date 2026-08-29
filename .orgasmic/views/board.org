@@ -5484,7 +5484,6 @@ AP971.5: writer routing — journal iff the event is about exactly one dir-backe
 :PROPERTIES:
 :ID: TASK-FBSZ2
 :PRIORITY: P2
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
 * IN_REVIEW TASK-GCXB7 Shared dispatch fold in orgasmic-core with a type-set guard :e01mc:node_kernel:

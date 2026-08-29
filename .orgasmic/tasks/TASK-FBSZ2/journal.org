@@ -94,3 +94,83 @@
 :TO_STATE: todo
 :EVENT_ID: 97f1acb7-7747-433a-998c-aa3c809f046e
 :END:
+
+* tx-20260829-orgasmic-6661 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6661
+:TIME:    [2026-08-29 Sat 18:51:15]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: review follow-ups continuing
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: 40708de3-f824-418b-aa92-08a120d726fd
+:END:
+
+* tx-20260829-orgasmic-6662 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6662
+:TIME:    [2026-08-29 Sat 18:51:15]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: requeue for review-fix round
+:FROM_STATE: in_progress
+:TO_STATE: todo
+:EVENT_ID: 16c546ed-d497-430d-b6da-afd98f96e3d2
+:END:
+
+* tx-20260829-orgasmic-6663 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6663
+:TIME:    [2026-08-29 Sat 18:51:15]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: transition TASK-FBSZ2 to in_review
+:FROM_STATE: todo
+:TO_STATE: in_review
+:EVENT_ID: 35c01ba6-cc1f-4486-9fce-926e7903caf4
+:END:
+
+* tx-20260829-orgasmic-6664 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6664
+:TIME:    [2026-08-29 Sat 18:51:23]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: post-merge follow-ups
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: 131f7b39-92e0-4f27-8524-6c6b0a42d855
+:END:
+
+* tx-20260829-orgasmic-6665 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6665
+:TIME:    [2026-08-29 Sat 18:51:23]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: requeue for review-fix round
+:FROM_STATE: in_progress
+:TO_STATE: todo
+:EVENT_ID: 5b2709a4-94c6-498c-921e-970b29743747
+:END:
