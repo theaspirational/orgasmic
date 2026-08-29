@@ -1,0 +1,22 @@
+{
+  "event_count": 3955,
+  "tool_call_count": 12,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-8XXEC.3-implementer-20260829T183029.jsonl",
+    "size_bytes": 1155353
+  },
+  "native_transcript": {
+    "status": "not_found",
+    "reason": "hermes session file for id 'a9360705-7524-46b0-8a8f-2ea10cbd2fb6' not found under /Users/aspirational/.hermes/sessions"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task record and the other participant's extraction report.\n\nLet me check the task record and project context.\n\nNow let me quickly check `project.org` and `gotchas.org` as instructed, then verify some of the claims in the report against primary sources.\n\nNow let me verify some key claims against primary sources before writing the delta report.\n\nLet me read the omitted middle section of the SQLite WAL doc to verify claims about §5 (read-only databases), §6 (large WAL files), §8 (WAL without shared memory), and §9 (SQLITE_BUSY).\n\nLet me verify the walformat.html claim about read-only last connections.\n\nI now have enough verified primary-source evidence to write the delta report. Let me compose it.\n\nReport is written. Now let me finalize with the orgasmic CLI."
+    }
+  ],
+  "narrative_truncated": false
+}
