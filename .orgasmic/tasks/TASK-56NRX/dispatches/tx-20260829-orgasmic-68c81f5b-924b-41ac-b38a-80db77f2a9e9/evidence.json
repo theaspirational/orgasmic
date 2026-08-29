@@ -1,0 +1,20 @@
+{
+  "event_count": 648,
+  "tool_call_count": 221,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-56NRX-implementer-20260829T101648.jsonl",
+    "size_bytes": 1896260
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/08/29/rollout-2026-08-29T13-16-49-01a04d05-a197-7263-b43d-22c29958e9d7.jsonl",
+    "session_id": "01a04d05-a197-7263-b43d-22c29958e9d7",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
