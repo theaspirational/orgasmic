@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-932SH
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-932SH Multi-model extraction: When is it worth vendoring a third-party library into a monorepo instead of depending on the package
+* DONE TASK-932SH Multi-model extraction: When is it worth vendoring a third-party library into a monorepo instead of depending on the package
 :PROPERTIES:
 :ID: TASK-932SH
 :READ_SCOPE: named promoted dispatch reports
@@ -15,3 +15,8 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+** Evidence
+- Artifact: ART-4FHXX
+- Extraction tasks: TASK-932SH.1 TASK-932SH.2
+- Cross-review tasks: TASK-932SH.3 TASK-932SH.4
+- Curation task: TASK-932SH.5

@@ -1,0 +1,15 @@
+#+title: orgasmic journal ART-4FHXX
+#+orgasmic_version: 2
+
+* tx-20260829-orgasmic-6697 artifact.submitted
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6697
+:TIME:    [2026-08-29 Sat 21:21:02]
+:TYPE:    artifact.submitted
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:ARTIFACT_ID: ART-4FHXX
+:VERSION: 1
+:EVENT_ID: eb3d5abb-eb63-4a1d-b6b0-8d7016be4f05
+:END:

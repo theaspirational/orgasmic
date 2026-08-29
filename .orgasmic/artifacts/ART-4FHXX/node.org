@@ -1,0 +1,12 @@
+#+title: orgasmic artifact ART-4FHXX
+#+orgasmic_version: 2
+
+* ART-4FHXX Multi-model extraction: When is it worth vendoring a third-party library into a monorepo instead of depending on the package
+:PROPERTIES:
+:ID:           ART-4FHXX
+:TITLE:        Multi-model extraction: When is it worth vendoring a third-party library into a monorepo instead of depending on the package
+:SUBJECT_NODES: TASK-932SH
+:PROMPT:       When is it worth vendoring a third-party library into a monorepo instead of depending on the package registry, and what maintenance traps follow?
+:VERSION:      1
+:STATE:        submitted
+:END:

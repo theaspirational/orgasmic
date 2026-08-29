@@ -30,3 +30,50 @@
 :TO_STATE: in_progress
 :EVENT_ID: c645f5a1-425c-45b5-9fed-d7d6a3acb646
 :END:
+
+* tx-20260829-orgasmic-6698 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6698
+:TIME:    [2026-08-29 Sat 21:21:03]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-932SH
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-932SH/node.org
+:REASON: edited task node TASK-932SH
+:NODE_ID: TASK-932SH
+:EVENT_ID: 2d0c4ec6-b9f8-4438-a181-ef421a5030cb
+:END:
+
+* tx-20260829-orgasmic-6699 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6699
+:TIME:    [2026-08-29 Sat 21:21:03]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-932SH
+:TARGET: .orgasmic/tasks/TASK-932SH/node.org
+:REASON: report promoted and recorded as evidence
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: b31103ef-e98b-459e-bf8b-599d93aa9f8e
+:END:
+
+* tx-20260829-orgasmic-6700 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6700
+:TIME:    [2026-08-29 Sat 21:21:03]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-932SH
+:TARGET: .orgasmic/tasks/TASK-932SH/node.org
+:REASON: report promoted and recorded as evidence
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 292fecff-3042-4e78-bdb7-ed4bfd6a0a3c
+:END:

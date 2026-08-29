@@ -1332,3 +1332,16 @@
 :WRITE_SCOPE:  /tmp curation draft, diagram JSON, and dispatch report only
 :EVENT_ID:     2e095e36-bc2a-43f7-b7a3-8ca08038513e
 :END:
+
+* TX 2026-08-29 Sat 21:21:02.460909 task.claim_released TASK-932SH.5
+:PROPERTIES:
+:TX_ID:        tx-20260829212102-f1cb592a
+:TIME:         [2026-08-29 Sat 21:21:02.460909]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-932SH.5
+:TARGET:       .orgasmic/tasks/TASK-932SH.5
+:EVENT_ID:     f310d120-a9f2-4dac-8fb0-a4f543a8df44
+:END:
