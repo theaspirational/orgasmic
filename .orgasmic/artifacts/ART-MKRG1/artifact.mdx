@@ -26,79 +26,96 @@ What to do instead, in order of preference:
 </RichText>
 </Section>
 
-<Section title="Run at a glance">
-<Diagram caption="How this artifact was produced — every box ran as its own orgasmic dispatch; every output is a promoted dispatch record (brief, compiled prompt, report, evidence)" height="256">
-<style>
-html, body { height: 100%; }
-body > svg { display: block; margin: 0 auto; width: auto; height: auto; max-width: 100%; max-height: 100%; }
-.mm-stage { font-family: var(--sans, ui-sans-serif); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.6; }
-.mm-label { font-family: var(--sans, ui-sans-serif); font-size: 13px; font-weight: 600; }
-.mm-sub { font-family: var(--sans, ui-sans-serif); font-size: 11px; opacity: 0.65; }
-.mm-note { font-family: var(--sans, ui-sans-serif); font-size: 11px; opacity: 0.6; }
-</style>
-<svg viewBox="0 0 880 228" width="880" height="228" style="display:block;margin:0 auto;max-width:100%;height:auto" role="img" aria-label="Pipeline: three parallel extractors, blind cross-review, curator, final artifact">
-  <defs>
-    <marker id="mm-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
-    </marker>
-  </defs>
-  <text x="110" y="18" text-anchor="middle" class="mm-stage" fill="currentColor" style="text-anchor:middle;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;opacity:0.65">1 · extract</text>
-  <text x="400" y="18" text-anchor="middle" class="mm-stage" fill="currentColor" style="text-anchor:middle;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;opacity:0.65">2 · cross-review</text>
-  <text x="640" y="18" text-anchor="middle" class="mm-stage" fill="currentColor" style="text-anchor:middle;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;opacity:0.65">3 · curate</text>
-  <text x="820" y="18" text-anchor="middle" class="mm-stage" fill="currentColor" style="text-anchor:middle;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;opacity:0.65">4 · artifact</text>
+<Section title="The chain, walked backwards">
+<RichText>
+Read top to bottom to walk from the answer back to its origin. Every card below was one dispatch; each names its record, where the full raw text lives.
+</RichText>
 
-  <rect x="20" y="30" width="180" height="36" rx="8" fill="none" stroke="currentColor" stroke-width="1.5" />
-  <text x="110" y="53" text-anchor="middle" class="mm-label" style="text-anchor:middle;font-size:12px;font-weight:600" fill="currentColor">E1 · claude / fable-5</text>
-  <rect x="20" y="96" width="180" height="36" rx="8" fill="none" stroke="currentColor" stroke-width="1.5" />
-  <text x="110" y="119" text-anchor="middle" class="mm-label" style="text-anchor:middle;font-size:12px;font-weight:600" fill="currentColor">E2 · codex / gpt-5.2</text>
-  <rect x="20" y="162" width="180" height="36" rx="8" fill="none" stroke="currentColor" stroke-width="1.5" />
-  <text x="110" y="185" text-anchor="middle" class="mm-label" style="text-anchor:middle;font-size:12px;font-weight:600" fill="currentColor">E3 · opencode / gemini-3</text>
+<Callout tone="success">
+**Curator · claude / fable-5** — read the six cards below, deduplicated, kept the contradiction explicit, wrote the Final answer at the top of this page. `TASK-MM1.7 · dispatches/tx_9F44X/report.md`
+</Callout>
 
-  <line x1="200" y1="48" x2="308" y2="92" stroke="currentColor" stroke-width="1.5" marker-end="url(#mm-arrow)" />
-  <line x1="200" y1="114" x2="308" y2="112" stroke="currentColor" stroke-width="1.5" marker-end="url(#mm-arrow)" />
-  <line x1="200" y1="180" x2="308" y2="132" stroke="currentColor" stroke-width="1.5" marker-end="url(#mm-arrow)" />
+<RichText>
+**▲ synthesized from three blind cross-reviews:**
+</RichText>
 
-  <rect x="312" y="80" width="180" height="64" rx="8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3" />
-  <text x="402" y="106" text-anchor="middle" class="mm-label" style="text-anchor:middle;font-size:12px;font-weight:600" fill="currentColor">3 augment jobs</text>
-  <text x="402" y="126" text-anchor="middle" class="mm-sub" fill="currentColor" style="text-anchor:middle;font-size:11px;opacity:0.7">anonymized briefs · no self-review</text>
+<Columns>
+<Column label="A1 · E1 reviewed E2 + E3">
+<RichText>
+**Delta found:**
 
-  <line x1="492" y1="112" x2="556" y2="112" stroke="currentColor" stroke-width="1.5" marker-end="url(#mm-arrow)" />
+- Challenged E2's "NFSv4 + lock daemon is fine" — marked it a verification target, did not accept it.
+- Added the exact SQLite docs section to check against.
+- Confirmed E3's replication framing as the strongest path.
 
-  <rect x="560" y="86" width="160" height="52" rx="8" fill="none" stroke="#eb6c36" stroke-width="2" />
-  <text x="640" y="108" text-anchor="middle" class="mm-label" style="text-anchor:middle;font-size:12px;font-weight:600" fill="currentColor">Curator</text>
-  <text x="640" y="126" text-anchor="middle" class="mm-sub" fill="currentColor" style="text-anchor:middle;font-size:11px;opacity:0.7">claude / fable-5</text>
+`TASK-MM1.4 · dispatches/tx_9F31A/report.md`
+</RichText>
+</Column>
+<Column label="A2 · E2 reviewed E1 + E3">
+<RichText>
+**Delta found:**
 
-  <line x1="720" y1="112" x2="776" y2="112" stroke="currentColor" stroke-width="1.5" marker-end="url(#mm-arrow)" />
+- Added the EXCLUSIVE-locking escape hatch E1 omitted.
+- Flagged E3's LiteFS maturity claim as unverified.
+- Agreed WAL is impossible across machines — no dissent.
 
-  <rect x="780" y="92" width="84" height="40" rx="20" fill="#eb6c36" />
-  <text x="822" y="117" text-anchor="middle" class="mm-label" style="text-anchor:middle;font-size:12px;font-weight:600" fill="#ffffff">v1</text>
+`TASK-MM1.5 · dispatches/tx_9F31B/report.md`
+</RichText>
+</Column>
+<Column label="A3 · E3 reviewed E1 + E2">
+<RichText>
+**Delta found:**
 
-  <text x="20" y="220" class="mm-note" fill="currentColor" style="font-size:11px;opacity:0.65">Curator reads all 6 reports, builds the knowledge map below, writes this artifact, submits.</text>
-</svg>
-</Diagram>
+- Added: SMB fails differently (oplock / lease breaks) — do not lump it with NFS.
+- Softened E1's absolute "never" with the single-host loopback caveat.
+- Endorsed E2's narrow EXCLUSIVE-mode case.
 
-<Table
-  headers={["Job", "Participant", "Stage", "Dispatch record", "Status"]}
-  rows={[
-    ["TASK-MM1.1", "E1 · claude / fable-5", "extract", "dispatches/tx_9F2KQ/report.md", "reported"],
-    ["TASK-MM1.2", "E2 · codex / gpt-5.2", "extract", "dispatches/tx_9F2KR/report.md", "reported"],
-    ["TASK-MM1.3", "E3 · opencode / gemini-3", "extract", "dispatches/tx_9F2KS/report.md", "reported"],
-    ["TASK-MM1.4", "E1 reviews E2 + E3", "augment", "dispatches/tx_9F31A/report.md", "reported"],
-    ["TASK-MM1.5", "E2 reviews E1 + E3", "augment", "dispatches/tx_9F31B/report.md", "reported"],
-    ["TASK-MM1.6", "E3 reviews E1 + E2", "augment", "dispatches/tx_9F31C/report.md", "reported"],
-    ["TASK-MM1.7", "Curator · claude / fable-5", "curate + submit", "dispatches/tx_9F44X/report.md", "reported"]
-  ]}
-  caption="One parent task (TASK-MM1), one subtask per job. Records are promoted into .orgasmic/tasks/TASK-MM1.N/dispatches/ — raw model output is never overwritten."
-/>
+`TASK-MM1.6 · dispatches/tx_9F31C/report.md`
+</RichText>
+</Column>
+</Columns>
 
-<Timeline items={[
-  { date: "14:02", label: "Fan-out", body: "3 extractors dispatched in parallel, same original prompt, no peer visibility." },
-  { date: "14:11", label: "Extract done", body: "dispatch-wait barrier cleared: 3/3 reported." },
-  { date: "14:12", label: "Cross-review", body: "3 blind augment jobs; each brief carries the other two answers with names stripped." },
-  { date: "14:19", label: "Augment done", body: "3/3 reported." },
-  { date: "14:20", label: "Curate", body: "Curator reads 6 reports, deduplicates, keeps unique finds and the contradiction." },
-  { date: "14:26", label: "Submitted", body: "Artifact v1. Open questions posted below for the operator." }
-]} />
+<RichText>
+**▲ each review read the two other answers anonymized — never its own:**
+</RichText>
+
+<Columns>
+<Column label="E1 · claude / fable-5">
+<RichText>
+**Original answer (excerpt):**
+
+"Don't share SQLite over NFS or SMB. POSIX advisory locking is broken on most network-filesystem implementations, and WAL is impossible across machines — it needs the shared-memory file. If truly forced, the unix-dotfile VFS avoids POSIX locks at a performance cost."
+
+`TASK-MM1.1 · dispatches/tx_9F2KQ/report.md`
+</RichText>
+</Column>
+<Column label="E2 · codex / gpt-5.2">
+<RichText>
+**Original answer (excerpt):**
+
+"Narrowly workable: with PRAGMA locking_mode=EXCLUSIVE and a rollback journal, a single client is fine. NFSv4 with a correctly configured lock daemon can be acceptable at low concurrency." *(the disputed claim starts here)*
+
+`TASK-MM1.2 · dispatches/tx_9F2KR/report.md`
+</RichText>
+</Column>
+<Column label="E3 · opencode / gemini-3">
+<RichText>
+**Original answer (excerpt):**
+
+"Wrong question — don't share the file at all. Run SQLite locally and replicate with Litestream or LiteFS, or move to a client-server database if several machines truly write."
+
+`TASK-MM1.3 · dispatches/tx_9F2KS/report.md`
+</RichText>
+</Column>
+</Columns>
+
+<RichText>
+**▲ all three answered the same prompt, independently and in parallel:**
+</RichText>
+
+<Callout tone="info">
+**ROOT — the user's question:** "Can I put a SQLite database on a network filesystem (NFS/SMB) and have several machines use it?"
+</Callout>
 </Section>
 
 <Section title="Knowledge map">
