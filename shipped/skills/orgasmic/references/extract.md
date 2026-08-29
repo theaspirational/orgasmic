@@ -22,12 +22,16 @@ python3 <skill-dir>/scripts/multi-model-extract.py \
 `codex` (OpenAI) and `claude` (Anthropic). The first participant curates unless
 `--curator N` selects another 1-based roster entry. Use `--from <git-ref>` when
 the workers should branch from a ref other than the invoking checkout's HEAD.
+Pass `--artifact-id ART-XXXXX` only when intentionally submitting a new version
+of an existing artifact; otherwise the orchestrator mints a fresh id.
 
 The script prints the parent task, extraction subtasks, cross-review subtasks,
 curation subtask, and submitted artifact id as JSON. It launches every member
 of a stage before one `dispatch-wait` barrier, closes every dispatch so its
 report is promoted, and gives each cross-reviewer paths only to the other
-participants' reports.
+participants' reports. The curator writes prose plus bounded summary fields;
+the orchestrator inserts the verbatim Question section and renders the full SVG
+card chain deterministically before it submits the artifact.
 
 ## Existing close limitation
 
