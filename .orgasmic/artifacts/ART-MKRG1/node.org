@@ -7,6 +7,6 @@
 :TITLE:        Extraction Mode Final Artifact — Mock
 :SUBJECT_NODES: 
 :PROMPT:       Simulated mock of the final artifact a multi-model extraction run would produce. All content invented. Purpose: agree on the shape (final answer + pipeline graph + provenance + knowledge map + feedback questions) before implementing the pipeline.
-:VERSION:      4
+:VERSION:      5
 :STATE:        submitted
 :END:
