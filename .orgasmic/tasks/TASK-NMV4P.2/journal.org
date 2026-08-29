@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-NMV4P.2
+#+orgasmic_version: 2
+
+* tx-20260829-orgasmic-6538 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6538
+:TIME:    [2026-08-29 Sat 11:26:46]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-NMV4P.2
+:TARGET: .orgasmic/tasks/TASK-NMV4P.2/node.org
+:REASON: multi-model knowledge extraction run
+:EVENT_ID: d900c9f6-5393-4466-a946-f27247e507fa
+:END:

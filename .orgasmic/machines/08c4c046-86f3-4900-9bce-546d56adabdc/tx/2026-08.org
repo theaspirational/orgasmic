@@ -1610,3 +1610,58 @@
 :EFFORT_OVERRIDE: xhigh
 :EVENT_ID:     94f726f6-edc7-4a5e-b798-144216ec87c7
 :END:
+
+* TX 2026-08-29 Sat 11:26:46 manager.dispatch_started TASK-NMV4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-c5bd58fb-68b7-4338-90c2-c77fcf40b7f7
+:TIME:         [2026-08-29 Sat 11:26:46]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-NMV4P.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-nmv4p.1
+:BRANCH:       mm-nmv4p-extract-1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:STARTED_AT:   [2026-08-29 Sat 11:26:46]
+:LIVENESS:     0a5e1c974f40f72a312592f9b1ebcbfef4940727
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        openai/gpt-5.6-luna
+:EFFORT:       low
+:REASON_INITIAL: independent multi-model extraction
+:EVENT_ID:     deed1d29-17aa-442c-a976-e29653f2ac93
+:END:
+
+* TX 2026-08-29 Sat 11:26:46 run.created TASK-NMV4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-c4c1b3f4-4e43-4d1c-a500-84bfb134e5cb
+:TIME:         [2026-08-29 Sat 11:26:46]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-NMV4P.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-NMV4P.1-implementer-20260829T112646.jsonl
+:REASON:       independent multi-model extraction
+:RUN_ID:       run-01M16MBAMCKVYVXF0G471BFRR1
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-hermes-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-nmv4p.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/extract/extract-144a459ca1d049ee80ebd22aaaa4c792-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/extract/extract-144a459ca1d049ee80ebd22aaaa4c792-stdout.log
+:DISPATCH_ATTEMPT: 144a459ca1d049ee80ebd22aaaa4c792
+:PID:          77258
+:DISPATCH_TX:  tx-20260829-orgasmic-c5bd58fb-68b7-4338-90c2-c77fcf40b7f7
+:MODEL_OVERRIDE: openai/gpt-5.6-luna
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     4f7e289a-d635-49b1-81a7-586ec3fce233
+:END:

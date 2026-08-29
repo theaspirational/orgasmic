@@ -467,3 +467,17 @@
 :TARGET:       .orgasmic/tasks/TASK-56NRX
 :EVENT_ID:     11b761de-fd9f-4a73-9ffe-b39e97855b13
 :END:
+
+* TX 2026-08-29 Sat 11:26:46.507834 task.claimed TASK-NMV4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260829112646-de96dc45
+:TIME:         [2026-08-29 Sat 11:26:46.507834]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-NMV4P.1
+:TARGET:       .orgasmic/tasks/TASK-NMV4P.1
+:WRITE_SCOPE:  none; dispatch report only
+:EVENT_ID:     ae74d71b-8a7d-4843-b267-85d5915cd27c
+:END:
