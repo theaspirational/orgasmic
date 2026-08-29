@@ -65,3 +65,16 @@
 :VERSION: 5
 :EVENT_ID: fd043319-7277-4a09-9e57-dcacbeb4b3d8
 :END:
+
+* tx-20260829-orgasmic-6512 artifact.submitted
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6512
+:TIME:    [2026-08-29 Sat 00:09:52]
+:TYPE:    artifact.submitted
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:ARTIFACT_ID: ART-MKRG1
+:VERSION: 6
+:EVENT_ID: f8ae7dd2-31f9-4c12-9617-f639f2087723
+:END:
