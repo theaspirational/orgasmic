@@ -1,8 +1,10 @@
 #+title: orgasmic task TASK-FAS8R
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-FAS8R Reshape multi-model surface: rename 'orgasmic extract' to 'orgasmic forum' with mode subcommands (ask; critique later) :feature:
+* DONE TASK-FAS8R Reshape multi-model surface: rename 'orgasmic extract' to 'orgasmic forum' with mode subcommands (ask; critique later) :feature:
 :PROPERTIES:
 :ID: TASK-FAS8R
 :PRIORITY: P1
 :END:
+** Evidence
+Merge 179a237a: extract.rs -> forum.rs, forum command group with ask mode, skill routing /orgasmic forum, references/forum.md. Gates: forum::tests 6/6 incl Python SVG parity, cli_parity 7/7, report-only close test, clippy -D warnings, fmt, git grep proves no 'orgasmic extract' remains.

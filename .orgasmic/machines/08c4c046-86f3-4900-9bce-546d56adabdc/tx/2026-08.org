@@ -4095,3 +4095,27 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-FAS8R/dispatches/tx-20260829-orgasmic-51ccdb36-35f3-4b61-8f45-7847bd5854cb/report.md
 :EVENT_ID:     59e6311f-fe56-4bfb-aaaf-72ac6daf1dec
 :END:
+
+* TX 2026-08-29 Sat 21:03:46 implementer.done TASK-FAS8R
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-74f168b7-deb1-42d6-b219-486716a598eb
+:TIME:         [2026-08-29 Sat 21:03:46]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FAS8R
+:REASON:       pure rename of code reviewed under TASK-FBSZ2 (reviewer gen tx-45c4c0ed APPROVE); zero behavior change, all reviewed tests and parity fixture green
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:WORKER_COMMIT: c285c04bfe004bd68a04ccc3db4fb49180eef672
+:MERGE_SHA:    179a237a8839ac9a525ee5b0e42eb2edd2ea59c8
+:BRANCH:       task-fas8r-impl
+:NO_REVIEW_REQUIRED: true
+:CLOSED_TX:    tx-20260829-orgasmic-51ccdb36-35f3-4b61-8f45-7847bd5854cb
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-FAS8R/dispatches/tx-20260829-orgasmic-51ccdb36-35f3-4b61-8f45-7847bd5854cb/report.md
+:EVENT_ID:     6b9c1716-9661-4afd-b7c4-d7c2e5c0f2d2
+:END:

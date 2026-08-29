@@ -1195,3 +1195,16 @@
 :TARGET:       .orgasmic/tasks/TASK-FAS8R
 :EVENT_ID:     62828e13-70c3-46fe-9a6c-2c2ee8e13476
 :END:
+
+* TX 2026-08-29 Sat 21:03:46.637505 task.claim_released TASK-FAS8R
+:PROPERTIES:
+:TX_ID:        tx-20260829210346-f8c7fcfe
+:TIME:         [2026-08-29 Sat 21:03:46.637505]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FAS8R
+:TARGET:       .orgasmic/tasks/TASK-FAS8R
+:EVENT_ID:     b59ef875-1dd0-40be-b778-526ef563ba8e
+:END:

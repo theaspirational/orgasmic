@@ -30,3 +30,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: 24a9e623-2643-4d12-98ec-71f9bc1974cf
 :END:
+
+* tx-20260829-orgasmic-6673 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6673
+:TIME:    [2026-08-29 Sat 21:03:46]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FAS8R
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-FAS8R/node.org
+:REASON: edited task node TASK-FAS8R
+:NODE_ID: TASK-FAS8R
+:EVENT_ID: 22f8628c-6ae6-4870-8143-628757c19d80
+:END:
+
+* tx-20260829-orgasmic-6674 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6674
+:TIME:    [2026-08-29 Sat 21:03:46]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FAS8R
+:TARGET: .orgasmic/tasks/TASK-FAS8R/node.org
+:REASON: rename merged at 179a237a
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 31602cc3-3111-4c0e-bfb2-3f15a3a456aa
+:END:
