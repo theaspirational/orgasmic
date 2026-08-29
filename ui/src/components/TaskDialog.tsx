@@ -3,6 +3,7 @@ import {
   Bot,
   CircleUserRound,
   Eye,
+  FileText,
   ListTree,
   Loader2,
   MessageSquare,
@@ -61,8 +62,10 @@ import {
   fetchProject,
   fetchTask,
   fetchTaskActivity,
+  fetchTaskDispatches,
   postTaskComment,
 } from '@/lib/api';
+import { Markdown } from '@/lib/artifacts/blocks/Markdown';
 import type {
   ActivityEntry,
   LifecycleStage,
@@ -659,12 +662,62 @@ function MainPane({
           mode={mode}
           apiKind="task"
         />
+        <TaskDispatches projectId={projectId} taskId={task.id} />
         <Separator className="my-5" />
         <p className="text-xs text-muted-foreground">
           Source: <code className="font-mono">{shortPath(task.source_file)}</code>
         </p>
       </div>
     </ScrollArea>
+  );
+}
+
+/** Promoted dispatch records for this task — each worker's raw report.md
+ * (and the brief it was given), read from
+ * `.orgasmic/tasks/<id>/dispatches/<tx>/`. Hidden entirely when none exist. */
+function TaskDispatches({ projectId, taskId }: { projectId: string; taskId: string }) {
+  const dispatches = useResource(
+    `task-dispatches:${projectId}:${taskId}`,
+    () => fetchTaskDispatches(projectId, taskId),
+  );
+  const records = dispatches.data ?? [];
+  if (records.length === 0) return null;
+  return (
+    <section className="mt-6">
+      <div className="mb-2 flex items-center gap-2">
+        <FileText className="size-3.5 text-muted-foreground" />
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Dispatch reports
+        </span>
+        <span className="text-[10px] font-mono text-muted-foreground">{records.length}</span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {records.map((record, index) => (
+          <details key={record.tx} open={index === 0} className="rounded-md border">
+            <summary className="cursor-pointer select-none px-3 py-2 font-mono text-xs text-muted-foreground hover:bg-muted/40">
+              {record.tx}
+            </summary>
+            <div className="border-t px-3 py-3">
+              {record.report ? (
+                <Markdown text={record.report} />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No report was written for this dispatch.
+                </p>
+              )}
+              {record.brief ? (
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-xs text-muted-foreground">
+                    Brief given to the worker
+                  </summary>
+                  <Markdown text={record.brief} className="mt-2" />
+                </details>
+              ) : null}
+            </div>
+          </details>
+        ))}
+      </div>
+    </section>
   );
 }
 export function TaskActivityRail({

@@ -38,8 +38,12 @@ function buildDiagramSrcDoc(sanitizedHtml: string, authorCss: string): string {
   return `<!doctype html><html><head><meta charset="utf-8" />
 <style>
 :root { ${tokenCss} }
-html, body { margin: 0; padding: 12px; background: var(--wf-paper); color: var(--wf-ink); font-family: var(--sans); font-size: 13px; box-sizing: border-box; }
+html, body { margin: 0; padding: 12px; height: 100%; background: var(--wf-paper); color: var(--wf-ink); font-family: var(--sans); font-size: 13px; box-sizing: border-box; }
 * { box-sizing: border-box; }
+/* A root-level SVG with only a viewBox defaults to width:100% of the frame,
+ * so on wide screens its aspect-ratio height blows past the iframe's fixed
+ * height and clips. Scale it to fit both axes instead. */
+body > svg { display: block; margin: 0 auto; width: auto; height: auto; max-width: 100%; max-height: 100%; }
 .diagram-panel, .diagram-card { background: var(--wf-card); border: 1.2px solid var(--wf-line); border-radius: var(--wf-radius); padding: 12px; }
 .diagram-node, .diagram-box { background: var(--wf-card); border: 1.2px solid var(--wf-line); border-radius: calc(var(--wf-radius) * 0.7); padding: 8px 12px; display: inline-block; }
 .diagram-pill { display: inline-flex; align-items: center; border: 1px solid var(--wf-line); border-radius: 999px; padding: 2px 9px; font-size: 0.82em; background: var(--wf-card); }

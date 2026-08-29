@@ -148,6 +148,21 @@ export function fetchTaskActivity(projectId: string, taskId: string): Promise<Ac
   );
 }
 
+export type TaskDispatchRecord = {
+  tx: string;
+  report: string | null;
+  brief: string | null;
+};
+
+export function fetchTaskDispatches(
+  projectId: string,
+  taskId: string,
+): Promise<TaskDispatchRecord[]> {
+  return get<TaskDispatchRecord[]>(
+    `/tasks/${encodeURIComponent(taskId)}/dispatches${q(projectId)}`,
+  );
+}
+
 export function postTaskComment(
   projectId: string,
   taskId: string,

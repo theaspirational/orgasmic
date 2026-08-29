@@ -519,6 +519,11 @@ export const router = createRouter({
   defaultPreload: 'intent',
   parseSearch: parseAppSearch,
   stringifySearch: stringifyAppSearch,
+  /* Search-only navigations (drawer_stack peeks, filters, tabs) must not
+   * scroll the page: key scroll restoration by pathname so opening/closing a
+   * peek keeps the reader's place, while real page changes still reset. */
+  scrollRestoration: true,
+  getScrollRestorationKey: (location) => location.pathname,
 });
 
 declare module '@tanstack/react-router' {

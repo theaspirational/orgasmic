@@ -741,6 +741,7 @@ pub fn router(state: ApiState) -> Router {
             post(post_task_comment_delete),
         )
         .route("/tasks/:id/activity", get(get_task_activity))
+        .route("/tasks/:id/dispatches", get(get_task_dispatches))
         .route("/tx", get(get_tx).post(post_tx))
         .route("/daemon/status", get(get_status))
         .route("/daemon/restart", post(post_daemon_restart))
@@ -899,6 +900,7 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("GET", "/projects/:id/tasks"),
     ("GET", "/projects/:id/tasks/:task_id"),
     ("GET", "/tasks/:id/activity"),
+    ("GET", "/tasks/:id/dispatches"),
     ("GET", "/graph/nodes"),
     ("GET", "/graph/edges"),
     ("GET", "/decisions"),
@@ -2466,6 +2468,53 @@ async fn get_task_activity(
         .cloned()
         .unwrap_or_default();
     Ok(Json(entries))
+}
+
+/// One promoted dispatch record (`.orgasmic/tasks/<id>/dispatches/<tx>/`):
+/// the worker's report plus the brief it was given. Prompt/stdout stay on
+/// disk only — the peek needs the readable outcome, not the transcript.
+#[derive(Debug, Serialize)]
+pub struct TaskDispatchRecord {
+    pub tx: String,
+    pub report: Option<String>,
+    pub brief: Option<String>,
+}
+
+async fn get_task_dispatches(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Path(task_id): Path<String>,
+    Query(q): Query<GraphQuery>,
+) -> Result<Json<Vec<TaskDispatchRecord>>, ApiError> {
+    let (located, snap) = resolve_authorized_task(
+        &state,
+        &identity,
+        &task_id,
+        q.project.as_deref(),
+        Action::TasksRead,
+    )
+    .await?;
+    let root = &select_loaded_project(&snap, &located.project_id)?.root;
+    let dir = task_node_file_path(root, &task_id).with_file_name("dispatches");
+    let mut records = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(Json(records)); // no promoted records yet
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let tx = entry.file_name().to_string_lossy().into_owned();
+        let read = |name: &str| std::fs::read_to_string(entry.path().join(name)).ok();
+        records.push(TaskDispatchRecord {
+            tx,
+            report: read("report.md"),
+            brief: read("brief.md"),
+        });
+    }
+    // tx dir names are tx-YYYYMMDD-... so a name sort is chronological; newest first.
+    records.sort_by(|a, b| b.tx.cmp(&a.tx));
+    Ok(Json(records))
 }
 
 #[derive(Debug, Deserialize)]
