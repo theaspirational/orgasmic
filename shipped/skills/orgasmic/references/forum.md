@@ -4,11 +4,10 @@ When the operator invokes `/orgasmic forum` without naming a mode, ask which
 mode they want:
 
 - `ask` — multi-model knowledge extraction;
-- `critique` — multi-model critic, coming later;
+- `critique` — multi-model critique of a supplied document;
 - other modes are expected later.
 
-For an available chosen mode, run its documented command below. Currently only
-`ask` is available.
+For an available chosen mode, run its documented command below.
 
 ## Ask
 
@@ -43,6 +42,25 @@ report is promoted, and gives each cross-reviewer paths only to the other
 participants' reports. The curator writes prose plus bounded summary fields;
 the orchestrator inserts the verbatim Question section and renders the full SVG
 card chain deterministically before it submits the artifact.
+
+## Critique
+
+Run a supplied UTF-8 document through independent critique, blind cross-review,
+and curation into a prioritized verdict artifact:
+
+```bash
+orgasmic forum critique \
+  --target-file /tmp/design.md \
+  --focus 'security posture' \
+  --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \
+  --participant 'stdio,hermes,google/gemini-3.7-flash,low'
+```
+
+`--target-file` is required, non-empty, and limited to 64 KiB. `--focus` is an
+optional one-line steer. Participant, curator, source-ref, timeout, artifact,
+and project flags have the same semantics as `ask`. The mode prints critique
+subtasks instead of extraction subtasks; cross-review remains self-excluding.
+The orchestrator owns the verbatim Target section and deterministic diagram.
 
 Successful workers close through `manager dispatch-close --status done
 --report-only`. The close promotes their reports, records `REPORT_ONLY=true`,
