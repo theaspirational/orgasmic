@@ -2530,6 +2530,22 @@ Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches
 - Reviewer run pinned to its worktree (cwd fixed; main checkout not writable from the worker process — sandbox profile), or at minimum a post-run `git status` diff on main reported in dispatch-status as `main_checkout_dirty: <files>`.
 Related: orphaned-acp-reverts-tx memory (same class: workers touching main).
 
+* BACKLOG TASK-F9T91 Age-based retention for ledger tmp/sessions JSONLs
+:PROPERTIES:
+:ID: TASK-F9T91
+:PRIORITY: P3
+:END:
+
+** Description
+=.orgasmic/tmp/sessions/= grows without bound (1.1G / 535 files in 2.5 months on the orgasmic ledger). =run history compact= reclaims only rendered-TUI payload and treats structured session JSONLs as never-auto-cleaned authority. Operator precedent set 2026-08-28: delete session JSONLs older than 14 days (untouched-mtime), never files held open by a live run.
+
+Design: a daemon housekeeping pass (or =run history= verb) that deletes terminal runs' session files past a configurable age (default 14d), skipping non-terminal runs and open handles. Promoted dispatch evidence (evidence.json, TASK-W97C8) keeps counts/pointers, so the record survives the raw file; =session.status= correctly reports =missing= with a reason afterwards.
+
+** Acceptance
+- Configurable age threshold, default 14 days; never touches non-terminal runs or open files.
+- Runs as explicit verb or opt-in housekeeping; a dry-run mode reports files+bytes first.
+- evidence.json for already-closed dispatches unaffected; a post-deletion close of an old run reports missing-with-reason, not an error.
+
 * BACKLOG TASK-F9VEZ codex records no NativeRuntime, so its transcripts are neither resumable nor attributable    :drivers:codex:sessions:evidence:
 :PROPERTIES:
 :ID: TASK-F9VEZ
