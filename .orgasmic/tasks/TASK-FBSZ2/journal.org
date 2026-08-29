@@ -190,3 +190,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 0579a685-4b8d-4b07-9a4e-7516e1defa71
 :END:
+
+* tx-20260829-orgasmic-6667 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6667
+:TIME:    [2026-08-29 Sat 19:00:04]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: fix round merged
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 071b31a1-2ecb-4c31-957f-8656fae98fa7
+:END:
