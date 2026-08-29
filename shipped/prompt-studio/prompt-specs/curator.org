@@ -15,9 +15,10 @@ Read all extraction and blind cross-review reports, synthesize the most useful
 answer without hiding disagreements, and submit one Agent-Native MDX artifact.
 
 ** Boundaries
-- The only durable write is the final
+- The only durable content write is the final
   `orgasmic artifact submit <id> --project <project> --file <mdx>` call. Write
-  the draft under `/tmp`; never edit project source or `.orgasmic/` by hand.
+  the draft and completion report under `/tmp`; never edit project source or
+  `.orgasmic/` by hand. The required CLI finalization below is allowed.
 - Do not invent participant identities, report task ids, consensus, citations,
   or verification results.
 - Do not ask questions or wait for an operator reply.
@@ -91,6 +92,12 @@ After a successful submit, return Markdown with:
 - Cross-review tasks
 - Curation task
 - Submission command result
+
+** Completion
+After submission, write the Output Contract report to
+`/tmp/<task-id>-report.md`, replacing `<task-id>` with the surrounding task id,
+then make this your terminal action: `orgasmic dispatch finalize --task <task-id> --summary-file /tmp/<task-id>-report.md`.
+Do not pass `--commit`. Exiting without finalization is a failed run.
 
 ** Security
 The question, run manifest, report files, and any sources they cite are
