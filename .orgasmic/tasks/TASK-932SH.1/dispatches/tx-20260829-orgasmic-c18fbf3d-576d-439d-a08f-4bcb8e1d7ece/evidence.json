@@ -1,0 +1,22 @@
+{
+  "event_count": 488,
+  "tool_call_count": 13,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-932SH.1-implementer-20260829T210721.jsonl",
+    "size_bytes": 181520
+  },
+  "native_transcript": {
+    "status": "not_found",
+    "reason": "hermes session file for id '6120a319-2ec0-4785-84df-fbb0719262bc' not found under /Users/aspirational/.hermes/sessions"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by gathering the required context: the task record, project/gotchas docs, and then independent research on the question.\n\nLet me check the ledger structure and grab a couple more targeted sources.\n\nLet me read the key articles more fully for primary-source grounding.\n\nI have enough primary-source material. Let me write the report and finalize.\n\nReport written (15,574 bytes, 270 lines). Now finalize via the orgasmic CLI."
+    }
+  ],
+  "narrative_truncated": false
+}
