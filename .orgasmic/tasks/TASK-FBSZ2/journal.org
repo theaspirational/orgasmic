@@ -14,3 +14,19 @@
 :REASON: Remove the only non-Rust runtime dependency (python3) and the aborted-close workaround
 :EVENT_ID: e2d3eb46-3e23-4cb6-ae42-073f121bb3df
 :END:
+
+* tx-20260829-orgasmic-6630 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6630
+:TIME:    [2026-08-29 Sat 16:56:23]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: transition TASK-FBSZ2 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 503b9ee7-d160-4818-8881-80515c3bc8f8
+:END:

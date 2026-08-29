@@ -3238,3 +3238,59 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-56NRX/dispatches/tx-20260829-orgasmic-52001e15-c1a2-4869-b498-4e9a1f2df53c/report.md
 :EVENT_ID:     a5907788-35b5-4a6a-938b-b420fb3b22fb
 :END:
+
+
+* TX 2026-08-29 Sat 16:56:25 manager.dispatch_started TASK-FBSZ2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-cda33ddd-cb5c-4f8c-bbe0-8b8a87532971
+:TIME:         [2026-08-29 Sat 16:56:25]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FBSZ2
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fbsz2
+:BRANCH:       task-fbsz2-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-FBSZ2/brief-TASK-FBSZ2.md
+:STARTED_AT:   [2026-08-29 Sat 16:56:25]
+:LIVENESS:     4fa92af2cde4fff06ac2dbc3ce48c07c9b8fa3e1
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: Port python orchestrator to native orgasmic extract verb + truthful report-only close
+:EVENT_ID:     54694af4-7a60-41c3-b8fa-8c0a0102f252
+:END:
+
+* TX 2026-08-29 Sat 16:56:25 run.created TASK-FBSZ2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-7e23bc09-5d27-4270-a963-24abd9abf183
+:TIME:         [2026-08-29 Sat 16:56:25]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FBSZ2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FBSZ2-implementer-20260829T165624.jsonl
+:REASON:       Port python orchestrator to native orgasmic extract verb + truthful report-only close
+:RUN_ID:       run-01M1776WVSEG2325VXVHCMBXA5
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fbsz2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-FBSZ2/brief-TASK-FBSZ2.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-FBSZ2/brief-TASK-FBSZ2-2306b998e12e4509942be775c5b9a025-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-FBSZ2/brief-TASK-FBSZ2-2306b998e12e4509942be775c5b9a025-stdout.log
+:DISPATCH_ATTEMPT: 2306b998e12e4509942be775c5b9a025
+:PID:          65553
+:DISPATCH_TX:  tx-20260829-orgasmic-cda33ddd-cb5c-4f8c-bbe0-8b8a87532971
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:EVENT_ID:     32303160-0fb3-44b6-847a-64fa0d1cdec2
+:END:

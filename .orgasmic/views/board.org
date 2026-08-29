@@ -5332,6 +5332,13 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
+* IN_PROGRESS TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
+:PROPERTIES:
+:ID: TASK-FBSZ2
+:PRIORITY: P2
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
+
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-NMV4P
