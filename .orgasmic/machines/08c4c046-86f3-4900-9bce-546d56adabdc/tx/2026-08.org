@@ -2584,3 +2584,113 @@
 :EFFORT_OVERRIDE: xhigh
 :EVENT_ID:     70a69fb9-c473-43e7-9194-01312fb00168
 :END:
+
+* TX 2026-08-29 Sat 15:51:00 manager.dispatch_started TASK-DAACG.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-755f9cb1-cffa-441d-9d1f-dd266e78e29d
+:TIME:         [2026-08-29 Sat 15:51:00]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.1
+:BRANCH:       mm-daacg-extract-1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:STARTED_AT:   [2026-08-29 Sat 15:51:00]
+:LIVENESS:     0f46d34fe4fe193fadab9167ef9eb60aaf7ebcbc
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-luna
+:EFFORT:       low
+:REASON_INITIAL: independent multi-model extraction
+:EVENT_ID:     a77b30bf-6b10-462c-9a5c-aa5752e126be
+:END:
+
+* TX 2026-08-29 Sat 15:51:00 run.created TASK-DAACG.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-1a87b079-8390-4783-9ec6-2a1f5f27ffc0
+:TIME:         [2026-08-29 Sat 15:51:00]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-DAACG.1-implementer-20260829T155058.jsonl
+:REASON:       independent multi-model extraction
+:RUN_ID:       run-01M173F3GHXMFBFHT2Z5V9YAA3
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/extract/extract-b7265ac5232a49e2971e16947dff1e05-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/extract/extract-b7265ac5232a49e2971e16947dff1e05-stdout.log
+:DISPATCH_ATTEMPT: b7265ac5232a49e2971e16947dff1e05
+:PID:          32659
+:DISPATCH_TX:  tx-20260829-orgasmic-755f9cb1-cffa-441d-9d1f-dd266e78e29d
+:MODEL_OVERRIDE: gpt-5.6-luna
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     ca9291d4-8274-409e-a02f-fb60eb8ebbfa
+:END:
+
+* TX 2026-08-29 Sat 15:51:02 manager.dispatch_started TASK-DAACG.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-b41115d2-7413-4c00-ab8a-d5b0313ffbbd
+:TIME:         [2026-08-29 Sat 15:51:02]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.2
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.2
+:BRANCH:       mm-daacg-extract-2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:STARTED_AT:   [2026-08-29 Sat 15:51:02]
+:LIVENESS:     0f46d34fe4fe193fadab9167ef9eb60aaf7ebcbc
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        claude-haiku-4-5-20251001
+:EFFORT:       low
+:REASON_INITIAL: independent multi-model extraction
+:EVENT_ID:     7af51ec4-2faa-47d3-a518-6d11be8a03bf
+:END:
+
+* TX 2026-08-29 Sat 15:51:02 run.created TASK-DAACG.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-efd3f061-7a42-409f-8345-ca4b72f8f25e
+:TIME:         [2026-08-29 Sat 15:51:02]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-DAACG.2-implementer-20260829T155101.jsonl
+:REASON:       independent multi-model extraction
+:RUN_ID:       run-01M173F6B42C373JESAWB8HVZB
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-sdk-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-daacg.2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/extract/extract-b6bec34826e94bc0a02d58cb71422b15-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/extract/extract-b6bec34826e94bc0a02d58cb71422b15-stdout.log
+:DISPATCH_ATTEMPT: b6bec34826e94bc0a02d58cb71422b15
+:PID:          34274
+:DISPATCH_TX:  tx-20260829-orgasmic-b41115d2-7413-4c00-ab8a-d5b0313ffbbd
+:MODEL_OVERRIDE: claude-haiku-4-5-20251001
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     1dc761c8-e3a4-4c65-885d-f068c456f6a4
+:END:
