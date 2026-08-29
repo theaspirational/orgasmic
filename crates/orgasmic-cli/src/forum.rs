@@ -19,24 +19,13 @@ use crate::manager::{
 };
 
 const QUESTION_PLACEHOLDER: &str = "__ORGASMIC_QUESTION_SECTION__";
+const TARGET_PLACEHOLDER: &str = "__ORGASMIC_TARGET_SECTION__";
 const DIAGRAM_PLACEHOLDER: &str = "__ORGASMIC_PIPELINE_DIAGRAM__";
 const RUN_STATS_PLACEHOLDER: &str = "__ORGASMIC_RUN_STATS__";
+const MAX_TARGET_BYTES: usize = 64 * 1024;
 
 #[derive(Args, Debug, Clone)]
-#[command(after_help = "\
-Examples:
-  orgasmic forum ask --question-file /tmp/question.txt \\
-    --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \\
-    --participant 'stdio,hermes,google/gemini-3.7-flash,low'
-
-Participants are mode,harness,model,effort. Repeat --participant at least twice.")]
-pub struct AskArgs {
-    /// Question text. Mutually exclusive with --question-file.
-    #[arg(long, conflicts_with = "question_file", allow_hyphen_values = true)]
-    question: Option<String>,
-    /// Read the question from this UTF-8 file.
-    #[arg(long = "question-file", conflicts_with = "question")]
-    question_file: Option<PathBuf>,
+struct RunArgs {
     /// Participant as mode,harness,model,effort; repeat at least twice.
     #[arg(long, action = ArgAction::Append, required = true)]
     participant: Vec<String>,
@@ -55,6 +44,44 @@ pub struct AskArgs {
     /// Maximum wait per stage (for example 30s, 5m, 1h).
     #[arg(long, default_value = "45m", value_parser = parse_duration)]
     timeout: Duration,
+}
+
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+Examples:
+  orgasmic forum ask --question-file /tmp/question.txt \\
+    --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \\
+    --participant 'stdio,hermes,google/gemini-3.7-flash,low'
+
+Participants are mode,harness,model,effort. Repeat --participant at least twice.")]
+pub struct AskArgs {
+    /// Question text. Mutually exclusive with --question-file.
+    #[arg(long, conflicts_with = "question_file", allow_hyphen_values = true)]
+    question: Option<String>,
+    /// Read the question from this UTF-8 file.
+    #[arg(long = "question-file", conflicts_with = "question")]
+    question_file: Option<PathBuf>,
+    #[command(flatten)]
+    run: RunArgs,
+}
+
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+Example:
+  orgasmic forum critique --target-file /tmp/design.md --focus 'security posture' \\
+    --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \\
+    --participant 'stdio,hermes,google/gemini-3.7-flash,low'
+
+Participants are mode,harness,model,effort. Repeat --participant at least twice.")]
+pub struct CritiqueArgs {
+    /// UTF-8 document to critique (non-empty, at most 64 KiB).
+    #[arg(long = "target-file")]
+    target_file: PathBuf,
+    /// Optional one-line steer for the critique.
+    #[arg(long, allow_hyphen_values = true)]
+    focus: Option<String>,
+    #[command(flatten)]
+    run: RunArgs,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,6 +132,130 @@ struct DiagramFields {
     headline: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ForumKind {
+    Ask,
+    Critique,
+}
+
+impl ForumKind {
+    fn slug(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Critique => "critique",
+        }
+    }
+
+    fn first_stage_spec(self) -> &'static str {
+        match self {
+            Self::Ask => "extractor",
+            Self::Critique => "critic",
+        }
+    }
+
+    fn cross_review_spec(self) -> &'static str {
+        match self {
+            Self::Ask => "cross-reviewer",
+            Self::Critique => "critique-cross-reviewer",
+        }
+    }
+
+    fn curator_spec(self) -> &'static str {
+        match self {
+            Self::Ask => "curator",
+            Self::Critique => "critique-curator",
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ForumInput {
+    Ask {
+        question: String,
+    },
+    Critique {
+        target: String,
+        focus: Option<String>,
+        basename: String,
+    },
+}
+
+impl ForumInput {
+    fn kind(&self) -> ForumKind {
+        match self {
+            Self::Ask { .. } => ForumKind::Ask,
+            Self::Critique { .. } => ForumKind::Critique,
+        }
+    }
+
+    fn content(&self) -> &str {
+        match self {
+            Self::Ask { question } => question,
+            Self::Critique { target, .. } => target,
+        }
+    }
+
+    fn focus_value(&self) -> String {
+        match self {
+            Self::Ask { .. } => String::new(),
+            Self::Critique { focus, .. } => focus.clone().unwrap_or_else(|| "(none)".to_string()),
+        }
+    }
+
+    fn prompt_values(&self) -> BTreeMap<String, String> {
+        let mut values = BTreeMap::from([(
+            "artifact.user_prompt".to_string(),
+            self.content().to_string(),
+        )]);
+        if self.kind() == ForumKind::Critique {
+            values.insert("node.extra_prompt".to_string(), self.focus_value());
+        }
+        values
+    }
+
+    fn diagram_prompt(&self) -> String {
+        match self {
+            Self::Ask { question } => question.clone(),
+            Self::Critique {
+                focus: Some(focus), ..
+            } => focus.clone(),
+            Self::Critique {
+                target, basename, ..
+            } => format!("critique of {basename}, {} bytes", target.len()),
+        }
+    }
+
+    fn short_label(&self) -> String {
+        match self {
+            Self::Ask { question } => question
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(100)
+                .collect(),
+            Self::Critique {
+                focus: Some(focus), ..
+            } => clipped(focus, 100),
+            Self::Critique { basename, .. } => clipped(basename, 100),
+        }
+    }
+
+    fn fallback_title(&self) -> String {
+        match self {
+            Self::Ask { .. } => format!("Multi-model extraction: {}", self.short_label()),
+            Self::Critique { .. } => format!("Multi-model critique: {}", self.short_label()),
+        }
+    }
+
+    fn artifact_title(&self, fields: &DiagramFields) -> String {
+        fields
+            .headline
+            .clone()
+            .unwrap_or_else(|| self.fallback_title())
+    }
+}
+
 #[derive(Debug)]
 struct WaitUnknown(String);
 
@@ -120,6 +271,23 @@ impl std::error::Error for WaitUnknown {}
 struct AskResult {
     parent_task: String,
     extraction_tasks: Vec<String>,
+    cross_review_tasks: Vec<String>,
+    curation_task: String,
+    artifact_id: String,
+}
+
+#[derive(Serialize)]
+struct CritiqueResult {
+    parent_task: String,
+    critique_tasks: Vec<String>,
+    cross_review_tasks: Vec<String>,
+    curation_task: String,
+    artifact_id: String,
+}
+
+struct RunResult {
+    parent_task: String,
+    first_stage_tasks: Vec<String>,
     cross_review_tasks: Vec<String>,
     curation_task: String,
     artifact_id: String,
@@ -173,6 +341,12 @@ fn html_escape(value: &str, quotes: bool) -> String {
         }
     }
     out
+}
+
+fn escape_rich_text(value: &str) -> String {
+    html_escape(value, false)
+        .replace('{', "&#123;")
+        .replace('}', "&#125;")
 }
 
 fn svg_text(x: i32, y: i32, value: &str, style: &str, attrs: &[(&str, &str)]) -> String {
@@ -846,8 +1020,9 @@ fn task_is_present(mdx: &str, task: &str) -> bool {
 
 /// Run metadata is manifest truth the orchestrator already holds; rendering it
 /// here keeps the roster correct and scannable regardless of curator quality.
-/// It closes the artifact as a footer so the document opens with the question.
+/// It closes the artifact as a footer so the document opens with its source.
 fn render_about_run(
+    kind: ForumKind,
     extraction: &[RunReport],
     reviews: &[RunReport],
     curator: &Participant,
@@ -862,8 +1037,12 @@ fn render_about_run(
     }
     lines.push(format!("- **Curator:** {}", curator.identity()));
     lines.push(format!(
-        "- **Run:** {} extraction reports · {} cross-reviews · started {} UTC",
+        "- **Run:** {} {} reports · {} cross-reviews · started {} UTC",
         extraction.len(),
+        match kind {
+            ForumKind::Ask => "extraction",
+            ForumKind::Critique => "critique",
+        },
         reviews.len(),
         started
     ));
@@ -875,15 +1054,40 @@ fn render_about_run(
 
 fn assemble_artifact(
     draft: &str,
-    question: &str,
+    input: &ForumInput,
     svg: &str,
     about_run: &str,
     raw_tasks: &[String],
 ) -> Result<String> {
+    let (first_placeholder, other_placeholder, first_title, required, image_alt, image_caption) =
+        match input.kind() {
+            ForumKind::Ask => (
+                QUESTION_PLACEHOLDER,
+                TARGET_PLACEHOLDER,
+                "Question",
+                &[
+                    "Question",
+                    "Final answer",
+                    "From question to answer",
+                    "Knowledge map",
+                ][..],
+                "Question flows through independent extraction and blind cross-review into curation",
+                "From the verbatim question to the curated final answer.",
+            ),
+            ForumKind::Critique => (
+                TARGET_PLACEHOLDER,
+                QUESTION_PLACEHOLDER,
+                "Target",
+                &["Target", "Verdict", "Findings", "From target to verdict"][..],
+                "Target flows through independent critique and blind cross-review into curation",
+                "From the verbatim target to the curated verdict.",
+            ),
+        };
     if contains_model_svg(draft) {
         bail!("curator draft contained model-authored SVG");
     }
-    if draft.matches(QUESTION_PLACEHOLDER).count() != 1
+    if draft.matches(first_placeholder).count() != 1
+        || draft.contains(other_placeholder)
         || draft.matches(DIAGRAM_PLACEHOLDER).count() != 1
         || draft.matches(RUN_STATS_PLACEHOLDER).count() != 1
     {
@@ -893,43 +1097,66 @@ fn assemble_artifact(
         bail!("run-stats placeholder must be the final block of the draft");
     }
 
-    let escaped_question = html_escape(question, false)
-        .replace('{', "&#123;")
-        .replace('}', "&#125;");
-    let question_section = format!(
-        "<Section title=\"Question\">\n<RichText>\n{escaped_question}\n</RichText>\n</Section>"
-    );
+    let first_section = match input {
+        ForumInput::Ask { question } => format!(
+            "<Section title=\"Question\">\n<RichText>\n{}\n</RichText>\n</Section>",
+            escape_rich_text(question)
+        ),
+        ForumInput::Critique { target, focus, .. } => {
+            let focus = focus
+                .as_deref()
+                .map(|focus| format!("\n\n**Focus:** {}", escape_rich_text(focus)))
+                .unwrap_or_default();
+            format!(
+                "<Section title=\"Target\">\n<RichText>\n{}{focus}\n</RichText>\n</Section>",
+                escape_rich_text(target)
+            )
+        }
+    };
     let image = format!(
-        "<Image src=\"data:image/svg+xml;base64,{}\" alt=\"Question flows through independent extraction and blind cross-review into curation\" caption=\"From the verbatim question to the curated final answer.\" />",
-        base64_encode(svg.as_bytes())
+        "<Image src=\"data:image/svg+xml;base64,{}\" alt=\"{image_alt}\" caption=\"{image_caption}\" />",
+        base64_encode(svg.as_bytes()),
     );
     let mdx = draft
-        .replace(QUESTION_PLACEHOLDER, &question_section)
+        .replace(first_placeholder, &first_section)
         .replace(DIAGRAM_PLACEHOLDER, &image)
         .replace(RUN_STATS_PLACEHOLDER, about_run);
 
     let sections = section_titles(&mdx);
-    if sections.first().map(|(_, title)| title.as_str()) != Some("Question") {
-        bail!("Question must be the first Section");
+    if sections.first().map(|(_, title)| title.as_str()) != Some(first_title) {
+        bail!("{first_title} must be the first Section");
     }
-    let question_offset = sections
+    let first_offset = sections
         .iter()
-        .find_map(|(offset, title)| (title == "Question").then_some(*offset));
-    if question_offset.is_none_or(|offset| !mdx[offset..].starts_with(&question_section)) {
-        bail!("Question section does not match the input question verbatim");
+        .find_map(|(offset, title)| (title == first_title).then_some(*offset));
+    if first_offset.is_none_or(|offset| !mdx[offset..].starts_with(&first_section)) {
+        match input.kind() {
+            ForumKind::Ask => {
+                bail!("Question section does not match the input question verbatim")
+            }
+            ForumKind::Critique => {
+                bail!("Target section does not match the input target verbatim")
+            }
+        }
     }
-    let required = [
-        "Question",
-        "Final answer",
-        "From question to answer",
-        "Knowledge map",
-    ];
     let missing = required
-        .into_iter()
+        .iter()
         .filter(|required| !sections.iter().any(|(_, section)| section == *required))
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         bail!("curator draft is missing required sections: {missing:?}");
+    }
+    let required_offsets = required
+        .iter()
+        .map(|required| {
+            sections
+                .iter()
+                .find_map(|(offset, section)| (section == required).then_some(*offset))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    if required_offsets.windows(2).any(|pair| pair[0] >= pair[1]) {
+        bail!("curator draft required sections are out of order");
     }
     let missing_tasks = raw_tasks
         .iter()
@@ -1002,13 +1229,63 @@ fn validate_question(question: &str) -> Result<()> {
     if question.is_empty() {
         bail!("question must not be empty");
     }
-    if question.contains(QUESTION_PLACEHOLDER) || question.contains(DIAGRAM_PLACEHOLDER) {
+    if contains_orchestrator_placeholder(question) {
         bail!("question must not contain orchestrator placeholders");
     }
     if question.starts_with('-') {
         bail!("question must not start with '-'");
     }
     Ok(())
+}
+
+fn validate_focus(focus: &str) -> Result<()> {
+    if focus.is_empty() {
+        bail!("focus must not be empty");
+    }
+    if focus.contains(['\n', '\r']) {
+        bail!("focus must be one line");
+    }
+    if contains_orchestrator_placeholder(focus) {
+        bail!("focus must not contain orchestrator placeholders");
+    }
+    if focus.starts_with('-') {
+        bail!("focus must not start with '-'");
+    }
+    Ok(())
+}
+
+fn validate_target(target: &str) -> Result<()> {
+    if target.len() > MAX_TARGET_BYTES {
+        bail!(
+            "target file exceeds 64 KiB ({} bytes; maximum {MAX_TARGET_BYTES})",
+            target.len()
+        );
+    }
+    if target.trim().is_empty() {
+        bail!("target file must not be empty");
+    }
+    if contains_orchestrator_placeholder(target) {
+        bail!("target file must not contain orchestrator placeholders");
+    }
+    Ok(())
+}
+
+fn contains_orchestrator_placeholder(value: &str) -> bool {
+    [
+        QUESTION_PLACEHOLDER,
+        TARGET_PLACEHOLDER,
+        DIAGRAM_PLACEHOLDER,
+        RUN_STATS_PLACEHOLDER,
+    ]
+    .iter()
+    .any(|placeholder| value.contains(placeholder))
+}
+
+fn read_target(path: &Path) -> Result<String> {
+    let target = std::fs::read_to_string(path)
+        .with_context(|| format!("read target file {} as UTF-8", path.display()))?;
+    validate_target(&target).with_context(|| format!("invalid target file {}", path.display()))?;
+    Ok(target)
 }
 
 fn git_output(args: &[&str]) -> Result<String> {
@@ -1040,14 +1317,16 @@ struct Api {
     runtime: tokio::runtime::Runtime,
     client: DaemonClient,
     project: String,
+    kind: ForumKind,
 }
 
 impl Api {
-    fn new(home: &Home, project: String) -> Result<Self> {
+    fn new(home: &Home, project: String, kind: ForumKind) -> Result<Self> {
         Ok(Self {
             runtime: tokio::runtime::Runtime::new().context("create tokio runtime")?,
             client: DaemonClient::from_home_autostart(home)?,
             project,
+            kind,
         })
     }
 
@@ -1109,13 +1388,16 @@ impl Api {
                 "title": title,
                 "tags": [],
                 "body": body,
-                "reason": "multi-model knowledge extraction run",
+                "reason": match self.kind {
+                    ForumKind::Ask => "multi-model knowledge extraction run",
+                    ForumKind::Critique => "multi-model forum critique run",
+                },
                 "properties": {
                     "READ_SCOPE": read_scope,
                     "WRITE_SCOPE": write_scope,
                 },
                 "force": false,
-                "request_id": format!("forum-ask-create-{task_id}"),
+                "request_id": format!("forum-{}-create-{task_id}", self.kind.slug()),
             }),
         )?;
         if response.get("id").and_then(Value::as_str) != Some(task_id) {
@@ -1139,7 +1421,7 @@ impl Api {
                 "state": state,
                 "priority": Value::Null,
                 "reason": reason,
-                "request_id": format!("forum-ask-state-{task}-{state}"),
+                "request_id": format!("forum-{}-state-{task}-{state}", self.kind.slug()),
                 "properties": {},
             }),
         )?;
@@ -1175,7 +1457,7 @@ impl Api {
                 "project": self.project,
                 "kind": "task",
                 "base_version": base_version,
-                "request_id": format!("forum-ask-evidence-{task}"),
+                "request_id": format!("forum-{}-evidence-{task}", self.kind.slug()),
                 "ops": [{
                     "op": "add_section",
                     "title": "Evidence",
@@ -1380,27 +1662,25 @@ fn mark_closed(active: &mut [Dispatch], closed: &Dispatch) {
     }
 }
 
-fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
-    let question = match (args.question, args.question_file) {
-        (Some(question), None) => question,
-        (None, Some(path)) => {
-            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?
-        }
-        _ => bail!("one of --question or --question-file is required"),
-    };
-    let question = question.trim().to_string();
-    validate_question(&question)?;
-    let participants = args
-        .participant
+fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult> {
+    let RunArgs {
+        participant,
+        curator: curator_index,
+        source_ref,
+        artifact_id,
+        project: requested_project,
+        timeout,
+    } = args;
+    let kind = input.kind();
+    let participants = participant
         .iter()
         .map(|raw| parse_participant(raw))
         .collect::<Result<Vec<_>>>()?;
     validate_participants(&participants)?;
-    if !(1..=participants.len()).contains(&args.curator) {
+    if !(1..=participants.len()).contains(&curator_index) {
         bail!("--curator must select a 1-based participant entry");
     }
-    if args
-        .artifact_id
+    if artifact_id
         .as_deref()
         .is_some_and(|id| !is_valid_greenfield_artifact_id(id))
     {
@@ -1409,14 +1689,13 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
 
     let ledger = manager::find_project_root()?;
     let project = manager::read_project_id(&ledger)?;
-    if args
-        .project
+    if requested_project
         .as_deref()
         .is_some_and(|requested| requested != project)
     {
         bail!(
             "--project {} does not match current orgasmic project {project}",
-            args.project.unwrap()
+            requested_project.unwrap()
         );
     }
     let default_branch = orgasmic_core::projects::read_board(home)?
@@ -1425,7 +1704,7 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
         .map(|entry| entry.branch)
         .filter(|branch| !branch.is_empty())
         .unwrap_or_else(|| "main".to_string());
-    let source_ref = match args.source_ref {
+    let source_ref = match source_ref {
         Some(source_ref) => source_ref,
         None => {
             let branch = git_output(&["branch", "--show-current"])?;
@@ -1436,55 +1715,94 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             }
         }
     };
-    let curator = participants[args.curator - 1].clone();
-    let api = Api::new(home, project.clone())?;
+    let curator = participants[curator_index - 1].clone();
+    let api = Api::new(home, project.clone(), kind)?;
     let started_at = chrono::Utc::now().to_rfc3339();
-    let one_line_question = question.split_whitespace().collect::<Vec<_>>().join(" ");
-    let short_question = one_line_question.chars().take(100).collect::<String>();
     let roster = participants
         .iter()
         .map(Participant::identity)
         .collect::<Vec<_>>()
         .join(" — ");
     let parent = mint_node_id_for_class(NodeIdClass::Task);
+    let (parent_description, parent_acceptance) = match &input {
+        ForumInput::Ask { question } => (
+            format!(
+                "Question: {}\n\nParticipants: {roster}",
+                question.split_whitespace().collect::<Vec<_>>().join(" ")
+            ),
+            "All extraction and blind-review reports are promoted and one curated artifact is submitted.",
+        ),
+        ForumInput::Critique {
+            target,
+            focus,
+            basename,
+        } => (
+            format!(
+                "Target: {basename} ({} bytes)\nFocus: {}\n\nParticipants: {roster}",
+                target.len(),
+                focus.as_deref().unwrap_or("(none)")
+            ),
+            "All critique and blind-review reports are promoted and one curated verdict artifact is submitted.",
+        ),
+    };
     api.create_task(
         &parent,
-        format!("Multi-model extraction: {short_question}"),
-        &format!("Question: {one_line_question}\n\nParticipants: {roster}"),
-        "All extraction and blind-review reports are promoted and one curated artifact is submitted.",
+        input.fallback_title(),
+        &parent_description,
+        parent_acceptance,
         "named promoted dispatch reports",
         "orgasmic tasks and artifact store via CLI only",
     )?;
-    api.update_task_state(&parent, "in_progress", "forum ask started")?;
+    api.update_task_state(
+        &parent,
+        "in_progress",
+        &format!("forum {} started", kind.slug()),
+    )?;
     eprintln!("parent_task={parent}");
 
     let mut active = Vec::new();
     let mut extraction = Vec::new();
     let mut reviews = Vec::new();
-    let result = (|| -> Result<AskResult> {
+    let result = (|| -> Result<RunResult> {
         let tmp = tempfile::Builder::new()
             .prefix(&format!("orgasmic-{}-", parent.to_ascii_lowercase()))
             .tempdir()
-            .context("create forum ask tempdir")?;
+            .with_context(|| format!("create forum {} tempdir", kind.slug()))?;
 
-        let extract_brief = tmp.path().join("extract.md");
+        let extract_brief = tmp.path().join(format!("{}-stage-1.md", kind.slug()));
         std::fs::write(
             &extract_brief,
-            api.compile_prompt(
-                "extractor",
-                BTreeMap::from([("artifact.user_prompt".to_string(), question.clone())]),
-            )?,
+            api.compile_prompt(kind.first_stage_spec(), input.prompt_values())?,
         )?;
         let mut extract_dispatches = Vec::new();
+        let (stage_title, stage_description, stage_acceptance, stage_read, stage_branch, stage_reason) =
+            match kind {
+                ForumKind::Ask => (
+                    "Extract",
+                    "Answer the parent run question independently. This is report-only; do not edit project source.",
+                    "A standalone evidence-led extraction report is promoted.",
+                    "question in dispatch brief; public or repository sources as needed",
+                    "extract",
+                    "independent multi-model extraction",
+                ),
+                ForumKind::Critique => (
+                    "Critique",
+                    "Critique the supplied target independently. This is report-only; do not edit project source.",
+                    "A standalone evidence-anchored, severity-tagged critique report is promoted.",
+                    "target and optional focus in dispatch brief",
+                    "critic",
+                    "independent multi-model critique",
+                ),
+            };
         for (index, participant) in participants.iter().enumerate() {
             let ordinal = index + 1;
             let task = format!("{parent}.{ordinal}");
             api.create_task(
                 &task,
-                format!("Extract — {}", participant.identity()),
-                "Answer the parent run question independently. This is report-only; do not edit project source.",
-                "A standalone evidence-led extraction report is promoted.",
-                "question in dispatch brief; public or repository sources as needed",
+                format!("{stage_title} — {}", participant.identity()),
+                stage_description,
+                stage_acceptance,
+                stage_read,
                 "none; dispatch report only",
             )?;
             let dispatch = launch(
@@ -1494,15 +1812,15 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
                 &extract_brief,
                 &source_ref,
                 format!(
-                    "mm-{}-extract-{ordinal}",
+                    "mm-{}-{stage_branch}-{ordinal}",
                     parent.trim_start_matches("TASK-").to_ascii_lowercase()
                 ),
-                "independent multi-model extraction",
+                stage_reason,
             )?;
             active.push(dispatch.clone());
             extract_dispatches.push(dispatch);
         }
-        wait_barrier(home, &extract_dispatches, args.timeout)?;
+        wait_barrier(home, &extract_dispatches, timeout)?;
         for mut dispatch in extract_dispatches {
             let path = close_and_finish(home, &api, &ledger, &mut dispatch)?;
             mark_closed(&mut active, &dispatch);
@@ -1521,25 +1839,38 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
                 .iter()
                 .enumerate()
                 .filter(|(other_index, _)| *other_index != index)
-                .map(|(_, report)| manifest_entry("Extraction to review", report))
+                .map(|(_, report)| {
+                    manifest_entry(
+                        match kind {
+                            ForumKind::Ask => "Extraction to review",
+                            ForumKind::Critique => "Critique to review",
+                        },
+                        report,
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n\n");
             let review_brief = tmp.path().join(format!("cross-review-{ordinal}.md"));
-            std::fs::write(
-                &review_brief,
-                api.compile_prompt(
-                    "cross-reviewer",
-                    BTreeMap::from([
-                        ("artifact.user_prompt".to_string(), question.clone()),
-                        ("dispatch.brief".to_string(), report_manifest),
-                    ]),
-                )?,
-            )?;
+            std::fs::write(&review_brief, {
+                let mut values = input.prompt_values();
+                values.insert("dispatch.brief".to_string(), report_manifest);
+                api.compile_prompt(kind.cross_review_spec(), values)?
+            })?;
+            let (review_description, review_acceptance) = match kind {
+                ForumKind::Ask => (
+                    "Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.",
+                    "A ? / + / = delta report is promoted without access to this participant's own extraction.",
+                ),
+                ForumKind::Critique => (
+                    "Review only the other participants' promoted critique reports. This is a fresh report-only dispatch.",
+                    "A ? / + / = delta report is promoted without access to this participant's own critique.",
+                ),
+            };
             api.create_task(
                 &task,
                 format!("Blind cross-review — {}", participant.identity()),
-                "Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.",
-                "A ? / + / = delta report is promoted without access to this participant's own extraction.",
+                review_description,
+                review_acceptance,
                 "other participants' report paths named in dispatch brief",
                 "none; dispatch report only",
             )?;
@@ -1558,7 +1889,7 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             active.push(dispatch.clone());
             review_dispatches.push(dispatch);
         }
-        wait_barrier(home, &review_dispatches, args.timeout)?;
+        wait_barrier(home, &review_dispatches, timeout)?;
         for mut dispatch in review_dispatches {
             let path = close_and_finish(home, &api, &ledger, &mut dispatch)?;
             mark_closed(&mut active, &dispatch);
@@ -1581,7 +1912,15 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             curator.identity(),
             extraction
                 .iter()
-                .map(|report| manifest_entry("Extraction", report))
+                .map(|report| {
+                    manifest_entry(
+                        match kind {
+                            ForumKind::Ask => "Extraction",
+                            ForumKind::Critique => "Critique",
+                        },
+                        report,
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n\n"),
             reviews
@@ -1591,22 +1930,29 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
                 .join("\n\n"),
         );
         let curator_brief = tmp.path().join("curator.md");
-        std::fs::write(
-            &curator_brief,
-            api.compile_prompt(
-                "curator",
-                BTreeMap::from([
-                    ("artifact.user_prompt".to_string(), question.clone()),
-                    ("dispatch.brief".to_string(), run_manifest),
-                    ("task.id".to_string(), curator_task.clone()),
-                ]),
-            )?,
-        )?;
+        std::fs::write(&curator_brief, {
+            let mut values = input.prompt_values();
+            values.insert("dispatch.brief".to_string(), run_manifest);
+            values.insert("task.id".to_string(), curator_task.clone());
+            api.compile_prompt(kind.curator_spec(), values)?
+        })?;
+        let (curator_title, curator_description, curator_acceptance) = match kind {
+            ForumKind::Ask => (
+                "Curate answer",
+                "Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.",
+                "The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the run stats, Question, and diagram.",
+            ),
+            ForumKind::Critique => (
+                "Curate verdict",
+                "Read all promoted critique and cross-review reports, write the final verdict draft and structured diagram fields, and report their paths.",
+                "The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the run stats, Target, and diagram.",
+            ),
+        };
         api.create_task(
             &curator_task,
-            format!("Curate answer — {}", curator.identity()),
-            "Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.",
-            "The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the run stats, Question, and diagram.",
+            format!("{curator_title} — {}", curator.identity()),
+            curator_description,
+            curator_acceptance,
             "all promoted report paths named in dispatch brief and MDX block contract",
             "/tmp curation draft, diagram JSON, and dispatch report only",
         )?;
@@ -1623,7 +1969,7 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             "curate multi-model reports into final artifact",
         )?;
         active.push(curator_dispatch.clone());
-        wait_barrier(home, std::slice::from_ref(&curator_dispatch), args.timeout)?;
+        wait_barrier(home, std::slice::from_ref(&curator_dispatch), timeout)?;
         let curator_report_path = close_and_finish(home, &api, &ledger, &mut curator_dispatch)?;
         mark_closed(&mut active, &curator_dispatch);
 
@@ -1646,7 +1992,7 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             .collect::<Vec<_>>();
         let fields = load_diagram_fields(&fields_path, &extraction_tasks, &review_tasks)?;
         let svg = render_pipeline_svg(
-            &question,
+            &input.diagram_prompt(),
             &extraction,
             &reviews,
             &curator,
@@ -1662,16 +2008,18 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             .collect::<Vec<_>>();
         let draft = std::fs::read_to_string(&draft_path)
             .with_context(|| format!("read {}", draft_path.display()))?;
-        let about_run = render_about_run(&extraction, &reviews, &curator, &started_at);
-        let mdx = assemble_artifact(&draft, &question, &svg, &about_run, &raw_tasks)?;
-        let artifact = args
-            .artifact_id
-            .unwrap_or_else(|| mint_node_id_for_class(NodeIdClass::Artifact));
-        let title = fields
-            .headline
+        let about_run = render_about_run(kind, &extraction, &reviews, &curator, &started_at);
+        let mdx = assemble_artifact(&draft, &input, &svg, &about_run, &raw_tasks)?;
+        let artifact = artifact_id
             .clone()
-            .unwrap_or_else(|| format!("Multi-model extraction: {short_question}"));
-        api.submit_artifact(&artifact, mdx, title, &parent, &question)?;
+            .unwrap_or_else(|| mint_node_id_for_class(NodeIdClass::Artifact));
+        api.submit_artifact(
+            &artifact,
+            mdx,
+            input.artifact_title(&fields),
+            &parent,
+            input.content(),
+        )?;
         std::fs::remove_file(&draft_path)
             .with_context(|| format!("remove {}", draft_path.display()))?;
         std::fs::remove_file(&fields_path)
@@ -1680,15 +2028,19 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
         api.set_evidence(
             &parent,
             &format!(
-                "- Artifact: {artifact}\n- Extraction tasks: {}\n- Cross-review tasks: {}\n- Curation task: {curator_task}\n",
+                "- Artifact: {artifact}\n- {} tasks: {}\n- Cross-review tasks: {}\n- Curation task: {curator_task}\n",
+                match kind {
+                    ForumKind::Ask => "Extraction",
+                    ForumKind::Critique => "Critique",
+                },
                 extraction_tasks.join(" "),
                 review_tasks.join(" ")
             ),
         )?;
         api.finish_task(&parent)?;
-        Ok(AskResult {
+        Ok(RunResult {
             parent_task: parent.clone(),
-            extraction_tasks,
+            first_stage_tasks: extraction_tasks,
             cross_review_tasks: review_tasks,
             curation_task: curator_task,
             artifact_id: artifact,
@@ -1705,6 +2057,67 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
     result
 }
 
+fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
+    let question = match (args.question, args.question_file) {
+        (Some(question), None) => question,
+        (None, Some(path)) => {
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?
+        }
+        _ => bail!("one of --question or --question-file is required"),
+    };
+    let question = question.trim().to_string();
+    validate_question(&question)?;
+    let result = run_forum(home, ForumInput::Ask { question }, args.run)?;
+    Ok(AskResult {
+        parent_task: result.parent_task,
+        extraction_tasks: result.first_stage_tasks,
+        cross_review_tasks: result.cross_review_tasks,
+        curation_task: result.curation_task,
+        artifact_id: result.artifact_id,
+    })
+}
+
+fn run_critique(home: &Home, args: CritiqueArgs) -> Result<CritiqueResult> {
+    let target = read_target(&args.target_file)?;
+    let focus = match args.focus {
+        Some(focus) => {
+            let focus = focus.trim().to_string();
+            validate_focus(&focus)?;
+            Some(focus)
+        }
+        None => None,
+    };
+    let basename = args
+        .target_file
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "target".to_string())
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let basename = if basename.is_empty() {
+        "target".to_string()
+    } else {
+        basename
+    };
+    let result = run_forum(
+        home,
+        ForumInput::Critique {
+            target,
+            focus,
+            basename,
+        },
+        args.run,
+    )?;
+    Ok(CritiqueResult {
+        parent_task: result.parent_task,
+        critique_tasks: result.first_stage_tasks,
+        cross_review_tasks: result.cross_review_tasks,
+        curation_task: result.curation_task,
+        artifact_id: result.artifact_id,
+    })
+}
+
 #[derive(Args, Debug)]
 pub struct ForumArgs {
     #[command(subcommand)]
@@ -1715,6 +2128,8 @@ pub struct ForumArgs {
 enum ForumMode {
     /// Ask a hard question through independent extraction, blind cross-review, and curation.
     Ask(AskArgs),
+    /// Critique a target through independent analysis, blind cross-review, and curation.
+    Critique(CritiqueArgs),
 }
 
 pub fn run(home: &Home, args: ForumArgs) -> Result<()> {
@@ -1722,6 +2137,10 @@ pub fn run(home: &Home, args: ForumArgs) -> Result<()> {
         ForumMode::Ask(args) => {
             println!("{}", serde_json::to_string_pretty(&run_ask(home, args)?)?);
         }
+        ForumMode::Critique(args) => println!(
+            "{}",
+            serde_json::to_string_pretty(&run_critique(home, args)?)?
+        ),
     }
     Ok(())
 }
@@ -1841,6 +2260,50 @@ mod tests {
                 "question must be rejected up front: {rejected}"
             );
         }
+    }
+
+    #[test]
+    fn critique_target_and_focus_validation_rejects_unsafe_inputs() {
+        assert!(validate_target("")
+            .unwrap_err()
+            .to_string()
+            .contains("empty"));
+        assert!(validate_target(" \n\t")
+            .unwrap_err()
+            .to_string()
+            .contains("empty"));
+        assert!(validate_target(&"x".repeat(MAX_TARGET_BYTES + 1))
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds 64 KiB"));
+        for placeholder in [
+            QUESTION_PLACEHOLDER,
+            TARGET_PLACEHOLDER,
+            DIAGRAM_PLACEHOLDER,
+            RUN_STATS_PLACEHOLDER,
+        ] {
+            assert!(validate_target(&format!("hostile {placeholder}"))
+                .unwrap_err()
+                .to_string()
+                .contains("orchestrator placeholders"));
+        }
+        for focus in ["", "two\nlines", "-option", TARGET_PLACEHOLDER] {
+            assert!(
+                validate_focus(focus).is_err(),
+                "focus should fail: {focus:?}"
+            );
+        }
+        assert!(validate_target("a valid target").is_ok());
+        assert!(validate_target(&"x".repeat(MAX_TARGET_BYTES)).is_ok());
+        assert!(validate_focus("security posture").is_ok());
+
+        let tmp = tempfile::tempdir().unwrap();
+        let invalid_utf8 = tmp.path().join("invalid.md");
+        std::fs::write(&invalid_utf8, [0xff]).unwrap();
+        assert!(read_target(&invalid_utf8)
+            .unwrap_err()
+            .to_string()
+            .contains("as UTF-8"));
     }
 
     #[test]
@@ -1988,6 +2451,7 @@ mod tests {
     fn assembly_preserves_hostile_question_and_enforces_task_boundaries() {
         let (participants, extraction, reviews) = reports(2);
         let about_run = render_about_run(
+            ForumKind::Ask,
             &extraction,
             &reviews,
             &participants[0],
@@ -2007,8 +2471,11 @@ mod tests {
             raw_tasks.join(" ")
         );
         let question = "Should <svg> and {braces} stay verbatim & safe?";
+        let input = ForumInput::Ask {
+            question: question.to_string(),
+        };
         let assembled =
-            assemble_artifact(&draft, question, "<generated/>", &about_run, &raw_tasks).unwrap();
+            assemble_artifact(&draft, &input, "<generated/>", &about_run, &raw_tasks).unwrap();
         assert!(
             assembled.find("title=\"Question\"").unwrap()
                 < assembled.find("title=\"Final answer\"").unwrap()
@@ -2021,7 +2488,7 @@ mod tests {
 
         let authored = draft.replace(DIAGRAM_PLACEHOLDER, "<svg/>");
         assert!(
-            assemble_artifact(&authored, question, "generated", &about_run, &raw_tasks)
+            assemble_artifact(&authored, &input, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("model-authored SVG")
@@ -2029,7 +2496,7 @@ mod tests {
 
         let header = draft.replace(RUN_STATS_PLACEHOLDER, "<RichText>Run header</RichText>");
         assert!(
-            assemble_artifact(&header, question, "generated", &about_run, &raw_tasks)
+            assemble_artifact(&header, &input, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("each orchestrator placeholder once")
@@ -2037,7 +2504,7 @@ mod tests {
 
         let trailing = format!("{draft}\n<Section><RichText>PS.</RichText></Section>");
         assert!(
-            assemble_artifact(&trailing, question, "generated", &about_run, &raw_tasks)
+            assemble_artifact(&trailing, &input, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("must be the final block")
@@ -2045,7 +2512,7 @@ mod tests {
 
         let boundary = draft.replace(&raw_tasks[0], &format!("{}1", raw_tasks[0]));
         assert!(
-            assemble_artifact(&boundary, question, "generated", &about_run, &raw_tasks)
+            assemble_artifact(&boundary, &input, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("omitted raw-report task ids")
@@ -2060,10 +2527,119 @@ mod tests {
             ),
         );
         assert!(
-            assemble_artifact(&decoy, question, "generated", &about_run, &raw_tasks)
+            assemble_artifact(&decoy, &input, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("Question section does not match the input question verbatim")
         );
+    }
+
+    #[test]
+    fn critique_assembly_preserves_hostile_target_and_rejects_a_decoy() {
+        let (participants, extraction, reviews) = reports(2);
+        let about_run = render_about_run(
+            ForumKind::Critique,
+            &extraction,
+            &reviews,
+            &participants[0],
+            "2026-08-29T21:07:20.123+00:00",
+        );
+        assert!(about_run.contains("2 critique reports"));
+        let raw_tasks = extraction
+            .iter()
+            .chain(&reviews)
+            .map(|report| report.dispatch.task.clone())
+            .chain(std::iter::once("TASK-TESTX.5".to_string()))
+            .collect::<Vec<_>>();
+        let draft = format!(
+            "{TARGET_PLACEHOLDER}\n<Section title=\"Verdict\"><RichText>Reject.</RichText></Section>\n<Section title=\"Findings\"><Tabs><Tab label=\"Blocking\"><RichText>Finding.</RichText></Tab></Tabs></Section>\n<Section title=\"From target to verdict\">\n{DIAGRAM_PLACEHOLDER}\n<RichText>Raw reports: {}</RichText>\n</Section>\n<Section><QuestionForm questions={{[]}} /></Section>\n{RUN_STATS_PLACEHOLDER}",
+            raw_tasks.join(" ")
+        );
+        let target = "# Hostile\r\n</RichText> <Section title=\"Target\">decoy</Section> & {rule}";
+        let input = ForumInput::Critique {
+            target: target.to_string(),
+            focus: Some("security & boundaries".to_string()),
+            basename: "design.md".to_string(),
+        };
+        let assembled =
+            assemble_artifact(&draft, &input, "<generated/>", &about_run, &raw_tasks).unwrap();
+        assert!(assembled.starts_with("<Section title=\"Target\">"));
+        assert!(assembled.contains(&escape_rich_text(target)));
+        assert!(assembled.contains("**Focus:** security &amp; boundaries"));
+        let target_at = assembled.find("title=\"Target\"").unwrap();
+        let verdict_at = assembled.find("title=\"Verdict\"").unwrap();
+        let findings_at = assembled.find("title=\"Findings\"").unwrap();
+        let diagram_at = assembled.find("title=\"From target to verdict\"").unwrap();
+        assert!(target_at < verdict_at && verdict_at < findings_at && findings_at < diagram_at);
+        assert!(assembled.trim_end().ends_with("</Section>"));
+
+        let decoy = draft.replace(
+            TARGET_PLACEHOLDER,
+            &format!(
+                "<Section  title=\"Target\"><RichText>fake target</RichText></Section>\n{TARGET_PLACEHOLDER}"
+            ),
+        );
+        assert!(
+            assemble_artifact(&decoy, &input, "generated", &about_run, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("Target section does not match the input target verbatim")
+        );
+
+        let misplaced = draft.replacen(
+            TARGET_PLACEHOLDER,
+            "<Section title=\"Preface\"><RichText>decoy</RichText></Section>\n__ORGASMIC_TARGET_SECTION__",
+            1,
+        );
+        assert!(
+            assemble_artifact(&misplaced, &input, "generated", &about_run, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("Target must be the first Section")
+        );
+
+        let verdict = "<Section title=\"Verdict\"><RichText>Reject.</RichText></Section>";
+        let findings = "<Section title=\"Findings\"><Tabs><Tab label=\"Blocking\"><RichText>Finding.</RichText></Tab></Tabs></Section>";
+        let reordered = draft.replace(
+            &format!("{verdict}\n{findings}"),
+            &format!("{findings}\n{verdict}"),
+        );
+        assert!(
+            assemble_artifact(&reordered, &input, "generated", &about_run, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("required sections are out of order")
+        );
+    }
+
+    #[test]
+    fn critique_title_uses_headline_then_focus_then_basename() {
+        let (_, extraction, reviews) = reports(2);
+        let mut fields = fields(&extraction, &reviews);
+        let focused = ForumInput::Critique {
+            target: "target".to_string(),
+            focus: Some("security posture".to_string()),
+            basename: "design.md".to_string(),
+        };
+        assert_eq!(
+            focused.artifact_title(&fields),
+            "Multi-model critique: security posture"
+        );
+        fields.headline = Some("Prioritized security verdict".to_string());
+        assert_eq!(
+            focused.artifact_title(&fields),
+            "Prioritized security verdict"
+        );
+        fields.headline = None;
+        let unfocused = ForumInput::Critique {
+            target: "target".to_string(),
+            focus: None,
+            basename: "design.md".to_string(),
+        };
+        assert_eq!(
+            unfocused.artifact_title(&fields),
+            "Multi-model critique: design.md"
+        );
+        assert_eq!(unfocused.diagram_prompt(), "critique of design.md, 6 bytes");
     }
 }
