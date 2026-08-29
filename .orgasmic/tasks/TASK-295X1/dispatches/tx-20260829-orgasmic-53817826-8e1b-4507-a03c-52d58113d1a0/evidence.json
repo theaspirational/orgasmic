@@ -1,0 +1,23 @@
+{
+  "event_count": 371,
+  "tool_call_count": 29,
+  "unparsed_events": 3,
+  "bounded_events": 3,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-295X1-reviewer-20260829T233835.jsonl",
+    "size_bytes": 593909
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'm the reviewer for TASK-295X1. First I'll look at the diff and the task record.Now I'll read the full diff of the main file.`section_titles` matches any `<Section` prefix and the decoy test is honest. Now the assembly tail and error-cleanup path.Now the run_forum tail (cleanup + WaitUnknown handling).Cleanup path is shared and unchanged. Now the prompt specs — the three new ones, plus the existing ask curator spec to check the new section-order enforcement doesn't break live ask runs.The ask curator spec already mandates the exact order the new check enforces, so the tightening is safe. Now reading the three new specs.Ask specs are untouched and the new specs bind the contract properly. Checking headline cap handling, then running the verification gates myself.Diagram schema is shared and headline-capped at 80. Now running the gates myself.Third probe hit target validation first (expected order). Redoing with a clean target to prove the focus check on the production path.Validation confirmed on the real CLI path. One test-honesty probe: I suspect the `draft.contains(other_placeholder)` guard has no covering test. Mutation check (will revert).Confirmed test gap: with that guard disabled, all 9 forum tests still pass. Reverting the mutation now.Worktree is clean. Confirming the Python-parity fixture test by name.Everything checks out. Writing the review and finalizing."
+    }
+  ],
+  "narrative_truncated": false
+}
