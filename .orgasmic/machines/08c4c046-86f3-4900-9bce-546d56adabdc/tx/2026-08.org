@@ -3310,3 +3310,22 @@
 :WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fbsz2
 :EVENT_ID:     168242e3-357c-421c-b2fe-a7d71a2f6ddf
 :END:
+
+* TX 2026-08-29 Sat 17:13:31 manager.dispatch_aborted TASK-FBSZ2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-706e1ba8-9152-45dc-915a-3ac98654b9ad
+:TIME:         [2026-08-29 Sat 17:13:31]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FBSZ2
+:REASON:       codex stdio transport died mid-run: invalid stdio JSON on stdout after 14min; no report
+:CLOSED_TX:    tx-20260829-orgasmic-cda33ddd-cb5c-4f8c-bbe0-8b8a87532971
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fbsz2
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: git rev-parse --git-common-dir failed: fatal: not a git repository: /Users/aspirational/Documents/code/tools/orgasmic/.git/worktrees/ledger
+:EVENT_ID:     a963e84f-d61d-43de-b2b2-8b8acc7da6bb
+:END:
