@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-02JJW.2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-02JJW.2 Extract — hermes · google · gemini-3.7-flash · effort low
+* TODO TASK-02JJW.2 Extract — hermes · google · gemini-3.7-flash · effort low
 :PROPERTIES:
 :ID: TASK-02JJW.2
 :READ_SCOPE: question in dispatch brief; public or repository sources as needed

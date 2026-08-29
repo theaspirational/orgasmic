@@ -5012,28 +5012,11 @@ Either way the outcome is a recorded answer. The defect being fixed here is that
 
 TASK-CLM6W, TASK-IXPD4, TASK-LBRX7 (added in ledger commit 22b951f2, 2026-08-27) contain I/L, which the Crockford stem alphabet forbids — they were hand-minted, not daemon-minted. They are the whole remaining parse_errors=3 ("malformed identity id"). Referenced from TASK-AP971, TASK-AS0FS, TASK-D2DM3, TASK-MSYN4, TASK-TFXR2. Fix = re-mint each through the daemon and rewrite the references; needs a daemon-side rename path or a careful one-off migration, NOT hand edits.
 
-* IN_PROGRESS TASK-02JJW Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
-:PROPERTIES:
-:ID: TASK-02JJW
-:READ_SCOPE: named promoted dispatch reports
-:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
-:END:
-
-** Description
-Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
-
-Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · google · gemini-3.7-flash · effort low
-
-** Acceptance Criteria
-- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
-
-* IN_PROGRESS TASK-02JJW.1 Extract — hermes · openai · gpt-5.6-luna · effort low
+* TODO TASK-02JJW.1 Extract — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-02JJW.1
 :READ_SCOPE: question in dispatch brief; public or repository sources as needed
 :WRITE_SCOPE: none; dispatch report only
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:CLAIM_WRITE_SCOPE: none; dispatch report only
 :END:
 
 ** Description
@@ -5221,13 +5204,11 @@ Evidence: `session.rs:424-496` — `bound_driver_event_payload` with three-tier 
 14. `.orgasmic/gotchas.org` — durable code-level traps including session JSONL shape, macOS append-mode, and compaction pitfalls
 15. `.orgasmic/project.org` — project mission, operating constraints, and verification rules
 
-* IN_PROGRESS TASK-02JJW.2 Extract — hermes · google · gemini-3.7-flash · effort low
+* TODO TASK-02JJW.2 Extract — hermes · google · gemini-3.7-flash · effort low
 :PROPERTIES:
 :ID: TASK-02JJW.2
 :READ_SCOPE: question in dispatch brief; public or repository sources as needed
 :WRITE_SCOPE: none; dispatch report only
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:CLAIM_WRITE_SCOPE: none; dispatch report only
 :END:
 
 ** Description
@@ -5235,6 +5216,21 @@ Answer the parent run question independently. This is report-only; do not edit p
 
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
+
+* IN_PROGRESS TASK-02JJW Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
+:PROPERTIES:
+:ID: TASK-02JJW
+:READ_SCOPE: named promoted dispatch reports
+:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
+:END:
+
+** Description
+Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
+
+Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · google · gemini-3.7-flash · effort low
+
+** Acceptance Criteria
+- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
 * IN_PROGRESS TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
 :PROPERTIES:

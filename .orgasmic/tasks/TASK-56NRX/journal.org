@@ -46,3 +46,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: e6c3438d-6d80-4b66-9a80-a88d52b05767
 :END:
+
+* tx-20260829-orgasmic-6532 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6532
+:TIME:    [2026-08-29 Sat 11:02:11]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-56NRX
+:TARGET: .orgasmic/tasks/TASK-56NRX/node.org
+:REASON: round-1 blocked only on smoke under daemon overload; requeue for continuation round
+:FROM_STATE: in_progress
+:TO_STATE: todo
+:EVENT_ID: 798bb53f-c7d6-4330-ab78-c8f93a6508e9
+:END:

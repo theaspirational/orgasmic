@@ -1517,3 +1517,41 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-56NRX/dispatches/tx-20260829-orgasmic-68c81f5b-924b-41ac-b38a-80db77f2a9e9/report.md
 :EVENT_ID:     d5b09eed-83ac-42d0-8b5f-36bb1537ddc4
 :END:
+
+* TX 2026-08-29 Sat 11:02:03 manager.dispatch_aborted TASK-02JJW.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-3714b96e-787c-449e-90dc-40988c26b106
+:TIME:         [2026-08-29 Sat 11:02:03]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-02JJW.1
+:REASON:       orphaned smoke worker: daemon overload killed the run before close
+:CLOSED_TX:    tx-20260829-orgasmic-1665318d-cb25-4157-b268-aed8d79ce606
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-02jjw.1
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-02jjw.1
+:EVENT_ID:     4677c9fb-e0ad-4053-81b1-89ee3ea14fc6
+:END:
+
+* TX 2026-08-29 Sat 11:02:04 manager.dispatch_aborted TASK-02JJW.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-3e5bbb23-b22b-44ca-a3c1-0edaea035757
+:TIME:         [2026-08-29 Sat 11:02:04]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-02JJW.2
+:REASON:       orphaned smoke worker: daemon overload killed the run before close
+:CLOSED_TX:    tx-20260829-orgasmic-c9e8b1d0-5a82-445e-abee-0ff1fd920c1e
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-02jjw.2
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-02jjw.2
+:EVENT_ID:     b9f8fae8-2561-4aa0-b564-7676f1e1d983
+:END:
