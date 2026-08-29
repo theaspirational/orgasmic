@@ -91,7 +91,7 @@ Write `/tmp/{{task.id}}-diagram.json` as JSON only, with this exact shape:
 #+end_src
 
 Include every extraction and review task exactly once, in manifest order. Each
-extract has one to four non-empty excerpt lines, each at most 55 characters.
+extract has one to four non-empty excerpt lines, each at most 43 characters.
 Each review has exactly three non-empty bullets, one each tagged `?`, `+`, and
 `=`. Keep `curator_summary` to one short line. Do not put prose, Markdown fences,
 participant metadata, record paths, or SVG in this JSON; the orchestrator owns

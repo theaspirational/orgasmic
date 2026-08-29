@@ -115,7 +115,7 @@ def load_diagram_fields(
             or not all(isinstance(line, str) and line.strip() for line in lines)
         ):
             raise ValueError(f"invalid extract diagram entry for {task!r}")
-        extracts[task] = [clipped(line, 55) for line in lines]
+        extracts[task] = [clipped(line, 43) for line in lines]
     if set(extracts) != set(extraction_tasks):
         raise ValueError("curator diagram fields must cover every extraction task once")
 
@@ -143,7 +143,7 @@ def load_diagram_fields(
         ):
             raise ValueError(f"invalid review diagram entry for {task!r}")
         reviews[task] = [
-            {"tag": bullet["tag"], "text": clipped(bullet["text"], 55)}
+            {"tag": bullet["tag"], "text": clipped(bullet["text"], 43)}
             for bullet in bullets
         ]
     if set(reviews) != set(review_tasks):
@@ -458,7 +458,11 @@ def assemble_artifact(draft: str, question: str, svg: str, raw_tasks: list[str])
         raise RuntimeError(
             f"curator draft is missing required sections: {sorted(required - set(sections))}"
         )
-    missing_tasks = [task for task in raw_tasks if task not in mdx]
+    missing_tasks = [
+        task
+        for task in raw_tasks
+        if not re.search(rf"{re.escape(task)}(?![.\d])", mdx)
+    ]
     if missing_tasks:
         raise RuntimeError(
             f"curator draft omitted raw-report task ids: {missing_tasks}"
@@ -821,6 +825,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, object]:
     ).strip()
     if not question:
         raise ValueError("question must not be empty")
+    if any(
+        placeholder in question
+        for placeholder in (QUESTION_PLACEHOLDER, DIAGRAM_PLACEHOLDER)
+    ):
+        raise ValueError("question must not contain orchestrator placeholders")
+    if question.startswith("-"):
+        raise ValueError("question must not start with '-'")
     participants = [parse_participant(raw) for raw in args.participant]
     validate_participants(participants)
     if args.curator < 1 or args.curator > len(participants):
@@ -1128,6 +1139,48 @@ def self_test() -> None:
     else:
         raise AssertionError("duplicate models must be rejected")
 
+    text_limit = 43
+    over_limit = "x" * (text_limit + 1)
+    extract_at_limit = "e" * text_limit
+    review_at_limit = "r" * text_limit
+    with tempfile.TemporaryDirectory() as raw:
+        fields_path = Path(raw) / "diagram.json"
+        fields_path.write_text(
+            json.dumps(
+                {
+                    "extracts": [{"task": "TASK-CAP.1", "excerpt_lines": [over_limit]}],
+                    "reviews": [
+                        {
+                            "task": "TASK-CAP.2",
+                            "delta_bullets": [
+                                {"tag": tag, "text": over_limit} for tag in "?+="
+                            ],
+                        }
+                    ],
+                    "curator_summary": "summary",
+                }
+            )
+        )
+        cap_extracts, cap_reviews, _ = load_diagram_fields(
+            fields_path, ["TASK-CAP.1"], ["TASK-CAP.2"]
+        )
+    expected_cap = "x" * (text_limit - 1) + "…"
+    assert cap_extracts["TASK-CAP.1"] == [expected_cap]
+    assert cap_reviews["TASK-CAP.2"][0]["text"] == expected_cap
+
+    rejected_questions = {
+        f"contains {QUESTION_PLACEHOLDER}": "orchestrator placeholders",
+        f"contains {DIAGRAM_PLACEHOLDER}": "orchestrator placeholders",
+        "-leading option-shaped question": "must not start",
+    }
+    for rejected, message in rejected_questions.items():
+        try:
+            run_pipeline(argparse.Namespace(question=rejected, question_file=None))
+        except ValueError as error:
+            assert message in str(error)
+        else:
+            raise AssertionError(f"question must be rejected up front: {rejected}")
+
     for count in (2, 3):
         participants = [codex, hermes, claude][:count]
         extraction = [
@@ -1153,12 +1206,12 @@ def self_test() -> None:
             for index, participant in enumerate(participants, 1)
         ]
         extract_lines = {
-            dispatch.task: ["First short finding", "Second short finding"]
+            dispatch.task: [extract_at_limit, "Second short finding"]
             for _, dispatch, _ in extraction
         }
         review_bullets = {
             dispatch.task: [
-                {"tag": "?", "text": "challenged claim"},
+                {"tag": "?", "text": review_at_limit},
                 {"tag": "+", "text": "new evidence"},
                 {"tag": "=", "text": "shared conclusion"},
             ]
@@ -1190,6 +1243,9 @@ def self_test() -> None:
         cards = [group for group in groups if group.get("data-card")]
         pills = [group for group in groups if group.get("data-pill")]
         texts = root.findall(f".//{namespace}text")
+        assert {extract_at_limit, review_at_limit}.issubset(
+            {node.text for node in texts}
+        )
         assert len(cards) == 2 * count + 2
         assert len(pills) == 4
         assert len(texts) == 12 + 18 * count
@@ -1240,6 +1296,17 @@ def self_test() -> None:
             assert "model-authored SVG" in str(error)
         else:
             raise AssertionError("model-authored SVG must be rejected")
+        try:
+            assemble_artifact(
+                draft.replace(raw_tasks[0], f"{raw_tasks[0]}1"),
+                question,
+                svg,
+                raw_tasks,
+            )
+        except RuntimeError as error:
+            assert "omitted raw-report task ids" in str(error)
+        else:
+            raise AssertionError(f"{raw_tasks[0]}1 must not satisfy {raw_tasks[0]}")
     print("self-test ok")
 
 
