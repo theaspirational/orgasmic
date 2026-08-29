@@ -5338,6 +5338,51 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
+* IN_PROGRESS TASK-932SH Multi-model extraction: When is it worth vendoring a third-party library into a monorepo instead of depending on the package
+:PROPERTIES:
+:ID: TASK-932SH
+:READ_SCOPE: named promoted dispatch reports
+:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
+:END:
+
+** Description
+Question: When is it worth vendoring a third-party library into a monorepo instead of depending on the package registry, and what maintenance traps follow?
+
+Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · google · gemini-3.7-flash · effort low
+
+** Acceptance Criteria
+- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+
+* IN_PROGRESS TASK-932SH.1 Extract — hermes · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-932SH.1
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:CLAIM_WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+
+* IN_PROGRESS TASK-932SH.2 Extract — hermes · google · gemini-3.7-flash · effort low
+:PROPERTIES:
+:ID: TASK-932SH.2
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:CLAIM_WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-NMV4P
@@ -5485,12 +5530,6 @@ AP971.5: writer routing — journal iff the event is about exactly one dir-backe
 - [ ] routing table pinned by a test over every known type
 - [ ] dispatch close still atomic via transaction_multi with no multi-ledger append
 - [ ] id sequence cold-start scan covers journals (test)
-
-* IN_REVIEW TASK-FAS8R Reshape multi-model surface: rename 'orgasmic extract' to 'orgasmic forum' with mode subcommands (ask; critique later) :feature:
-:PROPERTIES:
-:ID: TASK-FAS8R
-:PRIORITY: P1
-:END:
 
 * IN_REVIEW TASK-GCXB7 Shared dispatch fold in orgasmic-core with a type-set guard :e01mc:node_kernel:
 :PROPERTIES:
@@ -15513,6 +15552,14 @@ Deferred D3 from TASK-RH4M5 (hot-session was landed without it; explicit POST /r
 Add a config-defaulted idle timeout to a persistent artifactor rmux session: if no followup (send_input) arrives for the configured duration, release the run (free the artifact.generate:{id} lease, tear down the pane). The timer RESETS on each accepted send_input — unlike the existing stall/ceiling timeouts (resolve_timeout_secs / is_interactive_manager_task at supervisor.rs), which are not reset-on-input. This is the one part of arch_045Q0.2's session-lifetime clause not yet shipped.
 
 Likely needs new supervisor machinery: a per-run last-input instant updated in supervisor.send_input on ack.accepted, plus a sweep (reuse release_first_timed_out_run's shape) that releases persistent runs idle past the threshold. Config default alongside the other timeout knobs. Acceptance: a persistent artifactor run with no followup for the idle window is released (lease freed, next regenerate cold-spawns); a run receiving periodic followups is never idle-released.
+
+* DONE TASK-FAS8R Reshape multi-model surface: rename 'orgasmic extract' to 'orgasmic forum' with mode subcommands (ask; critique later) :feature:
+:PROPERTIES:
+:ID: TASK-FAS8R
+:PRIORITY: P1
+:END:
+** Evidence
+Merge 179a237a: extract.rs -> forum.rs, forum command group with ask mode, skill routing /orgasmic forum, references/forum.md. Gates: forum::tests 6/6 incl Python SVG parity, cli_parity 7/7, report-only close test, clippy -D warnings, fmt, git grep proves no 'orgasmic extract' remains.
 
 * DONE TASK-FB8CK CLI: `orgasmic manager dispatch` — atomic worktree+brief+nohup+pre-flight-tx :daemon:cli:manager-pipeline:
 :PROPERTIES:

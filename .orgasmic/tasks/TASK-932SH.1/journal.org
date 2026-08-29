@@ -1,0 +1,32 @@
+#+title: orgasmic journal TASK-932SH.1
+#+orgasmic_version: 2
+
+* tx-20260829-orgasmic-6677 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6677
+:TIME:    [2026-08-29 Sat 21:07:21]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-932SH.1
+:TARGET: .orgasmic/tasks/TASK-932SH.1/node.org
+:REASON: multi-model knowledge extraction run
+:EVENT_ID: be84721c-4a6f-4233-b581-5a56554d7cfa
+:END:
+
+* tx-20260829-orgasmic-6678 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6678
+:TIME:    [2026-08-29 Sat 21:07:21]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-932SH.1
+:TARGET: .orgasmic/tasks/TASK-932SH.1/node.org
+:REASON: transition TASK-932SH.1 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: f1ec617a-ca57-405c-8e9e-c145243e0f34
+:END:
