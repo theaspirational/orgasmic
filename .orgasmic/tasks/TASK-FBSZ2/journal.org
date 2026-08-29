@@ -62,3 +62,35 @@
 :TO_STATE: in_review
 :EVENT_ID: 92237938-c8ca-4a86-990f-5e881fc65075
 :END:
+
+* tx-20260829-orgasmic-6659 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6659
+:TIME:    [2026-08-29 Sat 18:50:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: review approved with follow-ups
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: 242d9f4c-547d-4a69-b03b-230f251a6bae
+:END:
+
+* tx-20260829-orgasmic-6660 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6660
+:TIME:    [2026-08-29 Sat 18:50:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: requeue for fix round
+:FROM_STATE: in_progress
+:TO_STATE: todo
+:EVENT_ID: 97f1acb7-7747-433a-998c-aa3c809f046e
+:END:
