@@ -172,10 +172,10 @@ Meta section — this part would NOT appear in a real run. Answer here or drop a
   },
   {
     type: "single",
-    prompt: "How much of each answer should a chain card show?",
+    prompt: "Where should the pipeline graph live?",
     options: [
-      { label: "Excerpt + record link, like now", detail: "A few lines per card; the full raw text stays in the dispatch record.", recommended: true },
-      { label: "Full text inline", detail: "Whole answers and reviews expanded inside the chain. Complete, but a very long page." }
+      { label: "Inside this artifact, drawn by the curator", detail: "What you see above. Zero new UI code; graph is per-run and versioned with the answer.", recommended: true },
+      { label: "A separate live view in the app", detail: "Real-time stage progress outside the artifact. New UI work; the RunDock already shows live runs today." }
     ],
     allowOther: true
   },
