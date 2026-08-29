@@ -143,3 +143,29 @@
 :VERSION: 11
 :EVENT_ID: 4a9a899f-3885-41aa-9b7e-5f7ff77e6acf
 :END:
+
+* tx-20260829-orgasmic-6518 artifact.submitted
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6518
+:TIME:    [2026-08-29 Sat 08:15:31]
+:TYPE:    artifact.submitted
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:ARTIFACT_ID: ART-MKRG1
+:VERSION: 12
+:EVENT_ID: 2ce1b6cb-e492-4ca5-9e2b-aa498301a521
+:END:
+
+* tx-20260829-orgasmic-6519 artifact.submitted
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6519
+:TIME:    [2026-08-29 Sat 08:15:52]
+:TYPE:    artifact.submitted
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:ARTIFACT_ID: ART-MKRG1
+:VERSION: 13
+:EVENT_ID: 6d15bc34-deda-4dc1-a056-c3f9dcb069ba
+:END:
