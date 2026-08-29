@@ -3384,3 +3384,21 @@
 :EFFORT_OVERRIDE: xhigh
 :EVENT_ID:     d0472d84-7284-4bd7-a74f-2a29c8df8033
 :END:
+
+
+* TX 2026-08-29 Sat 18:21:48 manager.dispatch_aborted TASK-FBSZ2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-989841f0-b73f-4c70-848c-811c6c2b2ec8
+:TIME:         [2026-08-29 Sat 18:21:48]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FBSZ2
+:REASON:       Required smoke precondition unmet: 1m load never fell below 4 after 35m of durable probes
+:RUN_ID:       run-01M1788CMVXGS16QYEX0EMRFHJ
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fbsz2-r2
+:SHA:          32377f687b682e44f91de6df700ca2a39de86708
+:REPORT_PATH:  .orgasmic/tasks/TASK-FBSZ2/dispatches/tx-20260829-orgasmic-54e3bc6b-b01e-45ae-826d-634e47aafddd/report.md
+:EVENT_ID:     36460907-f7c9-44aa-aab7-30f344059f3c
+:END:
