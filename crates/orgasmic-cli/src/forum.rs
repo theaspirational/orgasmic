@@ -1282,6 +1282,15 @@ fn contains_orchestrator_placeholder(value: &str) -> bool {
 }
 
 fn read_target(path: &Path) -> Result<String> {
+    let length = std::fs::metadata(path)
+        .with_context(|| format!("stat target file {}", path.display()))?
+        .len();
+    if length > MAX_TARGET_BYTES as u64 {
+        bail!(
+            "invalid target file {}: target must be at most {MAX_TARGET_BYTES} bytes, got {length}",
+            path.display()
+        );
+    }
     let target = std::fs::read_to_string(path)
         .with_context(|| format!("read target file {} as UTF-8", path.display()))?;
     validate_target(&target).with_context(|| format!("invalid target file {}", path.display()))?;
@@ -2486,6 +2495,17 @@ mod tests {
         assert!(assembled
             .contains("Should &lt;svg&gt; and &#123;braces&#125; stay verbatim &amp; safe?"));
 
+        let cross_mode = draft.replace(
+            "<RichText>Answer.</RichText>",
+            &format!("<RichText>Answer. {TARGET_PLACEHOLDER}</RichText>"),
+        );
+        assert!(
+            assemble_artifact(&cross_mode, &input, "generated", &about_run, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("each orchestrator placeholder once")
+        );
+
         let authored = draft.replace(DIAGRAM_PLACEHOLDER, "<svg/>");
         assert!(
             assemble_artifact(&authored, &input, "generated", &about_run, &raw_tasks)
@@ -2572,6 +2592,17 @@ mod tests {
         let diagram_at = assembled.find("title=\"From target to verdict\"").unwrap();
         assert!(target_at < verdict_at && verdict_at < findings_at && findings_at < diagram_at);
         assert!(assembled.trim_end().ends_with("</Section>"));
+
+        let cross_mode = draft.replace(
+            "<RichText>Reject.</RichText>",
+            &format!("<RichText>Reject. {QUESTION_PLACEHOLDER}</RichText>"),
+        );
+        assert!(
+            assemble_artifact(&cross_mode, &input, "generated", &about_run, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("each orchestrator placeholder once")
+        );
 
         let decoy = draft.replace(
             TARGET_PLACEHOLDER,
