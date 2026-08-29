@@ -1,0 +1,23 @@
+{
+  "event_count": 256,
+  "tool_call_count": 9,
+  "unparsed_events": 2,
+  "bounded_events": 3,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-KK4DA.4-implementer-20260829T125637.jsonl",
+    "size_bytes": 337701
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'm reading the other participant's extraction report to produce a blind cross-review delta.Now I'll produce my blind cross-review delta report.Now I'll finalize the dispatch with the required CLI command."
+    }
+  ],
+  "narrative_truncated": false
+}
