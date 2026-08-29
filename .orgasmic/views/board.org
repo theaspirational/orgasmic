@@ -5347,21 +5347,6 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
-* IN_PROGRESS TASK-8XXEC.5 Curate answer — hermes · openai · gpt-5.6-luna · effort low
-:PROPERTIES:
-:ID: TASK-8XXEC.5
-:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
-:WRITE_SCOPE: /tmp curation draft, diagram JSON, and dispatch report only
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:CLAIM_WRITE_SCOPE: /tmp curation draft, diagram JSON, and dispatch report only
-:END:
-
-** Description
-Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.
-
-** Acceptance Criteria
-- [ ] The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the Question and diagram.
-
 * IN_PROGRESS TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
 :PROPERTIES:
 :ID: TASK-FBSZ2
@@ -5457,6 +5442,19 @@ AP971.10: one regenerate path — recompile node content + open comments + extra
 ** Acceptance
 - [ ] regenerate works for artifact (unchanged behaviour), task, decision, glossary
 - [ ] the consume rule is tested once, type-agnostically
+
+* IN_REVIEW TASK-8XXEC.5 Curate answer — hermes · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-8XXEC.5
+:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
+:WRITE_SCOPE: /tmp curation draft, diagram JSON, and dispatch report only
+:END:
+
+** Description
+Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.
+
+** Acceptance Criteria
+- [ ] The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the Question and diagram.
 
 * IN_REVIEW TASK-AN992 CLI verbs over node dirs and shipped content for the new layout :e01mc:node_kernel:
 :PROPERTIES:

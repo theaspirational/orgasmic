@@ -1,0 +1,12 @@
+#+title: orgasmic artifact ART-PT7ZX
+#+orgasmic_version: 2
+
+* ART-PT7ZX Multi-model extraction: What are the real failure modes of relying on SQLite WAL mode for a single-writer multi-reader deskt
+:PROPERTIES:
+:ID:           ART-PT7ZX
+:TITLE:        Multi-model extraction: What are the real failure modes of relying on SQLite WAL mode for a single-writer multi-reader deskt
+:SUBJECT_NODES: TASK-8XXEC
+:PROMPT:       What are the real failure modes of relying on SQLite WAL mode for a single-writer multi-reader desktop app, and when do you need something else?
+:VERSION:      1
+:STATE:        submitted
+:END:
