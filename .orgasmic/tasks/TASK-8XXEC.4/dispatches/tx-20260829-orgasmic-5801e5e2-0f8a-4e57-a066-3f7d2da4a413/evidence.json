@@ -1,0 +1,22 @@
+{
+  "event_count": 13255,
+  "tool_call_count": 11,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-8XXEC.4-implementer-20260829T183030.jsonl",
+    "size_bytes": 3866726
+  },
+  "native_transcript": {
+    "status": "not_found",
+    "reason": "hermes session file for id 'd5503e65-e387-42d2-8722-47c4b45bcd0c' not found under /Users/aspirational/.hermes/sessions"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the other participant's extraction report.\n\nNow let me verify some key claims against primary sources to produce discriminating delta checks.\n\nLet me verify a few more specific claims by reading the middle of the WAL documentation.\n\nLet me verify the attribution of the Antithesis reproducer, which the report attributes to \"Phil Eaton.\"\n\nNow I have enough verified evidence. Let me check one more detail — the authorship of the Antithesis reproducer and the theconsensus.dev article.\n\nI now have sufficient verified evidence to write the delta report. Let me compose it.\n\nNow finalize the dispatch."
+    }
+  ],
+  "narrative_truncated": false
+}
