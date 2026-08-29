@@ -1,0 +1,23 @@
+{
+  "event_count": 240,
+  "tool_call_count": 7,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-KK4DA.2-implementer-20260829T125505.jsonl",
+    "size_bytes": 329070
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll investigate this question about append-only event records vs mutable state in local-first tools.Now I'll write a comprehensive extraction report on this topic.Now I'll finalize the report with the orgasmic CLI."
+    }
+  ],
+  "narrative_truncated": false
+}
