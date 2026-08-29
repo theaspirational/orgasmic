@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-295X1
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target :feature:
+* DONE TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target :feature:
 :PROPERTIES:
 :ID: TASK-295X1
 :PRIORITY: P2
@@ -9,8 +9,8 @@
 ** Description
 Add the second forum mode: `orgasmic forum critique` — N models blindly critique a supplied target document, cross-review each other's critiques (self-excluding), and a curator synthesizes a prioritized verdict artifact. Reuses forum ask machinery: dispatch pipeline, deterministic SVG, placeholder assembly, About-this-run footer, headline titling.
 ** Evidence
-- Implementer: codex/gpt-5.6-sol/xhigh, commit 7d4b7916 (merged fast-forward to main), report promoted on the dispatch record
+- Implementer: codex/gpt-5.6-sol/xhigh, commit 7d4b7916, merged to main at c74eb263 (merge commit)
 - Review: claude-fable-5/high, APPROVE, 'would merge as-is', zero blocking/medium findings; review promoted on the reviewer dispatch record
-- LOW findings closed on main at c3d79f53 (pre-read 64KiB stat cap; cross-mode placeholder rejection tests, one per mode)
+- LOW findings closed on main at 8bfb1a88 (pre-read 64KiB stat cap; cross-mode placeholder rejection tests, one per mode)
 - Gates: cargo fmt --all, clippy -D warnings, 280 CLI bin tests incl. 9 forum tests and byte-identical ask SVG fixture, shipped prompt specs compile
 - Live multi-model critique smoke not yet run (operator-owned, post-reinstall)
