@@ -54,23 +54,18 @@ Write `/tmp/{{task.id}}-curation.mdx` using the registered block contract docume
 `shipped/prompt-studio/prompt-specs/artifact-generator.org` and exercised by
 `ui/src/lib/artifacts/__fixtures__/all-blocks.ts`. It has this exact shape:
 
-1. A first line containing exactly `__ORGASMIC_RUN_STATS__`. The orchestrator
-   replaces it with the deterministic run-stats block (participant roster,
-   curator identity, report counts, start time). Never write your own roster
-   or run header.
-2. A provenance-warning `Callout`: this is multi-model synthesis, not verified
-   truth; readers must verify consequential claims before acting.
-3. A line containing exactly `__ORGASMIC_QUESTION_SECTION__`. The orchestrator
-   replaces it with `Section title="Question"` containing the user's prompt
-   verbatim as `RichText`. It must be the first `Section`, above `Final answer`.
-4. `Section title="Final answer"` containing the curated answer and provenance
+1. A first line containing exactly `__ORGASMIC_QUESTION_SECTION__`. The
+   orchestrator replaces it with `Section title="Question"` containing the
+   user's prompt verbatim as `RichText`. The document opens with the question:
+   no header, roster, run stats, or warning above it.
+2. `Section title="Final answer"` containing the curated answer and provenance
    tags.
-5. `Section title="From question to answer"` containing a line with exactly
+3. `Section title="From question to answer"` containing a line with exactly
    `__ORGASMIC_PIPELINE_DIAGRAM__`, followed by a `RichText` **Raw reports**
    list. List every extraction, cross-review, and curation task id so native
    task peeks expose their promoted reports. The orchestrator replaces the
    placeholder with the deterministic `Image`.
-6. `Section title="Knowledge map"` with `Tabs` for `Shared core`, `Unique finds`,
+4. `Section title="Knowledge map"` with `Tabs` for `Shared core`, `Unique finds`,
    `Contradictions`, and `To verify`. Attribute all claims by model; use a
    `Checklist` for verification targets. Write for scanning, not rereading:
    every bullet opens with a bold claim of at most eight words, then one plain
@@ -79,8 +74,13 @@ Write `/tmp/{{task.id}}-curation.mdx` using the registered block contract docume
    instead of repeating the model name in every bullet. If a tab would exceed
    roughly eight bullets, keep the strongest and fold the rest into the raw
    reports.
-7. A final `Section` containing a `QuestionForm` with concise reader-feedback
+5. A `Section` containing a `QuestionForm` with concise reader-feedback
    questions about answer quality, missing evidence, and disputed claims.
+6. A last line containing exactly `__ORGASMIC_RUN_STATS__`, after every other
+   block. The orchestrator replaces it with the deterministic `About this run`
+   footer (participant roster, curator identity, report counts, start time,
+   provenance caution). Never write your own roster, run header, or
+   provenance-warning `Callout`.
 
 Write `/tmp/{{task.id}}-diagram.json` as JSON only, with this exact shape:
 
@@ -96,9 +96,14 @@ Write `/tmp/{{task.id}}-diagram.json` as JSON only, with this exact shape:
       {"tag": "=", "text": "agreement"}
     ]}
   ],
-  "curator_summary": "short synthesis summary"
+  "curator_summary": "short synthesis summary",
+  "headline": "short artifact title, at most 80 characters"
 }
 #+end_src
+
+`headline` names the artifact in lists and at the top of the page: a plain
+noun-phrase title for the answer's topic (like a good article title), not a
+restatement of the question and not a sentence.
 
 Include every extraction and review task exactly once, in manifest order. Each
 extract has one to four non-empty excerpt lines, each at most 43 characters.

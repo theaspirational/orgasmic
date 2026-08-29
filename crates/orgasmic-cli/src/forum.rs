@@ -102,6 +102,7 @@ struct DiagramFields {
     extracts: BTreeMap<String, Vec<String>>,
     reviews: BTreeMap<String, Vec<DeltaBullet>>,
     curator_summary: String,
+    headline: Option<String>,
 }
 
 #[derive(Debug)]
@@ -323,10 +324,19 @@ fn load_diagram_fields(
         .and_then(Value::as_str)
         .filter(|summary| !summary.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("curator_summary must be a non-empty string"))?;
+    // Optional short artifact title; a bad value falls back to the question-derived
+    // title rather than failing a finished run.
+    let headline = object
+        .get("headline")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|headline| !headline.is_empty() && !headline.contains(['\n', '\r']))
+        .map(|headline| clipped(headline, 80));
     Ok(DiagramFields {
         extracts,
         reviews,
         curator_summary: clipped(summary, 72),
+        headline,
     })
 }
 
@@ -836,7 +846,8 @@ fn task_is_present(mdx: &str, task: &str) -> bool {
 
 /// Run metadata is manifest truth the orchestrator already holds; rendering it
 /// here keeps the roster correct and scannable regardless of curator quality.
-fn render_run_stats(
+/// It closes the artifact as a footer so the document opens with the question.
+fn render_about_run(
     extraction: &[RunReport],
     reviews: &[RunReport],
     curator: &Participant,
@@ -856,14 +867,17 @@ fn render_run_stats(
         reviews.len(),
         started
     ));
-    format!("<RichText>\n{}\n</RichText>", lines.join("\n"))
+    format!(
+        "<Section title=\"About this run\">\n<RichText>\n{}\n</RichText>\n<Callout tone=\"warning\">Multi-model synthesis, not verified truth. Verify consequential claims before acting.</Callout>\n</Section>",
+        lines.join("\n")
+    )
 }
 
 fn assemble_artifact(
     draft: &str,
     question: &str,
     svg: &str,
-    run_stats: &str,
+    about_run: &str,
     raw_tasks: &[String],
 ) -> Result<String> {
     if contains_model_svg(draft) {
@@ -874,6 +888,9 @@ fn assemble_artifact(
         || draft.matches(RUN_STATS_PLACEHOLDER).count() != 1
     {
         bail!("curator draft must contain each orchestrator placeholder once");
+    }
+    if !draft.trim_end().ends_with(RUN_STATS_PLACEHOLDER) {
+        bail!("run-stats placeholder must be the final block of the draft");
     }
 
     let escaped_question = html_escape(question, false)
@@ -889,7 +906,7 @@ fn assemble_artifact(
     let mdx = draft
         .replace(QUESTION_PLACEHOLDER, &question_section)
         .replace(DIAGRAM_PLACEHOLDER, &image)
-        .replace(RUN_STATS_PLACEHOLDER, run_stats);
+        .replace(RUN_STATS_PLACEHOLDER, about_run);
 
     let sections = section_titles(&mdx);
     if sections.first().map(|(_, title)| title.as_str()) != Some("Question") {
@@ -1645,18 +1662,16 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             .collect::<Vec<_>>();
         let draft = std::fs::read_to_string(&draft_path)
             .with_context(|| format!("read {}", draft_path.display()))?;
-        let run_stats = render_run_stats(&extraction, &reviews, &curator, &started_at);
-        let mdx = assemble_artifact(&draft, &question, &svg, &run_stats, &raw_tasks)?;
+        let about_run = render_about_run(&extraction, &reviews, &curator, &started_at);
+        let mdx = assemble_artifact(&draft, &question, &svg, &about_run, &raw_tasks)?;
         let artifact = args
             .artifact_id
             .unwrap_or_else(|| mint_node_id_for_class(NodeIdClass::Artifact));
-        api.submit_artifact(
-            &artifact,
-            mdx,
-            format!("Multi-model extraction: {short_question}"),
-            &parent,
-            &question,
-        )?;
+        let title = fields
+            .headline
+            .clone()
+            .unwrap_or_else(|| format!("Multi-model extraction: {short_question}"));
+        api.submit_artifact(&artifact, mdx, title, &parent, &question)?;
         std::fs::remove_file(&draft_path)
             .with_context(|| format!("remove {}", draft_path.display()))?;
         std::fs::remove_file(&fields_path)
@@ -1799,6 +1814,7 @@ mod tests {
                 })
                 .collect(),
             curator_summary: "reports deduplicated; disagreements remain explicit".to_string(),
+            headline: None,
         }
     }
 
@@ -1841,7 +1857,8 @@ mod tests {
                     {"tag": "+", "text": "x".repeat(44)},
                     {"tag": "=", "text": "x".repeat(44)}
                 ]}],
-                "curator_summary": "summary"
+                "curator_summary": "summary",
+                "headline": format!(" {} ", "h".repeat(90))
             })
             .to_string(),
         )
@@ -1858,6 +1875,7 @@ mod tests {
             std::slice::from_ref(&expected)
         );
         assert_eq!(fields.reviews["TASK-CAP.2"][0].text, expected);
+        assert_eq!(fields.headline, Some(format!("{}…", "h".repeat(79))));
 
         std::fs::write(
             &path,
@@ -1969,14 +1987,15 @@ mod tests {
     #[test]
     fn assembly_preserves_hostile_question_and_enforces_task_boundaries() {
         let (participants, extraction, reviews) = reports(2);
-        let run_stats = render_run_stats(
+        let about_run = render_about_run(
             &extraction,
             &reviews,
             &participants[0],
             "2026-08-29T21:07:20.123+00:00",
         );
-        assert!(run_stats.contains("- **Curator:**"));
-        assert!(run_stats.contains("started 2026-08-29 21:07 UTC"));
+        assert!(about_run.starts_with("<Section title=\"About this run\">"));
+        assert!(about_run.contains("- **Curator:**"));
+        assert!(about_run.contains("started 2026-08-29 21:07 UTC"));
         let raw_tasks = extraction
             .iter()
             .chain(&reviews)
@@ -1984,24 +2003,25 @@ mod tests {
             .chain(std::iter::once("TASK-TESTX.5".to_string()))
             .collect::<Vec<_>>();
         let draft = format!(
-            "{RUN_STATS_PLACEHOLDER}\n<Callout tone=\"warning\">Verify claims.</Callout>\n{QUESTION_PLACEHOLDER}\n<Section title=\"Final answer\"><RichText>Answer.</RichText></Section>\n<Section title=\"From question to answer\">\n{DIAGRAM_PLACEHOLDER}\n<RichText>Raw reports: {}</RichText>\n</Section>\n<Section title=\"Knowledge map\"><RichText>Map.</RichText></Section>\n<Section><RichText>Feedback.</RichText></Section>",
+            "{QUESTION_PLACEHOLDER}\n<Section title=\"Final answer\"><RichText>Answer.</RichText></Section>\n<Section title=\"From question to answer\">\n{DIAGRAM_PLACEHOLDER}\n<RichText>Raw reports: {}</RichText>\n</Section>\n<Section title=\"Knowledge map\"><RichText>Map.</RichText></Section>\n<Section><RichText>Feedback.</RichText></Section>\n{RUN_STATS_PLACEHOLDER}",
             raw_tasks.join(" ")
         );
         let question = "Should <svg> and {braces} stay verbatim & safe?";
         let assembled =
-            assemble_artifact(&draft, question, "<generated/>", &run_stats, &raw_tasks).unwrap();
+            assemble_artifact(&draft, question, "<generated/>", &about_run, &raw_tasks).unwrap();
         assert!(
             assembled.find("title=\"Question\"").unwrap()
                 < assembled.find("title=\"Final answer\"").unwrap()
         );
         assert_eq!(assembled.matches("data:image/svg+xml;base64,").count(), 1);
+        assert!(assembled.trim_end().ends_with("</Section>"));
         assert!(assembled.contains("- **Curator:**"));
         assert!(assembled
             .contains("Should &lt;svg&gt; and &#123;braces&#125; stay verbatim &amp; safe?"));
 
         let authored = draft.replace(DIAGRAM_PLACEHOLDER, "<svg/>");
         assert!(
-            assemble_artifact(&authored, question, "generated", &run_stats, &raw_tasks)
+            assemble_artifact(&authored, question, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("model-authored SVG")
@@ -2009,15 +2029,23 @@ mod tests {
 
         let header = draft.replace(RUN_STATS_PLACEHOLDER, "<RichText>Run header</RichText>");
         assert!(
-            assemble_artifact(&header, question, "generated", &run_stats, &raw_tasks)
+            assemble_artifact(&header, question, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("each orchestrator placeholder once")
         );
 
+        let trailing = format!("{draft}\n<Section><RichText>PS.</RichText></Section>");
+        assert!(
+            assemble_artifact(&trailing, question, "generated", &about_run, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("must be the final block")
+        );
+
         let boundary = draft.replace(&raw_tasks[0], &format!("{}1", raw_tasks[0]));
         assert!(
-            assemble_artifact(&boundary, question, "generated", &run_stats, &raw_tasks)
+            assemble_artifact(&boundary, question, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("omitted raw-report task ids")
@@ -2032,7 +2060,7 @@ mod tests {
             ),
         );
         assert!(
-            assemble_artifact(&decoy, question, "generated", &run_stats, &raw_tasks)
+            assemble_artifact(&decoy, question, "generated", &about_run, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("Question section does not match the input question verbatim")
