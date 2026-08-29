@@ -1,7 +1,7 @@
 ---
 name: orgasmic
 description: 'Orgasmic project management: tasks, decisions, worker dispatch, runtime install/update.'
-triggers: ["/orgasmic", "/orgasmic install", "/orgasmic update", "/orgasmic init", "/orgasmic recall", "/orgasmic resume", "/orgasmic extract", "/recall", "/resume"]
+triggers: ["/orgasmic", "/orgasmic install", "/orgasmic update", "/orgasmic init", "/orgasmic recall", "/orgasmic resume", "/orgasmic forum", "/recall", "/resume"]
 ---
 
 # orgasmic
@@ -31,7 +31,7 @@ in full before acting** — do not run a subcommand from this summary alone.
 | `init [name]` | scaffold via `orgasmic project init` (runtime required) | [`references/init.md`](references/init.md) |
 | `recall` (default) | briefing from on-disk state, then **stop** | [`references/recall-resume.md`](references/recall-resume.md) |
 | `resume` | briefing, then **immediately** run the next planned action | [`references/recall-resume.md`](references/recall-resume.md) |
-| `extract` | invoke native `orgasmic extract` for blind extraction, cross-review, and curation | [`references/extract.md`](references/extract.md) |
+| `forum` | choose a multi-model deliberation mode | [`references/forum.md`](references/forum.md) |
 
 ## Situational references — load on demand
 
@@ -73,7 +73,7 @@ orgasmic/
   SKILL.md
   references/
     install.md          /orgasmic install
-    extract.md          /orgasmic extract
+    forum.md            /orgasmic forum
     update.md           /orgasmic update
     init.md             /orgasmic init
     recall-resume.md    /orgasmic recall and resume

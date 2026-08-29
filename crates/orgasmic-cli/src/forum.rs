@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use clap::{ArgAction, Args};
+use clap::{ArgAction, Args, Subcommand};
 use orgasmic_core::{is_valid_greenfield_artifact_id, mint_node_id_for_class, NodeIdClass};
 use orgasmic_drivers::catalog::transport_profiles;
 use serde::Serialize;
@@ -24,12 +24,12 @@ const DIAGRAM_PLACEHOLDER: &str = "__ORGASMIC_PIPELINE_DIAGRAM__";
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "\
 Examples:
-  orgasmic extract --question-file /tmp/question.txt \\
+  orgasmic forum ask --question-file /tmp/question.txt \\
     --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \\
     --participant 'stdio,hermes,google/gemini-3.7-flash,low'
 
 Participants are mode,harness,model,effort. Repeat --participant at least twice.")]
-pub struct ExtractArgs {
+pub struct AskArgs {
     /// Question text. Mutually exclusive with --question-file.
     #[arg(long, conflicts_with = "question_file", allow_hyphen_values = true)]
     question: Option<String>,
@@ -115,7 +115,7 @@ impl std::fmt::Display for WaitUnknown {
 impl std::error::Error for WaitUnknown {}
 
 #[derive(Serialize)]
-struct ExtractResult {
+struct AskResult {
     parent_task: String,
     extraction_tasks: Vec<String>,
     cross_review_tasks: Vec<String>,
@@ -1069,7 +1069,7 @@ impl Api {
                     "WRITE_SCOPE": write_scope,
                 },
                 "force": false,
-                "request_id": format!("extract-create-{task_id}"),
+                "request_id": format!("forum-ask-create-{task_id}"),
             }),
         )?;
         if response.get("id").and_then(Value::as_str) != Some(task_id) {
@@ -1093,7 +1093,7 @@ impl Api {
                 "state": state,
                 "priority": Value::Null,
                 "reason": reason,
-                "request_id": format!("extract-state-{task}-{state}"),
+                "request_id": format!("forum-ask-state-{task}-{state}"),
                 "properties": {},
             }),
         )?;
@@ -1129,7 +1129,7 @@ impl Api {
                 "project": self.project,
                 "kind": "task",
                 "base_version": base_version,
-                "request_id": format!("extract-evidence-{task}"),
+                "request_id": format!("forum-ask-evidence-{task}"),
                 "ops": [{
                     "op": "add_section",
                     "title": "Evidence",
@@ -1334,7 +1334,7 @@ fn mark_closed(active: &mut [Dispatch], closed: &Dispatch) {
     }
 }
 
-fn run_pipeline(home: &Home, args: ExtractArgs) -> Result<ExtractResult> {
+fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
     let question = match (args.question, args.question_file) {
         (Some(question), None) => question,
         (None, Some(path)) => {
@@ -1409,17 +1409,17 @@ fn run_pipeline(home: &Home, args: ExtractArgs) -> Result<ExtractResult> {
         "named promoted dispatch reports",
         "orgasmic tasks and artifact store via CLI only",
     )?;
-    api.update_task_state(&parent, "in_progress", "multi-model extraction started")?;
+    api.update_task_state(&parent, "in_progress", "forum ask started")?;
     eprintln!("parent_task={parent}");
 
     let mut active = Vec::new();
     let mut extraction = Vec::new();
     let mut reviews = Vec::new();
-    let result = (|| -> Result<ExtractResult> {
+    let result = (|| -> Result<AskResult> {
         let tmp = tempfile::Builder::new()
             .prefix(&format!("orgasmic-{}-", parent.to_ascii_lowercase()))
             .tempdir()
-            .context("create extract tempdir")?;
+            .context("create forum ask tempdir")?;
 
         let extract_brief = tmp.path().join("extract.md");
         std::fs::write(
@@ -1641,7 +1641,7 @@ fn run_pipeline(home: &Home, args: ExtractArgs) -> Result<ExtractResult> {
             ),
         )?;
         api.finish_task(&parent)?;
-        Ok(ExtractResult {
+        Ok(AskResult {
             parent_task: parent.clone(),
             extraction_tasks,
             cross_review_tasks: review_tasks,
@@ -1660,9 +1660,24 @@ fn run_pipeline(home: &Home, args: ExtractArgs) -> Result<ExtractResult> {
     result
 }
 
-pub fn cmd_extract(home: &Home, args: ExtractArgs) -> Result<()> {
-    let result = run_pipeline(home, args)?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+#[derive(Args, Debug)]
+pub struct ForumArgs {
+    #[command(subcommand)]
+    mode: ForumMode,
+}
+
+#[derive(Subcommand, Debug)]
+enum ForumMode {
+    /// Ask a hard question through independent extraction, blind cross-review, and curation.
+    Ask(AskArgs),
+}
+
+pub fn run(home: &Home, args: ForumArgs) -> Result<()> {
+    match args.mode {
+        ForumMode::Ask(args) => {
+            println!("{}", serde_json::to_string_pretty(&run_ask(home, args)?)?);
+        }
+    }
     Ok(())
 }
 
