@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-932SH.5
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-932SH.5 Curate answer — hermes · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-932SH.5
+:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
+:WRITE_SCOPE: /tmp curation draft, diagram JSON, and dispatch report only
+:END:
+
+** Description
+Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.
+
+** Acceptance Criteria
+- [ ] The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the Question and diagram.

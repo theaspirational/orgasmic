@@ -30,3 +30,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: 3d409fef-b09c-406e-9e8d-d9b2b56a27d8
 :END:
+
+* tx-20260829-orgasmic-6691 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6691
+:TIME:    [2026-08-29 Sat 21:15:13]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-932SH.4
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-932SH.4/node.org
+:REASON: edited task node TASK-932SH.4
+:NODE_ID: TASK-932SH.4
+:EVENT_ID: 0115197a-59a1-4133-a177-fda574feb9df
+:END:
+
+* tx-20260829-orgasmic-6692 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6692
+:TIME:    [2026-08-29 Sat 21:15:13]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-932SH.4
+:TARGET: .orgasmic/tasks/TASK-932SH.4/node.org
+:REASON: report promoted and recorded as evidence
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 1df6dd6b-2a01-4b45-97f6-a7664c95fd25
+:END:
