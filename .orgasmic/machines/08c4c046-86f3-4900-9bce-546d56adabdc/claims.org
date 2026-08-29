@@ -888,3 +888,16 @@
 :WRITE_SCOPE:  /tmp curation draft, diagram JSON, and dispatch report only
 :EVENT_ID:     cf295563-effb-4082-b075-ae58f96ef3d9
 :END:
+
+* TX 2026-08-29 Sat 15:54:13.446296 task.claim_released TASK-DAACG.5
+:PROPERTIES:
+:TX_ID:        tx-20260829155413-304ae19c
+:TIME:         [2026-08-29 Sat 15:54:13.446296]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DAACG.5
+:TARGET:       .orgasmic/tasks/TASK-DAACG.5
+:EVENT_ID:     854e0eb4-39fd-4a8c-9edf-2a3057976b00
+:END:

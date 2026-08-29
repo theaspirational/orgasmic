@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DAACG
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-DAACG Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
+* DONE TASK-DAACG Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-DAACG
 :READ_SCOPE: named promoted dispatch reports
@@ -15,3 +15,8 @@ Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthro
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+** Evidence
+- Artifact: ART-DSKQY
+- Extraction tasks: TASK-DAACG.1 TASK-DAACG.2
+- Cross-review tasks: TASK-DAACG.3 TASK-DAACG.4
+- Curation task: TASK-DAACG.5

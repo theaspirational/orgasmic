@@ -7,6 +7,6 @@
 :TITLE:        Local-first event records, snapshots, and compaction
 :SUBJECT_NODES: TASK-KK4DA
 :PROMPT:       When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
-:VERSION:      2
+:VERSION:      3
 :STATE:        submitted
 :END:
