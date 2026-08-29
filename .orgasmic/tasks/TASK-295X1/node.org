@@ -6,3 +6,5 @@
 :ID: TASK-295X1
 :PRIORITY: P2
 :END:
+** Description
+Add the second forum mode: `orgasmic forum critique` — N models blindly critique a supplied target document, cross-review each other's critiques (self-excluding), and a curator synthesizes a prioritized verdict artifact. Reuses forum ask machinery: dispatch pipeline, deterministic SVG, placeholder assembly, About-this-run footer, headline titling.
