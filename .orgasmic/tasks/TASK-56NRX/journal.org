@@ -94,3 +94,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 0c856f38-1a42-4d86-9f66-333d37a1277f
 :END:
+
+* tx-20260829-orgasmic-6625 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6625
+:TIME:    [2026-08-29 Sat 16:03:50]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-56NRX
+:TARGET: .orgasmic/tasks/TASK-56NRX/node.org
+:REASON: transition TASK-56NRX to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 9d72c991-1600-4248-81da-f9c6332a0062
+:END:

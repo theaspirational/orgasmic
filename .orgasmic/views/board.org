@@ -5256,19 +5256,6 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
 
-* TODO TASK-DAACG.5 Curate answer — codex · openai · gpt-5.6-luna · effort low
-:PROPERTIES:
-:ID: TASK-DAACG.5
-:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
-:WRITE_SCOPE: /tmp curation draft, diagram JSON, and dispatch report only
-:END:
-
-** Description
-Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.
-
-** Acceptance Criteria
-- [ ] The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the Question and diagram.
-
 * TODO TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-NMV4P.1
@@ -5338,28 +5325,6 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
-* IN_PROGRESS TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
-:PROPERTIES:
-:ID: TASK-56NRX
-:PRIORITY: P1
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:END:
-
-* IN_PROGRESS TASK-DAACG Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
-:PROPERTIES:
-:ID: TASK-DAACG
-:READ_SCOPE: named promoted dispatch reports
-:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
-:END:
-
-** Description
-Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
-
-Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthropic · claude-haiku-4-5-20251001 · effort low
-
-** Acceptance Criteria
-- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
-
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-NMV4P
@@ -5405,6 +5370,13 @@ Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthro
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+
+* IN_REVIEW TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
+:PROPERTIES:
+:ID: TASK-56NRX
+:PRIORITY: P1
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
 
 * IN_REVIEW TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
 :PROPERTIES:
@@ -14029,6 +14001,26 @@ Implement the event-triggered manager surface and layer-specific pipeline tasks 
 - [2026-05-21 Thu 22:42] Fixed two smoke-found mismatches: prompt lookup now tolerates file id versus task state, and convention hydration maps underscore slot ids to kebab-case bundle filenames while injecting nested convention sections.
 - [2026-05-21 Thu 22:44] Rebuilt, restarted the daemon on =127.0.0.1:8739=, ran native CLI smoke, and completed the verification pass.
 
+* DONE TASK-DAACG Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
+:PROPERTIES:
+:ID: TASK-DAACG
+:READ_SCOPE: named promoted dispatch reports
+:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
+:END:
+
+** Description
+Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
+
+Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthropic · claude-haiku-4-5-20251001 · effort low
+
+** Acceptance Criteria
+- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+** Evidence
+- Artifact: ART-DSKQY
+- Extraction tasks: TASK-DAACG.1 TASK-DAACG.2
+- Cross-review tasks: TASK-DAACG.3 TASK-DAACG.4
+- Curation task: TASK-DAACG.5
+
 * DONE TASK-DAACG.1 Extract — codex · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-DAACG.1
@@ -14092,6 +14084,22 @@ Review only the other participants' promoted extraction reports. This is a fresh
 ** Evidence
 - Promoted dispatch report: TASK-DAACG.4 generation tx-20260829-orgasmic-9a99dea6-23dd-4020-a1bb-7ef1f831eb33
 - Report path: .orgasmic/tasks/TASK-DAACG.4/dispatches/tx-20260829-orgasmic-9a99dea6-23dd-4020-a1bb-7ef1f831eb33/report.md
+
+* DONE TASK-DAACG.5 Curate answer — codex · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-DAACG.5
+:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
+:WRITE_SCOPE: /tmp curation draft, diagram JSON, and dispatch report only
+:END:
+
+** Description
+Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.
+
+** Acceptance Criteria
+- [ ] The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the Question and diagram.
+** Evidence
+- Promoted dispatch report: TASK-DAACG.5 generation tx-20260829-orgasmic-df0ebf8c-f47f-4701-800b-16d37134158d
+- Report path: .orgasmic/tasks/TASK-DAACG.5/dispatches/tx-20260829-orgasmic-df0ebf8c-f47f-4701-800b-16d37134158d/report.md
 
 * DONE TASK-DFEDX Polish phase 1 slice 2: ApiError public-message audit — apply TASK-PYW86 sanitization pattern to remaining daemon endpoints :daemon:security:hardening:audit:apierror:
 :PROPERTIES:
