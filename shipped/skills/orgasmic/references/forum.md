@@ -1,4 +1,16 @@
-# Multi-model extraction
+# Multi-model forum
+
+When the operator invokes `/orgasmic forum` without naming a mode, ask which
+mode they want:
+
+- `ask` — multi-model knowledge extraction;
+- `critique` — multi-model critic, coming later;
+- other modes are expected later.
+
+For an available chosen mode, run its documented command below. Currently only
+`ask` is available.
+
+## Ask
 
 Run one hard question through independent extraction, blind cross-review, and
 curation into an Agent-Native MDX artifact. This is a report-only workflow: it
@@ -9,7 +21,7 @@ uses the native Rust CLI and never edits project source.
 From the project checkout whose ledger should receive the run:
 
 ```bash
-orgasmic extract \
+orgasmic forum ask \
   --question-file /tmp/question.txt \
   --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \
   --participant 'stdio,hermes,google/gemini-3.7-flash,low'
@@ -24,7 +36,7 @@ the workers should branch from a ref other than the invoking checkout's HEAD.
 Pass `--artifact-id ART-XXXXX` only when intentionally submitting a new version
 of an existing artifact; otherwise the orchestrator mints a fresh id.
 
-The verb prints the parent task, extraction subtasks, cross-review subtasks,
+The mode prints the parent task, extraction subtasks, cross-review subtasks,
 curation subtask, and submitted artifact id as JSON. It launches every member
 of a stage before one `dispatch-wait` barrier, closes every dispatch so its
 report is promoted, and gives each cross-reviewer paths only to the other
