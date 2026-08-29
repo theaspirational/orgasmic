@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-FBSZ2
+#+orgasmic_version: 2
+
+* tx-20260829-orgasmic-6629 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6629
+:TIME:    [2026-08-29 Sat 16:55:54]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: Remove the only non-Rust runtime dependency (python3) and the aborted-close workaround
+:EVENT_ID: e2d3eb46-3e23-4cb6-ae42-073f121bb3df
+:END:
