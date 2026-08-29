@@ -28,7 +28,7 @@ export function Tabs({ node }: { node: Extract<MdxNode, { kind: 'element' }> }) 
         ))}
       </TabsList>
       {tabs.map((tab, index) => (
-        <TabsContent key={index} value={`tab-${index}`}>
+        <TabsContent key={index} value={`tab-${index}`} className="mt-3">
           {renderNodes(tab.children, `tab-${index}`)}
         </TabsContent>
       ))}

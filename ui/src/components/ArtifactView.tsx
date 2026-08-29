@@ -698,14 +698,19 @@ export function ArtifactComments({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
       <div
         ref={bodyRef}
-        className="rounded-xl border bg-card/40 p-4"
+        className="rounded-xl border bg-card/40 p-5 sm:p-8"
         onPointerUp={(event) => scheduleSelectionCapture(event.pointerType !== 'touch')}
         onKeyUp={() => scheduleSelectionCapture(true)}
         onTouchEnd={() => scheduleSelectionCapture(false)}
         onClick={handleBodyClick}
       >
         <ArtifactInteractionContext.Provider value={interaction}>
-          <ArtifactRenderer content={data.content} />
+          {/* Reading measure: unbounded column width is what made artifact prose
+           * read as a wall of text; 44rem keeps ~85ch lines and still fits the
+           * 598px pipeline diagram and typical tables. */}
+          <div className="mx-auto w-full max-w-[44rem]">
+            <ArtifactRenderer content={data.content} />
+          </div>
         </ArtifactInteractionContext.Provider>
       </div>
       <Popover open={Boolean(inlineSelection)} onOpenChange={(open) => {

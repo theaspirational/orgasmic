@@ -16,8 +16,8 @@ export function Image({ node }: { node: Extract<MdxNode, { kind: 'element' }> })
   }
   return (
     <figure className="flex flex-col gap-1.5">
-      <img src={src} alt={alt} className="max-w-full rounded-lg border" loading="lazy" />
-      {caption ? <figcaption className="text-xs text-muted-foreground">{caption}</figcaption> : null}
+      <img src={src} alt={alt} className="mx-auto max-w-full rounded-lg border" loading="lazy" />
+      {caption ? <figcaption className="text-center text-xs text-muted-foreground">{caption}</figcaption> : null}
     </figure>
   );
 }

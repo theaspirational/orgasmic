@@ -22,17 +22,17 @@ function Decorated({ children }: { children?: ReactNode }) {
 }
 
 const COMPONENTS: Components = {
-  h1: ({ node: _node, children, ...props }) => <h1 className="mb-2 mt-4 text-lg font-semibold first:mt-0" {...props}><Decorated>{children}</Decorated></h1>,
-  h2: ({ node: _node, children, ...props }) => <h2 className="mb-2 mt-4 text-base font-semibold first:mt-0" {...props}><Decorated>{children}</Decorated></h2>,
-  h3: ({ node: _node, children, ...props }) => <h3 className="mb-1.5 mt-3 text-sm font-semibold first:mt-0" {...props}><Decorated>{children}</Decorated></h3>,
-  h4: ({ node: _node, children, ...props }) => <h4 className="mb-1 mt-3 text-sm font-medium first:mt-0" {...props}><Decorated>{children}</Decorated></h4>,
-  p: ({ node: _node, children, ...props }) => <p className="leading-relaxed [&:not(:first-child)]:mt-2" {...props}><Decorated>{children}</Decorated></p>,
+  h1: ({ node: _node, children, ...props }) => <h1 className="mb-2 mt-5 text-xl font-semibold tracking-tight first:mt-0" {...props}><Decorated>{children}</Decorated></h1>,
+  h2: ({ node: _node, children, ...props }) => <h2 className="mb-2 mt-5 text-lg font-semibold tracking-tight first:mt-0" {...props}><Decorated>{children}</Decorated></h2>,
+  h3: ({ node: _node, children, ...props }) => <h3 className="mb-1.5 mt-4 text-base font-semibold first:mt-0" {...props}><Decorated>{children}</Decorated></h3>,
+  h4: ({ node: _node, children, ...props }) => <h4 className="mb-1 mt-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground first:mt-0" {...props}><Decorated>{children}</Decorated></h4>,
+  p: ({ node: _node, children, ...props }) => <p className="leading-7 [&:not(:first-child)]:mt-3" {...props}><Decorated>{children}</Decorated></p>,
   a: ({ node: _node, ...props }) => (
     <a className="text-primary underline-offset-2 hover:underline" target="_blank" rel="noreferrer" {...props} />
   ),
-  ul: ({ node: _node, ...props }) => <ul className="ml-5 list-disc space-y-1" {...props} />,
-  ol: ({ node: _node, ...props }) => <ol className="ml-5 list-decimal space-y-1" {...props} />,
-  li: ({ node: _node, children, ...props }) => <li className="leading-relaxed" {...props}><Decorated>{children}</Decorated></li>,
+  ul: ({ node: _node, ...props }) => <ul className="ml-5 list-disc space-y-2 marker:text-muted-foreground/60 [&:not(:first-child)]:mt-3" {...props} />,
+  ol: ({ node: _node, ...props }) => <ol className="ml-5 list-decimal space-y-2 marker:text-muted-foreground/60 [&:not(:first-child)]:mt-3" {...props} />,
+  li: ({ node: _node, children, ...props }) => <li className="leading-7 pl-1" {...props}><Decorated>{children}</Decorated></li>,
   blockquote: ({ node: _node, ...props }) => (
     <blockquote className="border-l-2 border-border pl-3 text-muted-foreground" {...props} />
   ),
@@ -64,7 +64,7 @@ const COMPONENTS: Components = {
 export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
   if (!text.trim()) return null;
   return (
-    <div className={cn('text-sm text-foreground', className)}>
+    <div className={cn('text-[15px] text-foreground', className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS} skipHtml>
         {text}
       </ReactMarkdown>

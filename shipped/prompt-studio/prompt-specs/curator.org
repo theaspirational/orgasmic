@@ -70,7 +70,13 @@ Write `/tmp/{{task.id}}-curation.mdx` using the registered block contract docume
    placeholder with the deterministic `Image`.
 6. `Section title="Knowledge map"` with `Tabs` for `Shared core`, `Unique finds`,
    `Contradictions`, and `To verify`. Attribute all claims by model; use a
-   `Checklist` for verification targets.
+   `Checklist` for verification targets. Write for scanning, not rereading:
+   every bullet opens with a bold claim of at most eight words, then one plain
+   sentence — never a paragraph. When several bullets share one source model
+   (as in `Unique finds`), group them under a small `#### <model>` heading
+   instead of repeating the model name in every bullet. If a tab would exceed
+   roughly eight bullets, keep the strongest and fold the rest into the raw
+   reports.
 7. A final `Section` containing a `QuestionForm` with concise reader-feedback
    questions about answer quality, missing evidence, and disputed claims.
 

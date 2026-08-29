@@ -8,8 +8,10 @@ import { renderNodes } from './index';
 export function Section({ node }: { node: Extract<MdxNode, { kind: 'element' }> }) {
   const title = asOptionalString(node.props.title);
   return (
-    <section className="flex flex-col gap-3 rounded-lg border bg-muted/10 p-4">
-      {title ? <h3 className="text-sm font-semibold">{title}</h3> : null}
+    <section className="flex flex-col gap-4 border-t border-border/60 pt-6 [&:first-child]:border-t-0 [&:first-child]:pt-0">
+      {title ? (
+        <h3 className="text-lg font-semibold tracking-tight text-foreground">{title}</h3>
+      ) : null}
       {renderNodes(node.children, 'section')}
     </section>
   );
