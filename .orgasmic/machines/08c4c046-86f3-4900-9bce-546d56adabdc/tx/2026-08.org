@@ -1684,3 +1684,114 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-NMV4P.1/dispatches/tx-20260829-orgasmic-c5bd58fb-68b7-4338-90c2-c77fcf40b7f7/report.md
 :EVENT_ID:     21ad5ef4-d4ef-47ef-ad43-019443ae2441
 :END:
+
+
+* TX 2026-08-29 Sat 11:59:28 manager.dispatch_started TASK-2XT9J.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-c9c5a018-46b5-4e1d-bbb8-d0092322333e
+:TIME:         [2026-08-29 Sat 11:59:28]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2xt9j.1
+:BRANCH:       mm-2xt9j-extract-1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:STARTED_AT:   [2026-08-29 Sat 11:59:28]
+:LIVENESS:     0a5e1c974f40f72a312592f9b1ebcbfef4940727
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        openai/gpt-5.6-luna
+:EFFORT:       low
+:REASON_INITIAL: independent multi-model extraction
+:EVENT_ID:     ba817880-cb22-4e61-bc64-e16de8af89d4
+:END:
+
+* TX 2026-08-29 Sat 11:59:29 run.created TASK-2XT9J.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-d983dc7a-a639-4f59-876c-b0b370169f99
+:TIME:         [2026-08-29 Sat 11:59:29]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2XT9J.1-implementer-20260829T115927.jsonl
+:REASON:       independent multi-model extraction
+:RUN_ID:       run-01M16P75ZAZWDPEVNRWDMXN0K1
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-hermes-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2xt9j.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/extract/extract-d9512e3ff3ae45f297d8752998ed0048-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/extract/extract-d9512e3ff3ae45f297d8752998ed0048-stdout.log
+:DISPATCH_ATTEMPT: d9512e3ff3ae45f297d8752998ed0048
+:PID:          87632
+:DISPATCH_TX:  tx-20260829-orgasmic-c9c5a018-46b5-4e1d-bbb8-d0092322333e
+:MODEL_OVERRIDE: openai/gpt-5.6-luna
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     61d535be-58b7-4e60-9e46-49d52ec57572
+:END:
+
+* TX 2026-08-29 Sat 11:59:30 manager.dispatch_started TASK-2XT9J.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-4c82d257-4e62-4273-8f1c-3c47670b39ab
+:TIME:         [2026-08-29 Sat 11:59:30]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.2
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2xt9j.2
+:BRANCH:       mm-2xt9j-extract-2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:STARTED_AT:   [2026-08-29 Sat 11:59:30]
+:LIVENESS:     0a5e1c974f40f72a312592f9b1ebcbfef4940727
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        google/gemini-3.7-flash
+:EFFORT:       low
+:REASON_INITIAL: independent multi-model extraction
+:EVENT_ID:     937e8365-63f1-41fc-be0a-9ae8d7c01b8f
+:END:
+
+* TX 2026-08-29 Sat 11:59:30 run.created TASK-2XT9J.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-72548cb9-02bf-479e-9d1c-976aaf68869e
+:TIME:         [2026-08-29 Sat 11:59:30]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-2XT9J.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2XT9J.2-implementer-20260829T115930.jsonl
+:REASON:       independent multi-model extraction
+:RUN_ID:       run-01M16P78QJB9YQFZPBVAG3MV45
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-hermes-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2xt9j.2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/extract/extract-79ef6db7fd4d4c08964deb9bbae90565-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/extract/extract-79ef6db7fd4d4c08964deb9bbae90565-stdout.log
+:DISPATCH_ATTEMPT: 79ef6db7fd4d4c08964deb9bbae90565
+:PID:          88439
+:DISPATCH_TX:  tx-20260829-orgasmic-4c82d257-4e62-4273-8f1c-3c47670b39ab
+:MODEL_OVERRIDE: google/gemini-3.7-flash
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     7bf219b9-534b-4ac1-bacb-a0715aa44d45
+:END:

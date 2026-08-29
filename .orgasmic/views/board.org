@@ -5258,6 +5258,51 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
+* IN_PROGRESS TASK-2XT9J Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
+:PROPERTIES:
+:ID: TASK-2XT9J
+:READ_SCOPE: named promoted dispatch reports
+:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
+:END:
+
+** Description
+Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
+
+Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · google · gemini-3.7-flash · effort low
+
+** Acceptance Criteria
+- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+
+* IN_PROGRESS TASK-2XT9J.1 Extract — hermes · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-2XT9J.1
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:CLAIM_WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+
+* IN_PROGRESS TASK-2XT9J.2 Extract — hermes · google · gemini-3.7-flash · effort low
+:PROPERTIES:
+:ID: TASK-2XT9J.2
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:CLAIM_WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+
 * IN_PROGRESS TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
 :PROPERTIES:
 :ID: TASK-56NRX

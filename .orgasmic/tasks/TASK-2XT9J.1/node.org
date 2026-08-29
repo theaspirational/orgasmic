@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-2XT9J.1
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-2XT9J.1 Extract — hermes · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-2XT9J.1
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
