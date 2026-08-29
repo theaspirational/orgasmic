@@ -1,0 +1,8 @@
+#+title: orgasmic task TASK-295X1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target    :feature:
+:PROPERTIES:
+:ID: TASK-295X1
+:PRIORITY: P2
+:END:

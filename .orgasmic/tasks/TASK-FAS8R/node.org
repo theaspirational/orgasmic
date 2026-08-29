@@ -1,0 +1,8 @@
+#+title: orgasmic task TASK-FAS8R
+#+orgasmic_version: 2
+
+* BACKLOG TASK-FAS8R Reshape multi-model surface: rename 'orgasmic extract' to 'orgasmic forum' with mode subcommands (ask; critique later)    :feature:
+:PROPERTIES:
+:ID: TASK-FAS8R
+:PRIORITY: P1
+:END:

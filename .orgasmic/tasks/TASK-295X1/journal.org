@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-295X1
+#+orgasmic_version: 2
+
+* tx-20260829-orgasmic-6671 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6671
+:TIME:    [2026-08-29 Sat 20:52:45]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-295X1
+:TARGET: .orgasmic/tasks/TASK-295X1/node.org
+:REASON: second forum mode after knowledge extraction; depends on the forum reshape
+:EVENT_ID: ef8fd3ca-9867-46aa-967c-958e6246b330
+:END:
