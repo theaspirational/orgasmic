@@ -1,0 +1,6 @@
+- Artifact: ART-DSKQY
+- Parent task: TASK-KK4DA
+- Extraction tasks: TASK-KK4DA.1, TASK-KK4DA.2
+- Cross-review tasks: TASK-KK4DA.3, TASK-KK4DA.4
+- Curation task: TASK-KK4DA.5
+- Submission command result: submitted ART-DSKQY version 1
