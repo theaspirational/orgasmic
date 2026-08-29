@@ -110,3 +110,51 @@
 :TO_STATE: in_review
 :EVENT_ID: 9d72c991-1600-4248-81da-f9c6332a0062
 :END:
+
+* tx-20260829-orgasmic-6626 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6626
+:TIME:    [2026-08-29 Sat 16:14:50]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-56NRX
+:TARGET: .orgasmic/tasks/TASK-56NRX/node.org
+:REASON: review approved with follow-ups; continuing fixes
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: dd22fd45-29d8-41d5-9beb-6d3d2e0c1a2c
+:END:
+
+* tx-20260829-orgasmic-6627 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6627
+:TIME:    [2026-08-29 Sat 16:14:50]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-56NRX
+:TARGET: .orgasmic/tasks/TASK-56NRX/node.org
+:REASON: requeue for fix round 4 dispatch
+:FROM_STATE: in_progress
+:TO_STATE: todo
+:EVENT_ID: 89c14451-e3b6-4c6b-8149-71f17de2e98c
+:END:
+
+* tx-20260829-orgasmic-6628 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6628
+:TIME:    [2026-08-29 Sat 16:14:55]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-56NRX
+:TARGET: .orgasmic/tasks/TASK-56NRX/node.org
+:REASON: transition TASK-56NRX to in_progress
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: 616c9c89-b045-40df-ae17-54ad247c1e05
+:END:

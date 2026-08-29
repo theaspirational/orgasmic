@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-56NRX
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
+* IN_PROGRESS TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
 :PROPERTIES:
 :ID: TASK-56NRX
 :PRIORITY: P1
