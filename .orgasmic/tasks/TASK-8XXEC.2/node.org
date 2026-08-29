@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8XXEC.2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8XXEC.2 Extract — hermes · google · gemini-3.7-flash · effort low
+* DONE TASK-8XXEC.2 Extract — hermes · google · gemini-3.7-flash · effort low
 :PROPERTIES:
 :ID: TASK-8XXEC.2
 :READ_SCOPE: question in dispatch brief; public or repository sources as needed
@@ -13,3 +13,6 @@ Answer the parent run question independently. This is report-only; do not edit p
 
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
+** Evidence
+- Promoted dispatch report: TASK-8XXEC.2 generation tx-20260829-orgasmic-f7a20486-fadb-47b0-9d0f-5471f9cd555b
+- Report path: .orgasmic/tasks/TASK-8XXEC.2/dispatches/tx-20260829-orgasmic-f7a20486-fadb-47b0-9d0f-5471f9cd555b/report.md

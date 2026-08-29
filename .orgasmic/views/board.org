@@ -5347,35 +5347,35 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
-* IN_PROGRESS TASK-8XXEC.1 Extract — hermes · openai · gpt-5.6-luna · effort low
+* IN_PROGRESS TASK-8XXEC.3 Blind cross-review — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
-:ID: TASK-8XXEC.1
-:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:ID: TASK-8XXEC.3
+:READ_SCOPE: other participants' report paths named in dispatch brief
 :WRITE_SCOPE: none; dispatch report only
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :CLAIM_WRITE_SCOPE: none; dispatch report only
 :END:
 
 ** Description
-Answer the parent run question independently. This is report-only; do not edit project source.
+Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
 
 ** Acceptance Criteria
-- [ ] A standalone evidence-led extraction report is promoted.
+- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
 
-* IN_PROGRESS TASK-8XXEC.2 Extract — hermes · google · gemini-3.7-flash · effort low
+* IN_PROGRESS TASK-8XXEC.4 Blind cross-review — hermes · google · gemini-3.7-flash · effort low
 :PROPERTIES:
-:ID: TASK-8XXEC.2
-:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:ID: TASK-8XXEC.4
+:READ_SCOPE: other participants' report paths named in dispatch brief
 :WRITE_SCOPE: none; dispatch report only
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :CLAIM_WRITE_SCOPE: none; dispatch report only
 :END:
 
 ** Description
-Answer the parent run question independently. This is report-only; do not edit project source.
+Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
 
 ** Acceptance Criteria
-- [ ] A standalone evidence-led extraction report is promoted.
+- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
 
 * IN_PROGRESS TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
 :PROPERTIES:
@@ -10566,6 +10566,38 @@ RESIDUAL RISK (manager review of the diff)
    still writes Lifecycle::Release (supervisor.rs:3976-3981), so the run is not
    stranded, but its summary event is lost.
 These three are for the reviewer to rule on; none blocked the merge.
+
+* DONE TASK-8XXEC.1 Extract — hermes · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-8XXEC.1
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+** Evidence
+- Promoted dispatch report: TASK-8XXEC.1 generation tx-20260829-orgasmic-323c3a9a-4eed-4227-80b3-bf510f9fe2a6
+- Report path: .orgasmic/tasks/TASK-8XXEC.1/dispatches/tx-20260829-orgasmic-323c3a9a-4eed-4227-80b3-bf510f9fe2a6/report.md
+
+* DONE TASK-8XXEC.2 Extract — hermes · google · gemini-3.7-flash · effort low
+:PROPERTIES:
+:ID: TASK-8XXEC.2
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+** Evidence
+- Promoted dispatch report: TASK-8XXEC.2 generation tx-20260829-orgasmic-f7a20486-fadb-47b0-9d0f-5471f9cd555b
+- Report path: .orgasmic/tasks/TASK-8XXEC.2/dispatches/tx-20260829-orgasmic-f7a20486-fadb-47b0-9d0f-5471f9cd555b/report.md
 
 * DONE TASK-95SGV finish_dispatch_cleanup releases by a recomputed worktree key, so a removed directory leaks the reservation forever :daemon:supervisor:hardening:
 :PROPERTIES:
