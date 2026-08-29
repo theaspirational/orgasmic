@@ -1,0 +1,22 @@
+{
+  "event_count": 382,
+  "tool_call_count": 11,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-56NRX-implementer-20260829T101601.jsonl",
+    "size_bytes": 130185
+  },
+  "native_transcript": {
+    "status": "not_found",
+    "reason": "hermes session file for id '2adbd198-3d8e-4d70-a3a4-fa6e81cd70c3' not found under /Users/aspirational/.hermes/sessions"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by loading the orgasmic skill and gathering context about the task, existing codebase structure, and the mock artifact.\n\nLet me read the dispatch reference and find the task record, plus look at the existing skill and prompt-spec layouts.\n\nNow let me gather the key reference files in parallel: the task record, the mock artifact, the existing artifact-generator prompt spec, the all-blocks fixture, and the orgasmic CLI help for key commands.\n\nLet me read the artifact-generator prompt spec and the rest of the all-blocks fixture, plus check CLI commands available.\n\nNow let me look at the existing orgasmic skill's SKILL.md structure and check the key CLI commands available for dispatch, artifact submission, etc."
+    }
+  ],
+  "narrative_truncated": false
+}
