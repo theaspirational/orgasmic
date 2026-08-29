@@ -2475,3 +2475,22 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-KK4DA.5/dispatches/tx-20260829-orgasmic-06818d0b-bbbb-4ce3-97f8-d2d295fc35a9/report.md
 :EVENT_ID:     e69c90b2-97ff-4337-91d7-d7b7718adee6
 :END:
+
+* TX 2026-08-29 Sat 13:01:28 manager.dispatch_aborted TASK-KK4DA.5
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-2faac112-97e5-4684-bc40-59f103c6126d
+:TIME:         [2026-08-29 Sat 13:01:28]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-KK4DA.5
+:REASON:       successful report-only run; no source merge exists
+:CLOSED_TX:    tx-20260829-orgasmic-06818d0b-bbbb-4ce3-97f8-d2d295fc35a9
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-kk4da.5
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-KK4DA.5/dispatches/tx-20260829-orgasmic-06818d0b-bbbb-4ce3-97f8-d2d295fc35a9/report.md
+:EVENT_ID:     b3bf4139-7c5d-4e36-958d-fddca8d3ee27
+:END:

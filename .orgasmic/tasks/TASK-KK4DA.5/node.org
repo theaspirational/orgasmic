@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KK4DA.5
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-KK4DA.5 Curate artifact — codex · openai · gpt-5.6-luna · effort low
+* DONE TASK-KK4DA.5 Curate artifact — codex · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-KK4DA.5
 :READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
@@ -13,3 +13,6 @@ Read all promoted extraction and cross-review reports, submit one final MDX arti
 
 ** Acceptance Criteria
 - [ ] The submitted artifact matches the multi-model final-artifact contract and names every raw-report task.
+** Evidence
+- Promoted dispatch report: TASK-KK4DA.5 generation tx-20260829-orgasmic-06818d0b-bbbb-4ce3-97f8-d2d295fc35a9
+- Report path: .orgasmic/tasks/TASK-KK4DA.5/dispatches/tx-20260829-orgasmic-06818d0b-bbbb-4ce3-97f8-d2d295fc35a9/report.md
