@@ -1227,6 +1227,46 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
         "unexpected close error: {close_stderr}"
     );
 
+    let report_only_close = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-NO-MERGE",
+            "--started-tx",
+            &second_started_tx,
+            "--status",
+            "done",
+            "--report-only",
+        ],
+    );
+    assert!(report_only_close.contains("closed: TASK-NO-MERGE implementer.done tx="));
+    assert!(
+        !second_worktree.exists(),
+        "report-only close must use ordinary cleanup and promotion"
+    );
+    assert_task_stage(&project_root, "TASK-NO-MERGE", "IN_REVIEW", "in_review");
+    let tx_raw = tx_log(&project_root);
+    assert_eq!(
+        tx_property_for(&tx_raw, "implementer.done", "TASK-NO-MERGE", "REPORT_ONLY"),
+        "true"
+    );
+    let report_only_tx = tx_raw
+        .split("\n\n* TX ")
+        .find(|block| {
+            block.contains(":TYPE:         implementer.done")
+                && block.contains(":TASK:         TASK-NO-MERGE")
+        })
+        .unwrap();
+    assert!(
+        !report_only_tx.contains(":MERGE_SHA:") && !report_only_tx.contains(":BRANCH:"),
+        "report-only completion must not fabricate source-merge evidence:\n{report_only_tx}"
+    );
+
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }

@@ -261,6 +261,7 @@ impl ManagerOwnedCloseProperty {
 const MANAGER_OWNED_CLOSE_PROPERTIES: &[ManagerOwnedCloseProperty] = &[
     ManagerOwnedCloseProperty::reserved("FIX_ROUND_FINAL", "--fix-round-final"),
     ManagerOwnedCloseProperty::reserved("NO_REVIEW_REQUIRED", "--no-review-required"),
+    ManagerOwnedCloseProperty::reserved("REPORT_ONLY", "--report-only"),
     ManagerOwnedCloseProperty::aliased_verdict(),
 ];
 
@@ -330,6 +331,11 @@ pub struct DispatchCloseArgs {
     /// round's own REVIEW ROUND — "does this fix get reviewed at all".
     #[arg(long = "fix-round-final")]
     pub fix_round_final: bool,
+    /// Close a successful report-only implementer without a merge commit.
+    /// Records `REPORT_ONLY=true` on the `implementer.done` tx and keeps the
+    /// ordinary report promotion and cleanup path.
+    #[arg(long = "report-only")]
+    pub report_only: bool,
     /// Remove the worker's git worktree as part of the close. DEFAULTS TO
     /// TRUE (TASK-2BPWM): closing without saying anything removes it. The
     /// removal salvages uncommitted worker output to
@@ -903,6 +909,15 @@ struct CleanupFailureRecord {
 }
 
 pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
+    dispatch_inner(home, args, true).map(|_| ())
+}
+
+pub(crate) fn dispatch_quiet(home: &Home, args: DispatchArgs) -> Result<String> {
+    dispatch_inner(home, args, false)?
+        .ok_or_else(|| anyhow::anyhow!("a dry-run dispatch has no started_tx"))
+}
+
+fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<String>> {
     let plan = build_dispatch_plan(home, args)?;
     if plan.brief_content.is_empty() {
         bail!("brief is empty: {}", plan.brief_path.display());
@@ -928,8 +943,10 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
         let attempt_id = mint_dispatch_attempt_id();
         let (brief, last, stdout) =
             dispatch_artifact_paths_for_attempt(&plan.project_root, &plan.brief_path, &attempt_id)?;
-        print_dispatch_plan(&plan.with_artifacts(brief, last, stdout, attempt_id));
-        return Ok(());
+        if emit {
+            print_dispatch_plan(&plan.with_artifacts(brief, last, stdout, attempt_id));
+        }
+        return Ok(None);
     }
 
     // orgasmic:task_EP3H1 — a torn implementer close leaves its task short of
@@ -1063,26 +1080,36 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
 
     // `started_tx` is the generation token `dispatch-close --started-tx` takes
     // (TASK-6AYEJ.1); print it here so the manager never has to go looking.
-    println!(
-        "dispatched: {} {} pid={} run_id={} started_tx={} worker={} driver={} harness={} brief={}",
-        task_list_property(&plan.tasks),
-        plan.kind,
-        response.pid,
-        response.run_id,
-        response.dispatch_tx_id,
-        response.worker_id,
-        response.driver,
-        response.harness,
-        plan.brief_path.display()
-    );
-    println!(
-        "watch: orgasmic manager dispatch-wait --started-tx {} &",
-        response.dispatch_tx_id
-    );
-    Ok(())
+    if emit {
+        println!(
+            "dispatched: {} {} pid={} run_id={} started_tx={} worker={} driver={} harness={} brief={}",
+            task_list_property(&plan.tasks),
+            plan.kind,
+            response.pid,
+            response.run_id,
+            response.dispatch_tx_id,
+            response.worker_id,
+            response.driver,
+            response.harness,
+            plan.brief_path.display()
+        );
+        println!(
+            "watch: orgasmic manager dispatch-wait --started-tx {} &",
+            response.dispatch_tx_id
+        );
+    }
+    Ok(Some(response.dispatch_tx_id))
 }
 
 pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()> {
+    dispatch_close_inner(home, &mut args, true)
+}
+
+pub(crate) fn dispatch_close_quiet(home: &Home, mut args: DispatchCloseArgs) -> Result<()> {
+    dispatch_close_inner(home, &mut args, false)
+}
+
+fn dispatch_close_inner(home: &Home, args: &mut DispatchCloseArgs, emit: bool) -> Result<()> {
     let project_root = find_live_project_root(home, "manager dispatch-close")?;
     let project_id = read_project_id(&project_root)?;
     let tasks = normalize_tasks(args.task.clone())?;
@@ -1107,11 +1134,13 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
             // historical worker-closed dispatches the worktree may well still
             // be on disk, so say so rather than let `--worktree-remove` look
             // like it ran.
-            println!(
-                "already-closed: {} started_tx={} (no-op)",
-                task_list_property(&tasks),
-                closed.tx_id
-            );
+            if emit {
+                println!(
+                    "already-closed: {} started_tx={} (no-op)",
+                    task_list_property(&tasks),
+                    closed.tx_id
+                );
+            }
             // orgasmic:TASK-QGWK7.1.1.1 — F-1: "no-op" is the contract for
             // CLEANUP, not for a record the previous close promoted onto disk
             // and then failed to commit. That state has no other way back into
@@ -1149,8 +1178,17 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
         .as_ref()
         .map(|s| sanitize_tx_value(s))
         .filter(|s| !s.is_empty());
+    if args.report_only
+        && !(args.status == DispatchCloseStatus::Done && tx_type == "implementer.done")
+    {
+        bail!("--report-only is valid only when closing an implementer dispatch as done");
+    }
+    if args.report_only && merge_sha.is_some() {
+        bail!("--report-only does not take --merge-sha: no source merge exists");
+    }
     if args.status == DispatchCloseStatus::Done
         && tx_type == "implementer.done"
+        && !args.report_only
         && merge_sha.is_none()
     {
         bail!("--merge-sha is required when closing an implementer dispatch as implementer.done");
@@ -1162,7 +1200,9 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
         bail!("--merge-sha is required when closing an architector dispatch as architector.done");
     }
     if args.no_review_required
-        && !(args.status == DispatchCloseStatus::Done && tx_type == "implementer.done")
+        && !(args.status == DispatchCloseStatus::Done
+            && tx_type == "implementer.done"
+            && !args.report_only)
     {
         bail!("--no-review-required is valid only when closing an implementer dispatch as done");
     }
@@ -1180,8 +1220,8 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     // rather than in `close_lifecycle_transitions`: that runs after worktree
     // cleanup, so a refusal from there would arrive with the worktree already
     // removed.
-    validate_fix_round_final(&project_root, &tasks, &args, tx_type)?;
-    validate_manager_owned_close_properties(&args)?;
+    validate_fix_round_final(&project_root, &tasks, args, tx_type)?;
+    validate_manager_owned_close_properties(args)?;
     // orgasmic:task_ZKZBF
     // `--status aborted` has no generic property channel: `close_aborted_request`
     // records only its structured fields (--reason, worktree, lifecycle,
@@ -1210,17 +1250,18 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
              VERDICT property on the reviewer.done tx that the default-branch review gate reads"
         );
     }
-    let verified_merge = if matches!(tx_type, "implementer.done" | "architector.done") {
-        merge_sha
-            .as_deref()
-            .map(|merge_sha| {
-                verify_merge_evidence(&project_root, merge_sha, args.worker_commit.as_deref())
-            })
-            .transpose()?
-    } else {
-        None
-    };
-    if tx_type == "implementer.done" {
+    let verified_merge =
+        if !args.report_only && matches!(tx_type, "implementer.done" | "architector.done") {
+            merge_sha
+                .as_deref()
+                .map(|merge_sha| {
+                    verify_merge_evidence(&project_root, merge_sha, args.worker_commit.as_deref())
+                })
+                .transpose()?
+        } else {
+            None
+        };
+    if tx_type == "implementer.done" && !args.report_only {
         let merge = verified_merge.as_ref().expect("verified implementer merge");
         if merge_lands_on_default_branch(home, &project_id, &project_root, &merge.sha)?
             && !args.no_review_required
@@ -1293,7 +1334,7 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
         && open.kind == DispatchKind::Implementer.as_str()
         && open.worktree.as_deref().is_some_and(Path::is_dir);
     let remove_worktree = args.worktree_remove && !args.no_worktree_remove && !keep_chain_worktree;
-    let delete_branch = dispatch_close_deletes_branch(&args);
+    let delete_branch = dispatch_close_deletes_branch(args);
     // TASK-1T3FZ: a destructive close takes a DAEMON-OWNED reservation on the
     // worktree before it releases — or fails to find — any run, and holds it
     // until cleanup is done. The competing recovery runs in another process
@@ -1391,21 +1432,25 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     }
     if let Some(salvage) = &cleanup.salvage {
         if salvage.worktree_removed {
-            println!(
-                "cleanup: worktree salvaged sha={} ref={} files={}; worktree removed",
-                salvage.sha, salvage.ref_name, salvage.file_count
-            );
+            if emit {
+                println!(
+                    "cleanup: worktree salvaged sha={} ref={} files={}; worktree removed",
+                    salvage.sha, salvage.ref_name, salvage.file_count
+                );
+            }
         } else {
-            println!(
-                "cleanup: worktree salvaged sha={} ref={} files={}; worktree retained after removal failure",
-                salvage.sha, salvage.ref_name, salvage.file_count
-            );
+            if emit {
+                println!(
+                    "cleanup: worktree salvaged sha={} ref={} files={}; worktree retained after removal failure",
+                    salvage.sha, salvage.ref_name, salvage.file_count
+                );
+            }
         }
     }
     // orgasmic:task_EP3H1 — computed BEFORE the close txs so each one can carry
     // the transition it is about to make. That is what makes a lost lifecycle
     // leg repairable from the ledger instead of by hand.
-    let transitions = close_lifecycle_transitions(&project_root, &tasks, &open, &args)?;
+    let transitions = close_lifecycle_transitions(&project_root, &tasks, &open, args)?;
     let mut responses = Vec::new();
     for task in &missing_close_tasks {
         let transition = transition_for(&transitions, task).ok_or_else(|| {
@@ -1416,7 +1461,7 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
                 &project_id,
                 &open,
                 task,
-                &args,
+                args,
                 &CloseTxFacts {
                     tx_type,
                     merge_sha: verified_merge.as_ref().map(|merge| merge.sha.as_str()),
@@ -1493,12 +1538,14 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     if args.status == DispatchCloseStatus::Done && open.kind == DispatchKind::Implementer.as_str() {
         release_chain_worktree_holds(&project_root, &tasks);
     }
-    println!(
-        "closed: {} {} tx={}",
-        task_list_property(&tasks),
-        tx_type,
-        tx_ids
-    );
+    if emit {
+        println!(
+            "closed: {} {} tx={}",
+            task_list_property(&tasks),
+            tx_type,
+            tx_ids
+        );
+    }
     Ok(())
 }
 
@@ -3102,6 +3149,32 @@ fn classify_dispatch_wait_round(
 }
 
 pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
+    match dispatch_wait_inner(home, args, true)? {
+        DispatchWaitOutcome::Reported => Ok(()),
+        DispatchWaitOutcome::Died => std::process::exit(2),
+        DispatchWaitOutcome::TimedOut => std::process::exit(3),
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DispatchWaitOutcome {
+    Reported,
+    Died,
+    TimedOut,
+}
+
+pub(crate) fn dispatch_wait_quiet(
+    home: &Home,
+    args: DispatchWaitArgs,
+) -> Result<DispatchWaitOutcome> {
+    dispatch_wait_inner(home, args, false)
+}
+
+fn dispatch_wait_inner(
+    home: &Home,
+    args: DispatchWaitArgs,
+    emit: bool,
+) -> Result<DispatchWaitOutcome> {
     let project_root = find_live_project_root(home, "manager dispatch-wait")?;
     let project_id = read_project_id(&project_root)?;
     let client = DaemonClient::from_home_autostart(home)?;
@@ -3134,22 +3207,26 @@ pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
                 );
             }
             DispatchWaitRound::Died(generation) => {
-                println!(
-                    "dispatch-wait: died TX_ID={} RUN_ID={}",
-                    generation.started_tx,
-                    generation.run_id.as_deref().unwrap_or("-")
-                );
-                std::process::exit(2);
-            }
-            DispatchWaitRound::Reported => {
-                for generation in &response.generations {
+                if emit {
                     println!(
-                        "dispatch-wait: reported TX_ID={} RUN_ID={}",
+                        "dispatch-wait: died TX_ID={} RUN_ID={}",
                         generation.started_tx,
                         generation.run_id.as_deref().unwrap_or("-")
                     );
                 }
-                return Ok(());
+                return Ok(DispatchWaitOutcome::Died);
+            }
+            DispatchWaitRound::Reported => {
+                if emit {
+                    for generation in &response.generations {
+                        println!(
+                            "dispatch-wait: reported TX_ID={} RUN_ID={}",
+                            generation.started_tx,
+                            generation.run_id.as_deref().unwrap_or("-")
+                        );
+                    }
+                }
+                return Ok(DispatchWaitOutcome::Reported);
             }
             DispatchWaitRound::Waiting => {}
         }
@@ -3157,8 +3234,10 @@ pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
             .timeout
             .is_some_and(|timeout| started.elapsed() >= timeout)
         {
-            eprintln!("dispatch-wait: timeout");
-            std::process::exit(3);
+            if emit {
+                eprintln!("dispatch-wait: timeout");
+            }
+            return Ok(DispatchWaitOutcome::TimedOut);
         }
         std::thread::sleep(Duration::from_secs(1));
     }
@@ -6952,13 +7031,16 @@ fn close_done_request(
     {
         manager_extra.push(("WORKER_COMMIT".to_string(), commit));
     }
-    if matches!(tx_type, "implementer.done" | "architector.done") {
+    if matches!(tx_type, "implementer.done" | "architector.done") && !args.report_only {
         if let Some(merge_sha) = merge_sha {
             manager_extra.push(("MERGE_SHA".to_string(), merge_sha.to_string()));
         }
         if let Some(branch) = optional_value(open.branch.as_deref()) {
             manager_extra.push(("BRANCH".to_string(), branch));
         }
+    }
+    if args.report_only {
+        manager_extra.push(("REPORT_ONLY".to_string(), "true".to_string()));
     }
     if let Some(wall) = optional_value(args.wall.as_deref()) {
         manager_extra.push(("WALL".to_string(), wall));
@@ -12073,6 +12155,7 @@ mod tests {
             reason: Some("test".to_string()),
             no_review_required: false,
             fix_round_final: false,
+            report_only: false,
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,
@@ -12122,6 +12205,7 @@ mod tests {
             reason: None,
             no_review_required: false,
             fix_round_final: false,
+            report_only: false,
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,
@@ -12156,6 +12240,7 @@ mod tests {
             reason: Some("not an implementer.done close".to_string()),
             no_review_required: false,
             fix_round_final: true,
+            report_only: false,
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,

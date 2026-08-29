@@ -162,14 +162,17 @@ Optional properties:
 
 **** implementer.done
 Emitted by the MANAGER via =dispatch-close= after reading the report, merging,
-and deciding. This is the record that closes the dispatch.
+and deciding, or after accepting a successful report-only dispatch. This is the
+record that closes the dispatch.
 
 Required properties in addition to the base tx properties:
 - :PROJECT: project id
 - :TASK: task id
-- :MERGE_SHA: merge commit sha on main
-- :BRANCH: branch that landed
 - :CLOSED_TX: =TX_ID= of the matching =manager.dispatch_started=
+
+Exactly one completion shape is required:
+- Source change: :MERGE_SHA: merge commit sha and :BRANCH: branch that landed
+- Report only: :REPORT_ONLY: =true=; no merge sha or landed branch is recorded
 
 Optional properties:
 - :REPORT_PATH: repo-relative path of the promoted worker report (=.orgasmic/tasks/<ID>/dispatches/<CLOSED_TX>/report.md=). Written automatically when close promotes the tmp artifacts (TASK-QGWK7). The harness =stdout.log= sits beside it; this property always names =report.md=.
