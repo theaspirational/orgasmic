@@ -1,0 +1,20 @@
+{
+  "event_count": 577,
+  "tool_call_count": 289,
+  "unparsed_events": 3,
+  "bounded_events": 10,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-FBSZ2-implementer-20260829T171441.jsonl",
+    "size_bytes": 1229526
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/08/29/rollout-2026-08-29T20-14-42-01a04e84-3588-75f0-af9f-4feb7825eaff.jsonl",
+    "session_id": "01a04e84-3588-75f0-af9f-4feb7825eaff",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
