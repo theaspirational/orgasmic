@@ -1,0 +1,12 @@
+#+title: orgasmic artifact ART-DSKQY
+#+orgasmic_version: 2
+
+* ART-DSKQY Local-first event records, snapshots, and compaction
+:PROPERTIES:
+:ID:           ART-DSKQY
+:TITLE:        Local-first event records, snapshots, and compaction
+:SUBJECT_NODES: TASK-KK4DA
+:PROMPT:       When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
+:VERSION:      1
+:STATE:        submitted
+:END:

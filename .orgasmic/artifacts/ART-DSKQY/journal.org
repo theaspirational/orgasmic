@@ -1,0 +1,15 @@
+#+title: orgasmic journal ART-DSKQY
+#+orgasmic_version: 2
+
+* tx-20260829-orgasmic-6579 artifact.submitted
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6579
+:TIME:    [2026-08-29 Sat 13:00:06]
+:TYPE:    artifact.submitted
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:ARTIFACT_ID: ART-DSKQY
+:VERSION: 1
+:EVENT_ID: b311be93-cf6a-4718-8794-8b10d8ef7641
+:END:
