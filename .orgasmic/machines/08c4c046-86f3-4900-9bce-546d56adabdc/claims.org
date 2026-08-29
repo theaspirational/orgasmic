@@ -752,3 +752,16 @@
 :TARGET:       .orgasmic/tasks/TASK-56NRX
 :EVENT_ID:     90e417fb-9098-4b6a-b0f3-fd74fab79db9
 :END:
+
+* TX 2026-08-29 Sat 15:17:53.449184 task.claimed TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260829151753-3c90e6a9
+:TIME:         [2026-08-29 Sat 15:17:53.449184]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:TARGET:       .orgasmic/tasks/TASK-56NRX
+:EVENT_ID:     002282ab-99df-4fde-8932-f1f9b34fb391
+:END:

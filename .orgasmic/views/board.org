@@ -5256,12 +5256,6 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
 
-* TODO TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
-:PROPERTIES:
-:ID: TASK-56NRX
-:PRIORITY: P1
-:END:
-
 * TODO TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-NMV4P.1
@@ -5330,6 +5324,13 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+
+* IN_PROGRESS TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
+:PROPERTIES:
+:ID: TASK-56NRX
+:PRIORITY: P1
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
 
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
