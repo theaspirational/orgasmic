@@ -5347,35 +5347,20 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
-* IN_PROGRESS TASK-8XXEC.3 Blind cross-review — hermes · openai · gpt-5.6-luna · effort low
+* IN_PROGRESS TASK-8XXEC.5 Curate answer — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
-:ID: TASK-8XXEC.3
-:READ_SCOPE: other participants' report paths named in dispatch brief
-:WRITE_SCOPE: none; dispatch report only
+:ID: TASK-8XXEC.5
+:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
+:WRITE_SCOPE: /tmp curation draft, diagram JSON, and dispatch report only
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:CLAIM_WRITE_SCOPE: none; dispatch report only
+:CLAIM_WRITE_SCOPE: /tmp curation draft, diagram JSON, and dispatch report only
 :END:
 
 ** Description
-Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
+Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.
 
 ** Acceptance Criteria
-- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
-
-* IN_PROGRESS TASK-8XXEC.4 Blind cross-review — hermes · google · gemini-3.7-flash · effort low
-:PROPERTIES:
-:ID: TASK-8XXEC.4
-:READ_SCOPE: other participants' report paths named in dispatch brief
-:WRITE_SCOPE: none; dispatch report only
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:CLAIM_WRITE_SCOPE: none; dispatch report only
-:END:
-
-** Description
-Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
-
-** Acceptance Criteria
-- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
+- [ ] The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the Question and diagram.
 
 * IN_PROGRESS TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
 :PROPERTIES:
@@ -10598,6 +10583,38 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Evidence
 - Promoted dispatch report: TASK-8XXEC.2 generation tx-20260829-orgasmic-f7a20486-fadb-47b0-9d0f-5471f9cd555b
 - Report path: .orgasmic/tasks/TASK-8XXEC.2/dispatches/tx-20260829-orgasmic-f7a20486-fadb-47b0-9d0f-5471f9cd555b/report.md
+
+* DONE TASK-8XXEC.3 Blind cross-review — hermes · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-8XXEC.3
+:READ_SCOPE: other participants' report paths named in dispatch brief
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
+
+** Acceptance Criteria
+- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
+** Evidence
+- Promoted dispatch report: TASK-8XXEC.3 generation tx-20260829-orgasmic-69901689-4c3e-4c39-90f3-65ea2903ae7a
+- Report path: .orgasmic/tasks/TASK-8XXEC.3/dispatches/tx-20260829-orgasmic-69901689-4c3e-4c39-90f3-65ea2903ae7a/report.md
+
+* DONE TASK-8XXEC.4 Blind cross-review — hermes · google · gemini-3.7-flash · effort low
+:PROPERTIES:
+:ID: TASK-8XXEC.4
+:READ_SCOPE: other participants' report paths named in dispatch brief
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Review only the other participants' promoted extraction reports. This is a fresh report-only dispatch.
+
+** Acceptance Criteria
+- [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
+** Evidence
+- Promoted dispatch report: TASK-8XXEC.4 generation tx-20260829-orgasmic-5801e5e2-0f8a-4e57-a066-3f7d2da4a413
+- Report path: .orgasmic/tasks/TASK-8XXEC.4/dispatches/tx-20260829-orgasmic-5801e5e2-0f8a-4e57-a066-3f7d2da4a413/report.md
 
 * DONE TASK-95SGV finish_dispatch_cleanup releases by a recomputed worktree key, so a removed directory leaks the reservation forever :daemon:supervisor:hardening:
 :PROPERTIES:

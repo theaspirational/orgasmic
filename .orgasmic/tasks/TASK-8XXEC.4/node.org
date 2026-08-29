@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8XXEC.4
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8XXEC.4 Blind cross-review — hermes · google · gemini-3.7-flash · effort low
+* DONE TASK-8XXEC.4 Blind cross-review — hermes · google · gemini-3.7-flash · effort low
 :PROPERTIES:
 :ID: TASK-8XXEC.4
 :READ_SCOPE: other participants' report paths named in dispatch brief
@@ -13,3 +13,6 @@ Review only the other participants' promoted extraction reports. This is a fresh
 
 ** Acceptance Criteria
 - [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
+** Evidence
+- Promoted dispatch report: TASK-8XXEC.4 generation tx-20260829-orgasmic-5801e5e2-0f8a-4e57-a066-3f7d2da4a413
+- Report path: .orgasmic/tasks/TASK-8XXEC.4/dispatches/tx-20260829-orgasmic-5801e5e2-0f8a-4e57-a066-3f7d2da4a413/report.md

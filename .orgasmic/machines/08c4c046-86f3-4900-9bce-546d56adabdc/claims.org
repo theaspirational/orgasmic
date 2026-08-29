@@ -1089,3 +1089,43 @@
 :WRITE_SCOPE:  none; dispatch report only
 :EVENT_ID:     96934c52-732f-42d1-9b56-a2ea8eeaf668
 :END:
+
+* TX 2026-08-29 Sat 18:34:24.651218 task.claim_released TASK-8XXEC.3
+:PROPERTIES:
+:TX_ID:        tx-20260829183424-ace5c454
+:TIME:         [2026-08-29 Sat 18:34:24.651218]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8XXEC.3
+:TARGET:       .orgasmic/tasks/TASK-8XXEC.3
+:EVENT_ID:     d9a77d26-4ac8-4673-b005-ecd68e18124f
+:END:
+
+* TX 2026-08-29 Sat 18:34:26.934110 task.claim_released TASK-8XXEC.4
+:PROPERTIES:
+:TX_ID:        tx-20260829183426-248bd036
+:TIME:         [2026-08-29 Sat 18:34:26.934110]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8XXEC.4
+:TARGET:       .orgasmic/tasks/TASK-8XXEC.4
+:EVENT_ID:     da56b2dd-5b24-4ba6-a58b-08f99878bcdf
+:END:
+
+* TX 2026-08-29 Sat 18:34:29.030231 task.claimed TASK-8XXEC.5
+:PROPERTIES:
+:TX_ID:        tx-20260829183428-7c3c2d2f
+:TIME:         [2026-08-29 Sat 18:34:29.030231]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8XXEC.5
+:TARGET:       .orgasmic/tasks/TASK-8XXEC.5
+:WRITE_SCOPE:  /tmp curation draft, diagram JSON, and dispatch report only
+:EVENT_ID:     801f7535-9133-40f4-b1d1-c0fbeb16dd5b
+:END:

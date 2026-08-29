@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8XXEC.3
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8XXEC.3 Blind cross-review — hermes · openai · gpt-5.6-luna · effort low
+* DONE TASK-8XXEC.3 Blind cross-review — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-8XXEC.3
 :READ_SCOPE: other participants' report paths named in dispatch brief
@@ -13,3 +13,6 @@ Review only the other participants' promoted extraction reports. This is a fresh
 
 ** Acceptance Criteria
 - [ ] A ? / + / = delta report is promoted without access to this participant's own extraction.
+** Evidence
+- Promoted dispatch report: TASK-8XXEC.3 generation tx-20260829-orgasmic-69901689-4c3e-4c39-90f3-65ea2903ae7a
+- Report path: .orgasmic/tasks/TASK-8XXEC.3/dispatches/tx-20260829-orgasmic-69901689-4c3e-4c39-90f3-65ea2903ae7a/report.md
