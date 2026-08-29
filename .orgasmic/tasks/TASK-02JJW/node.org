@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-02JJW
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-02JJW Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
+:PROPERTIES:
+:ID: TASK-02JJW
+:READ_SCOPE: named promoted dispatch reports
+:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
+:END:
+
+** Description
+Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
+
+Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · google · gemini-3.7-flash · effort low
+
+** Acceptance Criteria
+- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
