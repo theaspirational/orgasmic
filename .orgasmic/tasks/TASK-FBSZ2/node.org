@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-FBSZ2
 #+orgasmic_version: 2
 
-* TODO TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
+* IN_PROGRESS TASK-FBSZ2 Port multi-model extract orchestrator to native 'orgasmic extract' verb; add report-only dispatch close :feature:
 :PROPERTIES:
 :ID: TASK-FBSZ2
 :PRIORITY: P2

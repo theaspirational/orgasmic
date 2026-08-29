@@ -174,3 +174,19 @@
 :TO_STATE: todo
 :EVENT_ID: 5b2709a4-94c6-498c-921e-970b29743747
 :END:
+
+* tx-20260829-orgasmic-6666 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6666
+:TIME:    [2026-08-29 Sat 18:51:24]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FBSZ2
+:TARGET: .orgasmic/tasks/TASK-FBSZ2/node.org
+:REASON: transition TASK-FBSZ2 to in_progress
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: 0579a685-4b8d-4b07-9a4e-7516e1defa71
+:END:

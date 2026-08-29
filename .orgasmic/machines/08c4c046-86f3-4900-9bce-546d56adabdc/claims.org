@@ -1168,3 +1168,16 @@
 :TARGET:       .orgasmic/tasks/TASK-FBSZ2
 :EVENT_ID:     4e397ef6-a17f-443b-aaa2-85c111d26297
 :END:
+
+* TX 2026-08-29 Sat 18:51:26.191499 task.claimed TASK-FBSZ2
+:PROPERTIES:
+:TX_ID:        tx-20260829185126-fd05c38d
+:TIME:         [2026-08-29 Sat 18:51:26.191499]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FBSZ2
+:TARGET:       .orgasmic/tasks/TASK-FBSZ2
+:EVENT_ID:     aa332a8a-12e5-4844-81ad-892146246644
+:END:
