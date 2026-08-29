@@ -1,0 +1,20 @@
+{
+  "event_count": 19,
+  "tool_call_count": 8,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-KK4DA.3-implementer-20260829T125633.jsonl",
+    "size_bytes": 90913
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/08/29/rollout-2026-08-29T15-56-34-01a04d97-dfcf-7d12-b2e0-65b33ff9ff70.jsonl",
+    "session_id": "01a04d97-dfcf-7d12-b2e0-65b33ff9ff70",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
