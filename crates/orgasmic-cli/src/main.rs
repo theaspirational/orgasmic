@@ -5,7 +5,7 @@
 //! update, serve, status, restart, project, board, tasks, task, run,
 //! worker, prompt, skills, manager, tx, recovery, auth, question,
 //! optional, hub, glossary, graph, decision, adr, snapshot, grill,
-//! plan, reconcile). TASK-005 promotes `serve`, `status`,
+//! plan, reconcile, extract). TASK-005 promotes `serve`, `status`,
 //! `restart`, `tx`, and `auth` to real implementations that talk to the
 //! local daemon. Later tasks promote other groups as their owners land.
 
@@ -17,6 +17,7 @@ mod daemon_runtime;
 mod daemon_service;
 mod doctor;
 mod drivers;
+mod extract;
 mod goal;
 mod home;
 mod install_state;
@@ -181,6 +182,8 @@ Examples:
         #[arg(long)]
         channel: Option<String>,
     },
+    /// Run blind multi-model extraction, cross-review, and curation.
+    Extract(extract::ExtractArgs),
     /// Per-project commands.
     Project {
         #[command(subcommand)]
@@ -1503,6 +1506,7 @@ fn main() -> Result<()> {
             no_build,
             channel,
         } => update::run(&home, &branch, !no_build, channel),
+        Cmd::Extract(args) => extract::cmd_extract(&home, args),
         Cmd::Project { cmd } => match cmd {
             ProjectCmd::Init {
                 path,
