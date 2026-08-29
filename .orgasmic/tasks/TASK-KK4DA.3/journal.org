@@ -30,3 +30,66 @@
 :TO_STATE: in_progress
 :EVENT_ID: 1cd904e2-4374-48b1-9b36-b59c1fe84599
 :END:
+
+* tx-20260829-orgasmic-6569 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6569
+:TIME:    [2026-08-29 Sat 12:57:54]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KK4DA.3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-KK4DA.3/node.org
+:REASON: edited task node TASK-KK4DA.3
+:NODE_ID: TASK-KK4DA.3
+:EVENT_ID: c507e584-b6fe-4245-b0db-3b3ec233900f
+:END:
+
+* tx-20260829-orgasmic-6570 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6570
+:TIME:    [2026-08-29 Sat 12:57:54]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KK4DA.3
+:TARGET: .orgasmic/tasks/TASK-KK4DA.3/node.org
+:REASON: report promoted and recorded as evidence
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: 984d2be7-5ef6-49a5-9b36-0b036b232014
+:END:
+
+* tx-20260829-orgasmic-6571 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6571
+:TIME:    [2026-08-29 Sat 12:57:55]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KK4DA.3
+:TARGET: .orgasmic/tasks/TASK-KK4DA.3/node.org
+:REASON: report promoted and recorded as evidence
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: d963c1b6-6a06-4fbb-aec5-d7b280dcc1a0
+:END:
+
+* tx-20260829-orgasmic-6572 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260829-orgasmic-6572
+:TIME:    [2026-08-29 Sat 12:57:55]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KK4DA.3
+:TARGET: .orgasmic/tasks/TASK-KK4DA.3/node.org
+:REASON: report promoted and recorded as evidence
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 5e55af73-6d1d-4b9f-8117-fac709c2ff8c
+:END:
