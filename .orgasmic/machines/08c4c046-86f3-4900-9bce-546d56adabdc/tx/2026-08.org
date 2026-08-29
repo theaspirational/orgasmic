@@ -2008,3 +2008,23 @@
 :WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-v6jw4.2
 :EVENT_ID:     b2abcdd7-5024-49ed-813f-0dc61c03da21
 :END:
+
+* TX 2026-08-29 Sat 12:22:10 manager.dispatch_aborted TASK-V6JW4.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-20e4710a-3eba-4485-97d7-ac1df70f166a
+:TIME:         [2026-08-29 Sat 12:22:10]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-V6JW4.2
+:REASON:       multi-model orchestrator failed
+:CLOSED_TX:    tx-20260829-orgasmic-d2ce0b03-815d-445c-b638-1098ad1ac7e8
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-v6jw4.2
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: partial
+:CLEANUP_ERROR: report: brief.md missing from tmp
+:REPORT_PATH:  .orgasmic/tasks/TASK-V6JW4.2/dispatches/tx-20260829-orgasmic-d2ce0b03-815d-445c-b638-1098ad1ac7e8/report.md
+:EVENT_ID:     25e34664-3009-4c4a-ac7b-2a582e56fa10
+:END:
