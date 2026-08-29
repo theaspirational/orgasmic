@@ -5,6 +5,7 @@
 :VERSION:            1
 :DEFAULT_RENDERER:   markdown
 :OUTPUT_CONTRACT:    draft-artifact-and-report
+:USES_PARTS:         output_style_plain_english
 :END:
 
 ** Role
@@ -46,7 +47,8 @@ Run manifest (participants, curator, task ids, and promoted-report paths):
   `harness · vendor · model · effort`; identify the curator the same way. Never
   use E1/E2, model A/model B, or another anonymous alias.
 - In the final answer, put `(vendor · model)` provenance tags on material
-  claims. In the knowledge map, attribute every claim by model name.
+  claims, placed at paragraph or bullet level rather than mid-sentence. In the
+  knowledge map, attribute every claim by model name.
 
 Write `/tmp/{{task.id}}-curation.mdx` using the registered block contract documented in
 `shipped/prompt-studio/prompt-specs/artifact-generator.org` and exercised by
