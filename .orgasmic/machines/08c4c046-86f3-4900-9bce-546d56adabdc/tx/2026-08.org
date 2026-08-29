@@ -2510,3 +2510,22 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-56NRX/dispatches/tx-20260829-orgasmic-b3379560-9155-408b-8141-ad6615c80bc6/report.md
 :EVENT_ID:     45ccc304-b8dc-4b2f-a877-b9108bb89072
 :END:
+
+* TX 2026-08-29 Sat 14:55:06 manager.dispatch_aborted TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-c8c8e603-7e32-43c3-8479-c8c59d5bc667
+:TIME:         [2026-08-29 Sat 14:55:06]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:REASON:       round-1 finalize-blocked close never landed under 503 storm; superseded by round-2 gen b3379560 (reported done)
+:CLOSED_TX:    tx-20260829-orgasmic-68c81f5b-924b-41ac-b38a-80db77f2a9e9
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx-codex
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-56NRX/dispatches/tx-20260829-orgasmic-68c81f5b-924b-41ac-b38a-80db77f2a9e9/report.md
+:EVENT_ID:     afb3dcd3-1ed3-4ce8-a5b3-dbf2fcb252f4
+:END:

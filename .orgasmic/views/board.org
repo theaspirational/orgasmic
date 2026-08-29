@@ -5256,18 +5256,11 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
 
-* TODO TASK-KK4DA.5 Curate artifact — codex · openai · gpt-5.6-luna · effort low
+* TODO TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
 :PROPERTIES:
-:ID: TASK-KK4DA.5
-:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
-:WRITE_SCOPE: artifact store via orgasmic artifact submit only
+:ID: TASK-56NRX
+:PRIORITY: P1
 :END:
-
-** Description
-Read all promoted extraction and cross-review reports, submit one final MDX artifact, and report its id.
-
-** Acceptance Criteria
-- [ ] The submitted artifact matches the multi-model final-artifact contract and names every raw-report task.
 
 * TODO TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
@@ -5334,28 +5327,6 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
 
 Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · google · gemini-3.7-flash · effort low
-
-** Acceptance Criteria
-- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
-
-* IN_PROGRESS TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
-:PROPERTIES:
-:ID: TASK-56NRX
-:PRIORITY: P1
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:END:
-
-* IN_PROGRESS TASK-KK4DA Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
-:PROPERTIES:
-:ID: TASK-KK4DA
-:READ_SCOPE: named promoted dispatch reports
-:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
-:END:
-
-** Description
-Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
-
-Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthropic · claude-haiku-4-5-20251001 · effort low
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
@@ -21350,6 +21321,26 @@ Target: when =config.endpoint= and =config.api_key_env= are both set, the driver
 ** Worklog
 - [2026-05-22 Fri 01:40] Dispatched as background =codex exec --model gpt-5.5 --sandbox workspace-write --dangerously-bypass-approvals-and-sandbox= run in an isolated git worktree branched from =1bccc85= per the user's "headless codex per task" choice. Worktree-isolation prevented Cargo.lock and Cargo.toml conflicts with the parallel TASK-KJJRF and TASK-AAW76 implementer runs.
 
+* DONE TASK-KK4DA Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
+:PROPERTIES:
+:ID: TASK-KK4DA
+:READ_SCOPE: named promoted dispatch reports
+:WRITE_SCOPE: orgasmic tasks and artifact store via CLI only
+:END:
+
+** Description
+Question: When should a local-first developer tool prefer append-only event records over in-place mutable state, and which failure modes require snapshots or compaction?
+
+Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthropic · claude-haiku-4-5-20251001 · effort low
+
+** Acceptance Criteria
+- [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
+** Evidence
+- Artifact: ART-DSKQY
+- Extraction tasks: TASK-KK4DA.1 TASK-KK4DA.2
+- Cross-review tasks: TASK-KK4DA.3 TASK-KK4DA.4
+- Curation task: TASK-KK4DA.5
+
 * DONE TASK-KK4DA.1 Extract — codex · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-KK4DA.1
@@ -21413,6 +21404,22 @@ Review only the other participants' promoted extraction reports. This is a fresh
 ** Evidence
 - Promoted dispatch report: TASK-KK4DA.4 generation tx-20260829-orgasmic-ca43763c-1196-47d2-9a85-a53cc30e2b13
 - Report path: .orgasmic/tasks/TASK-KK4DA.4/dispatches/tx-20260829-orgasmic-ca43763c-1196-47d2-9a85-a53cc30e2b13/report.md
+
+* DONE TASK-KK4DA.5 Curate artifact — codex · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-KK4DA.5
+:READ_SCOPE: all promoted report paths named in dispatch brief and MDX block contract
+:WRITE_SCOPE: artifact store via orgasmic artifact submit only
+:END:
+
+** Description
+Read all promoted extraction and cross-review reports, submit one final MDX artifact, and report its id.
+
+** Acceptance Criteria
+- [ ] The submitted artifact matches the multi-model final-artifact contract and names every raw-report task.
+** Evidence
+- Promoted dispatch report: TASK-KK4DA.5 generation tx-20260829-orgasmic-06818d0b-bbbb-4ce3-97f8-d2d295fc35a9
+- Report path: .orgasmic/tasks/TASK-KK4DA.5/dispatches/tx-20260829-orgasmic-06818d0b-bbbb-4ce3-97f8-d2d295fc35a9/report.md
 
 * DONE TASK-KKBTP pin the credential decision preflight admitted, and stop blocking the runtime in acquire
 :PROPERTIES:
