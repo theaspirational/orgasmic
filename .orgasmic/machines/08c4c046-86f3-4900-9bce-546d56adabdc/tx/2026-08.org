@@ -2047,3 +2047,113 @@
 :CLEANUP_ERROR: report: last_path missing: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tmp/dispatch/extract/extract-3c64265458f648e2b864f8844b09ed01-last.txt
 :EVENT_ID:     7ed176d3-c616-47ed-8eb5-2a24357dd759
 :END:
+
+* TX 2026-08-29 Sat 12:55:04 manager.dispatch_started TASK-KK4DA.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-e8e023b2-c394-4cf2-9718-147f9aee8422
+:TIME:         [2026-08-29 Sat 12:55:04]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-KK4DA.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-kk4da.1
+:BRANCH:       mm-kk4da-extract-1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:STARTED_AT:   [2026-08-29 Sat 12:55:04]
+:LIVENESS:     0a5e1c974f40f72a312592f9b1ebcbfef4940727
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-luna
+:EFFORT:       low
+:REASON_INITIAL: independent multi-model extraction
+:EVENT_ID:     6123fec9-ef8a-4768-a604-6077f0293f29
+:END:
+
+* TX 2026-08-29 Sat 12:55:04 run.created TASK-KK4DA.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-15db7772-13d9-48ec-ab30-4636ce0651c6
+:TIME:         [2026-08-29 Sat 12:55:04]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-KK4DA.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-KK4DA.1-implementer-20260829T125502.jsonl
+:REASON:       independent multi-model extraction
+:RUN_ID:       run-01M16SCYY1NXFJ8T278NK7QSB6
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-kk4da.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/extract/extract-e00d0a6da93847b798e13df94dcd244e-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/extract/extract-e00d0a6da93847b798e13df94dcd244e-stdout.log
+:DISPATCH_ATTEMPT: e00d0a6da93847b798e13df94dcd244e
+:PID:          39877
+:DISPATCH_TX:  tx-20260829-orgasmic-e8e023b2-c394-4cf2-9718-147f9aee8422
+:MODEL_OVERRIDE: gpt-5.6-luna
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     a1f13213-4f2c-4714-ac90-a22afafc5433
+:END:
+
+* TX 2026-08-29 Sat 12:55:06 manager.dispatch_started TASK-KK4DA.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-becfc5b6-5087-4391-bf13-78d1d9c36222
+:TIME:         [2026-08-29 Sat 12:55:06]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-KK4DA.2
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-kk4da.2
+:BRANCH:       mm-kk4da-extract-2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:STARTED_AT:   [2026-08-29 Sat 12:55:06]
+:LIVENESS:     0a5e1c974f40f72a312592f9b1ebcbfef4940727
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        claude-haiku-4-5-20251001
+:EFFORT:       low
+:REASON_INITIAL: independent multi-model extraction
+:EVENT_ID:     3875f357-00c6-48a2-95bb-8ba61b56d707
+:END:
+
+* TX 2026-08-29 Sat 12:55:06 run.created TASK-KK4DA.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-3e5c222c-3fc7-4cb0-80d9-b4b273d06e5c
+:TIME:         [2026-08-29 Sat 12:55:06]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-KK4DA.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-KK4DA.2-implementer-20260829T125505.jsonl
+:REASON:       independent multi-model extraction
+:RUN_ID:       run-01M16SD204RBZQYY1EZX7RA97B
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-sdk-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-kk4da.2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/extract/extract.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/extract/extract-3a5ab89314df4d7b8069add0c6de4071-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/extract/extract-3a5ab89314df4d7b8069add0c6de4071-stdout.log
+:DISPATCH_ATTEMPT: 3a5ab89314df4d7b8069add0c6de4071
+:PID:          41522
+:DISPATCH_TX:  tx-20260829-orgasmic-becfc5b6-5087-4391-bf13-78d1d9c36222
+:MODEL_OVERRIDE: claude-haiku-4-5-20251001
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     9551bbbe-28ed-40b6-843e-2ec6b60dcf5c
+:END:
