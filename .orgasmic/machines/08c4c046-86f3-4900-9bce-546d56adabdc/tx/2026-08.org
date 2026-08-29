@@ -1244,3 +1244,59 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-W97C8.1/dispatches/tx-20260828-orgasmic-7a301a3a-121f-4965-a057-c9cab102582a/report.md
 :EVENT_ID:     0970bd15-bf32-48e8-be21-06e1eaf24a67
 :END:
+
+
+* TX 2026-08-29 Sat 10:16:03 manager.dispatch_started TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-228e9f1c-ce10-4d47-8676-f70fec8009f9
+:TIME:         [2026-08-29 Sat 10:16:03]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx
+:BRANCH:       task-56nrx-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-56NRX/brief-TASK-56NRX.md
+:STARTED_AT:   [2026-08-29 Sat 10:16:03]
+:LIVENESS:     f7b35c9d19d787e5670d1b8b23de430c230feb92
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        openai/gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: Implement multi-model extraction mode per co-designed shape spec ART-MKRG1
+:EVENT_ID:     b2941bdf-82af-4951-ae5c-304d81220298
+:END:
+
+* TX 2026-08-29 Sat 10:16:03 run.created TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-7e9e5874-67a7-425f-acc6-7c4ae2212af1
+:TIME:         [2026-08-29 Sat 10:16:03]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-56NRX-implementer-20260829T101601.jsonl
+:REASON:       Implement multi-model extraction mode per co-designed shape spec ART-MKRG1
+:RUN_ID:       run-01M16G9SKF58WX99KFD2BP25R9
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-hermes-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-56NRX/brief-TASK-56NRX.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-56NRX/brief-TASK-56NRX-4fdba9cbb72c46bbbebfcad12cc7810c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-56NRX/brief-TASK-56NRX-4fdba9cbb72c46bbbebfcad12cc7810c-stdout.log
+:DISPATCH_ATTEMPT: 4fdba9cbb72c46bbbebfcad12cc7810c
+:PID:          67054
+:DISPATCH_TX:  tx-20260829-orgasmic-228e9f1c-ce10-4d47-8676-f70fec8009f9
+:MODEL_OVERRIDE: openai/gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:EVENT_ID:     c5e820df-6932-42c0-90bc-ccbb355018fd
+:END:

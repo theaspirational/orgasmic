@@ -5012,6 +5012,13 @@ Either way the outcome is a recorded answer. The defect being fixed here is that
 
 TASK-CLM6W, TASK-IXPD4, TASK-LBRX7 (added in ledger commit 22b951f2, 2026-08-27) contain I/L, which the Crockford stem alphabet forbids — they were hand-minted, not daemon-minted. They are the whole remaining parse_errors=3 ("malformed identity id"). Referenced from TASK-AP971, TASK-AS0FS, TASK-D2DM3, TASK-MSYN4, TASK-TFXR2. Fix = re-mint each through the daemon and rewrite the references; needs a daemon-side rename path or a careful one-off migration, NOT hand edits.
 
+* IN_PROGRESS TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
+:PROPERTIES:
+:ID: TASK-56NRX
+:PRIORITY: P1
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
+
 * IN_PROGRESS TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-TFXR2
