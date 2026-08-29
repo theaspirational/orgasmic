@@ -1,0 +1,20 @@
+{
+  "event_count": 185,
+  "tool_call_count": 99,
+  "unparsed_events": 2,
+  "bounded_events": 2,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-FAS8R-implementer-20260829T205308.jsonl",
+    "size_bytes": 350125
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/08/29/rollout-2026-08-29T23-53-09-01a04f4c-3388-71c1-bc7c-0e8472d45509.jsonl",
+    "session_id": "01a04f4c-3388-71c1-bc7c-0e8472d45509",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
