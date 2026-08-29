@@ -1,0 +1,23 @@
+{
+  "event_count": 146,
+  "tool_call_count": 3,
+  "unparsed_events": 1,
+  "bounded_events": 1,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-DAACG.4-implementer-20260829T155208.jsonl",
+    "size_bytes": 190399
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "Reading the other participant's extraction report to produce a delta review.Now I'll produce my blind cross-review delta report. I can see the codex · openai · gpt-5.6-luna report; I'll compare it against the question and mark claims I can verify, challenge, or extend.Finalizing the cross-review dispatch."
+    }
+  ],
+  "narrative_truncated": false
+}
