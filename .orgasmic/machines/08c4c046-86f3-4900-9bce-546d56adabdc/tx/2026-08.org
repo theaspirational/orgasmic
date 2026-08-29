@@ -1500,3 +1500,20 @@
 :EFFORT_OVERRIDE: low
 :EVENT_ID:     339dffda-a1a4-45eb-942c-038c276b28a7
 :END:
+
+* TX 2026-08-29 Sat 11:00:08 manager.dispatch_aborted TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-17e51c36-a161-4df4-801d-1a284a1fc9da
+:TIME:         [2026-08-29 Sat 11:00:08]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:REASON:       required end-to-end smoke could not complete: dispatch-wait and dispatch-close hit repeated daemon project-scan timeouts
+:RUN_ID:       run-01M16GB6W3WV62JE59T6X7WM9E
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx-codex
+:SHA:          0a5e1c974f40f72a312592f9b1ebcbfef4940727
+:REPORT_PATH:  .orgasmic/tasks/TASK-56NRX/dispatches/tx-20260829-orgasmic-68c81f5b-924b-41ac-b38a-80db77f2a9e9/report.md
+:EVENT_ID:     d5b09eed-83ac-42d0-8b5f-36bb1537ddc4
+:END:
