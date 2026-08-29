@@ -4260,3 +4260,157 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-932SH.2/dispatches/tx-20260829-orgasmic-59dc333d-0267-459b-abb2-d9f7bacb7381/report.md
 :EVENT_ID:     e9264fe5-815d-40b1-aaba-a0647a28f7da
 :END:
+
+* TX 2026-08-29 Sat 21:12:15 implementer.done TASK-932SH.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-3bea9725-7843-4ffc-9f3b-d7a621661059
+:TIME:         [2026-08-29 Sat 21:12:15]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-932SH.1
+:REASON:       successful report-only run
+:MODEL:        openai/gpt-5.6-luna
+:EFFORT:       low
+:REPORT_ONLY:  true
+:CLOSED_TX:    tx-20260829-orgasmic-c18fbf3d-576d-439d-a08f-4bcb8e1d7ece
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-932SH.1/dispatches/tx-20260829-orgasmic-c18fbf3d-576d-439d-a08f-4bcb8e1d7ece/report.md
+:EVENT_ID:     faea3af0-3006-4aaf-ac66-209d06dc88c7
+:END:
+
+* TX 2026-08-29 Sat 21:12:17 implementer.done TASK-932SH.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-09e31d0b-9b60-439f-9426-015f50bb4060
+:TIME:         [2026-08-29 Sat 21:12:17]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-932SH.2
+:REASON:       successful report-only run
+:MODEL:        google/gemini-3.7-flash
+:EFFORT:       low
+:REPORT_ONLY:  true
+:CLOSED_TX:    tx-20260829-orgasmic-59dc333d-0267-459b-abb2-d9f7bacb7381
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: partial
+:CLEANUP_ERROR: report: brief.md missing from tmp
+:REPORT_PATH:  .orgasmic/tasks/TASK-932SH.2/dispatches/tx-20260829-orgasmic-59dc333d-0267-459b-abb2-d9f7bacb7381/report.md
+:EVENT_ID:     0b268465-0fe4-4ecc-9402-d7125d54e67e
+:END:
+
+* TX 2026-08-29 Sat 21:12:18 manager.dispatch_started TASK-932SH.3
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-10a2050c-c815-4fa0-b816-0d10b8d076eb
+:TIME:         [2026-08-29 Sat 21:12:18]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-932SH.3
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-932sh.3
+:BRANCH:       mm-932sh-review-1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/cross-review-1/cross-review-1.md
+:STARTED_AT:   [2026-08-29 Sat 21:12:18]
+:LIVENESS:     179a237a8839ac9a525ee5b0e42eb2edd2ea59c8
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        openai/gpt-5.6-luna
+:EFFORT:       low
+:REASON_INITIAL: blind cross-review of other model reports
+:EVENT_ID:     5e32fe26-f843-433b-8dfd-aec6aa05df07
+:END:
+
+* TX 2026-08-29 Sat 21:12:18 run.created TASK-932SH.3
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-a22a3e68-c4c4-436a-92b3-b51db04cdbbc
+:TIME:         [2026-08-29 Sat 21:12:18]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-932SH.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-932SH.3-implementer-20260829T211218.jsonl
+:REASON:       blind cross-review of other model reports
+:RUN_ID:       run-01M17NVFBZ9P2ZZY3E86WBYXWG
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-hermes-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-932sh.3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/cross-review-1/cross-review-1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/cross-review-1/cross-review-1-f7ac364aceb540a68093682f48ab5ac1-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/cross-review-1/cross-review-1-f7ac364aceb540a68093682f48ab5ac1-stdout.log
+:DISPATCH_ATTEMPT: f7ac364aceb540a68093682f48ab5ac1
+:PID:          56541
+:DISPATCH_TX:  tx-20260829-orgasmic-10a2050c-c815-4fa0-b816-0d10b8d076eb
+:MODEL_OVERRIDE: openai/gpt-5.6-luna
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     7d0e1d5b-15b6-497f-acd0-5985a363cc5e
+:END:
+
+
+* TX 2026-08-29 Sat 21:12:19 manager.dispatch_started TASK-932SH.4
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-b053456c-8c2b-4bbb-bfba-c19b810aaeba
+:TIME:         [2026-08-29 Sat 21:12:19]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-932SH.4
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-932sh.4
+:BRANCH:       mm-932sh-review-2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/cross-review-2/cross-review-2.md
+:STARTED_AT:   [2026-08-29 Sat 21:12:19]
+:LIVENESS:     179a237a8839ac9a525ee5b0e42eb2edd2ea59c8
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        google/gemini-3.7-flash
+:EFFORT:       low
+:REASON_INITIAL: blind cross-review of other model reports
+:EVENT_ID:     05b5a33e-31ae-457a-a578-8772b735e76c
+:END:
+
+* TX 2026-08-29 Sat 21:12:19 run.created TASK-932SH.4
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-05588be1-064e-4108-9f93-1c79691e4039
+:TIME:         [2026-08-29 Sat 21:12:19]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-932SH.4
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-932SH.4-implementer-20260829T211219.jsonl
+:REASON:       blind cross-review of other model reports
+:RUN_ID:       run-01M17NVG942YZDNKPF293Q1TG2
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-hermes-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      hermes
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-932sh.4
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/cross-review-2/cross-review-2.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/cross-review-2/cross-review-2-fb87a3a59cab4f37bfeb7e934c28b733-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/cross-review-2/cross-review-2-fb87a3a59cab4f37bfeb7e934c28b733-stdout.log
+:DISPATCH_ATTEMPT: fb87a3a59cab4f37bfeb7e934c28b733
+:PID:          56808
+:DISPATCH_TX:  tx-20260829-orgasmic-b053456c-8c2b-4bbb-bfba-c19b810aaeba
+:MODEL_OVERRIDE: google/gemini-3.7-flash
+:EFFORT_OVERRIDE: low
+:EVENT_ID:     12a0a2b8-e943-4fb6-8a9f-efc5d9e7c209
+:END:
