@@ -5269,6 +5269,19 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
 
+* TODO TASK-V6JW4.1 Extract — codex · openai · gpt-5.6-luna · effort low
+:PROPERTIES:
+:ID: TASK-V6JW4.1
+:READ_SCOPE: question in dispatch brief; public or repository sources as needed
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Answer the parent run question independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-led extraction report is promoted.
+
 * TODO TASK-V6JW4.2 Extract — claude · anthropic · claude-haiku-4-5-20251001 · effort low
 :PROPERTIES:
 :ID: TASK-V6JW4.2
@@ -5364,21 +5377,6 @@ Participants: codex · openai · gpt-5.6-luna · effort low — claude · anthro
 
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
-
-* IN_PROGRESS TASK-V6JW4.1 Extract — codex · openai · gpt-5.6-luna · effort low
-:PROPERTIES:
-:ID: TASK-V6JW4.1
-:READ_SCOPE: question in dispatch brief; public or repository sources as needed
-:WRITE_SCOPE: none; dispatch report only
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:CLAIM_WRITE_SCOPE: none; dispatch report only
-:END:
-
-** Description
-Answer the parent run question independently. This is report-only; do not edit project source.
-
-** Acceptance Criteria
-- [ ] A standalone evidence-led extraction report is promoted.
 
 * IN_REVIEW TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
 :PROPERTIES:

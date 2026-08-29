@@ -2028,3 +2028,22 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-V6JW4.2/dispatches/tx-20260829-orgasmic-d2ce0b03-815d-445c-b638-1098ad1ac7e8/report.md
 :EVENT_ID:     25e34664-3009-4c4a-ac7b-2a582e56fa10
 :END:
+
+* TX 2026-08-29 Sat 12:23:36 manager.dispatch_aborted TASK-V6JW4.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-12ca1be9-8661-4028-82b7-b054564e573e
+:TIME:         [2026-08-29 Sat 12:23:36]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-V6JW4.1
+:REASON:       smoke exposed report prompts conflicting with required dispatch finalize
+:CLOSED_TX:    tx-20260829-orgasmic-0a117109-00f8-4fc9-a48e-35c9231b1eb9
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-v6jw4.1
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: partial
+:CLEANUP_ERROR: report: last_path missing: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tmp/dispatch/extract/extract-3c64265458f648e2b864f8844b09ed01-last.txt
+:EVENT_ID:     7ed176d3-c616-47ed-8eb5-2a24357dd759
+:END:
