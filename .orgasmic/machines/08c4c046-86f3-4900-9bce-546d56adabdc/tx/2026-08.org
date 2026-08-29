@@ -1316,3 +1316,77 @@
 :WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx
 :EVENT_ID:     f4bbc738-8f82-4ac8-b874-fac0c45a0e67
 :END:
+
+* TX 2026-08-29 Sat 10:16:38 manager.dispatch_aborted TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-3294f4b1-9f8c-49f0-ab63-0a8ba6575b74
+:TIME:         [2026-08-29 Sat 10:16:38]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:REASON:       wrong harness: operator wants codex stdio, not hermes
+:CLOSED_TX:    tx-20260829-orgasmic-228e9f1c-ce10-4d47-8676-f70fec8009f9
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-56NRX/dispatches/tx-20260829-orgasmic-228e9f1c-ce10-4d47-8676-f70fec8009f9/report.md
+:EVENT_ID:     0b2a2f43-92bc-41bc-8efe-ac5da73780dc
+:END:
+
+* TX 2026-08-29 Sat 10:16:52 manager.dispatch_started TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-68c81f5b-924b-41ac-b38a-80db77f2a9e9
+:TIME:         [2026-08-29 Sat 10:16:52]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx-codex
+:BRANCH:       task-56nrx-impl-r2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-56NRX/brief-TASK-56NRX.md
+:STARTED_AT:   [2026-08-29 Sat 10:16:52]
+:LIVENESS:     f7b35c9d19d787e5670d1b8b23de430c230feb92
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: Implement multi-model extraction mode per shape spec ART-MKRG1 (re-dispatch on codex stdio)
+:EVENT_ID:     c24b298d-24c7-417d-9605-34c609950311
+:END:
+
+* TX 2026-08-29 Sat 10:16:52 run.created TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-bbdce5f1-7db5-40b7-b7ae-a47fcd5c9cb6
+:TIME:         [2026-08-29 Sat 10:16:52]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-56NRX-implementer-20260829T101648.jsonl
+:REASON:       Implement multi-model extraction mode per shape spec ART-MKRG1 (re-dispatch on codex stdio)
+:RUN_ID:       run-01M16GB6W3WV62JE59T6X7WM9E
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx-codex
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-56NRX/brief-TASK-56NRX.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-56NRX/brief-TASK-56NRX-d9b8d0b7b73046cfb57cadb7442e4af0-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-56NRX/brief-TASK-56NRX-d9b8d0b7b73046cfb57cadb7442e4af0-stdout.log
+:DISPATCH_ATTEMPT: d9b8d0b7b73046cfb57cadb7442e4af0
+:PID:          70747
+:DISPATCH_TX:  tx-20260829-orgasmic-68c81f5b-924b-41ac-b38a-80db77f2a9e9
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:EVENT_ID:     6a255b4a-fbc3-4914-9d76-3ab2d9e88604
+:END:
