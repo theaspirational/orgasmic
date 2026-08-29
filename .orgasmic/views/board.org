@@ -5310,20 +5310,6 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
-* IN_PROGRESS TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target :feature:
-:PROPERTIES:
-:ID: TASK-295X1
-:PRIORITY: P2
-:END:
-** Description
-Add the second forum mode: `orgasmic forum critique` — N models blindly critique a supplied target document, cross-review each other's critiques (self-excluding), and a curator synthesizes a prioritized verdict artifact. Reuses forum ask machinery: dispatch pipeline, deterministic SVG, placeholder assembly, About-this-run footer, headline titling.
-** Evidence
-- Implementer: codex/gpt-5.6-sol/xhigh, commit 7d4b7916 (merged fast-forward to main), report promoted on the dispatch record
-- Review: claude-fable-5/high, APPROVE, 'would merge as-is', zero blocking/medium findings; review promoted on the reviewer dispatch record
-- LOW findings closed on main at c3d79f53 (pre-read 64KiB stat cap; cross-mode placeholder rejection tests, one per mode)
-- Gates: cargo fmt --all, clippy -D warnings, 280 CLI bin tests incl. 9 forum tests and byte-identical ask SVG fixture, shipped prompt specs compile
-- Live multi-model critique smoke not yet run (operator-owned, post-reinstall)
-
 * IN_PROGRESS TASK-2XT9J Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-2XT9J
@@ -6144,6 +6130,20 @@ Acceptance:
 - Re-run focused boot/index tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings. Baseline watcher refresh tests currently fail identically on b18808c and must be reported distinctly, not attributed to this fix.
 ** Notes
 Landed in bd3d7bd as part of the reviewed TASK-35TK4 slice. Independent Claude Opus 4.8/high review returned SHIP; focused daemon and CLI boot tests passed. Baseline watcher-refresh failures were reproduced on b18808c and were not attributed to this fix.
+
+* DONE TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target :feature:
+:PROPERTIES:
+:ID: TASK-295X1
+:PRIORITY: P2
+:END:
+** Description
+Add the second forum mode: `orgasmic forum critique` — N models blindly critique a supplied target document, cross-review each other's critiques (self-excluding), and a curator synthesizes a prioritized verdict artifact. Reuses forum ask machinery: dispatch pipeline, deterministic SVG, placeholder assembly, About-this-run footer, headline titling.
+** Evidence
+- Implementer: codex/gpt-5.6-sol/xhigh, commit 7d4b7916, merged to main at c74eb263 (merge commit)
+- Review: claude-fable-5/high, APPROVE, 'would merge as-is', zero blocking/medium findings; review promoted on the reviewer dispatch record
+- LOW findings closed on main at 8bfb1a88 (pre-read 64KiB stat cap; cross-mode placeholder rejection tests, one per mode)
+- Gates: cargo fmt --all, clippy -D warnings, 280 CLI bin tests incl. 9 forum tests and byte-identical ask SVG fixture, shipped prompt specs compile
+- Live multi-model critique smoke not yet run (operator-owned, post-reinstall)
 
 * DONE TASK-2BPWM dispatch-close destroys uncommitted worker output by default (git worktree remove --force, no dirty check) :dispatch:recovery:data-loss:bug:
 :PROPERTIES:
