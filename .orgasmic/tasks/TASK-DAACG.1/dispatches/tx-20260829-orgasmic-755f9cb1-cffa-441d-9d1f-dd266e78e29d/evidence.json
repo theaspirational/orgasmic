@@ -1,0 +1,20 @@
+{
+  "event_count": 25,
+  "tool_call_count": 13,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-DAACG.1-implementer-20260829T155058.jsonl",
+    "size_bytes": 91245
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/08/29/rollout-2026-08-29T18-50-59-01a04e37-8f52-71f2-8409-c23ed63933a0.jsonl",
+    "session_id": "01a04e37-8f52-71f2-8409-c23ed63933a0",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
