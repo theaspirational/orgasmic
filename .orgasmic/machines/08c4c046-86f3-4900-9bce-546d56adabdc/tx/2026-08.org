@@ -1976,3 +1976,35 @@
 :EFFORT_OVERRIDE: low
 :EVENT_ID:     c7e04f8c-a317-421d-9a70-dbca832c955e
 :END:
+
+* TX 2026-08-29 Sat 12:21:50 manager.dispatch_orphaned TASK-V6JW4.1
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-c6f99d5a-b523-4220-a8b6-57b20ba6e67e
+:TIME:         [2026-08-29 Sat 12:21:50]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-V6JW4.1
+:TARGET:       ledgers/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-V6JW4.1-implementer-20260829T121336.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-01M16Q12JVDQK6K5HHZA8F59N3
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-v6jw4.1
+:EVENT_ID:     da2c13e1-3211-4bb7-85bf-b06e4282545a
+:END:
+
+* TX 2026-08-29 Sat 12:21:51 manager.dispatch_orphaned TASK-V6JW4.2
+:PROPERTIES:
+:TX_ID:        tx-20260829-orgasmic-449d0cf1-cce6-4382-a14b-0b019d6ea5ea
+:TIME:         [2026-08-29 Sat 12:21:51]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-V6JW4.2
+:TARGET:       ledgers/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-V6JW4.2-implementer-20260829T121338.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-01M16Q152P1MGX16TJEQZXDT09
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-v6jw4.2
+:EVENT_ID:     b2abcdd7-5024-49ed-813f-0dc61c03da21
+:END:
