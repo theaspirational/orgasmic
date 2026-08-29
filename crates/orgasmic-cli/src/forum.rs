@@ -20,6 +20,7 @@ use crate::manager::{
 
 const QUESTION_PLACEHOLDER: &str = "__ORGASMIC_QUESTION_SECTION__";
 const DIAGRAM_PLACEHOLDER: &str = "__ORGASMIC_PIPELINE_DIAGRAM__";
+const RUN_STATS_PLACEHOLDER: &str = "__ORGASMIC_RUN_STATS__";
 
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "\
@@ -833,10 +834,36 @@ fn task_is_present(mdx: &str, task: &str) -> bool {
     })
 }
 
+/// Run metadata is manifest truth the orchestrator already holds; rendering it
+/// here keeps the roster correct and scannable regardless of curator quality.
+fn render_run_stats(
+    extraction: &[RunReport],
+    reviews: &[RunReport],
+    curator: &Participant,
+    started_at: &str,
+) -> String {
+    let started = started_at
+        .get(..16)
+        .map_or_else(|| started_at.to_string(), |head| head.replace('T', " "));
+    let mut lines = vec![format!("- **Participants ({}):**", extraction.len())];
+    for report in extraction {
+        lines.push(format!("    - {}", report.participant.identity()));
+    }
+    lines.push(format!("- **Curator:** {}", curator.identity()));
+    lines.push(format!(
+        "- **Run:** {} extraction reports · {} cross-reviews · started {} UTC",
+        extraction.len(),
+        reviews.len(),
+        started
+    ));
+    format!("<RichText>\n{}\n</RichText>", lines.join("\n"))
+}
+
 fn assemble_artifact(
     draft: &str,
     question: &str,
     svg: &str,
+    run_stats: &str,
     raw_tasks: &[String],
 ) -> Result<String> {
     if contains_model_svg(draft) {
@@ -844,6 +871,7 @@ fn assemble_artifact(
     }
     if draft.matches(QUESTION_PLACEHOLDER).count() != 1
         || draft.matches(DIAGRAM_PLACEHOLDER).count() != 1
+        || draft.matches(RUN_STATS_PLACEHOLDER).count() != 1
     {
         bail!("curator draft must contain each orchestrator placeholder once");
     }
@@ -860,7 +888,8 @@ fn assemble_artifact(
     );
     let mdx = draft
         .replace(QUESTION_PLACEHOLDER, &question_section)
-        .replace(DIAGRAM_PLACEHOLDER, &image);
+        .replace(DIAGRAM_PLACEHOLDER, &image)
+        .replace(RUN_STATS_PLACEHOLDER, run_stats);
 
     let sections = section_titles(&mdx);
     if sections.first().map(|(_, title)| title.as_str()) != Some("Question") {
@@ -1560,7 +1589,7 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             &curator_task,
             format!("Curate answer — {}", curator.identity()),
             "Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.",
-            "The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the Question and diagram.",
+            "The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the run stats, Question, and diagram.",
             "all promoted report paths named in dispatch brief and MDX block contract",
             "/tmp curation draft, diagram JSON, and dispatch report only",
         )?;
@@ -1616,7 +1645,8 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
             .collect::<Vec<_>>();
         let draft = std::fs::read_to_string(&draft_path)
             .with_context(|| format!("read {}", draft_path.display()))?;
-        let mdx = assemble_artifact(&draft, &question, &svg, &raw_tasks)?;
+        let run_stats = render_run_stats(&extraction, &reviews, &curator, &started_at);
+        let mdx = assemble_artifact(&draft, &question, &svg, &run_stats, &raw_tasks)?;
         let artifact = args
             .artifact_id
             .unwrap_or_else(|| mint_node_id_for_class(NodeIdClass::Artifact));
@@ -1938,7 +1968,15 @@ mod tests {
 
     #[test]
     fn assembly_preserves_hostile_question_and_enforces_task_boundaries() {
-        let (_, extraction, reviews) = reports(2);
+        let (participants, extraction, reviews) = reports(2);
+        let run_stats = render_run_stats(
+            &extraction,
+            &reviews,
+            &participants[0],
+            "2026-08-29T21:07:20.123+00:00",
+        );
+        assert!(run_stats.contains("- **Curator:**"));
+        assert!(run_stats.contains("started 2026-08-29 21:07 UTC"));
         let raw_tasks = extraction
             .iter()
             .chain(&reviews)
@@ -1946,30 +1984,40 @@ mod tests {
             .chain(std::iter::once("TASK-TESTX.5".to_string()))
             .collect::<Vec<_>>();
         let draft = format!(
-            "<RichText>Run header</RichText>\n<Callout tone=\"warning\">Verify claims.</Callout>\n{QUESTION_PLACEHOLDER}\n<Section title=\"Final answer\"><RichText>Answer.</RichText></Section>\n<Section title=\"From question to answer\">\n{DIAGRAM_PLACEHOLDER}\n<RichText>Raw reports: {}</RichText>\n</Section>\n<Section title=\"Knowledge map\"><RichText>Map.</RichText></Section>\n<Section><RichText>Feedback.</RichText></Section>",
+            "{RUN_STATS_PLACEHOLDER}\n<Callout tone=\"warning\">Verify claims.</Callout>\n{QUESTION_PLACEHOLDER}\n<Section title=\"Final answer\"><RichText>Answer.</RichText></Section>\n<Section title=\"From question to answer\">\n{DIAGRAM_PLACEHOLDER}\n<RichText>Raw reports: {}</RichText>\n</Section>\n<Section title=\"Knowledge map\"><RichText>Map.</RichText></Section>\n<Section><RichText>Feedback.</RichText></Section>",
             raw_tasks.join(" ")
         );
         let question = "Should <svg> and {braces} stay verbatim & safe?";
-        let assembled = assemble_artifact(&draft, question, "<generated/>", &raw_tasks).unwrap();
+        let assembled =
+            assemble_artifact(&draft, question, "<generated/>", &run_stats, &raw_tasks).unwrap();
         assert!(
             assembled.find("title=\"Question\"").unwrap()
                 < assembled.find("title=\"Final answer\"").unwrap()
         );
         assert_eq!(assembled.matches("data:image/svg+xml;base64,").count(), 1);
+        assert!(assembled.contains("- **Curator:**"));
         assert!(assembled
             .contains("Should &lt;svg&gt; and &#123;braces&#125; stay verbatim &amp; safe?"));
 
         let authored = draft.replace(DIAGRAM_PLACEHOLDER, "<svg/>");
         assert!(
-            assemble_artifact(&authored, question, "generated", &raw_tasks)
+            assemble_artifact(&authored, question, "generated", &run_stats, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("model-authored SVG")
         );
 
+        let header = draft.replace(RUN_STATS_PLACEHOLDER, "<RichText>Run header</RichText>");
+        assert!(
+            assemble_artifact(&header, question, "generated", &run_stats, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("each orchestrator placeholder once")
+        );
+
         let boundary = draft.replace(&raw_tasks[0], &format!("{}1", raw_tasks[0]));
         assert!(
-            assemble_artifact(&boundary, question, "generated", &raw_tasks)
+            assemble_artifact(&boundary, question, "generated", &run_stats, &raw_tasks)
                 .unwrap_err()
                 .to_string()
                 .contains("omitted raw-report task ids")
@@ -1983,9 +2031,11 @@ mod tests {
                 "<Section  title=\"Question\">\n<RichText>\nfake question\n</RichText>\n</Section>\n{QUESTION_PLACEHOLDER}"
             ),
         );
-        assert!(assemble_artifact(&decoy, question, "generated", &raw_tasks)
-            .unwrap_err()
-            .to_string()
-            .contains("Question section does not match the input question verbatim"));
+        assert!(
+            assemble_artifact(&decoy, question, "generated", &run_stats, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("Question section does not match the input question verbatim")
+        );
     }
 }

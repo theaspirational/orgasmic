@@ -54,8 +54,10 @@ Write `/tmp/{{task.id}}-curation.mdx` using the registered block contract docume
 `shipped/prompt-studio/prompt-specs/artifact-generator.org` and exercised by
 `ui/src/lib/artifacts/__fixtures__/all-blocks.ts`. It has this exact shape:
 
-1. A top-level `RichText` header with run stats, the complete participant
-   roster, and curator identity.
+1. A first line containing exactly `__ORGASMIC_RUN_STATS__`. The orchestrator
+   replaces it with the deterministic run-stats block (participant roster,
+   curator identity, report counts, start time). Never write your own roster
+   or run header.
 2. A provenance-warning `Callout`: this is multi-model synthesis, not verified
    truth; readers must verify consequential claims before acting.
 3. A line containing exactly `__ORGASMIC_QUESTION_SECTION__`. The orchestrator
