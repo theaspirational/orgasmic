@@ -336,7 +336,7 @@ async fn dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "codex dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -469,7 +469,7 @@ async fn dispatch_with_task_worker_property_still_spawns_via_explicit_path() {
     );
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "explicit dispatch with task worker pin\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -550,7 +550,7 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
     );
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "sandbox override dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -618,7 +618,7 @@ dispatch:
     );
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "sandbox matrix dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -672,7 +672,7 @@ async fn dispatch_endpoint_lease_held_returns_409() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "lease dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -747,7 +747,7 @@ async fn dispatch_endpoint_routes_cursor_agent_through_supervisor_and_emits_run_
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "cursor dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -813,7 +813,7 @@ async fn dispatch_endpoint_routes_stdio_codex_through_supervisor() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "codex stdio dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -871,7 +871,7 @@ async fn dispatch_unsupported_transport_is_path_free() {
     write(&brief, "unsupported transport dispatch brief\n");
     let worktree = tmp.path().join("worktree");
     std::fs::create_dir_all(&worktree).unwrap();
-    let last = project_root.join("last.txt");
+    let last = project_root.join("task-last.txt");
     write(&last, "");
     let stdout = project_root.join("stdout.txt");
     write(&stdout, "");
@@ -917,7 +917,7 @@ async fn dispatch_rejects_missing_worktree_with_sanitized_error() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let missing_worktree = tmp.path().join("missing-worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "missing worktree brief\n");
 
@@ -965,7 +965,7 @@ async fn dispatch_rejects_file_worktree_with_sanitized_error() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let file_worktree = tmp.path().join("not-a-dir");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "file worktree brief\n");
     write(&file_worktree, "not a directory\n");
@@ -1014,7 +1014,7 @@ async fn dispatch_override_off_list_model_passes_through_with_warn() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "override dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -1267,7 +1267,7 @@ async fn dispatch_protocol_end_without_finalize_orphans_and_leaves_artifacts_emp
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "last path dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -1325,7 +1325,7 @@ async fn dispatch_delayed_protocol_end_without_finalize_orphans() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-delayed.md");
     let worktree = tmp.path().join("worktree-delayed");
-    let last = tmp.path().join("last-delayed.txt");
+    let last = tmp.path().join("delayed-last.txt");
     let stdout = tmp.path().join("stdout-delayed.log");
     write(&brief, "delayed artifact dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -1386,7 +1386,7 @@ async fn dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-cursor-shaped.md");
     let worktree = tmp.path().join("worktree-cursor-shaped");
-    let last = tmp.path().join("last-cursor-shaped.txt");
+    let last = tmp.path().join("cursor-shaped-last.txt");
     let stdout = tmp.path().join("stdout-cursor-shaped.log");
     write(&brief, "cursor-shaped dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -1460,7 +1460,7 @@ async fn dispatch_clean_worktree_protocol_end_without_finalize_orphans() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree-clean");
-    let last = tmp.path().join("last-clean.txt");
+    let last = tmp.path().join("clean-last.txt");
     let stdout = tmp.path().join("stdout-clean.log");
     write(&brief, "clean worktree dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -1806,7 +1806,7 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
     let missing_brief = tmp.path().join("missing-brief.md");
     let worktree = tmp.path().join("worktree");
     std::fs::create_dir_all(&worktree).unwrap();
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&last, "");
     write(&stdout, "");
@@ -1859,7 +1859,7 @@ async fn dispatch_system_only_session_without_finalize_orphans_not_scrapes() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-system-only.md");
     let worktree = tmp.path().join("worktree-system-only");
-    let last = tmp.path().join("last-system-only.txt");
+    let last = tmp.path().join("system-only-last.txt");
     let stdout = tmp.path().join("stdout-system-only.log");
     write(&brief, "system-only dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -1940,7 +1940,7 @@ async fn dispatch_grace_path_writes_artifacts_without_terminal_session_marker() 
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-grace-path.md");
     let worktree = tmp.path().join("worktree-grace-path");
-    let last = tmp.path().join("last-grace-path.txt");
+    let last = tmp.path().join("grace-path-last.txt");
     let stdout = tmp.path().join("stdout-grace-path.log");
     write(&brief, "grace-path dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -2023,7 +2023,7 @@ async fn dispatch_started_tx_empty_reason_has_no_trailing_whitespace() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-empty-reason.md");
     let worktree = tmp.path().join("worktree-empty-reason");
-    let last = tmp.path().join("last-empty-reason.txt");
+    let last = tmp.path().join("empty-reason-last.txt");
     let stdout = tmp.path().join("stdout-empty-reason.log");
     write(&brief, "empty reason dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -2584,7 +2584,7 @@ async fn dispatch_response_pid_is_inner_subprocess_child() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-watch-pid.md");
     let worktree = tmp.path().join("worktree-watch-pid");
-    let last = tmp.path().join("last-watch-pid.txt");
+    let last = tmp.path().join("watch-pid-last.txt");
     let stdout = tmp.path().join("stdout-watch-pid.log");
     write(&brief, "watch pid dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -2660,7 +2660,7 @@ async fn dispatch_response_pid_prefers_worker_server_child() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-worker-server-pid.md");
     let worktree = tmp.path().join("worktree-worker-server-pid");
-    let last = tmp.path().join("last-worker-server-pid.txt");
+    let last = tmp.path().join("worker-server-pid-last.txt");
     let stdout = tmp.path().join("stdout-worker-server-pid.log");
     write(&brief, "worker-server pid dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -2728,7 +2728,7 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-early-exit.md");
     let worktree = tmp.path().join("worktree-early-exit");
-    let last = tmp.path().join("last-early-exit.txt");
+    let last = tmp.path().join("early-exit-last.txt");
     let stdout = tmp.path().join("stdout-early-exit.log");
     write(&brief, "early-exit dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -2936,7 +2936,7 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-synthetic-rc.md");
     let worktree = tmp.path().join("worktree-synthetic-rc");
-    let last = tmp.path().join("last-synthetic-rc.txt");
+    let last = tmp.path().join("synthetic-rc-last.txt");
     let stdout = tmp.path().join("stdout-synthetic-rc.log");
     write(&brief, "synthetic run_complete dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -3551,7 +3551,7 @@ async fn dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect() {
     std::fs::create_dir_all(&worktree).unwrap();
     let brief = stem_dir.join("brief.md");
     write(&brief, "finalize tx brief");
-    let last = stem_dir.join("last.txt");
+    let last = stem_dir.join("task-last.txt");
     let stdout = stem_dir.join("stdout.log");
     write(&last, "worker report");
     write(&stdout, "");
@@ -3714,7 +3714,7 @@ async fn dispatch_endpoint_old_cli_release_without_terminal_tx_is_refused() {
     std::fs::create_dir_all(&worktree).unwrap();
     let brief = stem_dir.join("brief.md");
     write(&brief, "old-cli skew brief");
-    let last = stem_dir.join("last.txt");
+    let last = stem_dir.join("task-last.txt");
     let stdout = stem_dir.join("stdout.log");
     write(&last, "worker report");
     write(&stdout, "");
@@ -3892,7 +3892,7 @@ async fn dispatch_endpoint_controlled_restart_waits_for_pending_terminal_tx() {
     std::fs::create_dir_all(&worktree).unwrap();
     let brief = stem_dir.join("brief.md");
     write(&brief, "restart tx brief");
-    let last = stem_dir.join("last.txt");
+    let last = stem_dir.join("task-last.txt");
     let stdout = stem_dir.join("stdout.log");
     write(&last, "worker report");
     write(&stdout, "");
@@ -4088,7 +4088,7 @@ async fn dispatch_endpoint_restart_waits_for_a_release_admitted_but_not_yet_regi
     std::fs::create_dir_all(&worktree).unwrap();
     let brief = stem_dir.join("brief.md");
     write(&brief, "admission race brief");
-    let last = stem_dir.join("last.txt");
+    let last = stem_dir.join("task-last.txt");
     let stdout = stem_dir.join("stdout.log");
     write(&last, "worker report");
     write(&stdout, "");

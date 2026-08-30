@@ -2433,7 +2433,7 @@ async fn architecture_production_and_read_routes_are_gone() {
             "harness": "codex",
             "brief_path": tmp.path().join("brief.md"),
             "worktree_path": tmp.path().join("wt"),
-            "last_path": tmp.path().join("last.txt"),
+            "last_path": tmp.path().join("task-last.txt"),
             "stdout_path": tmp.path().join("stdout.log"),
         }))
         .send()
@@ -2885,7 +2885,7 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
     );
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "classifier dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();

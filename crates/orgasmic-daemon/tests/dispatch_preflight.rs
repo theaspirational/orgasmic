@@ -179,7 +179,7 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
     seed_project(&home, &project_root, "proj-preflight", task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
-    let last = tmp.path().join("last.txt");
+    let last = tmp.path().join("task-last.txt");
     let stdout = tmp.path().join("stdout.log");
     write(&brief, "preflight dispatch brief\n");
     std::fs::create_dir_all(&worktree).unwrap();

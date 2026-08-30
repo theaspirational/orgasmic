@@ -273,7 +273,7 @@ async fn the_daemon_pins_the_admitted_credential_plan_into_the_launch() {
             "harness": "claude",
             "brief_path": brief,
             "worktree_path": worktree,
-            "last_path": tmp.path().join("last.txt"),
+            "last_path": tmp.path().join("task-last.txt"),
             "stdout_path": tmp.path().join("stdout.log"),
             "worker_id": worker_id,
             "branch": "task-credential-plan",
