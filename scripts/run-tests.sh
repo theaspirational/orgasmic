@@ -308,9 +308,24 @@ parse_registry() {
 
 # An entry whose owning task is closed is a graveyard headstone: it keeps a
 # fixed test permanently excused. The task nodes are committed, so this
-# check needs no daemon and works in a worktree and in CI.
+# check needs no daemon and works in a worktree and in CI. The 2026-08-27
+# ledger cutover moved `.orgasmic/` off the repo tree to
+# ~/.orgasmic/ledgers/<project>; the nodes are committed there instead, so
+# fall back to that checkout when the repo carries none. A tree with neither
+# (CI, plain clones, task worktrees) still skips fail-open.
+orgasmic_tasks_dir() {
+    local repo_tasks="$REPO/.orgasmic/tasks"
+    local ledger_tasks="$HOME/.orgasmic/ledgers/$(basename "$REPO")/.orgasmic/tasks"
+    if [ ! -d "$repo_tasks" ] && [ -d "$ledger_tasks" ]; then
+        printf '%s\n' "$ledger_tasks"
+    else
+        printf '%s\n' "$repo_tasks"
+    fi
+}
+
 check_owner_lifecycle() {
-    local tasks="$REPO/.orgasmic/tasks"
+    local tasks
+    tasks=$(orgasmic_tasks_dir)
     local problems=0 owner state token
     if [ ! -d "$tasks" ]; then
         printf 'registry: %s not found — owner lifecycle NOT checked\n' "$tasks"

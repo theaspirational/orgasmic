@@ -199,7 +199,12 @@ OTHER_PANIC='resume_native_fork recover: 500'
 # Resolve an open one at startup instead, so the self-test measures the
 # classifier and not the task board.
 open_owner() {
+    # Mirror run-tests.sh `orgasmic_tasks_dir`: the 2026-08-27 ledger cutover
+    # moved the committed task nodes to ~/.orgasmic/ledgers/<project>.
     local tasks="$REPO/.orgasmic/tasks" f id
+    if [ ! -d "$tasks" ] && [ -d "$HOME/.orgasmic/ledgers/$(basename "$REPO")/.orgasmic/tasks" ]; then
+        tasks="$HOME/.orgasmic/ledgers/$(basename "$REPO")/.orgasmic/tasks"
+    fi
     for f in "$tasks"/*/node.org; do
         [ -f "$f" ] || continue
         grep -Eq '^\*+[ \t]+(DONE|CANCELLED)[ \t]+' "$f" && continue
@@ -218,7 +223,7 @@ EOF
 }
 
 FIXTURE_OWNER=$(open_owner) || {
-    printf 'FAIL setup: no open task in %s to own the fixture registry entries\n' \
+    printf 'FAIL setup: no open task in %s (or the ledger checkout) to own the fixture registry entries\n' \
         "$REPO/.orgasmic/tasks"
     exit 1
 }
