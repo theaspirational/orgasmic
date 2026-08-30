@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-9TGQS
 #+orgasmic_version: 2
 
-* BACKLOG TASK-9TGQS Forum self-curation: default --curator is the invoking session; new 'forum curate' verb submits its draft    :feature:
+* IN_PROGRESS TASK-9TGQS Forum self-curation: default --curator is the invoking session; new 'forum curate' verb submits its draft :feature:
 :PROPERTIES:
 :ID: TASK-9TGQS
 :PRIORITY: P2
