@@ -104,6 +104,38 @@ pub struct CritiqueArgs {
     run: RunArgs,
 }
 
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+Example:
+  orgasmic forum review --forum TASK-XXXXX --all-rounds \\
+    --participant 'stdio,claude,claude-fable-5,high'
+
+Review challenges promoted stage-1 reports in an open self-curated forum.
+When neither --round nor --all-rounds is supplied, all answer rounds are reviewed.")]
+pub struct ReviewArgs {
+    /// Open self-curated forum whose stage-1 reports should be reviewed.
+    #[arg(long)]
+    forum: String,
+    /// Reviewer as mode,harness,model,effort; repeat for a larger panel.
+    #[arg(long, action = ArgAction::Append, required = true)]
+    participant: Vec<String>,
+    /// Review one earlier answer round.
+    #[arg(long, conflicts_with = "all_rounds")]
+    round: Option<usize>,
+    /// Review every earlier answer round (the default).
+    #[arg(long, conflicts_with = "round")]
+    all_rounds: bool,
+    /// Optional one-line steer for the review.
+    #[arg(long, allow_hyphen_values = true)]
+    focus: Option<String>,
+    /// Project id; when supplied it must match the project resolved from cwd.
+    #[arg(long)]
+    project: Option<String>,
+    /// Maximum wait for the review stage (for example 30s, 5m, 1h).
+    #[arg(long, default_value = "45m", value_parser = parse_duration)]
+    timeout: Duration,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct Participant {
     mode: String,
@@ -157,6 +189,7 @@ struct DiagramFields {
 enum ForumKind {
     Ask,
     Critique,
+    Review,
 }
 
 impl ForumKind {
@@ -164,6 +197,7 @@ impl ForumKind {
         match self {
             Self::Ask => "ask",
             Self::Critique => "critique",
+            Self::Review => "review",
         }
     }
 
@@ -171,6 +205,7 @@ impl ForumKind {
         match self {
             Self::Ask => "extractor",
             Self::Critique => "critic",
+            Self::Review => unreachable!("review rounds have no stage-1 prompt"),
         }
     }
 
@@ -178,6 +213,7 @@ impl ForumKind {
         match self {
             Self::Ask => "cross-reviewer",
             Self::Critique => "critique-cross-reviewer",
+            Self::Review => "forum-reviewer",
         }
     }
 
@@ -185,6 +221,7 @@ impl ForumKind {
         match self {
             Self::Ask => "curator",
             Self::Critique => "critique-curator",
+            Self::Review => unreachable!("a review round cannot open a forum"),
         }
     }
 }
@@ -200,6 +237,10 @@ enum ForumInput {
         focus: Option<String>,
         basename: String,
     },
+    Review {
+        reviewed_rounds: Vec<usize>,
+        focus: Option<String>,
+    },
 }
 
 impl ForumInput {
@@ -207,6 +248,7 @@ impl ForumInput {
         match self {
             Self::Ask { .. } => ForumKind::Ask,
             Self::Critique { .. } => ForumKind::Critique,
+            Self::Review { .. } => ForumKind::Review,
         }
     }
 
@@ -214,6 +256,7 @@ impl ForumInput {
         match self {
             Self::Ask { question } => question,
             Self::Critique { target, .. } => target,
+            Self::Review { .. } => "",
         }
     }
 
@@ -221,6 +264,7 @@ impl ForumInput {
         match self {
             Self::Ask { .. } => String::new(),
             Self::Critique { focus, .. } => focus.clone().unwrap_or_else(|| "(none)".to_string()),
+            Self::Review { focus, .. } => focus.clone().unwrap_or_else(|| "(none)".to_string()),
         }
     }
 
@@ -229,7 +273,7 @@ impl ForumInput {
             "artifact.user_prompt".to_string(),
             self.content().to_string(),
         )]);
-        if self.kind() == ForumKind::Critique {
+        if matches!(self.kind(), ForumKind::Critique | ForumKind::Review) {
             values.insert("node.extra_prompt".to_string(), self.focus_value());
         }
         values
@@ -244,6 +288,20 @@ impl ForumInput {
             Self::Critique {
                 target, basename, ..
             } => format!("critique of {basename}, {} bytes", target.len()),
+            Self::Review {
+                reviewed_rounds,
+                focus,
+            } => focus.clone().unwrap_or_else(|| {
+                format!(
+                    "review of round{} {}",
+                    if reviewed_rounds.len() == 1 { "" } else { "s" },
+                    reviewed_rounds
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }),
         }
     }
 
@@ -260,6 +318,7 @@ impl ForumInput {
                 focus: Some(focus), ..
             } => clipped(focus, 100),
             Self::Critique { basename, .. } => clipped(basename, 100),
+            Self::Review { .. } => clipped(&self.diagram_prompt(), 100),
         }
     }
 
@@ -267,6 +326,7 @@ impl ForumInput {
         match self {
             Self::Ask { .. } => format!("Multi-model extraction: {}", self.short_label()),
             Self::Critique { .. } => format!("Multi-model critique: {}", self.short_label()),
+            Self::Review { .. } => format!("Multi-model review: {}", self.short_label()),
         }
     }
 
@@ -367,10 +427,37 @@ struct ForumRound {
     panel: Vec<ManifestParticipant>,
     first_stage_tasks: Vec<String>,
     cross_review_tasks: Vec<String>,
+    #[serde(default)]
+    review_tasks: Vec<String>,
     promoted_report_paths: Vec<PathBuf>,
     started_at: String,
     completed_at: String,
     contract_path: Option<PathBuf>,
+}
+
+impl ForumRound {
+    fn report_tasks(&self) -> impl Iterator<Item = &String> {
+        self.first_stage_tasks
+            .iter()
+            .chain(&self.cross_review_tasks)
+            .chain(&self.review_tasks)
+    }
+
+    fn diagram_extract_tasks(&self) -> &[String] {
+        if self.kind == ForumKind::Review {
+            &[]
+        } else {
+            &self.first_stage_tasks
+        }
+    }
+
+    fn diagram_review_tasks(&self) -> &[String] {
+        if self.kind == ForumKind::Review {
+            &self.review_tasks
+        } else {
+            &self.cross_review_tasks
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -435,6 +522,17 @@ struct SelfCuratedCritiqueResult {
     parent_task: String,
     critique_tasks: Vec<String>,
     cross_review_tasks: Vec<String>,
+    manifest_path: PathBuf,
+    promoted_report_paths: Vec<PathBuf>,
+    contract_path: PathBuf,
+}
+
+#[derive(Serialize)]
+struct SelfCuratedReviewResult {
+    forum: String,
+    parent_task: String,
+    reviewed_rounds: Vec<usize>,
+    review_tasks: Vec<String>,
     manifest_path: PathBuf,
     promoted_report_paths: Vec<PathBuf>,
     contract_path: PathBuf,
@@ -746,6 +844,19 @@ fn load_multi_round_diagram_fields(
             if value_string(entry, "kind") != Some(expected.kind.slug()) {
                 bail!("diagram round {round_number} kind does not match the manifest");
             }
+            if expected.kind == ForumKind::Review {
+                if entry.get("extracts").is_some() {
+                    bail!("diagram review round {round_number} must not contain extracts");
+                }
+                if entry.get("reviews").is_none() {
+                    bail!("diagram review round {round_number} must contain reviews");
+                }
+            } else if entry.get("extracts").is_none() {
+                bail!(
+                    "diagram {} round {round_number} must contain extracts",
+                    expected.kind.slug()
+                );
+            }
             let mut entry_with_summary = entry.clone();
             entry_with_summary.as_object_mut().unwrap().insert(
                 "curator_summary".to_string(),
@@ -753,8 +864,8 @@ fn load_multi_round_diagram_fields(
             );
             let fields = parse_diagram_fields(
                 &entry_with_summary,
-                &expected.first_stage_tasks,
-                &expected.cross_review_tasks,
+                expected.diagram_extract_tasks(),
+                expected.diagram_review_tasks(),
             )?;
             parsed.push(RoundDiagramFields {
                 round: round_number,
@@ -1289,7 +1400,6 @@ fn round_reports(round: &ForumRound) -> Result<(Vec<RunReport>, Vec<RunReport>)>
         .iter()
         .map(ManifestParticipant::participant)
         .collect::<Result<Vec<_>>>()?;
-    let count = participants.len();
     let reports = |tasks: &[String], paths: &[PathBuf]| {
         participants
             .iter()
@@ -1307,6 +1417,13 @@ fn round_reports(round: &ForumRound) -> Result<(Vec<RunReport>, Vec<RunReport>)>
             })
             .collect::<Vec<_>>()
     };
+    if round.kind == ForumKind::Review {
+        return Ok((
+            Vec::new(),
+            reports(&round.review_tasks, &round.promoted_report_paths),
+        ));
+    }
+    let count = participants.len();
     Ok((
         reports(
             &round.first_stage_tasks,
@@ -1329,9 +1446,19 @@ fn render_multi_round_svg(
     if rounds.is_empty() || rounds.len() != fields.rounds.len() {
         bail!("multi-round diagram requires matching manifest and diagram rounds");
     }
-    if rounds.iter().any(|round| {
-        round.panel.len() < if round.fast { 1 } else { 2 }
-            || round.cross_review_tasks.len() != if round.fast { 0 } else { round.panel.len() }
+    if rounds.iter().any(|round| match round.kind {
+        ForumKind::Review => {
+            round.fast
+                || round.panel.is_empty()
+                || !round.first_stage_tasks.is_empty()
+                || !round.cross_review_tasks.is_empty()
+                || round.review_tasks.len() != round.panel.len()
+        }
+        ForumKind::Ask | ForumKind::Critique => {
+            round.panel.len() < if round.fast { 1 } else { 2 }
+                || round.cross_review_tasks.len() != if round.fast { 0 } else { round.panel.len() }
+                || !round.review_tasks.is_empty()
+        }
     }) {
         bail!("diagram round has an invalid panel or review roster");
     }
@@ -1346,8 +1473,18 @@ fn render_multi_round_svg(
     let width =
         (margin * 2 + max_count as i32 * card_width + (max_count as i32 - 1) * gap).max(544);
     let center = width / 2;
-    let round_height = 650i32;
-    let curator_y = 32 + rounds.len() as i32 * round_height;
+    // A review round draws only a header plus one 190px card row, so a
+    // uniform 650px slot leaves a blank band; give each kind its own height.
+    let mut row_tops = Vec::with_capacity(rounds.len());
+    let mut curator_y = 32i32;
+    for round in rounds {
+        row_tops.push(curator_y);
+        curator_y += if round.kind == ForumKind::Review {
+            300
+        } else {
+            650
+        };
+    }
     let height = curator_y + 190;
     let sans = "font-family:-apple-system,'SF Pro Text','Segoe UI',Helvetica,Arial,sans-serif";
     let mono = "font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace";
@@ -1376,16 +1513,124 @@ fn render_multi_round_svg(
             bail!("diagram round order does not match the manifest");
         }
         let (extraction, reviews) = round_reports(round)?;
-        let count = extraction.len() as i32;
+        let count = if round.kind == ForumKind::Review {
+            reviews.len()
+        } else {
+            extraction.len()
+        } as i32;
         let row_width = count * card_width + (count - 1) * gap;
         let row_left = center - row_width / 2;
         let xs = (0..count)
             .map(|index| row_left + index * (card_width + gap))
             .collect::<Vec<_>>();
         let centers = xs.iter().map(|x| x + card_width / 2).collect::<Vec<_>>();
-        let top = 32 + (round.round as i32 - 1) * round_height;
+        let top = row_tops[round.round - 1];
         let prompt_lines = wrap_question(&round.input.diagram_prompt());
-        write!(out, "<g data-round=\"{}\">", round.round)?;
+        write!(
+            out,
+            "<g data-round=\"{}\" data-round-kind=\"{}\">",
+            round.round,
+            round.kind.slug()
+        )?;
+        if let ForumInput::Review {
+            reviewed_rounds, ..
+        } = &round.input
+        {
+            out.push_str(&svg_text(
+                center,
+                top + 25,
+                &format!(
+                    "ROUND {} · REVIEW · ROUNDS {}",
+                    round.round,
+                    reviewed_rounds
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                ),
+                &stage_style,
+                &[],
+            ));
+            out.push_str(&svg_text(
+                center,
+                top + 46,
+                &clipped(&prompt_lines.join(" "), 68),
+                &format!("{sans};font-size:10.5px;font-weight:400;fill:#b9a998;text-anchor:middle"),
+                &[],
+            ));
+            for reviewed_round in reviewed_rounds {
+                let source_top = row_tops[*reviewed_round - 1];
+                let source_y = source_top + 332;
+                for destination in &centers {
+                    write!(
+                        out,
+                        "<path data-arrow=\"round-review\" data-from-round=\"{reviewed_round}\" data-to-round=\"{}\" d=\"M{center},{source_y} C{center},{} {destination},{} {destination},{}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.35\" marker-end=\"url(#ah)\"/>",
+                        round.round,
+                        source_y + 30,
+                        top + 32,
+                        top + 64
+                    )?;
+                }
+            }
+            for (x, report) in xs.iter().zip(&reviews) {
+                write!(
+                    out,
+                    "<g data-card=\"review\" data-review-round=\"{}\" data-task=\"{}\" data-record-path=\"{}\"><rect x=\"{x}\" y=\"{}\" width=\"252\" height=\"190\" rx=\"10\" fill=\"rgba(240,138,89,0.06)\" stroke=\"#f08a59\" stroke-width=\"1\"/>",
+                    round.round,
+                    html_escape(&report.dispatch.task, true),
+                    html_escape(&report.path.display().to_string(), true),
+                    top + 64
+                )?;
+                out.push_str(&svg_text(
+                    x + 18,
+                    top + 94,
+                    &clipped(
+                        &format!("{} · {}", report.participant.model, report.dispatch.task),
+                        38,
+                    ),
+                    &format!(
+                        "{sans};font-size:13px;font-weight:700;fill:#f0e6da;text-anchor:start"
+                    ),
+                    &[],
+                ));
+                for (index, bullet) in diagram.fields.reviews[&report.dispatch.task]
+                    .iter()
+                    .enumerate()
+                {
+                    let y = top + 124 + index as i32 * 24;
+                    out.push_str(&svg_text(
+                        x + 18,
+                        y,
+                        &bullet.tag,
+                        &format!(
+                            "{mono};font-size:10.5px;font-weight:700;fill:#f08a59;text-anchor:start"
+                        ),
+                        &[("data-delta", bullet.tag.as_str())],
+                    ));
+                    out.push_str(&svg_text(x + 32, y, &bullet.text, &body_style, &[]));
+                }
+                out.push_str(&svg_text(
+                    x + 18,
+                    top + 240,
+                    &format!("{}/…/report.md", report.dispatch.task),
+                    &path_style,
+                    &[],
+                ));
+                out.push_str("</g>");
+            }
+            for (source, report) in centers.iter().zip(&reviews) {
+                write!(
+                    out,
+                    "<path data-arrow=\"review-curator\" data-task=\"{}\" d=\"M{source},{} C{source},{} {center},{} {center},{curator_y}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.35\" marker-end=\"url(#ah)\"/>",
+                    html_escape(&report.dispatch.task, true),
+                    top + 254,
+                    top + 286,
+                    curator_y - 30
+                )?;
+            }
+            out.push_str("</g>");
+            continue;
+        }
         write!(
             out,
             "<g data-card=\"prompt\" data-round=\"{}\"><rect x=\"{}\" y=\"{top}\" width=\"480\" height=\"88\" rx=\"10\" fill=\"#2c211b\" stroke=\"{border}\"/>",
@@ -1715,6 +1960,7 @@ fn render_about_run(
         match kind {
             ForumKind::Ask => "extraction",
             ForumKind::Critique => "critique",
+            ForumKind::Review => "review",
         },
         reviews.len(),
         started
@@ -1732,13 +1978,7 @@ fn render_forum_about_run(manifest: &ForumManifest, curator: &Participant) -> Re
     );
     let mut lines = vec![format!("- **Rounds:** {}", manifest.rounds.len())];
     for round in &manifest.rounds {
-        let tasks = round
-            .first_stage_tasks
-            .iter()
-            .chain(&round.cross_review_tasks)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let tasks = round.report_tasks().cloned().collect::<Vec<_>>().join(" ");
         lines.push(format!(
             "    - Round {} · {} · {} · {}",
             round.round,
@@ -1799,6 +2039,7 @@ fn assemble_artifact(
                 },
                 "From the verbatim target to the curated verdict.",
             ),
+            ForumKind::Review => unreachable!("a review round cannot control artifact shape"),
         };
     if contains_model_svg(draft) {
         bail!("curator draft contained model-authored SVG");
@@ -1829,6 +2070,7 @@ fn assemble_artifact(
                 escape_rich_text(target)
             )
         }
+        ForumInput::Review { .. } => unreachable!("a review round cannot control artifact shape"),
     };
     let image = format!(
         "<Image src=\"data:image/svg+xml;base64,{}\" alt=\"{image_alt}\" caption=\"{image_caption}\" />",
@@ -1854,6 +2096,7 @@ fn assemble_artifact(
             ForumKind::Critique => {
                 bail!("Target section does not match the input target verbatim")
             }
+            ForumKind::Review => unreachable!("a review round cannot control artifact shape"),
         }
     }
     let missing = required
@@ -1893,18 +2136,27 @@ fn parse_participant(raw: &str) -> Result<Participant> {
     if fields.iter().any(|field| field.contains(['\n', '\r', '·'])) {
         bail!("participant fields must be single-line values without `·`");
     }
+    // Vendor/model form the comparison identity for panel uniqueness and
+    // reviewer self-exclusion, so normalize case and stray whitespace here;
+    // dispatch_model below stays byte-exact for the harness.
     let (vendor, model) = if let Some((vendor, model)) = fields[2].split_once('/') {
-        (vendor.to_string(), model.to_string())
+        (
+            vendor.trim().to_ascii_lowercase(),
+            model.trim().to_ascii_lowercase(),
+        )
     } else {
         match fields[1] {
-            "codex" => ("openai".to_string(), fields[2].to_string()),
-            "claude" => ("anthropic".to_string(), fields[2].to_string()),
+            "codex" => ("openai".to_string(), fields[2].to_ascii_lowercase()),
+            "claude" => ("anthropic".to_string(), fields[2].to_ascii_lowercase()),
             harness => bail!(
                 "cannot derive vendor for {harness}/{}; use provider/model",
                 fields[2]
             ),
         }
     };
+    if vendor.is_empty() || model.is_empty() {
+        bail!("participant model must be model or provider/model");
+    }
     Ok(Participant {
         mode: fields[0].to_string(),
         harness: fields[1].to_string(),
@@ -2040,20 +2292,47 @@ fn validate_manifest(manifest: &ForumManifest) -> Result<()> {
             bail!("forum manifest rounds must be contiguous and match their input kind");
         }
         let count = round.panel.len();
-        let minimum = if round.fast { 1 } else { 2 };
-        let review_count = if round.fast { 0 } else { count };
-        if count < minimum
-            || round.first_stage_tasks.len() != count
-            || round.cross_review_tasks.len() != review_count
-            || round.promoted_report_paths.len() != count + review_count
-        {
+        let counts_match = match round.kind {
+            ForumKind::Review => {
+                !round.fast
+                    && count >= 1
+                    && round.first_stage_tasks.is_empty()
+                    && round.cross_review_tasks.is_empty()
+                    && round.review_tasks.len() == count
+                    && round.promoted_report_paths.len() == count
+            }
+            ForumKind::Ask | ForumKind::Critique => {
+                let minimum = if round.fast { 1 } else { 2 };
+                let review_count = if round.fast { 0 } else { count };
+                count >= minimum
+                    && round.first_stage_tasks.len() == count
+                    && round.cross_review_tasks.len() == review_count
+                    && round.review_tasks.is_empty()
+                    && round.promoted_report_paths.len() == count + review_count
+            }
+        };
+        if !counts_match {
             bail!(
                 "forum manifest round {} has mismatched panel, task, or report counts",
                 round.round
             );
         }
-        for participant in &round.panel {
-            participant.participant()?;
+        let identities = round
+            .panel
+            .iter()
+            .map(|participant| participant.participant())
+            .collect::<Result<Vec<_>>>()?;
+        if identities
+            .iter()
+            .map(|participant| (&participant.vendor, &participant.model))
+            .collect::<BTreeSet<_>>()
+            .len()
+            != identities.len()
+        {
+            bail!(
+                "forum manifest round {} repeats a model identity",
+                round.round
+            );
         }
         // The manifest sits on disk between invocations; re-check what intake
         // validated so an edited or foreign manifest cannot push unvalidated
@@ -2069,12 +2348,49 @@ fn validate_manifest(manifest: &ForumManifest) -> Result<()> {
                         .with_context(|| format!("forum manifest round {} focus", round.round))?;
                 }
             }
+            ForumInput::Review {
+                reviewed_rounds,
+                focus,
+            } => {
+                if reviewed_rounds.is_empty()
+                    || reviewed_rounds
+                        .iter()
+                        .copied()
+                        .collect::<BTreeSet<_>>()
+                        .len()
+                        != reviewed_rounds.len()
+                {
+                    bail!(
+                        "forum manifest review round {} must name unique reviewed rounds",
+                        round.round
+                    );
+                }
+                for reviewed in reviewed_rounds {
+                    let source = reviewed
+                        .checked_sub(1)
+                        .filter(|source_index| *source_index < index)
+                        .and_then(|source_index| manifest.rounds.get(source_index))
+                        .filter(|source| source.round == *reviewed)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "forum manifest review round {} names missing or non-preceding round {reviewed}",
+                                round.round
+                            )
+                        })?;
+                    if source.kind == ForumKind::Review {
+                        bail!(
+                            "forum manifest review round {} cannot review review round {reviewed}",
+                            round.round
+                        );
+                    }
+                }
+                if let Some(focus) = focus {
+                    validate_focus(focus)
+                        .with_context(|| format!("forum manifest round {} focus", round.round))?;
+                }
+            }
         }
-        for task in round
-            .first_stage_tasks
-            .iter()
-            .chain(&round.cross_review_tasks)
-        {
+        for task in round.report_tasks() {
             if !is_valid_task_path_id(task) || !task.starts_with(&format!("{}.", manifest.forum)) {
                 bail!(
                     "forum manifest round {} contains task {task} that does not belong to {}",
@@ -2161,12 +2477,7 @@ fn next_task_ordinal(manifest: &ForumManifest) -> usize {
     manifest
         .rounds
         .iter()
-        .flat_map(|round| {
-            round
-                .first_stage_tasks
-                .iter()
-                .chain(&round.cross_review_tasks)
-        })
+        .flat_map(ForumRound::report_tasks)
         .filter_map(|task| task.rsplit_once('.'))
         .filter_map(|(_, ordinal)| ordinal.parse::<usize>().ok())
         .max()
@@ -2230,18 +2541,12 @@ fn self_curation_manifest(manifest: &ForumManifest) -> Result<String> {
         for participant in &round.panel {
             writeln!(text, "- {}", participant.participant()?.identity())?;
         }
-        let count = round.panel.len();
-        for (task, path) in round
-            .first_stage_tasks
-            .iter()
-            .chain(&round.cross_review_tasks)
-            .zip(&round.promoted_report_paths)
-        {
+        for (task, path) in round.report_tasks().zip(&round.promoted_report_paths) {
             writeln!(text, "- Task: {task}\n  Report: {}", path.display())?;
         }
         debug_assert_eq!(
             round.promoted_report_paths.len(),
-            count + if round.fast { 0 } else { count }
+            round.report_tasks().count()
         );
     }
     Ok(text)
@@ -2277,12 +2582,12 @@ fn compile_self_contract(api: &Api, manifest: &ForumManifest, contract_path: &Pa
     if manifest
         .rounds
         .iter()
-        .all(|round| round.cross_review_tasks.is_empty())
+        .all(|round| round.diagram_review_tasks().is_empty())
     {
         contract = strip_cross_review_output_line(&contract)?;
     }
     contract.push_str(
-        "\n# Self-curated forum submission\n\nThe invoking session, not a dispatch, performs curation. Discuss and iterate before writing the two files, then pass them to `orgasmic forum curate`; do not run `dispatch finalize`. In the draft's Raw reports list, include every report task named in every manifest round; do not invent a curation task id, because the CLI mints it after the draft passes its gates. For more than one round, the diagram JSON replaces the legacy top-level `extracts` and `reviews` with:\n\n```json\n{\n  \"rounds\": [\n    {\"round\": 1, \"kind\": \"ask\", \"extracts\": [...], \"reviews\": [...]},\n    {\"round\": 2, \"kind\": \"critique\", \"extracts\": [...]}\n  ],\n  \"curator_summary\": \"short synthesis summary\",\n  \"headline\": \"short artifact title\"\n}\n```\n\nInclude every manifest round in order and every named task exactly once in its own round. A fast round has no reviews: omit its `reviews` member or use an empty array, and never invent review provenance. The first round controls the draft's verbatim first section and required section shape.\n",
+        "\n# Self-curated forum submission\n\nThe invoking session, not a dispatch, performs curation. Discuss and iterate before writing the two files, then pass them to `orgasmic forum curate`; do not run `dispatch finalize`. In the draft's Raw reports list, include every report task named in every manifest round; do not invent a curation task id, because the CLI mints it after the draft passes its gates. For more than one round, the diagram JSON replaces the legacy top-level `extracts` and `reviews` with:\n\n```json\n{\n  \"rounds\": [\n    {\"round\": 1, \"kind\": \"ask\", \"extracts\": [...], \"reviews\": [...]},\n    {\"round\": 2, \"kind\": \"critique\", \"extracts\": [...]},\n    {\"round\": 3, \"kind\": \"review\", \"reviews\": [...]}\n  ],\n  \"curator_summary\": \"short synthesis summary\",\n  \"headline\": \"short artifact title\"\n}\n```\n\nInclude every manifest round in order and every named task exactly once in its own round. Each review entry has exactly three tagged bullets (`?`, `+`, `=`). A review round has `reviews` and no `extracts`; a fast round has no reviews, so omit its `reviews` member or use an empty array. Never invent review provenance. The first round controls the draft's verbatim first section and required section shape.\n",
     );
     std::fs::write(contract_path, contract)
         .with_context(|| format!("write {}", contract_path.display()))?;
@@ -2408,6 +2713,7 @@ impl Api {
                 "reason": match self.kind {
                     ForumKind::Ask => "multi-model knowledge extraction run",
                     ForumKind::Critique => "multi-model forum critique run",
+                    ForumKind::Review => "chosen-panel forum review run",
                 },
                 "properties": {
                     "READ_SCOPE": read_scope,
@@ -2826,6 +3132,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                     "All critique and blind-review reports are promoted and one curated verdict artifact is submitted."
                 },
             ),
+            ForumInput::Review { .. } => unreachable!("run_forum only starts answer rounds"),
         };
         api.create_task(
             &parent,
@@ -2898,6 +3205,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                     "critic",
                     "independent multi-model critique",
                 ),
+                ForumKind::Review => unreachable!("run_forum only starts answer rounds"),
             };
         for (index, participant) in participants.iter().enumerate() {
             let ordinal = first_ordinal + index;
@@ -2956,6 +3264,9 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                         match kind {
                             ForumKind::Ask => "Extraction to review",
                             ForumKind::Critique => "Critique to review",
+                            ForumKind::Review => {
+                                unreachable!("run_forum only starts answer rounds")
+                            }
                         },
                         report,
                     )
@@ -2977,6 +3288,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                     "Review only the other participants' promoted critique reports. This is a fresh report-only dispatch.",
                     "A ? / + / = delta report is promoted without access to this participant's own critique.",
                 ),
+                ForumKind::Review => unreachable!("run_forum only starts answer rounds"),
             };
             api.create_task(
                 &task,
@@ -3047,6 +3359,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
             panel: participants.iter().map(ManifestParticipant::from).collect(),
             first_stage_tasks: extraction_tasks.clone(),
             cross_review_tasks: review_tasks.clone(),
+            review_tasks: Vec::new(),
             promoted_report_paths: promoted_report_paths.clone(),
             started_at: round_started_at.clone(),
             completed_at: chrono::Utc::now().to_rfc3339(),
@@ -3096,6 +3409,9 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                         match kind {
                             ForumKind::Ask => "Extraction",
                             ForumKind::Critique => "Critique",
+                            ForumKind::Review => {
+                                unreachable!("run_forum only starts answer rounds")
+                            }
                         },
                         report,
                     )
@@ -3145,6 +3461,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                 },
                 "The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the run stats, Target, and diagram.",
             ),
+            ForumKind::Review => unreachable!("run_forum only starts answer rounds"),
         };
         api.create_task(
             &curator_task,
@@ -3229,6 +3546,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                 match kind {
                     ForumKind::Ask => "Extraction",
                     ForumKind::Critique => "Critique",
+                    ForumKind::Review => unreachable!("run_forum only starts answer rounds"),
                 },
                 extraction_tasks.join(" ")
             ),
@@ -3340,6 +3658,287 @@ fn run_critique(home: &Home, args: CritiqueArgs) -> Result<CritiqueResult> {
     })
 }
 
+fn select_review_rounds(manifest: &ForumManifest, requested: Option<usize>) -> Result<Vec<usize>> {
+    if manifest.rounds.is_empty() {
+        bail!("forum {} has no rounds to review", manifest.forum);
+    }
+    if let Some(round) = requested {
+        let source = round
+            .checked_sub(1)
+            .and_then(|index| manifest.rounds.get(index))
+            .filter(|source| source.round == round)
+            .ok_or_else(|| anyhow::anyhow!("forum {} has no round {round}", manifest.forum))?;
+        if source.kind == ForumKind::Review {
+            bail!("round {round} is a review round; reviews of reviews are not supported");
+        }
+        return Ok(vec![round]);
+    }
+    Ok(manifest
+        .rounds
+        .iter()
+        .filter(|round| round.kind != ForumKind::Review)
+        .map(|round| round.round)
+        .collect())
+}
+
+/// The author of a report is the model, not the transport: the same
+/// vendor/model reviewing through a different harness must still never see
+/// its own stage-1 report. Mode and effort are likewise irrelevant.
+fn same_reviewer_identity(left: &Participant, right: &Participant) -> bool {
+    left.vendor == right.vendor && left.model == right.model
+}
+
+fn review_scope(sources: &[(usize, RunReport)], reviewer: &Participant) -> Vec<(usize, RunReport)> {
+    sources
+        .iter()
+        .filter(|(_, report)| !same_reviewer_identity(reviewer, &report.participant))
+        .cloned()
+        .collect()
+}
+
+fn review_report_manifest(scope: &[(usize, RunReport)]) -> String {
+    scope
+        .iter()
+        .map(|(round, report)| {
+            manifest_entry(&format!("Round {round} stage-1 report to review"), report)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn validate_review_scopes(
+    reviewers: &[Participant],
+    scopes: &[Vec<(usize, RunReport)>],
+) -> Result<()> {
+    if let Some((reviewer, _)) = reviewers
+        .iter()
+        .zip(scopes)
+        .find(|(_, scope)| scope.is_empty())
+    {
+        bail!(
+            "reviewer {} has no reports left after self-exclusion",
+            reviewer.identity()
+        );
+    }
+    Ok(())
+}
+
+fn review_source_context(manifest: &ForumManifest, reviewed_rounds: &[usize]) -> String {
+    reviewed_rounds
+        .iter()
+        .map(|round| {
+            let source = &manifest.rounds[*round - 1];
+            match &source.input {
+                ForumInput::Ask { question } => {
+                    format!("Round {round} · ask\nQuestion:\n{question}")
+                }
+                ForumInput::Critique {
+                    target,
+                    focus,
+                    basename,
+                } => format!(
+                    "Round {round} · critique · {basename}\nFocus: {}\nTarget:\n{target}",
+                    focus.as_deref().unwrap_or("(none)")
+                ),
+                ForumInput::Review { .. } => unreachable!("review selection excludes reviews"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn run_review(home: &Home, args: ReviewArgs) -> Result<SelfCuratedReviewResult> {
+    let ReviewArgs {
+        forum,
+        participant,
+        round,
+        all_rounds: _,
+        focus,
+        project: requested_project,
+        timeout,
+    } = args;
+    validate_forum_id(&forum)?;
+    let reviewers = participant
+        .iter()
+        .map(|raw| parse_participant(raw))
+        .collect::<Result<Vec<_>>>()?;
+    validate_participants(&reviewers, true)?;
+    let focus = match focus {
+        Some(focus) => {
+            let focus = focus.trim().to_string();
+            validate_focus(&focus)?;
+            Some(focus)
+        }
+        None => None,
+    };
+
+    let ledger = manager::find_project_root()?;
+    let project = manager::read_project_id(&ledger)?;
+    if requested_project
+        .as_deref()
+        .is_some_and(|requested| requested != project)
+    {
+        bail!(
+            "--project {} does not match current orgasmic project {project}",
+            requested_project.unwrap()
+        );
+    }
+    let manifest_path = forum_manifest_path(&ledger, &forum);
+    let loaded = manifest_path
+        .is_file()
+        .then(|| read_manifest(&manifest_path))
+        .transpose()?;
+    let api = Api::new(home, project.clone(), ForumKind::Review)?;
+    let parent_state = loaded
+        .as_ref()
+        .map(|_| api.task_state(&forum))
+        .transpose()?;
+    validate_join_request(
+        &forum,
+        &project,
+        false,
+        loaded.as_ref(),
+        parent_state.as_deref(),
+    )?;
+    let mut manifest = loaded.unwrap();
+    let reviewed_rounds = select_review_rounds(&manifest, round)?;
+    let sources = reviewed_rounds
+        .iter()
+        .map(|round| {
+            round_reports(&manifest.rounds[*round - 1]).map(|(reports, _)| {
+                reports
+                    .into_iter()
+                    .map(|report| (*round, report))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let scopes = reviewers
+        .iter()
+        .map(|reviewer| review_scope(&sources, reviewer))
+        .collect::<Vec<_>>();
+    validate_review_scopes(&reviewers, &scopes)?;
+
+    let round_number = manifest.rounds.len() + 1;
+    let first_ordinal = next_task_ordinal(&manifest);
+    let round_started_at = chrono::Utc::now().to_rfc3339();
+    let source_context = review_source_context(&manifest, &reviewed_rounds);
+    let mut active = Vec::new();
+    let mut reports = Vec::new();
+    let result = (|| -> Result<SelfCuratedReviewResult> {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("orgasmic-{}-review-", forum.to_ascii_lowercase()))
+            .tempdir()
+            .context("create forum review tempdir")?;
+        let mut dispatches = Vec::new();
+        for (index, (reviewer, scope)) in reviewers.iter().zip(&scopes).enumerate() {
+            let ordinal = first_ordinal + index;
+            let task = format!("{forum}.{ordinal}");
+            let report_manifest = review_report_manifest(scope);
+            let brief = tmp.path().join(format!("forum-review-{ordinal}.md"));
+            std::fs::write(&brief, {
+                let values = BTreeMap::from([
+                    ("artifact.user_prompt".to_string(), source_context.clone()),
+                    (
+                        "node.extra_prompt".to_string(),
+                        focus.clone().unwrap_or_else(|| "(none)".to_string()),
+                    ),
+                    ("dispatch.brief".to_string(), report_manifest),
+                ]);
+                api.compile_prompt(ForumKind::Review.cross_review_spec(), values)?
+            })?;
+            api.create_task(
+                &task,
+                format!("Forum review — {}", reviewer.identity()),
+                "Challenge, add to, and explicitly agree with only the named promoted stage-1 reports. This is a fresh report-only dispatch.",
+                "A ? / + / = delta report is promoted without access to this reviewer's own stage-1 report or any review output.",
+                "promoted stage-1 report paths named in dispatch brief",
+                "none; dispatch report only",
+            )?;
+            let dispatch = launch(
+                home,
+                &task,
+                reviewer,
+                &brief,
+                &manifest.source_ref,
+                format!(
+                    "mm-{}-r{round_number}-review-{ordinal}",
+                    forum.trim_start_matches("TASK-").to_ascii_lowercase()
+                ),
+                "chosen-panel review of promoted forum reports",
+            )?;
+            active.push(dispatch.clone());
+            dispatches.push(dispatch);
+        }
+        wait_barrier(home, &dispatches, timeout)?;
+        for mut dispatch in dispatches {
+            let path = close_and_finish(home, &api, &ledger, &mut dispatch)?;
+            mark_closed(&mut active, &dispatch);
+            reports.push(RunReport {
+                participant: dispatch.participant.clone(),
+                dispatch,
+                path,
+            });
+        }
+
+        let review_tasks = reports
+            .iter()
+            .map(|report| report.dispatch.task.clone())
+            .collect::<Vec<_>>();
+        let promoted_report_paths = reports
+            .iter()
+            .map(|report| report.path.clone())
+            .collect::<Vec<_>>();
+        let contract_path =
+            forum_dir(&ledger).join(format!("{forum}-round-{round_number}-curation-contract.md"));
+        manifest.rounds.push(ForumRound {
+            round: round_number,
+            kind: ForumKind::Review,
+            fast: false,
+            input: ForumInput::Review {
+                reviewed_rounds: reviewed_rounds.clone(),
+                focus: focus.clone(),
+            },
+            panel: reviewers.iter().map(ManifestParticipant::from).collect(),
+            first_stage_tasks: Vec::new(),
+            cross_review_tasks: Vec::new(),
+            review_tasks: review_tasks.clone(),
+            promoted_report_paths: promoted_report_paths.clone(),
+            started_at: round_started_at,
+            completed_at: chrono::Utc::now().to_rfc3339(),
+            contract_path: Some(contract_path.clone()),
+        });
+        std::fs::create_dir_all(forum_dir(&ledger))?;
+        compile_self_contract(&api, &manifest, &contract_path)?;
+        write_manifest(&manifest_path, &manifest)?;
+        eprintln!("forum_manifest={}", manifest_path.display());
+        eprintln!("curation_contract={}", contract_path.display());
+        for path in &promoted_report_paths {
+            eprintln!("promoted_report={}", path.display());
+        }
+        Ok(SelfCuratedReviewResult {
+            forum: forum.clone(),
+            parent_task: forum.clone(),
+            reviewed_rounds,
+            review_tasks,
+            manifest_path: manifest_path.clone(),
+            promoted_report_paths,
+            contract_path,
+        })
+    })();
+    if let Err(error) = &result {
+        if error.downcast_ref::<WaitUnknown>().is_none() {
+            for dispatch in &mut active {
+                best_effort_close(home, dispatch);
+            }
+        }
+    }
+    result
+}
+
 fn run_curate(home: &Home, args: CurateArgs) -> Result<CurateResult> {
     validate_forum_id(&args.forum)?;
     let curator = parse_participant(&args.identity).context("--identity participant spec")?;
@@ -3410,12 +4009,7 @@ fn run_curate(home: &Home, args: CurateArgs) -> Result<CurateResult> {
     let raw_tasks = manifest
         .rounds
         .iter()
-        .flat_map(|round| {
-            round
-                .first_stage_tasks
-                .iter()
-                .chain(&round.cross_review_tasks)
-        })
+        .flat_map(ForumRound::report_tasks)
         .cloned()
         .collect::<Vec<_>>();
     let draft = std::fs::read_to_string(&args.draft)
@@ -3513,6 +4107,8 @@ enum ForumMode {
     Ask(AskArgs),
     /// Critique a target through independent analysis, blind cross-review, and curation.
     Critique(CritiqueArgs),
+    /// Challenge existing promoted stage-1 reports with a freely chosen panel.
+    Review(ReviewArgs),
     /// Validate and submit an invoking session's self-curated forum artifact.
     Curate(CurateArgs),
 }
@@ -3525,6 +4121,10 @@ pub fn run(home: &Home, args: ForumArgs) -> Result<()> {
         ForumMode::Critique(args) => println!(
             "{}",
             serde_json::to_string_pretty(&run_critique(home, args)?)?
+        ),
+        ForumMode::Review(args) => println!(
+            "{}",
+            serde_json::to_string_pretty(&run_review(home, args)?)?
         ),
         ForumMode::Curate(args) => println!(
             "{}",
@@ -3640,6 +4240,7 @@ mod tests {
                 focus: Some("durability".to_string()),
                 basename: "design.md".to_string(),
             },
+            ForumKind::Review => unreachable!("use review_round"),
         };
         let first_stage_tasks = (first_ordinal..first_ordinal + 2)
             .map(|ordinal| format!("TASK-TESTX.{ordinal}"))
@@ -3660,6 +4261,7 @@ mod tests {
             panel: panel.iter().map(ManifestParticipant::from).collect(),
             first_stage_tasks,
             cross_review_tasks,
+            review_tasks: Vec::new(),
             promoted_report_paths,
             started_at: format!("2026-08-30T0{round}:00:00+00:00"),
             completed_at: format!("2026-08-30T0{round}:10:00+00:00"),
@@ -3707,19 +4309,51 @@ mod tests {
         manifest
     }
 
+    fn review_round(round: usize, first_ordinal: usize, reviewed_rounds: Vec<usize>) -> ForumRound {
+        let participant = parse_participant("stdio,claude,claude-fable-5,high").unwrap();
+        let task = format!("TASK-TESTX.{first_ordinal}");
+        ForumRound {
+            round,
+            kind: ForumKind::Review,
+            fast: false,
+            input: ForumInput::Review {
+                reviewed_rounds,
+                focus: Some("challenge weak evidence".to_string()),
+            },
+            panel: vec![ManifestParticipant::from(&participant)],
+            first_stage_tasks: Vec::new(),
+            cross_review_tasks: Vec::new(),
+            review_tasks: vec![task.clone()],
+            promoted_report_paths: vec![PathBuf::from(format!(
+                "/ledger/.orgasmic/tasks/{task}/report.md"
+            ))],
+            started_at: format!("2026-08-30T0{round}:00:00+00:00"),
+            completed_at: format!("2026-08-30T0{round}:10:00+00:00"),
+            contract_path: Some(PathBuf::from(format!(
+                "/ledger/.orgasmic/tmp/forum/TASK-TESTX-round-{round}-contract.md"
+            ))),
+        }
+    }
+
+    fn mixed_review_manifest() -> ForumManifest {
+        let mut manifest = mixed_manifest();
+        manifest.rounds = vec![
+            manifest_round(1, ForumKind::Ask, 1),
+            fast_round(2, ForumKind::Critique, 5),
+            review_round(3, 6, vec![1, 2]),
+        ];
+        manifest
+    }
+
     fn multi_diagram_json(manifest: &ForumManifest) -> Value {
         let rounds = manifest
             .rounds
             .iter()
             .map(|round| {
-                serde_json::json!({
+                let mut value = serde_json::json!({
                     "round": round.round,
                     "kind": round.kind.slug(),
-                    "extracts": round.first_stage_tasks.iter().map(|task| serde_json::json!({
-                        "task": task,
-                        "excerpt_lines": [format!("finding from {task}")]
-                    })).collect::<Vec<_>>(),
-                    "reviews": round.cross_review_tasks.iter().map(|task| serde_json::json!({
+                    "reviews": round.diagram_review_tasks().iter().map(|task| serde_json::json!({
                         "task": task,
                         "delta_bullets": [
                             {"tag": "?", "text": format!("challenge from {task}")},
@@ -3727,7 +4361,18 @@ mod tests {
                             {"tag": "=", "text": format!("agreement from {task}")}
                         ]
                     })).collect::<Vec<_>>()
-                })
+                });
+                if round.kind != ForumKind::Review {
+                    value["extracts"] = serde_json::json!(round
+                        .first_stage_tasks
+                        .iter()
+                        .map(|task| serde_json::json!({
+                            "task": task,
+                            "excerpt_lines": [format!("finding from {task}")]
+                        }))
+                        .collect::<Vec<_>>());
+                }
+                value
             })
             .collect::<Vec<_>>();
         serde_json::json!({
@@ -3833,6 +4478,103 @@ mod tests {
         let mut normal_manifest = manifest;
         normal_manifest.rounds = vec![malformed_normal];
         assert!(validate_manifest(&normal_manifest).is_err());
+    }
+
+    #[test]
+    fn review_manifest_round_trip_and_source_validation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("forum/TASK-TESTX.json");
+        let manifest = mixed_review_manifest();
+        write_manifest(&path, &manifest).unwrap();
+        assert_eq!(read_manifest(&path).unwrap(), manifest);
+        assert_eq!(next_task_ordinal(&manifest), 7);
+        let review = &manifest.rounds[2];
+        assert_eq!(review.kind, ForumKind::Review);
+        assert!(review.first_stage_tasks.is_empty());
+        assert!(review.cross_review_tasks.is_empty());
+        assert_eq!(review.review_tasks, ["TASK-TESTX.6"]);
+        assert_eq!(review.promoted_report_paths.len(), 1);
+
+        let mut missing = manifest.clone();
+        missing.rounds[2].input = ForumInput::Review {
+            reviewed_rounds: vec![99],
+            focus: None,
+        };
+        assert!(validate_manifest(&missing)
+            .unwrap_err()
+            .to_string()
+            .contains("missing or non-preceding round 99"));
+
+        let mut review_of_review = manifest;
+        review_of_review.rounds.push(review_round(4, 7, vec![3]));
+        assert!(validate_manifest(&review_of_review)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot review review round 3"));
+
+        let mut old_data = serde_json::to_value(mixed_manifest()).unwrap();
+        for round in old_data["rounds"].as_array_mut().unwrap() {
+            round.as_object_mut().unwrap().remove("review_tasks");
+        }
+        let old_manifest: ForumManifest = serde_json::from_value(old_data).unwrap();
+        validate_manifest(&old_manifest).unwrap();
+        assert!(old_manifest
+            .rounds
+            .iter()
+            .all(|round| round.review_tasks.is_empty()));
+    }
+
+    #[test]
+    fn review_selection_refuses_missing_and_review_rounds() {
+        let mut empty = mixed_manifest();
+        empty.rounds.clear();
+        assert!(select_review_rounds(&empty, None)
+            .unwrap_err()
+            .to_string()
+            .contains("no rounds to review"));
+
+        let manifest = mixed_review_manifest();
+        assert_eq!(select_review_rounds(&manifest, None).unwrap(), [1, 2]);
+        assert_eq!(select_review_rounds(&manifest, Some(2)).unwrap(), [2]);
+        assert!(select_review_rounds(&manifest, Some(99))
+            .unwrap_err()
+            .to_string()
+            .contains("no round 99"));
+        assert!(select_review_rounds(&manifest, Some(3))
+            .unwrap_err()
+            .to_string()
+            .contains("reviews of reviews"));
+    }
+
+    #[test]
+    fn review_scope_excludes_the_reviewers_own_stage_one_reports() {
+        let manifest = mixed_review_manifest();
+        let (round_one, _) = round_reports(&manifest.rounds[0]).unwrap();
+        let sources = round_one
+            .into_iter()
+            .map(|report| (1, report))
+            .collect::<Vec<_>>();
+        let reviewer = sources[0].1.participant.clone();
+        let scope = review_scope(&sources, &reviewer);
+        let compiled_manifest = review_report_manifest(&scope);
+        assert!(!compiled_manifest.contains("TASK-TESTX.1"));
+        assert!(compiled_manifest.contains("TASK-TESTX.2"));
+        assert!(compiled_manifest.contains("Round 1 stage-1 report to review"));
+
+        // The author is the model, not the transport: the same vendor/model
+        // arriving via a different harness/mode/effort is still excluded.
+        let mut cross_harness = reviewer.clone();
+        cross_harness.harness = "hermes".to_string();
+        cross_harness.mode = "stdio".to_string();
+        cross_harness.effort = "high".to_string();
+        let cross_scope = review_scope(&sources, &cross_harness);
+        assert!(!review_report_manifest(&cross_scope).contains("TASK-TESTX.1"));
+
+        let only_own_report = review_scope(std::slice::from_ref(&sources[0]), &reviewer);
+        assert!(validate_review_scopes(&[reviewer], &[only_own_report])
+            .unwrap_err()
+            .to_string()
+            .contains("no reports left after self-exclusion"));
     }
 
     #[test]
@@ -4085,6 +4827,56 @@ mod tests {
     }
 
     #[test]
+    fn review_round_diagram_accepts_reviews_only_and_rejects_wrong_shape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let manifest = mixed_review_manifest();
+        let data = multi_diagram_json(&manifest);
+        std::fs::write(&path, data.to_string()).unwrap();
+        let fields = load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+        assert!(fields.rounds[2].fields.extracts.is_empty());
+        assert_eq!(
+            fields.rounds[2]
+                .fields
+                .reviews
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["TASK-TESTX.6"]
+        );
+
+        let mut with_extracts = data.clone();
+        with_extracts["rounds"][2]["extracts"] = serde_json::json!([]);
+        std::fs::write(&path, with_extracts.to_string()).unwrap();
+        assert!(load_multi_round_diagram_fields(&path, &manifest.rounds)
+            .unwrap_err()
+            .to_string()
+            .contains("must not contain extracts"));
+
+        let mut without_reviews = data.clone();
+        without_reviews["rounds"][2]
+            .as_object_mut()
+            .unwrap()
+            .remove("reviews");
+        std::fs::write(&path, without_reviews.to_string()).unwrap();
+        assert!(load_multi_round_diagram_fields(&path, &manifest.rounds)
+            .unwrap_err()
+            .to_string()
+            .contains("must contain reviews"));
+
+        let mut answer_without_extracts = data;
+        answer_without_extracts["rounds"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("extracts");
+        std::fs::write(&path, answer_without_extracts.to_string()).unwrap();
+        assert!(load_multi_round_diagram_fields(&path, &manifest.rounds)
+            .unwrap_err()
+            .to_string()
+            .contains("ask round 1 must contain extracts"));
+    }
+
+    #[test]
     fn multi_round_renderer_has_one_curator_and_all_review_arrows() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("diagram.json");
@@ -4179,6 +4971,83 @@ mod tests {
         assert_eq!(svg.matches("data-arrow=\"extract-curator\"").count(), 1);
         assert_eq!(svg.matches("data-arrow=\"review-curator\"").count(), 2);
         assert!(!svg.contains("data-card=\"review\" data-round=\"1\""));
+    }
+
+    #[test]
+    fn ask_fast_and_review_rows_attach_to_one_curator() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let manifest = mixed_review_manifest();
+        std::fs::write(&path, multi_diagram_json(&manifest).to_string()).unwrap();
+        let fields = load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+        let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
+        let svg = render_multi_round_svg(
+            &manifest.rounds,
+            &curator,
+            "TASK-TESTX.7",
+            Path::new("/tmp/TASK-TESTX-curation.mdx"),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(svg.matches("data-card=\"prompt\"").count(), 2);
+        assert_eq!(svg.matches("data-card=\"extract\"").count(), 3);
+        assert_eq!(svg.matches("data-card=\"review\"").count(), 3);
+        assert_eq!(svg.matches("data-review-round=\"3\"").count(), 1);
+        assert_eq!(svg.matches("data-arrow=\"round-review\"").count(), 2);
+        assert!(svg.contains("data-from-round=\"1\" data-to-round=\"3\""));
+        assert!(svg.contains("data-from-round=\"2\" data-to-round=\"3\""));
+        assert_eq!(svg.matches("data-card=\"curator\"").count(), 1);
+        assert_eq!(svg.matches("data-arrow=\"extract-curator\"").count(), 1);
+        assert_eq!(svg.matches("data-arrow=\"review-curator\"").count(), 3);
+        assert!(svg.contains("data-round=\"3\" data-round-kind=\"review\""));
+        assert!(svg.contains("ROUND 3 · REVIEW · ROUNDS 1 + 2"));
+    }
+
+    #[test]
+    fn curate_gates_cover_review_round_tasks_exactly_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let manifest = mixed_review_manifest();
+        std::fs::write(&path, multi_diagram_json(&manifest).to_string()).unwrap();
+        load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+
+        let raw_tasks = manifest
+            .rounds
+            .iter()
+            .flat_map(ForumRound::report_tasks)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            raw_tasks
+                .iter()
+                .filter(|task| task.as_str() == "TASK-TESTX.6")
+                .count(),
+            1
+        );
+        let draft = format!(
+            "{QUESTION_PLACEHOLDER}\n<Section title=\"Final answer\"><RichText>Answer.</RichText></Section>\n<Section title=\"From question to answer\">\n{DIAGRAM_PLACEHOLDER}\n<RichText>Raw reports: {}</RichText>\n</Section>\n<Section title=\"Knowledge map\"><RichText>Map.</RichText></Section>\n{RUN_STATS_PLACEHOLDER}",
+            raw_tasks.join(" ")
+        );
+        let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
+        let about = render_forum_about_run(&manifest, &curator).unwrap();
+        assemble_artifact(
+            &draft,
+            &manifest.rounds[0].input,
+            "generated",
+            &about,
+            &raw_tasks,
+        )
+        .unwrap();
+        assert!(assemble_artifact(
+            &draft.replace("TASK-TESTX.6", "TASK-OTHER"),
+            &manifest.rounds[0].input,
+            "generated",
+            &about,
+            &raw_tasks,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("omitted raw-report task ids"));
     }
 
     #[test]
