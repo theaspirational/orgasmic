@@ -5469,7 +5469,6 @@ TWCP9 decision, step 3. Claims live in per-machine append-only logs (`machines/<
 :PROPERTIES:
 :ID: TASK-DN1WK
 :PRIORITY: P2
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
 ** Description
