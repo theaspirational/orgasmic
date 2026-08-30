@@ -14,3 +14,19 @@
 :REASON: operator chose OKF-bundle pairing for agent discovery of the CLI surface
 :EVENT_ID: f4c0f8a7-0dfc-4f52-88ff-91754803d2b6
 :END:
+
+* tx-20260830-orgasmic-6728 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6728
+:TIME:    [2026-08-30 Sun 12:15:12]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-DN1WK
+:TARGET: .orgasmic/tasks/TASK-DN1WK/node.org
+:REASON: transition TASK-DN1WK to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 55522b3c-18d1-4f81-b8f9-3b8c29e0212d
+:END:

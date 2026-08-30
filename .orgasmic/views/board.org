@@ -2429,26 +2429,6 @@ Re-review of TASK-JHWNP.1 (APPROVE, tx-20260827-orgasmic-a374583b) surfaced 1 ME
 
 Full verdict: .orgasmic/tmp/dispatch/task-jhwnp.1-review/ (ledger tmp).
 
-* BACKLOG TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface    :feature:
-:PROPERTIES:
-:ID: TASK-DN1WK
-:PRIORITY: P2
-:END:
-
-** Description
-Pair the shipped orgasmic skill with the sibling okfy tool (~/Documents/code/tools/okfy). `shipped/skills/orgasmic/` becomes an OKF Bundle root: SKILL.md shrinks to the door (what orgasmic is, where the bundle index lives, follow links by raw traversal, use the okfy CLI for BM25 search when present), and the bundle holds small purpose-shaped concepts an agent walks by intent. Concepts are organized as recipes (cheap wide first pass with --fast, adversarial verify via a review round, dispatched fire-and-forget curator, ship a runtime, dispatch lifecycle...) linking to verb-reference concepts, so different preferred workflows coexist in the index. Bundle ships inside the runtime, so installed binaries carry version-accurate discovery.
-
-Bootstrap once with /okfy:new + /okfy:extract over the real corpus (CLI help trees, shipped/skills/orgasmic/references/*.md, prompt specs, AGENTS.md). After bootstrap, maintenance is manual: updating touched concepts joins the implementer definition-of-done, okfy validate becomes a test/CI gate, and the bundle's eval replay (ten standing discovery queries) is the drift test — a new CLI verb with no concept fails the parity gate.
-
-OPERATOR-OWNED CHECKPOINTS (cannot be dispatched): the okfy Purpose Interview and the ten eval-query verdicts — okfy refuses self-certified bundles by design.
-
-** Acceptance Criteria
-- [ ] Skill listing description names the major features (forum ask/critique/review, self- vs dispatched curation, dispatch, runtime install) so fresh sessions open the door
-- [ ] SKILL.md points to the bundle index; a fresh agent can answer 'how do I run a cheap 10-model round' by link traversal alone, no okfy install
-- [ ] Bundle validates with okfy validate; eval queries recorded in-bundle with owner verdicts
-- [ ] Parity gate: every orgasmic CLI subcommand is named by at least one concept; test fails otherwise
-- [ ] Implementer DoD template gains 'update touched OKF concepts'
-
 * BACKLOG TASK-DTCBP orgasmic verify: --all, the verify_artifact drawer property, and the dispatch-close gating decision    :cli:verification:mechanism:
 :PROPERTIES:
 :ID: TASK-DTCBP
@@ -5351,6 +5331,27 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 :PRIORITY: P1
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
+
+* IN_PROGRESS TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface :feature:
+:PROPERTIES:
+:ID: TASK-DN1WK
+:PRIORITY: P2
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
+
+** Description
+Pair the shipped orgasmic skill with the sibling okfy tool (~/Documents/code/tools/okfy). `shipped/skills/orgasmic/` becomes an OKF Bundle root: SKILL.md shrinks to the door (what orgasmic is, where the bundle index lives, follow links by raw traversal, use the okfy CLI for BM25 search when present), and the bundle holds small purpose-shaped concepts an agent walks by intent. Concepts are organized as recipes (cheap wide first pass with --fast, adversarial verify via a review round, dispatched fire-and-forget curator, ship a runtime, dispatch lifecycle...) linking to verb-reference concepts, so different preferred workflows coexist in the index. Bundle ships inside the runtime, so installed binaries carry version-accurate discovery.
+
+Bootstrap once with /okfy:new + /okfy:extract over the real corpus (CLI help trees, shipped/skills/orgasmic/references/*.md, prompt specs, AGENTS.md). After bootstrap, maintenance is manual: updating touched concepts joins the implementer definition-of-done, okfy validate becomes a test/CI gate, and the bundle's eval replay (ten standing discovery queries) is the drift test — a new CLI verb with no concept fails the parity gate.
+
+OPERATOR-OWNED CHECKPOINTS (cannot be dispatched): the okfy Purpose Interview and the ten eval-query verdicts — okfy refuses self-certified bundles by design.
+
+** Acceptance Criteria
+- [ ] Skill listing description names the major features (forum ask/critique/review, self- vs dispatched curation, dispatch, runtime install) so fresh sessions open the door
+- [ ] SKILL.md points to the bundle index; a fresh agent can answer 'how do I run a cheap 10-model round' by link traversal alone, no okfy install
+- [ ] Bundle validates with okfy validate; eval queries recorded in-bundle with owner verdicts
+- [ ] Parity gate: every orgasmic CLI subcommand is named by at least one concept; test fails otherwise
+- [ ] Implementer DoD template gains 'update touched OKF concepts'
 
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
