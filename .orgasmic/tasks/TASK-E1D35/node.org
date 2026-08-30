@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-E1D35
 #+orgasmic_version: 2
 
-* BACKLOG TASK-E1D35 Forum review rounds: 'forum review' challenges existing reports with a chosen panel    :feature:
+* IN_PROGRESS TASK-E1D35 Forum review rounds: 'forum review' challenges existing reports with a chosen panel :feature:
 :PROPERTIES:
 :DEPENDS_ON: TASK-82KKQ
 :ID: TASK-E1D35

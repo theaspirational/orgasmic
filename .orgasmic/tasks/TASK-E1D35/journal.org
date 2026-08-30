@@ -14,3 +14,19 @@
 :REASON: operator wants critique-of-what-we-have without a document detour (lego bricks design)
 :EVENT_ID: ba1a9dd2-6e6d-4d41-8c4c-85aa108063e6
 :END:
+
+* tx-20260830-orgasmic-6723 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6723
+:TIME:    [2026-08-30 Sun 11:40:50]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-E1D35
+:TARGET: .orgasmic/tasks/TASK-E1D35/node.org
+:REASON: transition TASK-E1D35 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 5a917eb0-478f-4dd0-be23-aa1ba38ab1df
+:END:
