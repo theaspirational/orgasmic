@@ -5019,3 +5019,59 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-82KKQ/dispatches/tx-20260830-orgasmic-f39d2fb8-f0b2-4912-9fab-6cf850aebade/report.md
 :EVENT_ID:     2a9106b0-3ab4-4a03-b1b5-b31daada87da
 :END:
+
+* TX 2026-08-30 Sun 11:28:22 manager.dispatch_started TASK-82KKQ
+:PROPERTIES:
+:TX_ID:        tx-20260830-orgasmic-b1e1bd17-9b05-4369-ba33-adfb8375f7e4
+:TIME:         [2026-08-30 Sun 11:28:22]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-82KKQ
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-82kkq-review
+:BRANCH:       forum-fast-rounds-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/TASK-82KKQ-review/TASK-82KKQ-review-brief.md
+:STARTED_AT:   [2026-08-30 Sun 11:28:22]
+:LIVENESS:     a05326dcd3031e8751eed5f5125969335c1b85b6
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-fable-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260830-orgasmic-f39d2fb8-f0b2-4912-9fab-6cf850aebade
+:REASON_INITIAL: adversarial review of fast rounds
+:EVENT_ID:     c65aeebf-46a1-4cd5-8c25-bde8de838b9b
+:END:
+
+* TX 2026-08-30 Sun 11:28:22 run.created TASK-82KKQ
+:PROPERTIES:
+:TX_ID:        tx-20260830-orgasmic-26d3eaae-ad81-487a-80c8-e9826344b5ca
+:TIME:         [2026-08-30 Sun 11:28:22]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-82KKQ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-82KKQ-reviewer-20260830T112822.jsonl
+:REASON:       adversarial review of fast rounds
+:RUN_ID:       run-01M196TZMCBE5GMC6B9KPMM91C
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-82kkq-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/TASK-82KKQ-review/TASK-82KKQ-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/TASK-82KKQ-review/TASK-82KKQ-review-318c8b6febdf483293b9346cf396edbc-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/TASK-82KKQ-review/TASK-82KKQ-review-318c8b6febdf483293b9346cf396edbc-stdout.log
+:DISPATCH_ATTEMPT: 318c8b6febdf483293b9346cf396edbc
+:PID:          811
+:DISPATCH_TX:  tx-20260830-orgasmic-b1e1bd17-9b05-4369-ba33-adfb8375f7e4
+:MODEL_OVERRIDE: claude-fable-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     49c5476f-5284-4194-9edc-e1d1b992e8fb
+:END:

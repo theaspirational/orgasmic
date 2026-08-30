@@ -1465,3 +1465,16 @@
 :TARGET:       .orgasmic/tasks/TASK-82KKQ
 :EVENT_ID:     eb5cb955-f5bc-4796-ae9e-d7a22e6e74d7
 :END:
+
+* TX 2026-08-30 Sun 11:28:22.748656 task.claimed TASK-82KKQ
+:PROPERTIES:
+:TX_ID:        tx-20260830112822-7f7ecf3b
+:TIME:         [2026-08-30 Sun 11:28:22.748656]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-82KKQ
+:TARGET:       .orgasmic/tasks/TASK-82KKQ
+:EVENT_ID:     0ab87294-5afb-4672-a07c-01ce8f993888
+:END:

@@ -5368,22 +5368,6 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
-* IN_PROGRESS TASK-82KKQ Forum fast rounds: --fast skips cross-review, panel minimum drops to 1 :feature:
-:PROPERTIES:
-:ID: TASK-82KKQ
-:PRIORITY: P2
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:END:
-
-** Description
-Add a `--fast` flag to `forum ask` and `forum critique` (both fresh forums and `--forum` joins): the round runs stage 1 only — no cross-review dispatches. Panel minimum drops from 2 to 1 for fast rounds (self-excluding review needs 2+; stage-1-only does not). Manifest records empty cross_review_tasks and half the report paths for such rounds; validate_manifest, the compiled contract, diagram JSON validation (reviews optional for fast rounds), the multi-round renderer (extract row feeds curator directly, no review row), and the About footer all accept them. Non-fast rounds keep every current invariant. Also add one skill-docs line: a new ask round's --file may carry the shared understanding so far plus the new question (context-carrying rounds, no code needed).
-
-** Acceptance Criteria
-- [ ] `forum ask --fast --participant x1..N` runs stage 1 only, joins and opens forums, and mixes freely with normal rounds under one forum
-- [ ] `--fast` with a dispatched `--curator` on a single-round forum also works (curator reads stage-1 reports only)
-- [ ] validate_manifest/diagram/renderer/curate gates accept fast rounds and still reject malformed normal rounds; existing ask SVG fixture stays byte-identical
-- [ ] panel of 1 is accepted only with --fast; without it the 2+ rule holds
-
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-NMV4P
@@ -5444,6 +5428,22 @@ AP971.2/.3: shipped/schema/node-types/{task,decision,glossary,artifact}.org — 
 - [ ] four descriptors ship and load; unknown collection path tested
 - [ ] mint is descriptor-driven and create_node_dir retries on AlreadyExists
 - [ ] task states/transitions come from the descriptor (state-machine.org folded in or pointed at)
+
+* IN_REVIEW TASK-82KKQ Forum fast rounds: --fast skips cross-review, panel minimum drops to 1 :feature:
+:PROPERTIES:
+:ID: TASK-82KKQ
+:PRIORITY: P2
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
+
+** Description
+Add a `--fast` flag to `forum ask` and `forum critique` (both fresh forums and `--forum` joins): the round runs stage 1 only — no cross-review dispatches. Panel minimum drops from 2 to 1 for fast rounds (self-excluding review needs 2+; stage-1-only does not). Manifest records empty cross_review_tasks and half the report paths for such rounds; validate_manifest, the compiled contract, diagram JSON validation (reviews optional for fast rounds), the multi-round renderer (extract row feeds curator directly, no review row), and the About footer all accept them. Non-fast rounds keep every current invariant. Also add one skill-docs line: a new ask round's --file may carry the shared understanding so far plus the new question (context-carrying rounds, no code needed).
+
+** Acceptance Criteria
+- [ ] `forum ask --fast --participant x1..N` runs stage 1 only, joins and opens forums, and mixes freely with normal rounds under one forum
+- [ ] `--fast` with a dispatched `--curator` on a single-round forum also works (curator reads stage-1 reports only)
+- [ ] validate_manifest/diagram/renderer/curate gates accept fast rounds and still reject malformed normal rounds; existing ask SVG fixture stays byte-identical
+- [ ] panel of 1 is accepted only with --fast; without it the 2+ rule holds
 
 * IN_REVIEW TASK-8AV8B Incremental refresh: per-node reload and writer apply-own-write :e01mc:node_kernel:
 :PROPERTIES:
