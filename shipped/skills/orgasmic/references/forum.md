@@ -21,16 +21,20 @@ From the project checkout whose ledger should receive the run:
 
 ```bash
 orgasmic forum ask \
-  --question-file /tmp/question.txt \
+  --file /tmp/question.txt \
   --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \
   --participant 'stdio,hermes,google/gemini-3.7-flash,low'
 ```
 
-`--question "..."` is the short-question alternative. Participants are
+`--question "..."` is the short-question alternative; `--file` is the shared
+file-input flag across forum modes. Participants are
 `mode,harness,model,effort`; repeat `--participant` at least twice. A
 `provider/model` model id supplies the vendor. Bare models are accepted for
 `codex` (OpenAI) and `claude` (Anthropic). The first participant curates unless
-`--curator N` selects another 1-based roster entry. Use `--from <git-ref>` when
+`--curator` selects another 1-based roster entry or names its own
+`mode,harness,model,effort` spec (a model outside the panel). The curator
+always runs as a fresh dispatch with no memory of its stage-1 answer, even
+when it is also a participant. Use `--from <git-ref>` when
 the workers should branch from a ref other than the invoking checkout's HEAD.
 Pass `--artifact-id ART-XXXXX` only when intentionally submitting a new version
 of an existing artifact; otherwise the orchestrator mints a fresh id.
@@ -50,13 +54,13 @@ and curation into a prioritized verdict artifact:
 
 ```bash
 orgasmic forum critique \
-  --target-file /tmp/design.md \
+  --file /tmp/design.md \
   --focus 'security posture' \
   --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \
   --participant 'stdio,hermes,google/gemini-3.7-flash,low'
 ```
 
-`--target-file` is required, non-empty, and limited to 64 KiB. `--focus` is an
+`--file` is required, non-empty, and limited to 64 KiB. `--focus` is an
 optional one-line steer. Participant, curator, source-ref, timeout, artifact,
 and project flags have the same semantics as `ask`. The mode prints critique
 subtasks instead of extraction subtasks; cross-review remains self-excluding.

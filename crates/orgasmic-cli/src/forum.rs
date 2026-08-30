@@ -29,9 +29,11 @@ struct RunArgs {
     /// Participant as mode,harness,model,effort; repeat at least twice.
     #[arg(long, action = ArgAction::Append, required = true)]
     participant: Vec<String>,
-    /// 1-based participant index that performs curation.
-    #[arg(long, default_value_t = 1)]
-    curator: usize,
+    /// Curator: a 1-based participant index, or a full mode,harness,model,effort
+    /// spec to curate with a model outside the panel. Either way the curator runs
+    /// as a fresh dispatch with no memory of stage 1.
+    #[arg(long, default_value = "1")]
+    curator: String,
     /// Git ref from which dispatched worktrees branch. Defaults to the invoking HEAD.
     #[arg(long = "from")]
     source_ref: Option<String>,
@@ -49,18 +51,21 @@ struct RunArgs {
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "\
 Examples:
-  orgasmic forum ask --question-file /tmp/question.txt \\
+  orgasmic forum ask --file /tmp/question.txt \\
     --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \\
-    --participant 'stdio,hermes,google/gemini-3.7-flash,low'
+    --participant 'stdio,hermes,google/gemini-3.7-flash,low' \\
+    --curator 'stdio,claude,claude-fable-5,low'
 
-Participants are mode,harness,model,effort. Repeat --participant at least twice.")]
+Participants are mode,harness,model,effort. Repeat --participant at least twice.
+--curator is a 1-based participant index (default 1) or its own
+mode,harness,model,effort spec; it always runs as a fresh dispatch.")]
 pub struct AskArgs {
-    /// Question text. Mutually exclusive with --question-file.
-    #[arg(long, conflicts_with = "question_file", allow_hyphen_values = true)]
+    /// Question text. Mutually exclusive with --file.
+    #[arg(long, conflicts_with = "file", allow_hyphen_values = true)]
     question: Option<String>,
     /// Read the question from this UTF-8 file.
-    #[arg(long = "question-file", conflicts_with = "question")]
-    question_file: Option<PathBuf>,
+    #[arg(long, conflicts_with = "question")]
+    file: Option<PathBuf>,
     #[command(flatten)]
     run: RunArgs,
 }
@@ -68,15 +73,17 @@ pub struct AskArgs {
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "\
 Example:
-  orgasmic forum critique --target-file /tmp/design.md --focus 'security posture' \\
+  orgasmic forum critique --file /tmp/design.md --focus 'security posture' \\
     --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \\
     --participant 'stdio,hermes,google/gemini-3.7-flash,low'
 
-Participants are mode,harness,model,effort. Repeat --participant at least twice.")]
+Participants are mode,harness,model,effort. Repeat --participant at least twice.
+--curator is a 1-based participant index (default 1) or its own
+mode,harness,model,effort spec; it always runs as a fresh dispatch.")]
 pub struct CritiqueArgs {
     /// UTF-8 document to critique (non-empty, at most 64 KiB).
-    #[arg(long = "target-file")]
-    target_file: PathBuf,
+    #[arg(long)]
+    file: PathBuf,
     /// Optional one-line steer for the critique.
     #[arg(long, allow_hyphen_values = true)]
     focus: Option<String>,
@@ -1511,6 +1518,27 @@ impl Api {
     }
 }
 
+/// `--curator` is either a 1-based index into the panel or a standalone
+/// mode,harness,model,effort spec. Either way the curator stage launches as a
+/// fresh dispatch, so an index never carries stage-1 context — a spec just
+/// also keeps the curator model off the stage-1 panel.
+fn resolve_curator(participants: &[Participant], raw: &str) -> Result<Participant> {
+    if raw.contains(',') {
+        return parse_participant(raw).context("--curator participant spec");
+    }
+    let index = raw
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|index| (1..=participants.len()).contains(index))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "--curator must be a 1-based participant index or a mode,harness,model,effort spec"
+            )
+        })?;
+    Ok(participants[index - 1].clone())
+}
+
 fn launch(
     home: &Home,
     task: &str,
@@ -1686,9 +1714,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
         .map(|raw| parse_participant(raw))
         .collect::<Result<Vec<_>>>()?;
     validate_participants(&participants)?;
-    if !(1..=participants.len()).contains(&curator_index) {
-        bail!("--curator must select a 1-based participant entry");
-    }
+    let curator = resolve_curator(&participants, &curator_index)?;
     if artifact_id
         .as_deref()
         .is_some_and(|id| !is_valid_greenfield_artifact_id(id))
@@ -1724,7 +1750,6 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
             }
         }
     };
-    let curator = participants[curator_index - 1].clone();
     let api = Api::new(home, project.clone(), kind)?;
     let started_at = chrono::Utc::now().to_rfc3339();
     let roster = participants
@@ -2067,12 +2092,12 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
 }
 
 fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
-    let question = match (args.question, args.question_file) {
+    let question = match (args.question, args.file) {
         (Some(question), None) => question,
         (None, Some(path)) => {
             std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?
         }
-        _ => bail!("one of --question or --question-file is required"),
+        _ => bail!("one of --question or --file is required"),
     };
     let question = question.trim().to_string();
     validate_question(&question)?;
@@ -2087,7 +2112,7 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
 }
 
 fn run_critique(home: &Home, args: CritiqueArgs) -> Result<CritiqueResult> {
-    let target = read_target(&args.target_file)?;
+    let target = read_target(&args.file)?;
     let focus = match args.focus {
         Some(focus) => {
             let focus = focus.trim().to_string();
@@ -2097,7 +2122,7 @@ fn run_critique(home: &Home, args: CritiqueArgs) -> Result<CritiqueResult> {
         None => None,
     };
     let basename = args
-        .target_file
+        .file
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "target".to_string())
@@ -2258,6 +2283,18 @@ mod tests {
             (hermes.vendor.as_str(), hermes.model.as_str()),
             ("google", "gemini-3.7-flash")
         );
+        let panel = [codex.clone(), hermes.clone()];
+        assert_eq!(resolve_curator(&panel, "2").unwrap(), hermes);
+        assert_eq!(
+            resolve_curator(&panel, "stdio,claude,claude-fable-5,high")
+                .unwrap()
+                .identity(),
+            "claude · anthropic · claude-fable-5 · effort high"
+        );
+        for rejected in ["0", "3", "not-a-number", ""] {
+            assert!(resolve_curator(&panel, rejected).is_err());
+        }
+        assert!(resolve_curator(&panel, "stdio,claude").is_err());
         assert!(validate_participants(&[codex.clone(), codex]).is_err());
         for rejected in [
             format!("contains {QUESTION_PLACEHOLDER}"),
