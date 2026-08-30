@@ -1691,7 +1691,7 @@ fn render_forum_about_run(manifest: &ForumManifest, curator: &Participant) -> Re
             "    - Round {} · {} · {} · {}",
             round.round,
             round.kind.slug(),
-            clipped(&round.input.diagram_prompt(), 80),
+            escape_rich_text(&clipped(&round.input.diagram_prompt(), 80)),
             tasks
         ));
         lines.push(format!("      Participants ({}):", round.panel.len()));
@@ -1989,11 +1989,33 @@ fn validate_manifest(manifest: &ForumManifest) -> Result<()> {
         for participant in &round.panel {
             participant.participant()?;
         }
+        // The manifest sits on disk between invocations; re-check what intake
+        // validated so an edited or foreign manifest cannot push unvalidated
+        // input or another forum's task ids into the submitted artifact.
+        match &round.input {
+            ForumInput::Ask { question } => validate_question(question)
+                .with_context(|| format!("forum manifest round {} question", round.round))?,
+            ForumInput::Critique { target, focus, .. } => {
+                validate_target(target)
+                    .with_context(|| format!("forum manifest round {} target", round.round))?;
+                if let Some(focus) = focus {
+                    validate_focus(focus)
+                        .with_context(|| format!("forum manifest round {} focus", round.round))?;
+                }
+            }
+        }
         for task in round
             .first_stage_tasks
             .iter()
             .chain(&round.cross_review_tasks)
         {
+            if !is_valid_task_path_id(task) || !task.starts_with(&format!("{}.", manifest.forum)) {
+                bail!(
+                    "forum manifest round {} contains task {task} that does not belong to {}",
+                    round.round,
+                    manifest.forum
+                );
+            }
             if !tasks.insert(task) {
                 bail!("forum manifest repeats task {task}");
             }
@@ -2056,6 +2078,11 @@ fn validate_join_request(
     }
     if manifest.state == ForumState::Curated {
         bail!("forum {forum} is already curated");
+    }
+    if manifest.curation_task.is_some() {
+        bail!(
+            "forum {forum} already reserved its curation task; finish `orgasmic forum curate` instead of adding rounds"
+        );
     }
     match parent_state {
         Some("backlog" | "todo" | "in_progress" | "in_review") => Ok(()),
@@ -2163,7 +2190,17 @@ fn compile_self_contract(api: &Api, manifest: &ForumManifest, contract_path: &Pa
     );
     values.insert("task.id".to_string(), manifest.forum.clone());
     let compiled = api.compile_prompt(first.kind.curator_spec(), values)?;
-    let mut contract = without_completion_section(&compiled)?;
+    // The dispatched-curator specs list a curation task id the session never
+    // has; neutralize that clause so the contract carries one instruction.
+    let mut contract = without_completion_section(&compiled)?
+        .replace(
+            "every extraction, cross-review, and curation task id",
+            "every extraction and cross-review task id",
+        )
+        .replace(
+            "every critique, cross-review, and curation task id",
+            "every critique and cross-review task id",
+        );
     contract.push_str(
         "\n# Self-curated forum submission\n\nThe invoking session, not a dispatch, performs curation. Discuss and iterate before writing the two files, then pass them to `orgasmic forum curate`; do not run `dispatch finalize`. In the draft's Raw reports list, include every first-stage and cross-review task from every manifest round; do not invent a curation task id, because the CLI mints it after the draft passes its gates. For more than one round, the diagram JSON replaces the legacy top-level `extracts` and `reviews` with:\n\n```json\n{\n  \"rounds\": [\n    {\"round\": 1, \"kind\": \"ask\", \"extracts\": [...], \"reviews\": [...]},\n    {\"round\": 2, \"kind\": \"critique\", \"extracts\": [...], \"reviews\": [...]}\n  ],\n  \"curator_summary\": \"short synthesis summary\",\n  \"headline\": \"short artifact title\"\n}\n```\n\nInclude every manifest round in order and every task exactly once in its own round. The first round controls the draft's verbatim first section and required section shape.\n",
     );
@@ -3235,28 +3272,23 @@ fn run_curate(home: &Home, args: CurateArgs) -> Result<CurateResult> {
     }
 
     let fields = load_multi_round_diagram_fields(&args.diagram, &manifest.rounds)?;
-    let curator_task = format!("{}.{}", manifest.forum, next_task_ordinal(&manifest));
+    // Reuse ids reserved by an earlier failed attempt so a retry cannot mint a
+    // colliding curation task or orphan a second artifact.
+    let curator_task = manifest
+        .curation_task
+        .clone()
+        .unwrap_or_else(|| format!("{}.{}", manifest.forum, next_task_ordinal(&manifest)));
     let first = manifest.rounds.first().unwrap();
-    let svg = if manifest.rounds.len() == 1 {
-        let (extraction, reviews) = round_reports(first)?;
-        render_pipeline_svg(
-            &first.input.diagram_prompt(),
-            &extraction,
-            &reviews,
-            &curator,
-            &curator_task,
-            &args.draft,
-            &fields.rounds[0].fields,
-        )?
-    } else {
-        render_multi_round_svg(
-            &manifest.rounds,
-            &curator,
-            &curator_task,
-            &args.draft,
-            &fields,
-        )?
-    };
+    // A session curation has no dispatch and no report file, so even a
+    // one-round forum renders through the multi-round card, which does not
+    // print a curator report path.
+    let svg = render_multi_round_svg(
+        &manifest.rounds,
+        &curator,
+        &curator_task,
+        &args.draft,
+        &fields,
+    )?;
     let raw_tasks = manifest
         .rounds
         .iter()
@@ -3275,29 +3307,41 @@ fn run_curate(home: &Home, args: CurateArgs) -> Result<CurateResult> {
     let artifact = manifest
         .artifact_id
         .clone()
+        .or_else(|| manifest.submitted_artifact.clone())
         .unwrap_or_else(|| mint_node_id_for_class(NodeIdClass::Artifact));
     let title = fields
         .headline
         .clone()
         .unwrap_or_else(|| first.input.fallback_title());
-    api.create_task(
+    // Persist the reservation before the first daemon mutation; a retry after
+    // any later failure replays the same task and artifact ids.
+    let fresh_curation = manifest.curation_task.is_none();
+    manifest.curation_task = Some(curator_task.clone());
+    manifest.submitted_artifact = Some(artifact.clone());
+    write_manifest(&manifest_path, &manifest)?;
+    // The body carries no volatile file paths, so a retried create replays the
+    // same request identically; the paths land in evidence below.
+    let create_result = api.create_task(
         &curator_task,
         format!("Curate forum — {}", curator.identity()),
-        &format!(
-            "Invoking session identity: {}\nDraft: {}\nDiagram: {}",
-            curator.identity(),
-            args.draft.display(),
-            args.diagram.display()
-        ),
+        &format!("Invoking session identity: {}", curator.identity()),
         "The session-authored draft and diagram pass the forum's curation gates and one artifact is submitted.",
         "all promoted reports named in the forum manifest",
         "session-authored draft and diagram; orgasmic task evidence and artifact store via CLI only",
-    )?;
-    api.update_task_state(
-        &curator_task,
-        "in_progress",
-        "invoking session began forum curation",
-    )?;
+    );
+    match create_result {
+        Ok(()) => {
+            api.update_task_state(
+                &curator_task,
+                "in_progress",
+                "invoking session began forum curation",
+            )?;
+        }
+        Err(error) if !fresh_curation => {
+            eprintln!("reusing curation task {curator_task} from an earlier attempt: {error:#}");
+        }
+        Err(error) => return Err(error),
+    }
     api.submit_artifact(
         &artifact,
         mdx,
@@ -3603,6 +3647,43 @@ mod tests {
     }
 
     #[test]
+    fn manifest_validation_rejects_foreign_tasks_and_unvalidated_input() {
+        let mut foreign = mixed_manifest();
+        foreign.rounds[1].cross_review_tasks[1] = "TASK-OTHER.8".to_string();
+        assert!(validate_manifest(&foreign)
+            .unwrap_err()
+            .to_string()
+            .contains("does not belong to TASK-TESTX"));
+
+        let mut junk = mixed_manifest();
+        junk.rounds[0].first_stage_tasks[0] = "not-a-task-id".to_string();
+        assert!(validate_manifest(&junk)
+            .unwrap_err()
+            .to_string()
+            .contains("does not belong to TASK-TESTX"));
+
+        let mut smuggled = mixed_manifest();
+        smuggled.rounds[0].input = ForumInput::Ask {
+            question: format!("hide {DIAGRAM_PLACEHOLDER} here"),
+        };
+        assert!(validate_manifest(&smuggled)
+            .unwrap_err()
+            .to_string()
+            .contains("round 1 question"));
+
+        let mut oversized = mixed_manifest();
+        oversized.rounds[1].input = ForumInput::Critique {
+            target: "x".repeat(MAX_TARGET_BYTES + 1),
+            focus: None,
+            basename: "design.md".to_string(),
+        };
+        assert!(validate_manifest(&oversized)
+            .unwrap_err()
+            .to_string()
+            .contains("round 2 target"));
+    }
+
+    #[test]
     fn forum_join_refusal_matrix_is_explicit() {
         let mut manifest = mixed_manifest();
         assert!(
@@ -3644,6 +3725,18 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("already curated"));
+        manifest.state = ForumState::Open;
+        manifest.curation_task = Some("TASK-TESTX.9".to_string());
+        assert!(validate_join_request(
+            "TASK-TESTX",
+            "orgasmic",
+            false,
+            Some(&manifest),
+            Some("in_progress")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("already reserved its curation task"));
     }
 
     #[test]
@@ -3809,11 +3902,18 @@ mod tests {
 
     #[test]
     fn multi_round_curate_uses_the_existing_assembly_gates() {
-        let manifest = mixed_manifest();
+        let mut manifest = mixed_manifest();
+        manifest.rounds[0].input = ForumInput::Ask {
+            question: "How should Vec<Section> and {braces} render?".to_string(),
+        };
         let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
         let about = render_forum_about_run(&manifest, &curator).unwrap();
         assert!(about.contains("Round 1 · ask"));
         assert!(about.contains("Round 2 · critique"));
+        // Round prompts are operator text; the footer must escape them like
+        // the verbatim first section does.
+        assert!(about.contains("Vec&lt;Section&gt; and &#123;braces&#125;"));
+        assert!(!about.contains("Vec<Section>"));
         let raw_tasks = manifest
             .rounds
             .iter()
