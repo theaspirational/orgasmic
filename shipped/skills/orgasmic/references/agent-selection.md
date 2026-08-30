@@ -1,3 +1,12 @@
+---
+type: Topic
+title: Agent selection
+description: Choose dispatch harness, model, and effort while preserving reviewer
+  independence.
+sources:
+- shipped/skills/orgasmic/references/agent-selection.md
+---
+
 # Agent selection — harness, model, effort
 
 Kind, mode, harness + the harness's own model/effort decide who runs a

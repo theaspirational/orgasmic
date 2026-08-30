@@ -1,3 +1,12 @@
+---
+type: Topic
+title: Dispatch mechanics and lifecycle
+description: Worker visibility, retained worktrees, dispatch lifecycle, and finalization
+  ownership.
+sources:
+- shipped/skills/orgasmic/references/dispatch.md
+---
+
 # Dispatch — mechanics, visibility, lifecycle
 
 ## Workers only — no raw provider CLIs

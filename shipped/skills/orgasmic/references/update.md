@@ -1,3 +1,12 @@
+---
+type: Topic
+title: Update orgasmic
+description: Update a bundle runtime or contributor source checkout without touching
+  project state.
+sources:
+- shipped/skills/orgasmic/references/update.md
+---
+
 # /orgasmic update - update installed runtime or source checkout
 
 `update` follows `$ORGASMIC_HOME/install.json`.

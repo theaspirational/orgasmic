@@ -1,3 +1,12 @@
+---
+type: Topic
+title: Adopt a repository
+description: Initialize project state safely and choose whether to run the interactive
+  bootstrap.
+sources:
+- shipped/skills/orgasmic/references/init.md
+---
+
 # /orgasmic init — adopt a repository (runtime required)
 
 `init` adopts orgasmic in a repo that has no `.orgasmic/` yet. Requires a
