@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-E1D35
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-E1D35 Forum review rounds: 'forum review' challenges existing reports with a chosen panel :feature:
+* DONE TASK-E1D35 Forum review rounds: 'forum review' challenges existing reports with a chosen panel :feature:
 :PROPERTIES:
 :DEPENDS_ON: TASK-82KKQ
 :ID: TASK-E1D35
@@ -16,3 +16,9 @@ New verb `orgasmic forum review --forum TASK-XXXXX --participant <model> [--roun
 - [ ] a reviewer that authored a stage-1 report in scope never receives its own report
 - [ ] multi-round tree renders review rounds distinctly and still converges on one curator card; ask SVG fixture stays byte-identical
 - [ ] skill docs teach the brick (when to review vs critique-a-document)
+** Evidence
+- Implementer: codex/gpt-5.6-sol/xhigh; follow-ups 0e6f816c; merged at f044ba19
+- Review: claude-fable-5/high, APPROVE 'merge as-is'; MEDIUM: self-exclusion included harness so the same model via another transport saw its own report — fixed to vendor+model identity with a cross-harness test; LOW casefold/trim of vendor-model at parse; LOW review rounds get a 300px diagram slot (no blank band)
+- New prompt spec forum-reviewer.org (cross-reviewer reuse judged genuinely unfit by reviewer)
+- Gates: 299 CLI bin tests, clippy -D warnings, fmt, ask SVG fixture byte-identical, both reviewer mutation probes red-then-green
+- No live billed review-round smoke yet (operator-owned)

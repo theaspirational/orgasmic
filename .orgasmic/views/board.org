@@ -5352,6 +5352,22 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
+* IN_PROGRESS TASK-E1D35 Forum review rounds: 'forum review' challenges existing reports with a chosen panel :feature:
+:PROPERTIES:
+:DEPENDS_ON: TASK-82KKQ
+:ID: TASK-E1D35
+:PRIORITY: P2
+:END:
+
+** Description
+New verb `orgasmic forum review --forum TASK-XXXXX --participant <model> [--round N | --all-rounds] [--focus <one-line>]`: a detached stage-2 brick. Each participant blind-reviews the named earlier round's promoted stage-1 reports (default: all rounds so far) without writing a new answer — challenge/add/agree deltas like today's cross-review, but the reviewing panel is chosen freely (one strong model reviewing ten cheap answers, or vice versa) and reviewers need not have been stage-1 participants. Recorded in the manifest as its own round kind (`review`), rendered in the tree as a review row hanging off the rounds it reviewed, feeding the curator. Reviews of reviews are out of scope. Self-exclusion still applies when a reviewer's own stage-1 report is in scope. Reuses the cross-reviewer prompt specs where possible.
+
+** Acceptance Criteria
+- [ ] `forum review` joins only open self-curated forums, refuses reviewing a round that does not exist, and records a review round the curate gates and diagram JSON cover exactly once
+- [ ] a reviewer that authored a stage-1 report in scope never receives its own report
+- [ ] multi-round tree renders review rounds distinctly and still converges on one curator card; ask SVG fixture stays byte-identical
+- [ ] skill docs teach the brick (when to review vs critique-a-document)
+
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-NMV4P
@@ -5484,23 +5500,6 @@ TWCP9 decision, step 3. Claims live in per-machine append-only logs (`machines/<
 - [ ] write to a node dir claimed by another machine is refused with a clear error (test)
 - [ ] double-claim interval is visible in dispatch-status/views
 - [ ] projections fold multi-machine logs identically regardless of ingest order (test)
-
-* IN_REVIEW TASK-E1D35 Forum review rounds: 'forum review' challenges existing reports with a chosen panel :feature:
-:PROPERTIES:
-:DEPENDS_ON: TASK-82KKQ
-:ID: TASK-E1D35
-:PRIORITY: P2
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:END:
-
-** Description
-New verb `orgasmic forum review --forum TASK-XXXXX --participant <model> [--round N | --all-rounds] [--focus <one-line>]`: a detached stage-2 brick. Each participant blind-reviews the named earlier round's promoted stage-1 reports (default: all rounds so far) without writing a new answer — challenge/add/agree deltas like today's cross-review, but the reviewing panel is chosen freely (one strong model reviewing ten cheap answers, or vice versa) and reviewers need not have been stage-1 participants. Recorded in the manifest as its own round kind (`review`), rendered in the tree as a review row hanging off the rounds it reviewed, feeding the curator. Reviews of reviews are out of scope. Self-exclusion still applies when a reviewer's own stage-1 report is in scope. Reuses the cross-reviewer prompt specs where possible.
-
-** Acceptance Criteria
-- [ ] `forum review` joins only open self-curated forums, refuses reviewing a round that does not exist, and records a review round the curate gates and diagram JSON cover exactly once
-- [ ] a reviewer that authored a stage-1 report in scope never receives its own report
-- [ ] multi-round tree renders review rounds distinctly and still converges on one curator card; ask SVG fixture stays byte-identical
-- [ ] skill docs teach the brick (when to review vs critique-a-document)
 
 * IN_REVIEW TASK-EPG6H tx split: route node-scoped events to journals per the AP971.5 table :e01mc:node_kernel:
 :PROPERTIES:
