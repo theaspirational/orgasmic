@@ -14,3 +14,18 @@
 :REASON: operator asked for in-session curation so forum runs continue as a conversation
 :EVENT_ID: 340d576f-f474-40b7-8588-7ca26ab0ee37
 :END:
+
+* tx-20260830-orgasmic-6709 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6709
+:TIME:    [2026-08-30 Sun 08:32:21]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-9TGQS
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-9TGQS/node.org
+:REASON: edited task node TASK-9TGQS
+:NODE_ID: TASK-9TGQS
+:EVENT_ID: 31fb9707-f0ad-4630-8f30-58b14f7eeef1
+:END:

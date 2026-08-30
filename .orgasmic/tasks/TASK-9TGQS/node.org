@@ -8,4 +8,4 @@
 :END:
 
 ** Description
-When --curator is omitted, forum ask/critique run stages 1-2 as dispatches, persist a run manifest, and stop so the invoking session's model curates in-chat; a new `orgasmic forum curate` verb validates the session-written draft + diagram JSON through the exact same gates and submits the artifact. Explicit --curator index/spec keeps today's dispatched-curator behavior.
+When --curator is omitted, forum ask/critique run stages 1-2 as dispatches and stop: the invoking session's model is the curator. Rounds accumulate: the first call mints the forum (parent task) and later calls join it via --forum TASK-XXXXX, mixing ask and critique rounds freely. The session curates in-chat between rounds; when the operator is satisfied, `orgasmic forum curate` validates the session-written draft + diagram JSON through the same gates and submits ONE artifact whose deterministic diagram renders ALL rounds in one tree converging on the curator. Explicit --curator index/spec keeps today's single-round dispatched-curator behavior.
