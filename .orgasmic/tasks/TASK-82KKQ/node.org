@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-82KKQ
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-82KKQ Forum fast rounds: --fast skips cross-review, panel minimum drops to 1 :feature:
+* DONE TASK-82KKQ Forum fast rounds: --fast skips cross-review, panel minimum drops to 1 :feature:
 :PROPERTIES:
 :ID: TASK-82KKQ
 :PRIORITY: P2
@@ -15,3 +15,9 @@ Add a `--fast` flag to `forum ask` and `forum critique` (both fresh forums and `
 - [ ] `--fast` with a dispatched `--curator` on a single-round forum also works (curator reads stage-1 reports only)
 - [ ] validate_manifest/diagram/renderer/curate gates accept fast rounds and still reject malformed normal rounds; existing ask SVG fixture stays byte-identical
 - [ ] panel of 1 is accepted only with --fast; without it the 2+ rule holds
+** Evidence
+- Implementer: codex/gpt-5.6-sol/xhigh, commit a05326dc; follow-ups d43edff1; merged at 3aaca8d7
+- Review: claude-fable-5/high, APPROVE 'merge as-is'; MEDIUM disclosure: this branch also FIXES a latent TASK-9TGQS defect — on pre-merge main, forum curate failed on every single-round self-curated forum (render_multi_round_svg bailed on rounds<2); regression test added at d43edff1
+- Other follow-ups: fail-closed canary on the Cross-review contract surgery; empty cross-review segment/evidence line suppressed for fast rounds
+- Gates: 293 CLI bin tests, clippy -D warnings, fmt, ask SVG fixture byte-identical, both mutation probes red-then-green (reviewer)
+- No live billed fast-round smoke yet (operator-owned)
