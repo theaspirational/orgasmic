@@ -4566,6 +4566,8 @@ state, not chasing three independent bugs.
   that converts a known flake into an unexplained REAL failure.
 - If a mode proves unreproducible on current HEAD, say so with the measurement
   and delete it on that evidence — a registry that only grows is a graveyard.
+** Notes
+2026-08-30: two orgasmic-cli dispatch-suite entries added to verify/flake-registry.toml under this owner (dispatch_close_records_cleanup_failure_and_status_filter_lists_it / 'cleanup failure close should still append tx', dispatch_timeout_requests_daemon_cleanup / 'daemon cleanup should remove branch after CLI timeout'). Both measured during release certification of b00b48bd: red under cargo test --workspace, classifier isolation rerun green, two rounds. Same parallelism class this task owns.
 
 * BACKLOG TASK-XC9N4 Dispatch silently substitutes driver/harness (tmux+codex→stdio codex-chat, custom+opencode→stdio opencode); --dry-run prints the request, not the resolution; ws+hermes is a simulated stub in the normal catalog    :vscode-orsl-letter:
 :PROPERTIES:
