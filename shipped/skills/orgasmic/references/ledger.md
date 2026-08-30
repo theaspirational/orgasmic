@@ -1,3 +1,11 @@
+---
+type: Topic
+title: Ledger map and write rules
+description: Map project state and enforce daemon-owned writes.
+sources:
+- shipped/skills/orgasmic/references/ledger.md
+---
+
 # Ledger — file map, write rules, content rules
 
 Paths relative to the project root printed by `orgasmic entry` (usually

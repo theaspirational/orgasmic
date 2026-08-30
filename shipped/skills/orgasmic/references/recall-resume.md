@@ -1,3 +1,11 @@
+---
+type: Topic
+title: Recall and resume
+description: Bootstrap a manager session from the thin goal and handoff state.
+sources:
+- shipped/skills/orgasmic/references/recall-resume.md
+---
+
 # /orgasmic recall & resume — manager session bootstrap
 
 Both run inside an existing orgasmic project from on-disk state alone. The

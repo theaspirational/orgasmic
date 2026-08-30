@@ -1,3 +1,12 @@
+---
+type: Topic
+title: When to ask
+description: Confirm only actions that are hard to reverse, external, or spend another
+  party's resources.
+sources:
+- shipped/skills/orgasmic/references/asking.md
+---
+
 # Asking — when to confirm with the user
 
 Proceed by default. Asking needs a reason naming which property triggers it.

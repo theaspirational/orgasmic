@@ -1,3 +1,12 @@
+---
+type: Topic
+title: Install orgasmic
+description: Install the runtime, optional host app, remote access, or contributor
+  source mode.
+sources:
+- shipped/skills/orgasmic/references/install.md
+---
+
 # /orgasmic install - interactive runtime wizard
 
 `install` is the post-skill setup path. The default path is a prebuilt runtime

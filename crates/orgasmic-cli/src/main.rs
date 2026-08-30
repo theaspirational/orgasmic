@@ -4161,6 +4161,57 @@ fn parse_key_values(items: Vec<String>) -> Result<Vec<(String, String)>> {
 }
 
 #[cfg(test)]
+mod okf_bundle_tests {
+    use super::Cli;
+    use clap::CommandFactory;
+    use std::path::Path;
+
+    fn command_paths(command: &clap::Command, prefix: &mut Vec<String>, out: &mut Vec<String>) {
+        for subcommand in command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set() && subcommand.get_name() != "help")
+        {
+            prefix.push(subcommand.get_name().to_string());
+            out.push(prefix.join(" "));
+            command_paths(subcommand, prefix, out);
+            prefix.pop();
+        }
+    }
+
+    fn read_markdown(path: &Path, out: &mut String) {
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path).unwrap() {
+                read_markdown(&entry.unwrap().path(), out);
+            }
+        } else if path.extension().is_some_and(|extension| extension == "md") {
+            out.push_str(&std::fs::read_to_string(path).unwrap());
+            out.push('\n');
+        }
+    }
+
+    #[test]
+    fn every_visible_cli_subcommand_is_named_in_the_shipped_okf_bundle() {
+        let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../shipped/skills/orgasmic");
+        let mut docs = String::new();
+        for path in ["SKILL.md", "operations", "recipes", "references"] {
+            read_markdown(&bundle.join(path), &mut docs);
+        }
+
+        let mut paths = Vec::new();
+        command_paths(&Cli::command(), &mut Vec::new(), &mut paths);
+        let missing: Vec<_> = paths
+            .iter()
+            .filter(|path| !docs.contains(&format!("`orgasmic {path}`")))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "CLI subcommand(s) missing from shipped/skills/orgasmic concepts: {missing:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod task_inventory_tests {
     use super::{
         filter_tasks_by_stage, parse_task_stage, task_count_summary, Cli, Cmd, ManagerCmd,

@@ -1,0 +1,1312 @@
+{
+  "runs": [
+    {
+      "run_id": "2026-08-30T12:29:24.494222+00:00",
+      "tool_version": "0.19.0",
+      "created": "2026-08-30T12:29:24.494222+00:00",
+      "retrieval_schema": "okfy-retrieval@3",
+      "retrieval_fingerprint": "2cf8f8e3227f5f60b6eb69aba60128051899b15fd75c8375921fae7729dbde60",
+      "suite": "acceptance",
+      "query_options": {
+        "n": 5,
+        "expand": true,
+        "include_meta": false,
+        "include_stale": true
+      },
+      "results": [
+        {
+          "query": "How do I run a cheap 10-model forum round?",
+          "expanded_query": "How do I run a cheap 10-model forum round?",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 17.618
+            },
+            {
+              "id": "references/forum",
+              "score": 9.614
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.814
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 7.284
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 7.249
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/cheap-wide-forum with an explicit ten-participant --fast command.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run a forum without cross-review?",
+          "expanded_query": "How do I run a forum without cross-review? fast skip cross-review",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/forum",
+              "score": 12.983
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.146
+            },
+            {
+              "id": "references/tiers",
+              "score": 8.576
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 8.382
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Lexicon pins recipes/cheap-wide-forum, which states --fast skips cross-review.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How can one strong model challenge the existing forum answers?",
+          "expanded_query": "How can one strong model challenge the existing forum answers?",
+          "top_hits": [
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 20.569
+            },
+            {
+              "id": "references/forum",
+              "score": 11.112
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 8.067
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 8.061
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 5.716
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/adversarial-forum-review with the one-strong-model example.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I judge a supplied document with several models?",
+          "expanded_query": "How do I judge a supplied document with several models?",
+          "top_hits": [
+            {
+              "id": "recipes/judge-document",
+              "score": 15.483
+            },
+            {
+              "id": "references/forum",
+              "score": 6.544
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 4.161
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.779
+            },
+            {
+              "id": "references/asking",
+              "score": 3.567
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/judge-document with the verified critique command.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run and finish a self-curated multi-round forum?",
+          "expanded_query": "How do I run and finish a self-curated multi-round forum?",
+          "top_hits": [
+            {
+              "id": "references/forum",
+              "score": 16.015
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 13.492
+            },
+            {
+              "id": "SKILL",
+              "score": 12.551
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 10.318
+            },
+            {
+              "id": "operations/forum",
+              "score": 7.589
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "The top two hits are the full forum policy and self-curated executable recipe.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "expanded_query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 21.933
+            },
+            {
+              "id": "references/forum",
+              "score": 10.192
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.274
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.291
+            },
+            {
+              "id": "SKILL",
+              "score": 6.308
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatched-curator with the explicit --curator path.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "expanded_query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 10.039
+            },
+            {
+              "id": "references/dispatch",
+              "score": 9.875
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 8.185
+            },
+            {
+              "id": "references/tiers",
+              "score": 7.05
+            },
+            {
+              "id": "references/asking",
+              "score": 6.777
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatch-task-lifecycle and it links the dispatch policy.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I close a reviewed task with evidence?",
+          "expanded_query": "How do I close a reviewed task with evidence?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 11.397
+            },
+            {
+              "id": "references/dispatch",
+              "score": 8.212
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 6.304
+            },
+            {
+              "id": "references/tiers",
+              "score": 5.366
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 4.7
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatch-task-lifecycle and names generation-bound close evidence.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I inspect tasks, runs, and artifacts?",
+          "expanded_query": "How do I inspect tasks, runs, and artifacts?",
+          "top_hits": [
+            {
+              "id": "recipes/inspect-work",
+              "score": 10.615
+            },
+            {
+              "id": "operations/artifacts",
+              "score": 5.07
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 4.872
+            },
+            {
+              "id": "references/tiers",
+              "score": 4.305
+            },
+            {
+              "id": "references/init",
+              "score": 3.874
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/inspect-work and composes task, run, and artifact reads.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I install or update the orgasmic runtime?",
+          "expanded_query": "How do I install or update the orgasmic runtime?",
+          "top_hits": [
+            {
+              "id": "recipes/install-update-runtime",
+              "score": 8.951
+            },
+            {
+              "id": "references/install",
+              "score": 8.397
+            },
+            {
+              "id": "references/update",
+              "score": 7.661
+            },
+            {
+              "id": "SKILL",
+              "score": 6.464
+            },
+            {
+              "id": "operations/core-project",
+              "score": 5.097
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top three hits are the install/update recipe and both depth references.",
+          "owner_verdict": null,
+          "owner_note": null
+        }
+      ]
+    },
+    {
+      "run_id": "2026-08-30T12:32:52.793839+00:00",
+      "tool_version": "0.19.0",
+      "created": "2026-08-30T12:32:52.793839+00:00",
+      "retrieval_schema": "okfy-retrieval@3",
+      "retrieval_fingerprint": "2cf8f8e3227f5f60b6eb69aba60128051899b15fd75c8375921fae7729dbde60",
+      "suite": "acceptance",
+      "query_options": {
+        "n": 5,
+        "expand": true,
+        "include_meta": false,
+        "include_stale": true
+      },
+      "results": [
+        {
+          "query": "How do I run a cheap 10-model forum round?",
+          "expanded_query": "How do I run a cheap 10-model forum round?",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 17.618
+            },
+            {
+              "id": "references/forum",
+              "score": 9.614
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.814
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 7.284
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 7.249
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/cheap-wide-forum with an explicit ten-participant --fast command.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run a forum without cross-review?",
+          "expanded_query": "How do I run a forum without cross-review? fast skip cross-review",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/forum",
+              "score": 12.983
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.146
+            },
+            {
+              "id": "references/tiers",
+              "score": 8.576
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 8.382
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Lexicon pins recipes/cheap-wide-forum, which states --fast skips cross-review.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How can one strong model challenge the existing forum answers?",
+          "expanded_query": "How can one strong model challenge the existing forum answers?",
+          "top_hits": [
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 20.569
+            },
+            {
+              "id": "references/forum",
+              "score": 11.112
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 8.067
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 8.061
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 5.716
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/adversarial-forum-review with the one-strong-model example.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I judge a supplied document with several models?",
+          "expanded_query": "How do I judge a supplied document with several models?",
+          "top_hits": [
+            {
+              "id": "recipes/judge-document",
+              "score": 15.483
+            },
+            {
+              "id": "references/forum",
+              "score": 6.544
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 4.161
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.779
+            },
+            {
+              "id": "references/asking",
+              "score": 3.567
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/judge-document with the verified critique command.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run and finish a self-curated multi-round forum?",
+          "expanded_query": "How do I run and finish a self-curated multi-round forum?",
+          "top_hits": [
+            {
+              "id": "references/forum",
+              "score": 16.015
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 13.492
+            },
+            {
+              "id": "SKILL",
+              "score": 12.551
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 10.318
+            },
+            {
+              "id": "operations/forum",
+              "score": 7.589
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "The top two hits are the full forum policy and self-curated executable recipe.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "expanded_query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 21.933
+            },
+            {
+              "id": "references/forum",
+              "score": 10.192
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.274
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.291
+            },
+            {
+              "id": "SKILL",
+              "score": 6.308
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatched-curator with the explicit --curator path.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "expanded_query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 10.039
+            },
+            {
+              "id": "references/dispatch",
+              "score": 9.875
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 8.185
+            },
+            {
+              "id": "references/tiers",
+              "score": 7.05
+            },
+            {
+              "id": "references/asking",
+              "score": 6.777
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatch-task-lifecycle and it links the dispatch policy.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I close a reviewed task with evidence?",
+          "expanded_query": "How do I close a reviewed task with evidence?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 11.397
+            },
+            {
+              "id": "references/dispatch",
+              "score": 8.212
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 6.304
+            },
+            {
+              "id": "references/tiers",
+              "score": 5.366
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 4.7
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatch-task-lifecycle and names generation-bound close evidence.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I inspect tasks, runs, and artifacts?",
+          "expanded_query": "How do I inspect tasks, runs, and artifacts?",
+          "top_hits": [
+            {
+              "id": "recipes/inspect-work",
+              "score": 10.615
+            },
+            {
+              "id": "operations/artifacts",
+              "score": 5.07
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 4.872
+            },
+            {
+              "id": "references/tiers",
+              "score": 4.305
+            },
+            {
+              "id": "references/init",
+              "score": 3.874
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/inspect-work and composes task, run, and artifact reads.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I install or update the orgasmic runtime?",
+          "expanded_query": "How do I install or update the orgasmic runtime?",
+          "top_hits": [
+            {
+              "id": "recipes/install-update-runtime",
+              "score": 8.951
+            },
+            {
+              "id": "references/install",
+              "score": 8.397
+            },
+            {
+              "id": "references/update",
+              "score": 7.661
+            },
+            {
+              "id": "SKILL",
+              "score": 6.464
+            },
+            {
+              "id": "operations/core-project",
+              "score": 5.097
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top three hits are the install/update recipe and both depth references.",
+          "owner_verdict": null,
+          "owner_note": null
+        }
+      ]
+    },
+    {
+      "run_id": "2026-08-30T12:35:03.196737+00:00",
+      "tool_version": "0.19.0",
+      "created": "2026-08-30T12:35:03.196737+00:00",
+      "retrieval_schema": "okfy-retrieval@3",
+      "retrieval_fingerprint": "79c83fcdd31b39f33f5be5063a1f4dd82a20dd04496cf4038cf51f5e626b38f7",
+      "suite": "acceptance",
+      "query_options": {
+        "n": 5,
+        "expand": true,
+        "include_meta": false,
+        "include_stale": true
+      },
+      "results": [
+        {
+          "query": "How do I run a cheap 10-model forum round?",
+          "expanded_query": "How do I run a cheap 10-model forum round?",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 17.618
+            },
+            {
+              "id": "references/forum",
+              "score": 9.615
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.814
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 7.284
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 7.249
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/cheap-wide-forum with an explicit ten-participant --fast command.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run a forum without cross-review?",
+          "expanded_query": "How do I run a forum without cross-review? fast skip cross-review",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/forum",
+              "score": 12.983
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.146
+            },
+            {
+              "id": "references/tiers",
+              "score": 8.577
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 8.382
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Lexicon pins recipes/cheap-wide-forum, which states --fast skips cross-review.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How can one strong model challenge the existing forum answers?",
+          "expanded_query": "How can one strong model challenge the existing forum answers?",
+          "top_hits": [
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 20.569
+            },
+            {
+              "id": "references/forum",
+              "score": 11.113
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 8.067
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 8.061
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 5.716
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/adversarial-forum-review with the one-strong-model example.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I judge a supplied document with several models?",
+          "expanded_query": "How do I judge a supplied document with several models?",
+          "top_hits": [
+            {
+              "id": "recipes/judge-document",
+              "score": 15.484
+            },
+            {
+              "id": "references/forum",
+              "score": 6.545
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 4.161
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.779
+            },
+            {
+              "id": "references/asking",
+              "score": 3.567
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/judge-document with the verified critique command.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run and finish a self-curated multi-round forum?",
+          "expanded_query": "How do I run and finish a self-curated multi-round forum?",
+          "top_hits": [
+            {
+              "id": "references/forum",
+              "score": 16.016
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 13.492
+            },
+            {
+              "id": "SKILL",
+              "score": 12.539
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 10.318
+            },
+            {
+              "id": "operations/forum",
+              "score": 7.589
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "The top two hits are the full forum policy and self-curated executable recipe.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "expanded_query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 21.933
+            },
+            {
+              "id": "references/forum",
+              "score": 10.192
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.274
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.291
+            },
+            {
+              "id": "SKILL",
+              "score": 6.303
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatched-curator with the explicit --curator path.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "expanded_query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 10.039
+            },
+            {
+              "id": "references/dispatch",
+              "score": 9.875
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 8.185
+            },
+            {
+              "id": "references/tiers",
+              "score": 7.05
+            },
+            {
+              "id": "references/asking",
+              "score": 6.778
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatch-task-lifecycle and it links the dispatch policy.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I close a reviewed task with evidence?",
+          "expanded_query": "How do I close a reviewed task with evidence?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 11.397
+            },
+            {
+              "id": "references/dispatch",
+              "score": 8.213
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 6.304
+            },
+            {
+              "id": "references/tiers",
+              "score": 5.366
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 4.701
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatch-task-lifecycle and names generation-bound close evidence.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I inspect tasks, runs, and artifacts?",
+          "expanded_query": "How do I inspect tasks, runs, and artifacts?",
+          "top_hits": [
+            {
+              "id": "recipes/inspect-work",
+              "score": 10.615
+            },
+            {
+              "id": "operations/artifacts",
+              "score": 5.071
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 4.873
+            },
+            {
+              "id": "references/tiers",
+              "score": 4.305
+            },
+            {
+              "id": "references/init",
+              "score": 3.874
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/inspect-work and composes task, run, and artifact reads.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I install or update the orgasmic runtime?",
+          "expanded_query": "How do I install or update the orgasmic runtime?",
+          "top_hits": [
+            {
+              "id": "recipes/install-update-runtime",
+              "score": 8.951
+            },
+            {
+              "id": "references/install",
+              "score": 8.397
+            },
+            {
+              "id": "references/update",
+              "score": 7.661
+            },
+            {
+              "id": "SKILL",
+              "score": 6.458
+            },
+            {
+              "id": "operations/core-project",
+              "score": 5.097
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top three hits are the install/update recipe and both depth references.",
+          "owner_verdict": null,
+          "owner_note": null
+        }
+      ]
+    },
+    {
+      "run_id": "2026-08-30T12:38:20.411718+00:00",
+      "tool_version": "0.19.0",
+      "created": "2026-08-30T12:38:20.411718+00:00",
+      "retrieval_schema": "okfy-retrieval@3",
+      "retrieval_fingerprint": "79c83fcdd31b39f33f5be5063a1f4dd82a20dd04496cf4038cf51f5e626b38f7",
+      "suite": "acceptance",
+      "query_options": {
+        "n": 5,
+        "expand": true,
+        "include_meta": false,
+        "include_stale": true
+      },
+      "results": [
+        {
+          "query": "How do I run a cheap 10-model forum round?",
+          "expanded_query": "How do I run a cheap 10-model forum round?",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 17.618
+            },
+            {
+              "id": "references/forum",
+              "score": 9.615
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.814
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 7.284
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 7.249
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/cheap-wide-forum with an explicit ten-participant --fast command.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run a forum without cross-review?",
+          "expanded_query": "How do I run a forum without cross-review? fast skip cross-review",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/forum",
+              "score": 12.983
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.146
+            },
+            {
+              "id": "references/tiers",
+              "score": 8.577
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 8.382
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Lexicon pins recipes/cheap-wide-forum, which states --fast skips cross-review.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How can one strong model challenge the existing forum answers?",
+          "expanded_query": "How can one strong model challenge the existing forum answers?",
+          "top_hits": [
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 20.569
+            },
+            {
+              "id": "references/forum",
+              "score": 11.113
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 8.067
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 8.061
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 5.716
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/adversarial-forum-review with the one-strong-model example.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I judge a supplied document with several models?",
+          "expanded_query": "How do I judge a supplied document with several models?",
+          "top_hits": [
+            {
+              "id": "recipes/judge-document",
+              "score": 15.484
+            },
+            {
+              "id": "references/forum",
+              "score": 6.545
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 4.161
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.779
+            },
+            {
+              "id": "references/asking",
+              "score": 3.567
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/judge-document with the verified critique command.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run and finish a self-curated multi-round forum?",
+          "expanded_query": "How do I run and finish a self-curated multi-round forum?",
+          "top_hits": [
+            {
+              "id": "references/forum",
+              "score": 16.016
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 13.492
+            },
+            {
+              "id": "SKILL",
+              "score": 12.539
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 10.318
+            },
+            {
+              "id": "operations/forum",
+              "score": 7.589
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "The top two hits are the full forum policy and self-curated executable recipe.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "expanded_query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 21.933
+            },
+            {
+              "id": "references/forum",
+              "score": 10.192
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.274
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.291
+            },
+            {
+              "id": "SKILL",
+              "score": 6.303
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatched-curator with the dispatched curator lifecycle.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "expanded_query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 10.039
+            },
+            {
+              "id": "references/dispatch",
+              "score": 9.875
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 8.185
+            },
+            {
+              "id": "references/tiers",
+              "score": 7.05
+            },
+            {
+              "id": "references/asking",
+              "score": 6.778
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatch-task-lifecycle with implementer and reviewer examples.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I close a reviewed task with evidence?",
+          "expanded_query": "How do I close a reviewed task with evidence?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 11.397
+            },
+            {
+              "id": "references/dispatch",
+              "score": 8.213
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 6.304
+            },
+            {
+              "id": "references/tiers",
+              "score": 5.366
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 4.701
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/dispatch-task-lifecycle with exact close and evidence guidance.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I inspect tasks, runs, and artifacts?",
+          "expanded_query": "How do I inspect tasks, runs, and artifacts?",
+          "top_hits": [
+            {
+              "id": "recipes/inspect-work",
+              "score": 10.615
+            },
+            {
+              "id": "operations/artifacts",
+              "score": 5.071
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 4.873
+            },
+            {
+              "id": "references/tiers",
+              "score": 4.305
+            },
+            {
+              "id": "references/init",
+              "score": 3.874
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/inspect-work covering task, run, and artifact read surfaces.",
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I install or update the orgasmic runtime?",
+          "expanded_query": "How do I install or update the orgasmic runtime?",
+          "top_hits": [
+            {
+              "id": "recipes/install-update-runtime",
+              "score": 8.951
+            },
+            {
+              "id": "references/install",
+              "score": 8.397
+            },
+            {
+              "id": "references/update",
+              "score": 7.661
+            },
+            {
+              "id": "SKILL",
+              "score": 6.458
+            },
+            {
+              "id": "operations/core-project",
+              "score": 5.097
+            }
+          ],
+          "notes": [],
+          "llm_verdict": "pass",
+          "llm_reason": "Top hit is recipes/install-update-runtime with verified install and update paths.",
+          "owner_verdict": null,
+          "owner_note": null
+        }
+      ]
+    }
+  ]
+}

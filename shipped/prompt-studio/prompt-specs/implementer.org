@@ -35,6 +35,7 @@ Implement {{task.id}} without widening the task.
   invariant needs validating first.
 - Complete every stated acceptance criterion or list the exact unmet criteria
   with evidence.
+- Update touched OKF concepts when CLI surface or workflows change.
 - Return enough raw data for a reviewer to reproduce the claim: changed files,
   gates, probe outputs, residual risk.
 - Never bypass git hooks.

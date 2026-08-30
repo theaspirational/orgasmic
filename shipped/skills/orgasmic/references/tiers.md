@@ -1,3 +1,12 @@
+---
+type: Topic
+title: Manager edit tiers
+description: Classify manager-direct source edits and route ordinary or risky work
+  to dispatch.
+sources:
+- shipped/skills/orgasmic/references/tiers.md
+---
+
 # Tiers — compute, declare, then edit
 
 Required before any manager-direct source edit.

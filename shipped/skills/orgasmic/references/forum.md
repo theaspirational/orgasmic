@@ -1,3 +1,12 @@
+---
+type: Topic
+title: Interactive multi-model forum
+description: Full self-curated and dispatched-curator forum behavior for ask, critique,
+  review, rounds, and curate.
+sources:
+- shipped/skills/orgasmic/references/forum.md
+---
+
 # Multi-model forum
 
 `/orgasmic forum` is an interactive, self-curated conversation by default.
