@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-9TGQS
+#+orgasmic_version: 2
+
+* tx-20260830-orgasmic-6708 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6708
+:TIME:    [2026-08-30 Sun 08:28:29]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-9TGQS
+:TARGET: .orgasmic/tasks/TASK-9TGQS/node.org
+:REASON: operator asked for in-session curation so forum runs continue as a conversation
+:EVENT_ID: 340d576f-f474-40b7-8588-7ca26ab0ee37
+:END:

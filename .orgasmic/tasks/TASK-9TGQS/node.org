@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-9TGQS
+#+orgasmic_version: 2
+
+* BACKLOG TASK-9TGQS Forum self-curation: default --curator is the invoking session; new 'forum curate' verb submits its draft    :feature:
+:PROPERTIES:
+:ID: TASK-9TGQS
+:PRIORITY: P2
+:END:
+
+** Description
+When --curator is omitted, forum ask/critique run stages 1-2 as dispatches, persist a run manifest, and stop so the invoking session's model curates in-chat; a new `orgasmic forum curate` verb validates the session-written draft + diagram JSON through the exact same gates and submits the artifact. Explicit --curator index/spec keeps today's dispatched-curator behavior.
