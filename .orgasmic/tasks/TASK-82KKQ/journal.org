@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-82KKQ
+#+orgasmic_version: 2
+
+* tx-20260830-orgasmic-6715 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6715
+:TIME:    [2026-08-30 Sun 10:13:39]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-82KKQ
+:TARGET: .orgasmic/tasks/TASK-82KKQ/node.org
+:REASON: operator wants cheap wide first-answer rounds (lego bricks design)
+:EVENT_ID: cee6b7d1-cb74-475a-a7a9-5457550f69f7
+:END:
