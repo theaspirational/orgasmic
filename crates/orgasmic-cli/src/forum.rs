@@ -6,9 +6,12 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, Subcommand};
-use orgasmic_core::{is_valid_greenfield_artifact_id, mint_node_id_for_class, NodeIdClass};
+use orgasmic_core::{
+    is_valid_greenfield_artifact_id, is_valid_task_path_id, mint_node_id_for_class,
+    project_tmp_dir, NodeIdClass,
+};
 use orgasmic_drivers::catalog::transport_profiles;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::daemon_client::DaemonClient;
@@ -32,8 +35,11 @@ struct RunArgs {
     /// Curator: a 1-based participant index, or a full mode,harness,model,effort
     /// spec to curate with a model outside the panel. Either way the curator runs
     /// as a fresh dispatch with no memory of stage 1.
-    #[arg(long, default_value = "1")]
-    curator: String,
+    #[arg(long)]
+    curator: Option<String>,
+    /// Add this self-curated round to an existing open forum.
+    #[arg(long)]
+    forum: Option<String>,
     /// Git ref from which dispatched worktrees branch. Defaults to the invoking HEAD.
     #[arg(long = "from")]
     source_ref: Option<String>,
@@ -57,8 +63,9 @@ Examples:
     --curator 'stdio,claude,claude-fable-5,low'
 
 Participants are mode,harness,model,effort. Repeat --participant at least twice.
---curator is a 1-based participant index (default 1) or its own
-mode,harness,model,effort spec; it always runs as a fresh dispatch.")]
+Omit --curator for in-session curation and use --forum to add later rounds.
+Pass --curator as a 1-based participant index or its own
+mode,harness,model,effort spec for the single-round dispatched-curator path.")]
 pub struct AskArgs {
     /// Question text. Mutually exclusive with --file.
     #[arg(long, conflicts_with = "file", allow_hyphen_values = true)]
@@ -78,8 +85,9 @@ Example:
     --participant 'stdio,hermes,google/gemini-3.7-flash,low'
 
 Participants are mode,harness,model,effort. Repeat --participant at least twice.
---curator is a 1-based participant index (default 1) or its own
-mode,harness,model,effort spec; it always runs as a fresh dispatch.")]
+Omit --curator for in-session curation and use --forum to add later rounds.
+Pass --curator as a 1-based participant index or its own
+mode,harness,model,effort spec for the single-round dispatched-curator path.")]
 pub struct CritiqueArgs {
     /// UTF-8 document to critique (non-empty, at most 64 KiB).
     #[arg(long)]
@@ -91,7 +99,7 @@ pub struct CritiqueArgs {
     run: RunArgs,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct Participant {
     mode: String,
     harness: String,
@@ -131,7 +139,7 @@ struct DeltaBullet {
     text: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DiagramFields {
     extracts: BTreeMap<String, Vec<String>>,
     reviews: BTreeMap<String, Vec<DeltaBullet>>,
@@ -139,7 +147,8 @@ struct DiagramFields {
     headline: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 enum ForumKind {
     Ask,
     Critique,
@@ -175,7 +184,8 @@ impl ForumKind {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 enum ForumInput {
     Ask {
         question: String,
@@ -275,7 +285,7 @@ impl std::fmt::Display for WaitUnknown {
 impl std::error::Error for WaitUnknown {}
 
 #[derive(Serialize)]
-struct AskResult {
+struct DispatchedAskResult {
     parent_task: String,
     extraction_tasks: Vec<String>,
     cross_review_tasks: Vec<String>,
@@ -284,7 +294,7 @@ struct AskResult {
 }
 
 #[derive(Serialize)]
-struct CritiqueResult {
+struct DispatchedCritiqueResult {
     parent_task: String,
     critique_tasks: Vec<String>,
     cross_review_tasks: Vec<String>,
@@ -292,12 +302,163 @@ struct CritiqueResult {
     artifact_id: String,
 }
 
-struct RunResult {
+struct DispatchedRunResult {
     parent_task: String,
     first_stage_tasks: Vec<String>,
     cross_review_tasks: Vec<String>,
     curation_task: String,
     artifact_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct ManifestParticipant {
+    mode: String,
+    harness: String,
+    model: String,
+    effort: String,
+}
+
+impl From<&Participant> for ManifestParticipant {
+    fn from(value: &Participant) -> Self {
+        Self {
+            mode: value.mode.clone(),
+            harness: value.harness.clone(),
+            model: value.dispatch_model.clone(),
+            effort: value.effort.clone(),
+        }
+    }
+}
+
+impl ManifestParticipant {
+    fn participant(&self) -> Result<Participant> {
+        parse_participant(&format!(
+            "{},{},{},{}",
+            self.mode, self.harness, self.model, self.effort
+        ))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CurationMode {
+    SelfCurated,
+    Dispatched,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ForumState {
+    Open,
+    Curated,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct ForumRound {
+    round: usize,
+    kind: ForumKind,
+    input: ForumInput,
+    panel: Vec<ManifestParticipant>,
+    first_stage_tasks: Vec<String>,
+    cross_review_tasks: Vec<String>,
+    promoted_report_paths: Vec<PathBuf>,
+    started_at: String,
+    completed_at: String,
+    contract_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct ForumManifest {
+    version: u32,
+    forum: String,
+    project: String,
+    source_ref: String,
+    started_at: String,
+    artifact_id: Option<String>,
+    curation_mode: CurationMode,
+    state: ForumState,
+    rounds: Vec<ForumRound>,
+    curation_task: Option<String>,
+    submitted_artifact: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SelfCuratedRoundResult {
+    forum: String,
+    parent_task: String,
+    first_stage_tasks: Vec<String>,
+    cross_review_tasks: Vec<String>,
+    manifest_path: PathBuf,
+    promoted_report_paths: Vec<PathBuf>,
+    contract_path: PathBuf,
+}
+
+enum RunResult {
+    Dispatched(DispatchedRunResult),
+    SelfCurated(SelfCuratedRoundResult),
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum AskResult {
+    Dispatched(DispatchedAskResult),
+    SelfCurated(SelfCuratedAskResult),
+}
+
+#[derive(Serialize)]
+struct SelfCuratedAskResult {
+    forum: String,
+    parent_task: String,
+    extraction_tasks: Vec<String>,
+    cross_review_tasks: Vec<String>,
+    manifest_path: PathBuf,
+    promoted_report_paths: Vec<PathBuf>,
+    contract_path: PathBuf,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum CritiqueResult {
+    Dispatched(DispatchedCritiqueResult),
+    SelfCurated(SelfCuratedCritiqueResult),
+}
+
+#[derive(Serialize)]
+struct SelfCuratedCritiqueResult {
+    forum: String,
+    parent_task: String,
+    critique_tasks: Vec<String>,
+    cross_review_tasks: Vec<String>,
+    manifest_path: PathBuf,
+    promoted_report_paths: Vec<PathBuf>,
+    contract_path: PathBuf,
+}
+
+#[derive(Args, Debug)]
+pub struct CurateArgs {
+    /// Open self-curated forum to submit.
+    #[arg(long)]
+    forum: String,
+    /// Session-authored MDX draft.
+    #[arg(long)]
+    draft: PathBuf,
+    /// Session-authored diagram JSON.
+    #[arg(long)]
+    diagram: PathBuf,
+    /// Invoking session as mode,harness,model,effort.
+    #[arg(long)]
+    identity: String,
+    /// Project id; when supplied it must match the project resolved from cwd.
+    #[arg(long)]
+    project: Option<String>,
+}
+
+#[derive(Serialize)]
+struct CurateResult {
+    forum: String,
+    parent_task: String,
+    curation_task: String,
+    artifact_id: String,
+    manifest_path: PathBuf,
 }
 
 fn parse_duration(raw: &str) -> std::result::Result<Duration, String> {
@@ -409,6 +570,14 @@ fn load_diagram_fields(
         bail!("curator diagram fields contained model-authored SVG");
     }
     let data: Value = serde_json::from_str(&raw).context("parse curator diagram fields")?;
+    parse_diagram_fields(&data, extraction_tasks, review_tasks)
+}
+
+fn parse_diagram_fields(
+    data: &Value,
+    extraction_tasks: &[String],
+    review_tasks: &[String],
+) -> Result<DiagramFields> {
     let object = data
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("curator diagram fields must be a JSON object"))?;
@@ -518,6 +687,116 @@ fn load_diagram_fields(
         reviews,
         curator_summary: clipped(summary, 72),
         headline,
+    })
+}
+
+#[derive(Clone, Debug)]
+struct RoundDiagramFields {
+    round: usize,
+    kind: ForumKind,
+    fields: DiagramFields,
+}
+
+#[derive(Debug)]
+struct MultiRoundDiagramFields {
+    rounds: Vec<RoundDiagramFields>,
+    curator_summary: String,
+    headline: Option<String>,
+}
+
+fn load_multi_round_diagram_fields(
+    path: &Path,
+    rounds: &[ForumRound],
+) -> Result<MultiRoundDiagramFields> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if contains_model_svg(&raw) {
+        bail!("curator diagram fields contained model-authored SVG");
+    }
+    let data: Value = serde_json::from_str(&raw).context("parse curator diagram fields")?;
+    let object = data
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("curator diagram fields must be a JSON object"))?;
+
+    if let Some(entries) = object.get("rounds").and_then(Value::as_array) {
+        if entries.len() != rounds.len() {
+            bail!("diagram rounds must cover every forum round once");
+        }
+        let mut seen = BTreeSet::new();
+        let mut parsed = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let round_number = entry
+                .get("round")
+                .and_then(Value::as_u64)
+                .and_then(|round| usize::try_from(round).ok())
+                .unwrap_or(0);
+            if round_number == 0 || !seen.insert(round_number) {
+                bail!("diagram rounds must use unique positive round numbers");
+            }
+            let expected = rounds
+                .get(round_number - 1)
+                .filter(|round| round.round == round_number)
+                .ok_or_else(|| anyhow::anyhow!("unknown diagram round {round_number}"))?;
+            if value_string(entry, "kind") != Some(expected.kind.slug()) {
+                bail!("diagram round {round_number} kind does not match the manifest");
+            }
+            let mut entry_with_summary = entry.clone();
+            entry_with_summary.as_object_mut().unwrap().insert(
+                "curator_summary".to_string(),
+                Value::String("round".to_string()),
+            );
+            let fields = parse_diagram_fields(
+                &entry_with_summary,
+                &expected.first_stage_tasks,
+                &expected.cross_review_tasks,
+            )?;
+            parsed.push(RoundDiagramFields {
+                round: round_number,
+                kind: expected.kind,
+                fields,
+            });
+        }
+        parsed.sort_by_key(|round| round.round);
+        if parsed
+            .iter()
+            .enumerate()
+            .any(|(index, round)| round.round != index + 1)
+        {
+            bail!("diagram rounds must cover every forum round once");
+        }
+        let summary = object
+            .get("curator_summary")
+            .and_then(Value::as_str)
+            .filter(|summary| !summary.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("curator_summary must be a non-empty string"))?;
+        let headline = object
+            .get("headline")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|headline| !headline.is_empty() && !headline.contains(['\n', '\r']))
+            .map(|headline| clipped(headline, 80));
+        return Ok(MultiRoundDiagramFields {
+            rounds: parsed,
+            curator_summary: clipped(summary, 72),
+            headline,
+        });
+    }
+
+    if rounds.len() != 1 {
+        bail!("multi-round forum diagrams must use the rounds array");
+    }
+    let fields = parse_diagram_fields(
+        &data,
+        &rounds[0].first_stage_tasks,
+        &rounds[0].cross_review_tasks,
+    )?;
+    Ok(MultiRoundDiagramFields {
+        curator_summary: fields.curator_summary.clone(),
+        headline: fields.headline.clone(),
+        rounds: vec![RoundDiagramFields {
+            round: 1,
+            kind: rounds[0].kind,
+            fields,
+        }],
     })
 }
 
@@ -971,6 +1250,341 @@ fn render_pipeline_svg(
     Ok(out)
 }
 
+fn round_reports(round: &ForumRound) -> Result<(Vec<RunReport>, Vec<RunReport>)> {
+    let participants = round
+        .panel
+        .iter()
+        .map(ManifestParticipant::participant)
+        .collect::<Result<Vec<_>>>()?;
+    let count = participants.len();
+    let reports = |tasks: &[String], paths: &[PathBuf]| {
+        participants
+            .iter()
+            .zip(tasks)
+            .zip(paths)
+            .map(|((participant, task), path)| RunReport {
+                participant: participant.clone(),
+                dispatch: Dispatch {
+                    task: task.clone(),
+                    started_tx: String::new(),
+                    participant: participant.clone(),
+                    closed: true,
+                },
+                path: path.clone(),
+            })
+            .collect::<Vec<_>>()
+    };
+    Ok((
+        reports(
+            &round.first_stage_tasks,
+            &round.promoted_report_paths[..count],
+        ),
+        reports(
+            &round.cross_review_tasks,
+            &round.promoted_report_paths[count..],
+        ),
+    ))
+}
+
+fn render_multi_round_svg(
+    rounds: &[ForumRound],
+    curator: &Participant,
+    curator_task: &str,
+    curator_path: &Path,
+    fields: &MultiRoundDiagramFields,
+) -> Result<String> {
+    if rounds.len() < 2 || rounds.len() != fields.rounds.len() {
+        bail!("multi-round diagram requires matching manifest and diagram rounds");
+    }
+    let max_count = rounds
+        .iter()
+        .map(|round| round.panel.len())
+        .max()
+        .unwrap_or(0);
+    if max_count < 2 {
+        bail!("diagram rounds require at least two participants");
+    }
+    let card_width = 252i32;
+    let gap = 30i32;
+    let margin = 32i32;
+    let width = margin * 2 + max_count as i32 * card_width + (max_count as i32 - 1) * gap;
+    let center = width / 2;
+    let round_height = 650i32;
+    let curator_y = 32 + rounds.len() as i32 * round_height;
+    let height = curator_y + 190;
+    let sans = "font-family:-apple-system,'SF Pro Text','Segoe UI',Helvetica,Arial,sans-serif";
+    let mono = "font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace";
+    let border = "rgba(240,230,218,0.13)";
+    let body_style =
+        format!("{sans};font-size:10.5px;font-weight:400;fill:#b9a998;text-anchor:start");
+    let path_style = format!("{mono};font-size:8px;font-weight:400;fill:#8f7f70;text-anchor:start");
+    let stage_style = format!(
+        "{mono};font-size:8px;font-weight:500;fill:#8f7f70;text-anchor:middle;letter-spacing:0.14em"
+    );
+    let mut out = String::new();
+    write!(
+        out,
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Multiple forum rounds converge on one curator\">"
+    )?;
+    write!(
+        out,
+        "<rect x=\"0.5\" y=\"0.5\" width=\"{}\" height=\"{}\" rx=\"16\" fill=\"#241a15\" stroke=\"{border}\"/>",
+        width - 1,
+        height - 1
+    )?;
+    out.push_str("<defs><marker id=\"ah\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0,0 L7,3.5 L0,7 z\" fill=\"#b9a998\"/></marker></defs>");
+
+    for (round, diagram) in rounds.iter().zip(&fields.rounds) {
+        if round.round != diagram.round || round.kind != diagram.kind {
+            bail!("diagram round order does not match the manifest");
+        }
+        let (extraction, reviews) = round_reports(round)?;
+        let count = extraction.len() as i32;
+        let row_width = count * card_width + (count - 1) * gap;
+        let row_left = center - row_width / 2;
+        let xs = (0..count)
+            .map(|index| row_left + index * (card_width + gap))
+            .collect::<Vec<_>>();
+        let centers = xs.iter().map(|x| x + card_width / 2).collect::<Vec<_>>();
+        let top = 32 + (round.round as i32 - 1) * round_height;
+        let prompt_lines = wrap_question(&round.input.diagram_prompt());
+        write!(out, "<g data-round=\"{}\">", round.round)?;
+        write!(
+            out,
+            "<g data-card=\"prompt\" data-round=\"{}\"><rect x=\"{}\" y=\"{top}\" width=\"480\" height=\"88\" rx=\"10\" fill=\"#2c211b\" stroke=\"{border}\"/>",
+            round.round,
+            center - 240
+        )?;
+        out.push_str(&svg_text(
+            center,
+            top + 23,
+            &format!(
+                "ROUND {} · {}",
+                round.round,
+                round.kind.slug().to_uppercase()
+            ),
+            &stage_style,
+            &[],
+        ));
+        out.push_str(&svg_text(
+            center,
+            top + 48,
+            &prompt_lines[0],
+            &format!("{sans};font-size:12px;font-weight:500;fill:#f0e6da;text-anchor:middle"),
+            &[],
+        ));
+        out.push_str(&svg_text(
+            center,
+            top + 66,
+            &prompt_lines[1],
+            &format!("{sans};font-size:12px;font-weight:500;fill:#f0e6da;text-anchor:middle"),
+            &[],
+        ));
+        out.push_str("</g>");
+        for destination in &centers {
+            write!(
+                out,
+                "<path d=\"M{center},{} C{center},{} {destination},{} {destination},{}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.55\" marker-end=\"url(#ah)\"/>",
+                top + 88,
+                top + 114,
+                top + 114,
+                top + 142
+            )?;
+        }
+        out.push_str(&svg_text(
+            center,
+            top + 121,
+            "1 · PARALLEL · ISOLATED",
+            &stage_style,
+            &[],
+        ));
+        for (x, report) in xs.iter().zip(&extraction) {
+            let lines = &diagram.fields.extracts[&report.dispatch.task];
+            write!(
+                out,
+                "<g data-card=\"extract\" data-round=\"{}\" data-task=\"{}\" data-record-path=\"{}\"><rect x=\"{x}\" y=\"{}\" width=\"252\" height=\"190\" rx=\"10\" fill=\"#2c211b\" stroke=\"{border}\"/>",
+                round.round,
+                html_escape(&report.dispatch.task, true),
+                html_escape(&report.path.display().to_string(), true),
+                top + 142
+            )?;
+            write!(
+                out,
+                "<circle cx=\"{}\" cy=\"{}\" r=\"4\" fill=\"{}\"/>",
+                x + 20,
+                top + 166,
+                vendor_color(&report.participant.vendor)
+            )?;
+            out.push_str(&svg_text(
+                x + 32,
+                top + 169,
+                &report.participant.vendor.to_uppercase(),
+                &format!("{mono};font-size:8.5px;font-weight:500;fill:#b9a998;text-anchor:start;letter-spacing:0.12em"),
+                &[],
+            ));
+            out.push_str(&svg_text(
+                x + 18,
+                top + 194,
+                &clipped(&report.participant.model, 32),
+                &format!("{sans};font-size:15px;font-weight:700;fill:#f0e6da;text-anchor:start"),
+                &[],
+            ));
+            out.push_str(&svg_text(
+                x + 18,
+                top + 211,
+                &clipped(&report.dispatch.task, 36),
+                &path_style,
+                &[],
+            ));
+            for (index, line) in lines.iter().take(4).enumerate() {
+                out.push_str(&svg_text(
+                    x + 18,
+                    top + 238 + index as i32 * 17,
+                    line,
+                    &body_style,
+                    &[],
+                ));
+            }
+            out.push_str(&svg_text(
+                x + 18,
+                top + 316,
+                &format!("{}/…/report.md", report.dispatch.task),
+                &path_style,
+                &[],
+            ));
+            out.push_str("</g>");
+        }
+        for (source_index, source) in centers.iter().enumerate() {
+            for (target_index, destination) in centers.iter().enumerate() {
+                if source_index != target_index {
+                    write!(
+                        out,
+                        "<path d=\"M{source},{} C{source},{} {destination},{} {destination},{}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.55\" marker-end=\"url(#ah)\"/>",
+                        top + 332,
+                        top + 365,
+                        top + 365,
+                        top + 398
+                    )?;
+                }
+            }
+        }
+        out.push_str(&svg_text(
+            center,
+            top + 360,
+            "2 · CROSS-REVIEW · NEVER SELF",
+            &stage_style,
+            &[],
+        ));
+        for (x, report) in xs.iter().zip(&reviews) {
+            write!(
+                out,
+                "<g data-card=\"review\" data-round=\"{}\" data-task=\"{}\" data-record-path=\"{}\"><rect x=\"{x}\" y=\"{}\" width=\"252\" height=\"190\" rx=\"10\" fill=\"#2c211b\" stroke=\"{border}\"/>",
+                round.round,
+                html_escape(&report.dispatch.task, true),
+                html_escape(&report.path.display().to_string(), true),
+                top + 398
+            )?;
+            out.push_str(&svg_text(
+                x + 18,
+                top + 428,
+                &clipped(
+                    &format!("{} · {}", report.participant.model, report.dispatch.task),
+                    38,
+                ),
+                &format!("{sans};font-size:13px;font-weight:700;fill:#f0e6da;text-anchor:start"),
+                &[],
+            ));
+            for (index, bullet) in diagram.fields.reviews[&report.dispatch.task]
+                .iter()
+                .enumerate()
+            {
+                let y = top + 458 + index as i32 * 24;
+                out.push_str(&svg_text(
+                    x + 18,
+                    y,
+                    &bullet.tag,
+                    &format!(
+                        "{mono};font-size:10.5px;font-weight:700;fill:#f08a59;text-anchor:start"
+                    ),
+                    &[("data-delta", bullet.tag.as_str())],
+                ));
+                out.push_str(&svg_text(x + 32, y, &bullet.text, &body_style, &[]));
+            }
+            out.push_str(&svg_text(
+                x + 18,
+                top + 574,
+                &format!("{}/…/report.md", report.dispatch.task),
+                &path_style,
+                &[],
+            ));
+            out.push_str("</g>");
+        }
+        for (source, report) in centers.iter().zip(&reviews) {
+            write!(
+                out,
+                "<path data-arrow=\"review-curator\" data-task=\"{}\" d=\"M{source},{} C{source},{} {center},{} {center},{curator_y}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.35\" marker-end=\"url(#ah)\"/>",
+                html_escape(&report.dispatch.task, true),
+                top + 588,
+                top + 620,
+                curator_y - 30
+            )?;
+        }
+        out.push_str("</g>");
+    }
+
+    let curator_x = center - 200;
+    write!(
+        out,
+        "<g data-card=\"curator\" data-task=\"{}\" data-record-path=\"{}\"><rect x=\"{curator_x}\" y=\"{curator_y}\" width=\"400\" height=\"92\" rx=\"10\" fill=\"rgba(240,138,89,0.10)\" stroke=\"#f08a59\" stroke-width=\"1.5\"/>",
+        html_escape(curator_task, true),
+        html_escape(&curator_path.display().to_string(), true)
+    )?;
+    write!(
+        out,
+        "<circle cx=\"{}\" cy=\"{}\" r=\"4\" fill=\"{}\"/>",
+        curator_x + 22,
+        curator_y + 26,
+        vendor_color(&curator.vendor)
+    )?;
+    out.push_str(&svg_text(
+        curator_x + 34,
+        curator_y + 29,
+        &curator.vendor.to_uppercase(),
+        &format!("{mono};font-size:8.5px;font-weight:500;fill:#b9a998;text-anchor:start;letter-spacing:0.12em"),
+        &[],
+    ));
+    out.push_str(&svg_text(
+        curator_x + 18,
+        curator_y + 54,
+        &clipped(&format!("{} · curator", curator.model), 48),
+        &format!("{sans};font-size:14px;font-weight:700;fill:#f0e6da;text-anchor:start"),
+        &[],
+    ));
+    out.push_str(&svg_text(
+        curator_x + 18,
+        curator_y + 74,
+        &fields.curator_summary,
+        &path_style,
+        &[],
+    ));
+    out.push_str("</g>");
+    write!(
+        out,
+        "<g data-pill=\"final-answer\"><rect x=\"{}\" y=\"{}\" width=\"380\" height=\"48\" rx=\"24\" fill=\"#f08a59\"/>",
+        center - 190,
+        curator_y + 112
+    )?;
+    out.push_str(&svg_text(
+        center,
+        curator_y + 141,
+        "FINAL ANSWER",
+        &format!("{sans};font-size:13px;font-weight:800;fill:#241a15;text-anchor:middle;letter-spacing:0.06em"),
+        &[],
+    ));
+    out.push_str("</g></svg>");
+    Ok(out)
+}
+
 fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -1057,6 +1671,41 @@ fn render_about_run(
         "<Section title=\"About this run\">\n<RichText>\n{}\n</RichText>\n<Callout tone=\"warning\">Multi-model synthesis, not verified truth. Verify consequential claims before acting.</Callout>\n</Section>",
         lines.join("\n")
     )
+}
+
+fn render_forum_about_run(manifest: &ForumManifest, curator: &Participant) -> Result<String> {
+    let started = manifest.started_at.get(..16).map_or_else(
+        || manifest.started_at.clone(),
+        |head| head.replace('T', " "),
+    );
+    let mut lines = vec![format!("- **Rounds:** {}", manifest.rounds.len())];
+    for round in &manifest.rounds {
+        let tasks = round
+            .first_stage_tasks
+            .iter()
+            .chain(&round.cross_review_tasks)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines.push(format!(
+            "    - Round {} · {} · {} · {}",
+            round.round,
+            round.kind.slug(),
+            escape_rich_text(&clipped(&round.input.diagram_prompt(), 80)),
+            tasks
+        ));
+        lines.push(format!("      Participants ({}):", round.panel.len()));
+        for participant in &round.panel {
+            let identity = participant.participant()?.identity();
+            lines.push(format!("        - {identity}"));
+        }
+    }
+    lines.push(format!("- **Curator:** {}", curator.identity()));
+    lines.push(format!("- **Started:** {started} UTC"));
+    Ok(format!(
+        "<Section title=\"About this run\">\n<RichText>\n{}\n</RichText>\n<Callout tone=\"warning\">Multi-model synthesis, not verified truth. Verify consequential claims before acting.</Callout>\n</Section>",
+        lines.join("\n")
+    ))
 }
 
 fn assemble_artifact(
@@ -1167,7 +1816,7 @@ fn assemble_artifact(
     }
     let missing_tasks = raw_tasks
         .iter()
-        .filter(|task| !task_is_present(&mdx, task))
+        .filter(|task| !task_is_present(draft, task))
         .collect::<Vec<_>>();
     if !missing_tasks.is_empty() {
         bail!("curator draft omitted raw-report task ids: {missing_tasks:?}");
@@ -1286,6 +1935,278 @@ fn contains_orchestrator_placeholder(value: &str) -> bool {
     ]
     .iter()
     .any(|placeholder| value.contains(placeholder))
+}
+
+fn forum_dir(ledger: &Path) -> PathBuf {
+    project_tmp_dir(ledger).join("forum")
+}
+
+fn forum_manifest_path(ledger: &Path, forum: &str) -> PathBuf {
+    forum_dir(ledger).join(format!("{forum}.json"))
+}
+
+fn validate_forum_id(forum: &str) -> Result<()> {
+    if !is_valid_task_path_id(forum) || forum.contains('.') {
+        bail!("--forum must name a parent task id such as TASK-XXXXX");
+    }
+    Ok(())
+}
+
+fn validate_manifest(manifest: &ForumManifest) -> Result<()> {
+    if manifest.version != 1 {
+        bail!("unsupported forum manifest version {}", manifest.version);
+    }
+    validate_forum_id(&manifest.forum)?;
+    if manifest.project.trim().is_empty()
+        || manifest.source_ref.trim().is_empty()
+        || manifest.started_at.trim().is_empty()
+    {
+        bail!("forum manifest omitted required forum metadata");
+    }
+    if manifest
+        .artifact_id
+        .as_deref()
+        .is_some_and(|id| !is_valid_greenfield_artifact_id(id))
+    {
+        bail!("forum manifest contains an invalid artifact id");
+    }
+    let mut tasks = BTreeSet::new();
+    for (index, round) in manifest.rounds.iter().enumerate() {
+        if round.round != index + 1 || round.kind != round.input.kind() {
+            bail!("forum manifest rounds must be contiguous and match their input kind");
+        }
+        let count = round.panel.len();
+        if count < 2
+            || round.first_stage_tasks.len() != count
+            || round.cross_review_tasks.len() != count
+            || round.promoted_report_paths.len() != count * 2
+        {
+            bail!(
+                "forum manifest round {} has mismatched panel, task, or report counts",
+                round.round
+            );
+        }
+        for participant in &round.panel {
+            participant.participant()?;
+        }
+        // The manifest sits on disk between invocations; re-check what intake
+        // validated so an edited or foreign manifest cannot push unvalidated
+        // input or another forum's task ids into the submitted artifact.
+        match &round.input {
+            ForumInput::Ask { question } => validate_question(question)
+                .with_context(|| format!("forum manifest round {} question", round.round))?,
+            ForumInput::Critique { target, focus, .. } => {
+                validate_target(target)
+                    .with_context(|| format!("forum manifest round {} target", round.round))?;
+                if let Some(focus) = focus {
+                    validate_focus(focus)
+                        .with_context(|| format!("forum manifest round {} focus", round.round))?;
+                }
+            }
+        }
+        for task in round
+            .first_stage_tasks
+            .iter()
+            .chain(&round.cross_review_tasks)
+        {
+            if !is_valid_task_path_id(task) || !task.starts_with(&format!("{}.", manifest.forum)) {
+                bail!(
+                    "forum manifest round {} contains task {task} that does not belong to {}",
+                    round.round,
+                    manifest.forum
+                );
+            }
+            if !tasks.insert(task) {
+                bail!("forum manifest repeats task {task}");
+            }
+        }
+        if round
+            .promoted_report_paths
+            .iter()
+            .any(|path| path.as_os_str().is_empty())
+        {
+            bail!(
+                "forum manifest round {} contains an empty report path",
+                round.round
+            );
+        }
+    }
+    Ok(())
+}
+
+fn read_manifest(path: &Path) -> Result<ForumManifest> {
+    let manifest: ForumManifest = serde_json::from_str(
+        &std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .with_context(|| format!("parse {}", path.display()))?;
+    validate_manifest(&manifest).with_context(|| format!("validate {}", path.display()))?;
+    Ok(manifest)
+}
+
+fn write_manifest(path: &Path, manifest: &ForumManifest) -> Result<()> {
+    validate_manifest(manifest)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("manifest path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("create temporary manifest in {}", parent.display()))?;
+    std::io::Write::write_all(&mut tmp, &serde_json::to_vec_pretty(manifest)?)?;
+    tmp.persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("replace {}", path.display()))?;
+    Ok(())
+}
+
+fn validate_join_request(
+    forum: &str,
+    project: &str,
+    explicit_curator: bool,
+    manifest: Option<&ForumManifest>,
+    parent_state: Option<&str>,
+) -> Result<()> {
+    validate_forum_id(forum)?;
+    if explicit_curator {
+        bail!("--forum cannot be combined with --curator");
+    }
+    let manifest = manifest.ok_or_else(|| anyhow::anyhow!("unknown forum {forum}"))?;
+    if manifest.forum != forum || manifest.project != project {
+        bail!("forum {forum} belongs to a different project");
+    }
+    if manifest.curation_mode == CurationMode::Dispatched {
+        bail!("forum {forum} was created with a dispatched curator");
+    }
+    if manifest.state == ForumState::Curated {
+        bail!("forum {forum} is already curated");
+    }
+    if manifest.curation_task.is_some() {
+        bail!(
+            "forum {forum} already reserved its curation task; finish `orgasmic forum curate` instead of adding rounds"
+        );
+    }
+    match parent_state {
+        Some("backlog" | "todo" | "in_progress" | "in_review") => Ok(()),
+        Some(state) => bail!("forum {forum} parent is not open ({state})"),
+        None => bail!("forum {forum} parent task is unknown"),
+    }
+}
+
+fn next_task_ordinal(manifest: &ForumManifest) -> usize {
+    manifest
+        .rounds
+        .iter()
+        .flat_map(|round| {
+            round
+                .first_stage_tasks
+                .iter()
+                .chain(&round.cross_review_tasks)
+        })
+        .filter_map(|task| task.rsplit_once('.'))
+        .filter_map(|(_, ordinal)| ordinal.parse::<usize>().ok())
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+fn markdown_heading(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_start();
+    let marks = trimmed.chars().take_while(|ch| *ch == '#').count();
+    (marks > 0 && trimmed.as_bytes().get(marks) == Some(&b' '))
+        .then(|| (marks, trimmed[marks + 1..].trim()))
+}
+
+fn without_completion_section(compiled: &str) -> Result<String> {
+    let lines = compiled.lines().collect::<Vec<_>>();
+    let (start, level) = lines
+        .iter()
+        .enumerate()
+        .find_map(|(index, line)| {
+            markdown_heading(line)
+                .filter(|(_, title)| *title == "Completion")
+                .map(|(level, _)| (index, level))
+        })
+        .ok_or_else(|| anyhow::anyhow!("compiled curator contract omitted Completion section"))?;
+    let end = lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find_map(|(index, line)| {
+            markdown_heading(line)
+                .filter(|(next_level, _)| *next_level <= level)
+                .map(|_| index)
+        })
+        .unwrap_or(lines.len());
+    let mut kept = lines[..start]
+        .iter()
+        .chain(&lines[end..])
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    kept.push('\n');
+    Ok(kept)
+}
+
+fn self_curation_manifest(manifest: &ForumManifest) -> Result<String> {
+    let mut text = format!(
+        "Forum: {}\nStarted UTC: {}\nRounds: {}\n",
+        manifest.forum,
+        manifest.started_at,
+        manifest.rounds.len()
+    );
+    for round in &manifest.rounds {
+        writeln!(
+            text,
+            "\nRound {} · {}\nInput: {}\nParticipants:",
+            round.round,
+            round.kind.slug(),
+            round.input.short_label()
+        )?;
+        for participant in &round.panel {
+            writeln!(text, "- {}", participant.participant()?.identity())?;
+        }
+        let count = round.panel.len();
+        for (task, path) in round
+            .first_stage_tasks
+            .iter()
+            .chain(&round.cross_review_tasks)
+            .zip(&round.promoted_report_paths)
+        {
+            writeln!(text, "- Task: {task}\n  Report: {}", path.display())?;
+        }
+        debug_assert_eq!(round.promoted_report_paths.len(), count * 2);
+    }
+    Ok(text)
+}
+
+fn compile_self_contract(api: &Api, manifest: &ForumManifest, contract_path: &Path) -> Result<()> {
+    let first = manifest
+        .rounds
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("cannot compile a contract for a forum without rounds"))?;
+    let mut values = first.input.prompt_values();
+    values.insert(
+        "dispatch.brief".to_string(),
+        self_curation_manifest(manifest)?,
+    );
+    values.insert("task.id".to_string(), manifest.forum.clone());
+    let compiled = api.compile_prompt(first.kind.curator_spec(), values)?;
+    // The dispatched-curator specs list a curation task id the session never
+    // has; neutralize that clause so the contract carries one instruction.
+    let mut contract = without_completion_section(&compiled)?
+        .replace(
+            "every extraction, cross-review, and curation task id",
+            "every extraction and cross-review task id",
+        )
+        .replace(
+            "every critique, cross-review, and curation task id",
+            "every critique and cross-review task id",
+        );
+    contract.push_str(
+        "\n# Self-curated forum submission\n\nThe invoking session, not a dispatch, performs curation. Discuss and iterate before writing the two files, then pass them to `orgasmic forum curate`; do not run `dispatch finalize`. In the draft's Raw reports list, include every first-stage and cross-review task from every manifest round; do not invent a curation task id, because the CLI mints it after the draft passes its gates. For more than one round, the diagram JSON replaces the legacy top-level `extracts` and `reviews` with:\n\n```json\n{\n  \"rounds\": [\n    {\"round\": 1, \"kind\": \"ask\", \"extracts\": [...], \"reviews\": [...]},\n    {\"round\": 2, \"kind\": \"critique\", \"extracts\": [...], \"reviews\": [...]}\n  ],\n  \"curator_summary\": \"short synthesis summary\",\n  \"headline\": \"short artifact title\"\n}\n```\n\nInclude every manifest round in order and every task exactly once in its own round. The first round controls the draft's verbatim first section and required section shape.\n",
+    );
+    std::fs::write(contract_path, contract)
+        .with_context(|| format!("write {}", contract_path.display()))?;
+    Ok(())
 }
 
 fn read_target(path: &Path) -> Result<String> {
@@ -1702,19 +2623,26 @@ fn mark_closed(active: &mut [Dispatch], closed: &Dispatch) {
 fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult> {
     let RunArgs {
         participant,
-        curator: curator_index,
-        source_ref,
+        curator: curator_arg,
+        forum,
+        source_ref: requested_source_ref,
         artifact_id,
         project: requested_project,
         timeout,
     } = args;
+    if forum.is_some() && curator_arg.is_some() {
+        bail!("--forum cannot be combined with --curator");
+    }
     let kind = input.kind();
     let participants = participant
         .iter()
         .map(|raw| parse_participant(raw))
         .collect::<Result<Vec<_>>>()?;
     validate_participants(&participants)?;
-    let curator = resolve_curator(&participants, &curator_index)?;
+    let curator = curator_arg
+        .as_deref()
+        .map(|raw| resolve_curator(&participants, raw))
+        .transpose()?;
     if artifact_id
         .as_deref()
         .is_some_and(|id| !is_valid_greenfield_artifact_id(id))
@@ -1739,60 +2667,114 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
         .map(|entry| entry.branch)
         .filter(|branch| !branch.is_empty())
         .unwrap_or_else(|| "main".to_string());
-    let source_ref = match source_ref {
-        Some(source_ref) => source_ref,
-        None => {
-            let branch = git_output(&["branch", "--show-current"])?;
-            if branch == project {
-                default_branch
-            } else {
-                git_output(&["rev-parse", "HEAD"])?
-            }
-        }
-    };
     let api = Api::new(home, project.clone(), kind)?;
-    let started_at = chrono::Utc::now().to_rfc3339();
+    let round_started_at = chrono::Utc::now().to_rfc3339();
     let roster = participants
         .iter()
         .map(Participant::identity)
         .collect::<Vec<_>>()
         .join(" — ");
-    let parent = mint_node_id_for_class(NodeIdClass::Task);
-    let (parent_description, parent_acceptance) = match &input {
-        ForumInput::Ask { question } => (
-            format!(
-                "Question: {}\n\nParticipants: {roster}",
-                question.split_whitespace().collect::<Vec<_>>().join(" ")
+    let (parent, manifest_path, mut manifest, source_ref) = if let Some(forum) = forum {
+        validate_forum_id(&forum)?;
+        let path = forum_manifest_path(&ledger, &forum);
+        let loaded = path.is_file().then(|| read_manifest(&path)).transpose()?;
+        let parent_state = loaded
+            .as_ref()
+            .map(|_| api.task_state(&forum))
+            .transpose()?;
+        validate_join_request(
+            &forum,
+            &project,
+            curator.is_some(),
+            loaded.as_ref(),
+            parent_state.as_deref(),
+        )?;
+        let manifest = loaded.unwrap();
+        if requested_source_ref
+            .as_deref()
+            .is_some_and(|source| source != manifest.source_ref)
+        {
+            bail!("--from must match the forum's original source ref");
+        }
+        if artifact_id
+            .as_deref()
+            .is_some_and(|artifact| Some(artifact) != manifest.artifact_id.as_deref())
+        {
+            bail!("--artifact-id must match the forum's original override");
+        }
+        let source_ref = manifest.source_ref.clone();
+        (forum, path, manifest, source_ref)
+    } else {
+        let source_ref = match requested_source_ref {
+            Some(source_ref) => source_ref,
+            None => {
+                let branch = git_output(&["branch", "--show-current"])?;
+                if branch == project {
+                    default_branch
+                } else {
+                    git_output(&["rev-parse", "HEAD"])?
+                }
+            }
+        };
+        let parent = mint_node_id_for_class(NodeIdClass::Task);
+        let (parent_description, parent_acceptance) = match &input {
+            ForumInput::Ask { question } => (
+                format!(
+                    "Question: {}\n\nParticipants: {roster}",
+                    question.split_whitespace().collect::<Vec<_>>().join(" ")
+                ),
+                "All extraction and blind-review reports are promoted and one curated artifact is submitted.",
             ),
-            "All extraction and blind-review reports are promoted and one curated artifact is submitted.",
-        ),
-        ForumInput::Critique {
-            target,
-            focus,
-            basename,
-        } => (
-            format!(
-                "Target: {basename} ({} bytes)\nFocus: {}\n\nParticipants: {roster}",
-                target.len(),
-                focus.as_deref().unwrap_or("(none)")
+            ForumInput::Critique {
+                target,
+                focus,
+                basename,
+            } => (
+                format!(
+                    "Target: {basename} ({} bytes)\nFocus: {}\n\nParticipants: {roster}",
+                    target.len(),
+                    focus.as_deref().unwrap_or("(none)")
+                ),
+                "All critique and blind-review reports are promoted and one curated verdict artifact is submitted.",
             ),
-            "All critique and blind-review reports are promoted and one curated verdict artifact is submitted.",
-        ),
+        };
+        api.create_task(
+            &parent,
+            input.fallback_title(),
+            &parent_description,
+            parent_acceptance,
+            "named promoted dispatch reports",
+            "orgasmic tasks and artifact store via CLI only",
+        )?;
+        api.update_task_state(
+            &parent,
+            "in_progress",
+            &format!("forum {} started", kind.slug()),
+        )?;
+        let path = forum_manifest_path(&ledger, &parent);
+        let manifest = ForumManifest {
+            version: 1,
+            forum: parent.clone(),
+            project: project.clone(),
+            source_ref: source_ref.clone(),
+            started_at: round_started_at.clone(),
+            artifact_id: artifact_id.clone(),
+            curation_mode: if curator.is_some() {
+                CurationMode::Dispatched
+            } else {
+                CurationMode::SelfCurated
+            },
+            state: ForumState::Open,
+            rounds: Vec::new(),
+            curation_task: None,
+            submitted_artifact: None,
+        };
+        write_manifest(&path, &manifest)?;
+        eprintln!("parent_task={parent}");
+        (parent, path, manifest, source_ref)
     };
-    api.create_task(
-        &parent,
-        input.fallback_title(),
-        &parent_description,
-        parent_acceptance,
-        "named promoted dispatch reports",
-        "orgasmic tasks and artifact store via CLI only",
-    )?;
-    api.update_task_state(
-        &parent,
-        "in_progress",
-        &format!("forum {} started", kind.slug()),
-    )?;
-    eprintln!("parent_task={parent}");
+    let round_number = manifest.rounds.len() + 1;
+    let first_ordinal = next_task_ordinal(&manifest);
 
     let mut active = Vec::new();
     let mut extraction = Vec::new();
@@ -1829,7 +2811,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                 ),
             };
         for (index, participant) in participants.iter().enumerate() {
-            let ordinal = index + 1;
+            let ordinal = first_ordinal + index;
             let task = format!("{parent}.{ordinal}");
             api.create_task(
                 &task,
@@ -1845,10 +2827,17 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                 participant,
                 &extract_brief,
                 &source_ref,
-                format!(
-                    "mm-{}-{stage_branch}-{ordinal}",
-                    parent.trim_start_matches("TASK-").to_ascii_lowercase()
-                ),
+                if curator.is_some() {
+                    format!(
+                        "mm-{}-{stage_branch}-{ordinal}",
+                        parent.trim_start_matches("TASK-").to_ascii_lowercase()
+                    )
+                } else {
+                    format!(
+                        "mm-{}-r{round_number}-{stage_branch}-{ordinal}",
+                        parent.trim_start_matches("TASK-").to_ascii_lowercase()
+                    )
+                },
                 stage_reason,
             )?;
             active.push(dispatch.clone());
@@ -1867,8 +2856,8 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
 
         let mut review_dispatches = Vec::new();
         for (index, participant) in participants.iter().enumerate() {
-            let ordinal = index + 1;
-            let task = format!("{parent}.{}", participants.len() + ordinal);
+            let ordinal = first_ordinal + participants.len() + index;
+            let task = format!("{parent}.{ordinal}");
             let report_manifest = extraction
                 .iter()
                 .enumerate()
@@ -1914,10 +2903,17 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                 participant,
                 &review_brief,
                 &source_ref,
-                format!(
-                    "mm-{}-review-{ordinal}",
-                    parent.trim_start_matches("TASK-").to_ascii_lowercase()
-                ),
+                if curator.is_some() {
+                    format!(
+                        "mm-{}-review-{ordinal}",
+                        parent.trim_start_matches("TASK-").to_ascii_lowercase()
+                    )
+                } else {
+                    format!(
+                        "mm-{}-r{round_number}-review-{ordinal}",
+                        parent.trim_start_matches("TASK-").to_ascii_lowercase()
+                    )
+                },
                 "blind cross-review of other model reports",
             )?;
             active.push(dispatch.clone());
@@ -1934,9 +2930,64 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
             });
         }
 
-        let curator_task = format!("{parent}.{}", 2 * participants.len() + 1);
+        let extraction_tasks = extraction
+            .iter()
+            .map(|report| report.dispatch.task.clone())
+            .collect::<Vec<_>>();
+        let review_tasks = reviews
+            .iter()
+            .map(|report| report.dispatch.task.clone())
+            .collect::<Vec<_>>();
+        let promoted_report_paths = extraction
+            .iter()
+            .chain(&reviews)
+            .map(|report| report.path.clone())
+            .collect::<Vec<_>>();
+        let contract_path = (curator.is_none()).then(|| {
+            forum_dir(&ledger).join(format!(
+                "{parent}-round-{round_number}-curation-contract.md"
+            ))
+        });
+        manifest.rounds.push(ForumRound {
+            round: round_number,
+            kind,
+            input: input.clone(),
+            panel: participants.iter().map(ManifestParticipant::from).collect(),
+            first_stage_tasks: extraction_tasks.clone(),
+            cross_review_tasks: review_tasks.clone(),
+            promoted_report_paths: promoted_report_paths.clone(),
+            started_at: round_started_at.clone(),
+            completed_at: chrono::Utc::now().to_rfc3339(),
+            contract_path: contract_path.clone(),
+        });
+        if let Some(contract_path) = &contract_path {
+            std::fs::create_dir_all(forum_dir(&ledger))?;
+            compile_self_contract(&api, &manifest, contract_path)?;
+        }
+        write_manifest(&manifest_path, &manifest)?;
+
+        if let Some(contract_path) = contract_path {
+            eprintln!("forum_manifest={}", manifest_path.display());
+            eprintln!("curation_contract={}", contract_path.display());
+            for path in &promoted_report_paths {
+                eprintln!("promoted_report={}", path.display());
+            }
+            return Ok(RunResult::SelfCurated(SelfCuratedRoundResult {
+                forum: parent.clone(),
+                parent_task: parent.clone(),
+                first_stage_tasks: extraction_tasks,
+                cross_review_tasks: review_tasks,
+                manifest_path: manifest_path.clone(),
+                promoted_report_paths,
+                contract_path,
+            }));
+        }
+
+        let curator = curator.as_ref().expect("dispatched curator is present");
+        let curator_task = format!("{parent}.{}", next_task_ordinal(&manifest));
         let run_manifest = format!(
-            "Parent task: {parent}\nStarted UTC: {started_at}\nParticipants ({}):\n{}\nCurator: {}\n\n{}\n\n{}\n\nCuration task: {curator_task}",
+            "Parent task: {parent}\nStarted UTC: {}\nParticipants ({}):\n{}\nCurator: {}\n\n{}\n\n{}\n\nCuration task: {curator_task}",
+            manifest.started_at,
             participants.len(),
             participants
                 .iter()
@@ -1993,7 +3044,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
         let mut curator_dispatch = launch(
             home,
             &curator_task,
-            &curator,
+            curator,
             &curator_brief,
             &source_ref,
             format!(
@@ -2016,20 +3067,12 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                 fields_path.is_file()
             );
         }
-        let extraction_tasks = extraction
-            .iter()
-            .map(|report| report.dispatch.task.clone())
-            .collect::<Vec<_>>();
-        let review_tasks = reviews
-            .iter()
-            .map(|report| report.dispatch.task.clone())
-            .collect::<Vec<_>>();
         let fields = load_diagram_fields(&fields_path, &extraction_tasks, &review_tasks)?;
         let svg = render_pipeline_svg(
             &input.diagram_prompt(),
             &extraction,
             &reviews,
-            &curator,
+            curator,
             &curator_task,
             &curator_report_path,
             &fields,
@@ -2042,7 +3085,8 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
             .collect::<Vec<_>>();
         let draft = std::fs::read_to_string(&draft_path)
             .with_context(|| format!("read {}", draft_path.display()))?;
-        let about_run = render_about_run(kind, &extraction, &reviews, &curator, &started_at);
+        let about_run =
+            render_about_run(kind, &extraction, &reviews, curator, &manifest.started_at);
         let mdx = assemble_artifact(&draft, &input, &svg, &about_run, &raw_tasks)?;
         let artifact = artifact_id
             .clone()
@@ -2072,13 +3116,17 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
             ),
         )?;
         api.finish_task(&parent)?;
-        Ok(RunResult {
+        manifest.state = ForumState::Curated;
+        manifest.curation_task = Some(curator_task.clone());
+        manifest.submitted_artifact = Some(artifact.clone());
+        write_manifest(&manifest_path, &manifest)?;
+        Ok(RunResult::Dispatched(DispatchedRunResult {
             parent_task: parent.clone(),
             first_stage_tasks: extraction_tasks,
             cross_review_tasks: review_tasks,
             curation_task: curator_task,
             artifact_id: artifact,
-        })
+        }))
     })();
 
     if let Err(error) = &result {
@@ -2102,12 +3150,23 @@ fn run_ask(home: &Home, args: AskArgs) -> Result<AskResult> {
     let question = question.trim().to_string();
     validate_question(&question)?;
     let result = run_forum(home, ForumInput::Ask { question }, args.run)?;
-    Ok(AskResult {
-        parent_task: result.parent_task,
-        extraction_tasks: result.first_stage_tasks,
-        cross_review_tasks: result.cross_review_tasks,
-        curation_task: result.curation_task,
-        artifact_id: result.artifact_id,
+    Ok(match result {
+        RunResult::Dispatched(result) => AskResult::Dispatched(DispatchedAskResult {
+            parent_task: result.parent_task,
+            extraction_tasks: result.first_stage_tasks,
+            cross_review_tasks: result.cross_review_tasks,
+            curation_task: result.curation_task,
+            artifact_id: result.artifact_id,
+        }),
+        RunResult::SelfCurated(result) => AskResult::SelfCurated(SelfCuratedAskResult {
+            forum: result.forum,
+            parent_task: result.parent_task,
+            extraction_tasks: result.first_stage_tasks,
+            cross_review_tasks: result.cross_review_tasks,
+            manifest_path: result.manifest_path,
+            promoted_report_paths: result.promoted_report_paths,
+            contract_path: result.contract_path,
+        }),
     })
 }
 
@@ -2143,12 +3202,184 @@ fn run_critique(home: &Home, args: CritiqueArgs) -> Result<CritiqueResult> {
         },
         args.run,
     )?;
-    Ok(CritiqueResult {
-        parent_task: result.parent_task,
-        critique_tasks: result.first_stage_tasks,
-        cross_review_tasks: result.cross_review_tasks,
-        curation_task: result.curation_task,
-        artifact_id: result.artifact_id,
+    Ok(match result {
+        RunResult::Dispatched(result) => CritiqueResult::Dispatched(DispatchedCritiqueResult {
+            parent_task: result.parent_task,
+            critique_tasks: result.first_stage_tasks,
+            cross_review_tasks: result.cross_review_tasks,
+            curation_task: result.curation_task,
+            artifact_id: result.artifact_id,
+        }),
+        RunResult::SelfCurated(result) => CritiqueResult::SelfCurated(SelfCuratedCritiqueResult {
+            forum: result.forum,
+            parent_task: result.parent_task,
+            critique_tasks: result.first_stage_tasks,
+            cross_review_tasks: result.cross_review_tasks,
+            manifest_path: result.manifest_path,
+            promoted_report_paths: result.promoted_report_paths,
+            contract_path: result.contract_path,
+        }),
+    })
+}
+
+fn run_curate(home: &Home, args: CurateArgs) -> Result<CurateResult> {
+    validate_forum_id(&args.forum)?;
+    let curator = parse_participant(&args.identity).context("--identity participant spec")?;
+    let ledger = manager::find_project_root()?;
+    let project = manager::read_project_id(&ledger)?;
+    if args
+        .project
+        .as_deref()
+        .is_some_and(|requested| requested != project)
+    {
+        bail!(
+            "--project {} does not match current orgasmic project {project}",
+            args.project.unwrap()
+        );
+    }
+    let manifest_path = forum_manifest_path(&ledger, &args.forum);
+    let manifest = manifest_path
+        .is_file()
+        .then(|| read_manifest(&manifest_path))
+        .transpose()?;
+    let kind = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.rounds.first())
+        .map(|round| round.kind)
+        .unwrap_or(ForumKind::Ask);
+    let api = Api::new(home, project.clone(), kind)?;
+    let parent_state = manifest
+        .as_ref()
+        .map(|_| api.task_state(&args.forum))
+        .transpose()?;
+    validate_join_request(
+        &args.forum,
+        &project,
+        false,
+        manifest.as_ref(),
+        parent_state.as_deref(),
+    )?;
+    let mut manifest = manifest.unwrap();
+    if manifest.rounds.is_empty() {
+        bail!("forum {} has no completed rounds", args.forum);
+    }
+    if !args.draft.is_file() || !args.diagram.is_file() {
+        bail!(
+            "curator outputs missing: draft={} diagram={}",
+            args.draft.is_file(),
+            args.diagram.is_file()
+        );
+    }
+
+    let fields = load_multi_round_diagram_fields(&args.diagram, &manifest.rounds)?;
+    // Reuse ids reserved by an earlier failed attempt so a retry cannot mint a
+    // colliding curation task or orphan a second artifact.
+    let curator_task = manifest
+        .curation_task
+        .clone()
+        .unwrap_or_else(|| format!("{}.{}", manifest.forum, next_task_ordinal(&manifest)));
+    let first = manifest.rounds.first().unwrap();
+    // A session curation has no dispatch and no report file, so even a
+    // one-round forum renders through the multi-round card, which does not
+    // print a curator report path.
+    let svg = render_multi_round_svg(
+        &manifest.rounds,
+        &curator,
+        &curator_task,
+        &args.draft,
+        &fields,
+    )?;
+    let raw_tasks = manifest
+        .rounds
+        .iter()
+        .flat_map(|round| {
+            round
+                .first_stage_tasks
+                .iter()
+                .chain(&round.cross_review_tasks)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let draft = std::fs::read_to_string(&args.draft)
+        .with_context(|| format!("read {}", args.draft.display()))?;
+    let about_run = render_forum_about_run(&manifest, &curator)?;
+    let mdx = assemble_artifact(&draft, &first.input, &svg, &about_run, &raw_tasks)?;
+    let artifact = manifest
+        .artifact_id
+        .clone()
+        .or_else(|| manifest.submitted_artifact.clone())
+        .unwrap_or_else(|| mint_node_id_for_class(NodeIdClass::Artifact));
+    let title = fields
+        .headline
+        .clone()
+        .unwrap_or_else(|| first.input.fallback_title());
+    // Persist the reservation before the first daemon mutation; a retry after
+    // any later failure replays the same task and artifact ids.
+    let fresh_curation = manifest.curation_task.is_none();
+    manifest.curation_task = Some(curator_task.clone());
+    manifest.submitted_artifact = Some(artifact.clone());
+    write_manifest(&manifest_path, &manifest)?;
+    // The body carries no volatile file paths, so a retried create replays the
+    // same request identically; the paths land in evidence below.
+    let create_result = api.create_task(
+        &curator_task,
+        format!("Curate forum — {}", curator.identity()),
+        &format!("Invoking session identity: {}", curator.identity()),
+        "The session-authored draft and diagram pass the forum's curation gates and one artifact is submitted.",
+        "all promoted reports named in the forum manifest",
+        "session-authored draft and diagram; orgasmic task evidence and artifact store via CLI only",
+    );
+    match create_result {
+        Ok(()) => {
+            api.update_task_state(
+                &curator_task,
+                "in_progress",
+                "invoking session began forum curation",
+            )?;
+        }
+        Err(error) if !fresh_curation => {
+            eprintln!("reusing curation task {curator_task} from an earlier attempt: {error:#}");
+        }
+        Err(error) => return Err(error),
+    }
+    api.submit_artifact(
+        &artifact,
+        mdx,
+        title,
+        &manifest.forum,
+        first.input.content(),
+    )?;
+
+    api.set_evidence(
+        &curator_task,
+        &format!(
+            "- Session curator: {}\n- Draft: {}\n- Diagram JSON: {}\n- Artifact: {artifact}\n",
+            curator.identity(),
+            args.draft.display(),
+            args.diagram.display()
+        ),
+    )?;
+    api.finish_task(&curator_task)?;
+    api.set_evidence(
+        &manifest.forum,
+        &format!(
+            "- Artifact: {artifact}\n- Forum rounds: {}\n- Raw report tasks: {}\n- Curation task: {curator_task}\n- Curator: {}\n",
+            manifest.rounds.len(),
+            raw_tasks.join(" "),
+            curator.identity()
+        ),
+    )?;
+    api.finish_task(&manifest.forum)?;
+    manifest.state = ForumState::Curated;
+    manifest.curation_task = Some(curator_task.clone());
+    manifest.submitted_artifact = Some(artifact.clone());
+    write_manifest(&manifest_path, &manifest)?;
+    Ok(CurateResult {
+        forum: manifest.forum.clone(),
+        parent_task: manifest.forum,
+        curation_task: curator_task,
+        artifact_id: artifact,
+        manifest_path,
     })
 }
 
@@ -2164,6 +3395,8 @@ enum ForumMode {
     Ask(AskArgs),
     /// Critique a target through independent analysis, blind cross-review, and curation.
     Critique(CritiqueArgs),
+    /// Validate and submit an invoking session's self-curated forum artifact.
+    Curate(CurateArgs),
 }
 
 pub fn run(home: &Home, args: ForumArgs) -> Result<()> {
@@ -2174,6 +3407,10 @@ pub fn run(home: &Home, args: ForumArgs) -> Result<()> {
         ForumMode::Critique(args) => println!(
             "{}",
             serde_json::to_string_pretty(&run_critique(home, args)?)?
+        ),
+        ForumMode::Curate(args) => println!(
+            "{}",
+            serde_json::to_string_pretty(&run_curate(home, args)?)?
         ),
     }
     Ok(())
@@ -2271,6 +3508,97 @@ mod tests {
         }
     }
 
+    fn manifest_round(round: usize, kind: ForumKind, first_ordinal: usize) -> ForumRound {
+        let panel = [
+            parse_participant("stdio,codex,gpt-5.6-luna,low").unwrap(),
+            parse_participant("stdio,hermes,google/gemini-3.7-flash,medium").unwrap(),
+        ];
+        let input = match kind {
+            ForumKind::Ask => ForumInput::Ask {
+                question: format!("Question for round {round}?"),
+            },
+            ForumKind::Critique => ForumInput::Critique {
+                target: format!("# Target for round {round}"),
+                focus: Some("durability".to_string()),
+                basename: "design.md".to_string(),
+            },
+        };
+        let first_stage_tasks = (first_ordinal..first_ordinal + 2)
+            .map(|ordinal| format!("TASK-TESTX.{ordinal}"))
+            .collect::<Vec<_>>();
+        let cross_review_tasks = (first_ordinal + 2..first_ordinal + 4)
+            .map(|ordinal| format!("TASK-TESTX.{ordinal}"))
+            .collect::<Vec<_>>();
+        let promoted_report_paths = first_stage_tasks
+            .iter()
+            .chain(&cross_review_tasks)
+            .map(|task| PathBuf::from(format!("/ledger/.orgasmic/tasks/{task}/report.md")))
+            .collect();
+        ForumRound {
+            round,
+            kind,
+            input,
+            panel: panel.iter().map(ManifestParticipant::from).collect(),
+            first_stage_tasks,
+            cross_review_tasks,
+            promoted_report_paths,
+            started_at: format!("2026-08-30T0{round}:00:00+00:00"),
+            completed_at: format!("2026-08-30T0{round}:10:00+00:00"),
+            contract_path: Some(PathBuf::from(format!(
+                "/ledger/.orgasmic/tmp/forum/TASK-TESTX-round-{round}-contract.md"
+            ))),
+        }
+    }
+
+    fn mixed_manifest() -> ForumManifest {
+        ForumManifest {
+            version: 1,
+            forum: "TASK-TESTX".to_string(),
+            project: "orgasmic".to_string(),
+            source_ref: "deadbeef".to_string(),
+            started_at: "2026-08-30T01:00:00+00:00".to_string(),
+            artifact_id: None,
+            curation_mode: CurationMode::SelfCurated,
+            state: ForumState::Open,
+            rounds: vec![
+                manifest_round(1, ForumKind::Ask, 1),
+                manifest_round(2, ForumKind::Critique, 5),
+            ],
+            curation_task: None,
+            submitted_artifact: None,
+        }
+    }
+
+    fn multi_diagram_json(manifest: &ForumManifest) -> Value {
+        let rounds = manifest
+            .rounds
+            .iter()
+            .map(|round| {
+                serde_json::json!({
+                    "round": round.round,
+                    "kind": round.kind.slug(),
+                    "extracts": round.first_stage_tasks.iter().map(|task| serde_json::json!({
+                        "task": task,
+                        "excerpt_lines": [format!("finding from {task}")]
+                    })).collect::<Vec<_>>(),
+                    "reviews": round.cross_review_tasks.iter().map(|task| serde_json::json!({
+                        "task": task,
+                        "delta_bullets": [
+                            {"tag": "?", "text": format!("challenge from {task}")},
+                            {"tag": "+", "text": format!("addition from {task}")},
+                            {"tag": "=", "text": format!("agreement from {task}")}
+                        ]
+                    })).collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "rounds": rounds,
+            "curator_summary": "two rounds synthesized",
+            "headline": "Durable forum synthesis"
+        })
+    }
+
     #[test]
     fn participant_and_question_validation_match_the_script() {
         let codex = parse_participant("stdio,codex,gpt-5.6-luna,low").unwrap();
@@ -2306,6 +3634,118 @@ mod tests {
                 "question must be rejected up front: {rejected}"
             );
         }
+    }
+
+    #[test]
+    fn manifest_round_trip_preserves_mixed_rounds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("forum/TASK-TESTX.json");
+        let manifest = mixed_manifest();
+        write_manifest(&path, &manifest).unwrap();
+        assert_eq!(read_manifest(&path).unwrap(), manifest);
+        assert_eq!(next_task_ordinal(&manifest), 9);
+    }
+
+    #[test]
+    fn manifest_validation_rejects_foreign_tasks_and_unvalidated_input() {
+        let mut foreign = mixed_manifest();
+        foreign.rounds[1].cross_review_tasks[1] = "TASK-OTHER.8".to_string();
+        assert!(validate_manifest(&foreign)
+            .unwrap_err()
+            .to_string()
+            .contains("does not belong to TASK-TESTX"));
+
+        let mut junk = mixed_manifest();
+        junk.rounds[0].first_stage_tasks[0] = "not-a-task-id".to_string();
+        assert!(validate_manifest(&junk)
+            .unwrap_err()
+            .to_string()
+            .contains("does not belong to TASK-TESTX"));
+
+        let mut smuggled = mixed_manifest();
+        smuggled.rounds[0].input = ForumInput::Ask {
+            question: format!("hide {DIAGRAM_PLACEHOLDER} here"),
+        };
+        assert!(validate_manifest(&smuggled)
+            .unwrap_err()
+            .to_string()
+            .contains("round 1 question"));
+
+        let mut oversized = mixed_manifest();
+        oversized.rounds[1].input = ForumInput::Critique {
+            target: "x".repeat(MAX_TARGET_BYTES + 1),
+            focus: None,
+            basename: "design.md".to_string(),
+        };
+        assert!(validate_manifest(&oversized)
+            .unwrap_err()
+            .to_string()
+            .contains("round 2 target"));
+    }
+
+    #[test]
+    fn forum_join_refusal_matrix_is_explicit() {
+        let mut manifest = mixed_manifest();
+        assert!(
+            validate_join_request("TASK-TESTX", "orgasmic", false, None, None)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown forum")
+        );
+        assert!(validate_join_request(
+            "TASK-TESTX",
+            "orgasmic",
+            true,
+            Some(&manifest),
+            Some("in_progress")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("cannot be combined"));
+        manifest.curation_mode = CurationMode::Dispatched;
+        assert!(validate_join_request(
+            "TASK-TESTX",
+            "orgasmic",
+            false,
+            Some(&manifest),
+            Some("in_progress")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("dispatched curator"));
+        manifest.curation_mode = CurationMode::SelfCurated;
+        manifest.state = ForumState::Curated;
+        assert!(validate_join_request(
+            "TASK-TESTX",
+            "orgasmic",
+            false,
+            Some(&manifest),
+            Some("done")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("already curated"));
+        manifest.state = ForumState::Open;
+        manifest.curation_task = Some("TASK-TESTX.9".to_string());
+        assert!(validate_join_request(
+            "TASK-TESTX",
+            "orgasmic",
+            false,
+            Some(&manifest),
+            Some("in_progress")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("already reserved its curation task"));
+    }
+
+    #[test]
+    fn compiled_self_contract_drops_only_completion() {
+        let compiled = "# Role\nKeep.\n\n# Completion\nDo not keep.\n\n# Security\nKeep secure.\n";
+        let contract = without_completion_section(compiled).unwrap();
+        assert!(contract.contains("# Role\nKeep."));
+        assert!(!contract.contains("Do not keep"));
+        assert!(contract.contains("# Security\nKeep secure."));
     }
 
     #[test]
@@ -2395,6 +3835,131 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("model-authored SVG"));
+    }
+
+    #[test]
+    fn multi_round_diagram_covers_each_round_task_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let manifest = mixed_manifest();
+        let data = multi_diagram_json(&manifest);
+        std::fs::write(&path, data.to_string()).unwrap();
+        let fields = load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+        assert_eq!(fields.rounds.len(), 2);
+        assert_eq!(fields.rounds[0].kind, ForumKind::Ask);
+        assert_eq!(fields.rounds[1].kind, ForumKind::Critique);
+
+        let mut missing = data.clone();
+        missing["rounds"][1]["reviews"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        std::fs::write(&path, missing.to_string()).unwrap();
+        assert!(load_multi_round_diagram_fields(&path, &manifest.rounds)
+            .unwrap_err()
+            .to_string()
+            .contains("cover every review task once"));
+
+        let mut duplicated = data;
+        duplicated["rounds"][1]["round"] = serde_json::json!(1);
+        std::fs::write(&path, duplicated.to_string()).unwrap();
+        assert!(load_multi_round_diagram_fields(&path, &manifest.rounds)
+            .unwrap_err()
+            .to_string()
+            .contains("unique positive round numbers"));
+    }
+
+    #[test]
+    fn multi_round_renderer_has_one_curator_and_all_review_arrows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let manifest = mixed_manifest();
+        std::fs::write(&path, multi_diagram_json(&manifest).to_string()).unwrap();
+        let fields = load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+        let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
+        let svg = render_multi_round_svg(
+            &manifest.rounds,
+            &curator,
+            "TASK-TESTX.9",
+            Path::new("/tmp/TASK-TESTX-curation.mdx"),
+            &fields,
+        )
+        .unwrap();
+        assert!(!svg.contains("<style"));
+        assert_eq!(svg.matches("data-card=\"prompt\"").count(), 2);
+        assert_eq!(svg.matches("data-card=\"extract\"").count(), 4);
+        assert_eq!(svg.matches("data-card=\"review\"").count(), 4);
+        assert_eq!(svg.matches("data-card=\"curator\"").count(), 1);
+        assert_eq!(svg.matches("data-arrow=\"review-curator\"").count(), 4);
+        for task in manifest
+            .rounds
+            .iter()
+            .flat_map(|round| &round.cross_review_tasks)
+        {
+            assert!(svg.contains(&format!("data-task=\"{task}\"")));
+        }
+    }
+
+    #[test]
+    fn multi_round_curate_uses_the_existing_assembly_gates() {
+        let mut manifest = mixed_manifest();
+        manifest.rounds[0].input = ForumInput::Ask {
+            question: "How should Vec<Section> and {braces} render?".to_string(),
+        };
+        let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
+        let about = render_forum_about_run(&manifest, &curator).unwrap();
+        assert!(about.contains("Round 1 · ask"));
+        assert!(about.contains("Round 2 · critique"));
+        // Round prompts are operator text; the footer must escape them like
+        // the verbatim first section does.
+        assert!(about.contains("Vec&lt;Section&gt; and &#123;braces&#125;"));
+        assert!(!about.contains("Vec<Section>"));
+        let raw_tasks = manifest
+            .rounds
+            .iter()
+            .flat_map(|round| {
+                round
+                    .first_stage_tasks
+                    .iter()
+                    .chain(&round.cross_review_tasks)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let draft = format!(
+            "{QUESTION_PLACEHOLDER}\n<Section title=\"Final answer\"><RichText>Answer.</RichText></Section>\n<Section title=\"From question to answer\">\n{DIAGRAM_PLACEHOLDER}\n<RichText>Raw reports: {}</RichText>\n</Section>\n<Section title=\"Knowledge map\"><RichText>Map.</RichText></Section>\n{RUN_STATS_PLACEHOLDER}",
+            raw_tasks.join(" ")
+        );
+        let input = &manifest.rounds[0].input;
+        assemble_artifact(&draft, input, "generated", &about, &raw_tasks).unwrap();
+
+        let decoy = draft.replace(
+            QUESTION_PLACEHOLDER,
+            &format!(
+                "<Section  title=\"Question\"><RichText>decoy</RichText></Section>\n{QUESTION_PLACEHOLDER}"
+            ),
+        );
+        assert!(
+            assemble_artifact(&decoy, input, "generated", &about, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("does not match")
+        );
+
+        let missing = draft.replace("TASK-TESTX.8", "TASK-OTHER");
+        assert!(
+            assemble_artifact(&missing, input, "generated", &about, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("omitted raw-report task ids")
+        );
+
+        let trailing = format!("{draft}\n<Section><RichText>late</RichText></Section>");
+        assert!(
+            assemble_artifact(&trailing, input, "generated", &about, &raw_tasks)
+                .unwrap_err()
+                .to_string()
+                .contains("final block")
+        );
     }
 
     #[test]

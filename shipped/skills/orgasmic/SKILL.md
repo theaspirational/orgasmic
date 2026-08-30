@@ -31,7 +31,7 @@ in full before acting** — do not run a subcommand from this summary alone.
 | `init [name]` | scaffold via `orgasmic project init` (runtime required) | [`references/init.md`](references/init.md) |
 | `recall` (default) | briefing from on-disk state, then **stop** | [`references/recall-resume.md`](references/recall-resume.md) |
 | `resume` | briefing, then **immediately** run the next planned action | [`references/recall-resume.md`](references/recall-resume.md) |
-| `forum` | choose a multi-model deliberation mode | [`references/forum.md`](references/forum.md) |
+| `forum` | run and curate a multi-round, multi-model deliberation | [`references/forum.md`](references/forum.md) |
 
 ## Situational references — load on demand
 
