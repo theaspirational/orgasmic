@@ -29,9 +29,12 @@ const MAX_TARGET_BYTES: usize = 64 * 1024;
 
 #[derive(Args, Debug, Clone)]
 struct RunArgs {
-    /// Participant as mode,harness,model,effort; repeat at least twice.
+    /// Participant as mode,harness,model,effort; repeat at least twice unless --fast.
     #[arg(long, action = ArgAction::Append, required = true)]
     participant: Vec<String>,
+    /// Run only the independent first stage; skip blind cross-review.
+    #[arg(long)]
+    fast: bool,
     /// Curator: a 1-based participant index, or a full mode,harness,model,effort
     /// spec to curate with a model outside the panel. Either way the curator runs
     /// as a fresh dispatch with no memory of stage 1.
@@ -62,7 +65,8 @@ Examples:
     --participant 'stdio,hermes,google/gemini-3.7-flash,low' \\
     --curator 'stdio,claude,claude-fable-5,low'
 
-Participants are mode,harness,model,effort. Repeat --participant at least twice.
+Participants are mode,harness,model,effort. Repeat --participant at least twice,
+or use --fast for a stage-1-only round with one or more participants.
 Omit --curator for in-session curation and use --forum to add later rounds.
 Pass --curator as a 1-based participant index or its own
 mode,harness,model,effort spec for the single-round dispatched-curator path.")]
@@ -84,7 +88,8 @@ Example:
     --participant 'stdio,hermes,openai/gpt-5.6-luna,low' \\
     --participant 'stdio,hermes,google/gemini-3.7-flash,low'
 
-Participants are mode,harness,model,effort. Repeat --participant at least twice.
+Participants are mode,harness,model,effort. Repeat --participant at least twice,
+or use --fast for a stage-1-only round with one or more participants.
 Omit --curator for in-session curation and use --forum to add later rounds.
 Pass --curator as a 1-based participant index or its own
 mode,harness,model,effort spec for the single-round dispatched-curator path.")]
@@ -356,6 +361,8 @@ enum ForumState {
 struct ForumRound {
     round: usize,
     kind: ForumKind,
+    #[serde(default)]
+    fast: bool,
     input: ForumInput,
     panel: Vec<ManifestParticipant>,
     first_stage_tasks: Vec<String>,
@@ -870,14 +877,20 @@ fn render_pipeline_svg(
     curator_task: &str,
     curator_path: &Path,
     fields: &DiagramFields,
+    fast: bool,
 ) -> Result<String> {
-    if extraction.len() < 2 || extraction.len() != reviews.len() {
+    if fast {
+        if extraction.is_empty() || !reviews.is_empty() || !fields.reviews.is_empty() {
+            bail!("fast diagram requires extraction reports and no reviews");
+        }
+    } else if extraction.len() < 2 || extraction.len() != reviews.len() {
         bail!("diagram requires matching extraction and review rosters");
     }
-    if extraction
-        .iter()
-        .map(|report| &report.participant)
-        .ne(reviews.iter().map(|report| &report.participant))
+    if !fast
+        && extraction
+            .iter()
+            .map(|report| &report.participant)
+            .ne(reviews.iter().map(|report| &report.participant))
     {
         bail!("diagram extraction and review roster order must match");
     }
@@ -886,10 +899,12 @@ fn render_pipeline_svg(
     let card_width = 252;
     let gap = 30;
     let margin = 32;
-    let width = margin * 2 + count * card_width + (count - 1) * gap;
+    let row_width = count * card_width + (count - 1) * gap;
+    let width = (margin * 2 + row_width).max(if fast { 464 } else { 0 });
     let center = width / 2;
+    let row_left = if fast { center - row_width / 2 } else { margin };
     let card_xs = (0..count)
-        .map(|index| margin + index * (card_width + gap))
+        .map(|index| row_left + index * (card_width + gap))
         .collect::<Vec<_>>();
     let card_centers = card_xs
         .iter()
@@ -1050,7 +1065,7 @@ fn render_pipeline_svg(
 
     for (source_index, source) in card_centers.iter().enumerate() {
         for (target_index, destination) in card_centers.iter().enumerate() {
-            if source_index == target_index {
+            if fast || source_index == target_index {
                 continue;
             }
             write!(
@@ -1059,20 +1074,22 @@ fn render_pipeline_svg(
             )?;
         }
     }
-    out.push_str("<g data-pill=\"cross-review\">");
-    write!(
-        out,
-        "<rect x=\"{}\" y=\"453\" width=\"280\" height=\"22\" rx=\"11\" fill=\"#241a15\" stroke=\"{border}\"/>",
-        center - 140
-    )?;
-    out.push_str(&svg_text(
-        center,
-        467,
-        "2 · CROSS-REVIEW — BLIND · NEVER SELF",
-        &stage_style,
-        &[],
-    ));
-    out.push_str("</g>");
+    if !fast {
+        out.push_str("<g data-pill=\"cross-review\">");
+        write!(
+            out,
+            "<rect x=\"{}\" y=\"453\" width=\"280\" height=\"22\" rx=\"11\" fill=\"#241a15\" stroke=\"{border}\"/>",
+            center - 140
+        )?;
+        out.push_str(&svg_text(
+            center,
+            467,
+            "2 · CROSS-REVIEW — BLIND · NEVER SELF",
+            &stage_style,
+            &[],
+        ));
+        out.push_str("</g>");
+    }
 
     for (index, (x, report)) in card_xs.iter().zip(reviews).enumerate() {
         let read_models = extraction
@@ -1159,11 +1176,21 @@ fn render_pipeline_svg(
         out.push_str("</g>");
     }
 
-    for source in &card_centers {
-        write!(
-            out,
-            "<path d=\"M{source},704 C{source},740 {center},740 {center},776\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.55\" marker-end=\"url(#ah)\"/>"
-        )?;
+    if fast {
+        for (source, report) in card_centers.iter().zip(extraction) {
+            write!(
+                out,
+                "<path data-arrow=\"extract-curator\" data-task=\"{}\" d=\"M{source},424 C{source},600 {center},600 {center},776\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.55\" marker-end=\"url(#ah)\"/>",
+                html_escape(&report.dispatch.task, true)
+            )?;
+        }
+    } else {
+        for source in &card_centers {
+            write!(
+                out,
+                "<path d=\"M{source},704 C{source},740 {center},740 {center},776\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.55\" marker-end=\"url(#ah)\"/>"
+            )?;
+        }
     }
     out.push_str("<g data-pill=\"curate\">");
     write!(
@@ -1171,7 +1198,13 @@ fn render_pipeline_svg(
         "<rect x=\"{}\" y=\"729\" width=\"120\" height=\"22\" rx=\"11\" fill=\"#241a15\" stroke=\"{border}\"/>",
         center - 60
     )?;
-    out.push_str(&svg_text(center, 743, "3 · CURATE", &stage_style, &[]));
+    out.push_str(&svg_text(
+        center,
+        743,
+        if fast { "2 · CURATE" } else { "3 · CURATE" },
+        &stage_style,
+        &[],
+    ));
     out.push_str("</g>");
     write!(
         out,
@@ -1293,21 +1326,25 @@ fn render_multi_round_svg(
     curator_path: &Path,
     fields: &MultiRoundDiagramFields,
 ) -> Result<String> {
-    if rounds.len() < 2 || rounds.len() != fields.rounds.len() {
+    if rounds.is_empty() || rounds.len() != fields.rounds.len() {
         bail!("multi-round diagram requires matching manifest and diagram rounds");
+    }
+    if rounds.iter().any(|round| {
+        round.panel.len() < if round.fast { 1 } else { 2 }
+            || round.cross_review_tasks.len() != if round.fast { 0 } else { round.panel.len() }
+    }) {
+        bail!("diagram round has an invalid panel or review roster");
     }
     let max_count = rounds
         .iter()
         .map(|round| round.panel.len())
         .max()
         .unwrap_or(0);
-    if max_count < 2 {
-        bail!("diagram rounds require at least two participants");
-    }
     let card_width = 252i32;
     let gap = 30i32;
     let margin = 32i32;
-    let width = margin * 2 + max_count as i32 * card_width + (max_count as i32 - 1) * gap;
+    let width =
+        (margin * 2 + max_count as i32 * card_width + (max_count as i32 - 1) * gap).max(544);
     let center = width / 2;
     let round_height = 650i32;
     let curator_y = 32 + rounds.len() as i32 * round_height;
@@ -1456,7 +1493,7 @@ fn render_multi_round_svg(
         }
         for (source_index, source) in centers.iter().enumerate() {
             for (target_index, destination) in centers.iter().enumerate() {
-                if source_index != target_index {
+                if !round.fast && source_index != target_index {
                     write!(
                         out,
                         "<path d=\"M{source},{} C{source},{} {destination},{} {destination},{}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.55\" marker-end=\"url(#ah)\"/>",
@@ -1468,13 +1505,15 @@ fn render_multi_round_svg(
                 }
             }
         }
-        out.push_str(&svg_text(
-            center,
-            top + 360,
-            "2 · CROSS-REVIEW · NEVER SELF",
-            &stage_style,
-            &[],
-        ));
+        if !round.fast {
+            out.push_str(&svg_text(
+                center,
+                top + 360,
+                "2 · CROSS-REVIEW · NEVER SELF",
+                &stage_style,
+                &[],
+            ));
+        }
         for (x, report) in xs.iter().zip(&reviews) {
             write!(
                 out,
@@ -1519,15 +1558,28 @@ fn render_multi_round_svg(
             ));
             out.push_str("</g>");
         }
-        for (source, report) in centers.iter().zip(&reviews) {
-            write!(
-                out,
-                "<path data-arrow=\"review-curator\" data-task=\"{}\" d=\"M{source},{} C{source},{} {center},{} {center},{curator_y}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.35\" marker-end=\"url(#ah)\"/>",
-                html_escape(&report.dispatch.task, true),
-                top + 588,
-                top + 620,
-                curator_y - 30
-            )?;
+        if round.fast {
+            for (source, report) in centers.iter().zip(&extraction) {
+                write!(
+                    out,
+                    "<path data-arrow=\"extract-curator\" data-task=\"{}\" d=\"M{source},{} C{source},{} {center},{} {center},{curator_y}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.35\" marker-end=\"url(#ah)\"/>",
+                    html_escape(&report.dispatch.task, true),
+                    top + 332,
+                    top + 365,
+                    curator_y - 30
+                )?;
+            }
+        } else {
+            for (source, report) in centers.iter().zip(&reviews) {
+                write!(
+                    out,
+                    "<path data-arrow=\"review-curator\" data-task=\"{}\" d=\"M{source},{} C{source},{} {center},{} {center},{curator_y}\" fill=\"none\" stroke=\"#b9a998\" stroke-width=\"1.25\" opacity=\"0.35\" marker-end=\"url(#ah)\"/>",
+                    html_escape(&report.dispatch.task, true),
+                    top + 588,
+                    top + 620,
+                    curator_y - 30
+                )?;
+            }
         }
         out.push_str("</g>");
     }
@@ -1715,6 +1767,7 @@ fn assemble_artifact(
     about_run: &str,
     raw_tasks: &[String],
 ) -> Result<String> {
+    let has_reviews = svg.contains("data-card=\"review\"");
     let (first_placeholder, other_placeholder, first_title, required, image_alt, image_caption) =
         match input.kind() {
             ForumKind::Ask => (
@@ -1727,7 +1780,11 @@ fn assemble_artifact(
                     "From question to answer",
                     "Knowledge map",
                 ][..],
-                "Question flows through independent extraction and blind cross-review into curation",
+                if has_reviews {
+                    "Question flows through independent extraction and blind cross-review into curation"
+                } else {
+                    "Question flows through independent extraction directly into curation"
+                },
                 "From the verbatim question to the curated final answer.",
             ),
             ForumKind::Critique => (
@@ -1735,7 +1792,11 @@ fn assemble_artifact(
                 QUESTION_PLACEHOLDER,
                 "Target",
                 &["Target", "Verdict", "Findings", "From target to verdict"][..],
-                "Target flows through independent critique and blind cross-review into curation",
+                if has_reviews {
+                    "Target flows through independent critique and blind cross-review into curation"
+                } else {
+                    "Target flows through independent critique directly into curation"
+                },
                 "From the verbatim target to the curated verdict.",
             ),
         };
@@ -1854,8 +1915,11 @@ fn parse_participant(raw: &str) -> Result<Participant> {
     })
 }
 
-fn validate_participants(participants: &[Participant]) -> Result<()> {
-    if participants.len() < 2 {
+fn validate_participants(participants: &[Participant], fast: bool) -> Result<()> {
+    if fast && participants.is_empty() {
+        bail!("at least one participant is required with --fast");
+    }
+    if !fast && participants.len() < 2 {
         bail!("at least two participants are required");
     }
     let models = participants
@@ -1976,10 +2040,12 @@ fn validate_manifest(manifest: &ForumManifest) -> Result<()> {
             bail!("forum manifest rounds must be contiguous and match their input kind");
         }
         let count = round.panel.len();
-        if count < 2
+        let minimum = if round.fast { 1 } else { 2 };
+        let review_count = if round.fast { 0 } else { count };
+        if count < minimum
             || round.first_stage_tasks.len() != count
-            || round.cross_review_tasks.len() != count
-            || round.promoted_report_paths.len() != count * 2
+            || round.cross_review_tasks.len() != review_count
+            || round.promoted_report_paths.len() != count + review_count
         {
             bail!(
                 "forum manifest round {} has mismatched panel, task, or report counts",
@@ -2173,9 +2239,26 @@ fn self_curation_manifest(manifest: &ForumManifest) -> Result<String> {
         {
             writeln!(text, "- Task: {task}\n  Report: {}", path.display())?;
         }
-        debug_assert_eq!(round.promoted_report_paths.len(), count * 2);
+        debug_assert_eq!(
+            round.promoted_report_paths.len(),
+            count + if round.fast { 0 } else { count }
+        );
     }
     Ok(text)
+}
+
+/// The dispatched curator specs emit a `- Cross-review tasks` output bullet a
+/// fast-only run cannot honor. The removal is string surgery against the
+/// compiled spec, so refuse to continue the moment the line stops matching
+/// instead of silently shipping a contract that demands nonexistent reports.
+fn strip_cross_review_output_line(compiled: &str) -> Result<String> {
+    let stripped = compiled.replace("- Cross-review tasks\n", "");
+    if stripped == compiled {
+        bail!(
+            "curator spec no longer carries the `- Cross-review tasks` output line; update the fast-round contract surgery"
+        );
+    }
+    Ok(stripped)
 }
 
 fn compile_self_contract(api: &Api, manifest: &ForumManifest, contract_path: &Path) -> Result<()> {
@@ -2190,19 +2273,16 @@ fn compile_self_contract(api: &Api, manifest: &ForumManifest, contract_path: &Pa
     );
     values.insert("task.id".to_string(), manifest.forum.clone());
     let compiled = api.compile_prompt(first.kind.curator_spec(), values)?;
-    // The dispatched-curator specs list a curation task id the session never
-    // has; neutralize that clause so the contract carries one instruction.
-    let mut contract = without_completion_section(&compiled)?
-        .replace(
-            "every extraction, cross-review, and curation task id",
-            "every extraction and cross-review task id",
-        )
-        .replace(
-            "every critique, cross-review, and curation task id",
-            "every critique and cross-review task id",
-        );
+    let mut contract = without_completion_section(&compiled)?;
+    if manifest
+        .rounds
+        .iter()
+        .all(|round| round.cross_review_tasks.is_empty())
+    {
+        contract = strip_cross_review_output_line(&contract)?;
+    }
     contract.push_str(
-        "\n# Self-curated forum submission\n\nThe invoking session, not a dispatch, performs curation. Discuss and iterate before writing the two files, then pass them to `orgasmic forum curate`; do not run `dispatch finalize`. In the draft's Raw reports list, include every first-stage and cross-review task from every manifest round; do not invent a curation task id, because the CLI mints it after the draft passes its gates. For more than one round, the diagram JSON replaces the legacy top-level `extracts` and `reviews` with:\n\n```json\n{\n  \"rounds\": [\n    {\"round\": 1, \"kind\": \"ask\", \"extracts\": [...], \"reviews\": [...]},\n    {\"round\": 2, \"kind\": \"critique\", \"extracts\": [...], \"reviews\": [...]}\n  ],\n  \"curator_summary\": \"short synthesis summary\",\n  \"headline\": \"short artifact title\"\n}\n```\n\nInclude every manifest round in order and every task exactly once in its own round. The first round controls the draft's verbatim first section and required section shape.\n",
+        "\n# Self-curated forum submission\n\nThe invoking session, not a dispatch, performs curation. Discuss and iterate before writing the two files, then pass them to `orgasmic forum curate`; do not run `dispatch finalize`. In the draft's Raw reports list, include every report task named in every manifest round; do not invent a curation task id, because the CLI mints it after the draft passes its gates. For more than one round, the diagram JSON replaces the legacy top-level `extracts` and `reviews` with:\n\n```json\n{\n  \"rounds\": [\n    {\"round\": 1, \"kind\": \"ask\", \"extracts\": [...], \"reviews\": [...]},\n    {\"round\": 2, \"kind\": \"critique\", \"extracts\": [...]}\n  ],\n  \"curator_summary\": \"short synthesis summary\",\n  \"headline\": \"short artifact title\"\n}\n```\n\nInclude every manifest round in order and every named task exactly once in its own round. A fast round has no reviews: omit its `reviews` member or use an empty array, and never invent review provenance. The first round controls the draft's verbatim first section and required section shape.\n",
     );
     std::fs::write(contract_path, contract)
         .with_context(|| format!("write {}", contract_path.display()))?;
@@ -2623,6 +2703,7 @@ fn mark_closed(active: &mut [Dispatch], closed: &Dispatch) {
 fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult> {
     let RunArgs {
         participant,
+        fast,
         curator: curator_arg,
         forum,
         source_ref: requested_source_ref,
@@ -2638,7 +2719,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
         .iter()
         .map(|raw| parse_participant(raw))
         .collect::<Result<Vec<_>>>()?;
-    validate_participants(&participants)?;
+    validate_participants(&participants, fast)?;
     let curator = curator_arg
         .as_deref()
         .map(|raw| resolve_curator(&participants, raw))
@@ -2723,7 +2804,11 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                     "Question: {}\n\nParticipants: {roster}",
                     question.split_whitespace().collect::<Vec<_>>().join(" ")
                 ),
-                "All extraction and blind-review reports are promoted and one curated artifact is submitted.",
+                if fast {
+                    "All extraction reports are promoted and one curated artifact is submitted."
+                } else {
+                    "All extraction and blind-review reports are promoted and one curated artifact is submitted."
+                },
             ),
             ForumInput::Critique {
                 target,
@@ -2735,7 +2820,11 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                     target.len(),
                     focus.as_deref().unwrap_or("(none)")
                 ),
-                "All critique and blind-review reports are promoted and one curated verdict artifact is submitted.",
+                if fast {
+                    "All critique reports are promoted and one curated verdict artifact is submitted."
+                } else {
+                    "All critique and blind-review reports are promoted and one curated verdict artifact is submitted."
+                },
             ),
         };
         api.create_task(
@@ -2855,7 +2944,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
         }
 
         let mut review_dispatches = Vec::new();
-        for (index, participant) in participants.iter().enumerate() {
+        for (index, participant) in participants.iter().enumerate().filter(|_| !fast) {
             let ordinal = first_ordinal + participants.len() + index;
             let task = format!("{parent}.{ordinal}");
             let report_manifest = extraction
@@ -2919,7 +3008,9 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
             active.push(dispatch.clone());
             review_dispatches.push(dispatch);
         }
-        wait_barrier(home, &review_dispatches, timeout)?;
+        if !review_dispatches.is_empty() {
+            wait_barrier(home, &review_dispatches, timeout)?;
+        }
         for mut dispatch in review_dispatches {
             let path = close_and_finish(home, &api, &ledger, &mut dispatch)?;
             mark_closed(&mut active, &dispatch);
@@ -2951,6 +3042,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
         manifest.rounds.push(ForumRound {
             round: round_number,
             kind,
+            fast,
             input: input.clone(),
             panel: participants.iter().map(ManifestParticipant::from).collect(),
             first_stage_tasks: extraction_tasks.clone(),
@@ -2985,16 +3077,18 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
 
         let curator = curator.as_ref().expect("dispatched curator is present");
         let curator_task = format!("{parent}.{}", next_task_ordinal(&manifest));
-        let run_manifest = format!(
-            "Parent task: {parent}\nStarted UTC: {}\nParticipants ({}):\n{}\nCurator: {}\n\n{}\n\n{}\n\nCuration task: {curator_task}",
-            manifest.started_at,
-            participants.len(),
-            participants
-                .iter()
-                .map(|participant| format!("- {}", participant.identity()))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            curator.identity(),
+        let mut manifest_segments = vec![
+            format!(
+                "Parent task: {parent}\nStarted UTC: {}\nParticipants ({}):\n{}\nCurator: {}",
+                manifest.started_at,
+                participants.len(),
+                participants
+                    .iter()
+                    .map(|participant| format!("- {}", participant.identity()))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                curator.identity(),
+            ),
             extraction
                 .iter()
                 .map(|report| {
@@ -3008,28 +3102,47 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n"),
-            reviews
-                .iter()
-                .map(|report| manifest_entry("Cross-review", report))
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-        );
+        ];
+        if !reviews.is_empty() {
+            manifest_segments.push(
+                reviews
+                    .iter()
+                    .map(|report| manifest_entry("Cross-review", report))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            );
+        }
+        manifest_segments.push(format!("Curation task: {curator_task}"));
+        let run_manifest = manifest_segments.join("\n\n");
         let curator_brief = tmp.path().join("curator.md");
         std::fs::write(&curator_brief, {
             let mut values = input.prompt_values();
             values.insert("dispatch.brief".to_string(), run_manifest);
             values.insert("task.id".to_string(), curator_task.clone());
-            api.compile_prompt(kind.curator_spec(), values)?
+            let compiled = api.compile_prompt(kind.curator_spec(), values)?;
+            if fast {
+                strip_cross_review_output_line(&compiled)?
+            } else {
+                compiled
+            }
         })?;
         let (curator_title, curator_description, curator_acceptance) = match kind {
             ForumKind::Ask => (
                 "Curate answer",
-                "Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths.",
+                if fast {
+                    "Read all promoted extraction reports, write the final prose draft and structured diagram fields, and report their paths."
+                } else {
+                    "Read all promoted extraction and cross-review reports, write the final prose draft and structured diagram fields, and report their paths."
+                },
                 "The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the run stats, Question, and diagram.",
             ),
             ForumKind::Critique => (
                 "Curate verdict",
-                "Read all promoted critique and cross-review reports, write the final verdict draft and structured diagram fields, and report their paths.",
+                if fast {
+                    "Read all promoted critique reports, write the final verdict draft and structured diagram fields, and report their paths."
+                } else {
+                    "Read all promoted critique and cross-review reports, write the final verdict draft and structured diagram fields, and report their paths."
+                },
                 "The prose draft matches the final-artifact contract, names every raw-report task, and contains only orchestrator placeholders for the run stats, Target, and diagram.",
             ),
         };
@@ -3076,6 +3189,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
             &curator_task,
             &curator_report_path,
             &fields,
+            fast,
         )?;
         let raw_tasks = extraction_tasks
             .iter()
@@ -3103,16 +3217,20 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
         std::fs::remove_file(&fields_path)
             .with_context(|| format!("remove {}", fields_path.display()))?;
 
+        let review_evidence = if review_tasks.is_empty() {
+            String::new()
+        } else {
+            format!("- Cross-review tasks: {}\n", review_tasks.join(" "))
+        };
         api.set_evidence(
             &parent,
             &format!(
-                "- Artifact: {artifact}\n- {} tasks: {}\n- Cross-review tasks: {}\n- Curation task: {curator_task}\n",
+                "- Artifact: {artifact}\n- {} tasks: {}\n{review_evidence}- Curation task: {curator_task}\n",
                 match kind {
                     ForumKind::Ask => "Extraction",
                     ForumKind::Critique => "Critique",
                 },
-                extraction_tasks.join(" "),
-                review_tasks.join(" ")
+                extraction_tasks.join(" ")
             ),
         )?;
         api.finish_task(&parent)?;
@@ -3537,6 +3655,7 @@ mod tests {
         ForumRound {
             round,
             kind,
+            fast: false,
             input,
             panel: panel.iter().map(ManifestParticipant::from).collect(),
             first_stage_tasks,
@@ -3567,6 +3686,25 @@ mod tests {
             curation_task: None,
             submitted_artifact: None,
         }
+    }
+
+    fn fast_round(round: usize, kind: ForumKind, first_ordinal: usize) -> ForumRound {
+        let mut round = manifest_round(round, kind, first_ordinal);
+        round.fast = true;
+        round.panel.truncate(1);
+        round.first_stage_tasks.truncate(1);
+        round.cross_review_tasks.clear();
+        round.promoted_report_paths.truncate(1);
+        round
+    }
+
+    fn mixed_fast_manifest() -> ForumManifest {
+        let mut manifest = mixed_manifest();
+        manifest.rounds = vec![
+            fast_round(1, ForumKind::Ask, 1),
+            manifest_round(2, ForumKind::Critique, 2),
+        ];
+        manifest
     }
 
     fn multi_diagram_json(manifest: &ForumManifest) -> Value {
@@ -3623,7 +3761,7 @@ mod tests {
             assert!(resolve_curator(&panel, rejected).is_err());
         }
         assert!(resolve_curator(&panel, "stdio,claude").is_err());
-        assert!(validate_participants(&[codex.clone(), codex]).is_err());
+        assert!(validate_participants(&[codex.clone(), codex], false).is_err());
         for rejected in [
             format!("contains {QUESTION_PLACEHOLDER}"),
             format!("contains {DIAGRAM_PLACEHOLDER}"),
@@ -3637,6 +3775,28 @@ mod tests {
     }
 
     #[test]
+    fn panel_of_one_requires_fast_for_ask_and_critique_rounds() {
+        let participant = parse_participant("stdio,codex,gpt-5.6-luna,low").unwrap();
+        for kind in [ForumKind::Ask, ForumKind::Critique] {
+            let error = validate_participants(std::slice::from_ref(&participant), false)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                error,
+                "at least two participants are required",
+                "normal {} round",
+                kind.slug()
+            );
+            validate_participants(std::slice::from_ref(&participant), true)
+                .unwrap_or_else(|error| panic!("fast {} round: {error:#}", kind.slug()));
+        }
+        assert_eq!(
+            validate_participants(&[], true).unwrap_err().to_string(),
+            "at least one participant is required with --fast"
+        );
+    }
+
+    #[test]
     fn manifest_round_trip_preserves_mixed_rounds() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("forum/TASK-TESTX.json");
@@ -3644,6 +3804,35 @@ mod tests {
         write_manifest(&path, &manifest).unwrap();
         assert_eq!(read_manifest(&path).unwrap(), manifest);
         assert_eq!(next_task_ordinal(&manifest), 9);
+    }
+
+    #[test]
+    fn fast_manifest_round_trip_accepts_stage_one_only_and_rejects_reviews() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("forum/TASK-TESTX.json");
+        let manifest = mixed_fast_manifest();
+        write_manifest(&path, &manifest).unwrap();
+        assert_eq!(read_manifest(&path).unwrap(), manifest);
+        assert_eq!(manifest.rounds[0].panel.len(), 1);
+        assert!(manifest.rounds[0].cross_review_tasks.is_empty());
+        assert_eq!(manifest.rounds[0].promoted_report_paths.len(), 1);
+        assert_eq!(next_task_ordinal(&manifest), 6);
+
+        let mut invented_review = manifest.clone();
+        invented_review.rounds[0]
+            .cross_review_tasks
+            .push("TASK-TESTX.6".to_string());
+        assert!(validate_manifest(&invented_review)
+            .unwrap_err()
+            .to_string()
+            .contains("mismatched panel, task, or report counts"));
+
+        let mut malformed_normal = manifest_round(1, ForumKind::Ask, 1);
+        malformed_normal.cross_review_tasks.clear();
+        malformed_normal.promoted_report_paths.truncate(2);
+        let mut normal_manifest = manifest;
+        normal_manifest.rounds = vec![malformed_normal];
+        assert!(validate_manifest(&normal_manifest).is_err());
     }
 
     #[test]
@@ -3870,6 +4059,32 @@ mod tests {
     }
 
     #[test]
+    fn fast_diagram_omits_reviews_and_rejects_invented_review_provenance() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let mut manifest = mixed_fast_manifest();
+        manifest.rounds.truncate(1);
+        let mut data = multi_diagram_json(&manifest);
+        data["rounds"][0].as_object_mut().unwrap().remove("reviews");
+        std::fs::write(&path, data.to_string()).unwrap();
+        load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+
+        data["rounds"][0]["reviews"] = serde_json::json!([{
+            "task": "TASK-TESTX.2",
+            "delta_bullets": [
+                {"tag": "?", "text": "invented"},
+                {"tag": "+", "text": "invented"},
+                {"tag": "=", "text": "invented"}
+            ]
+        }]);
+        std::fs::write(&path, data.to_string()).unwrap();
+        assert!(load_multi_round_diagram_fields(&path, &manifest.rounds)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid review diagram entry"));
+    }
+
+    #[test]
     fn multi_round_renderer_has_one_curator_and_all_review_arrows() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("diagram.json");
@@ -3898,6 +4113,72 @@ mod tests {
         {
             assert!(svg.contains(&format!("data-task=\"{task}\"")));
         }
+    }
+
+    #[test]
+    fn single_normal_round_renders_through_the_multi_round_card() {
+        // Latent-defect regression: before TASK-82KKQ this bailed on
+        // rounds.len() < 2, which broke `forum curate` for every single-round
+        // self-curated forum shipped in TASK-9TGQS.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let mut manifest = mixed_manifest();
+        manifest.rounds.truncate(1);
+        std::fs::write(&path, multi_diagram_json(&manifest).to_string()).unwrap();
+        let fields = load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+        let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
+        let svg = render_multi_round_svg(
+            &manifest.rounds,
+            &curator,
+            "TASK-TESTX.5",
+            Path::new("/tmp/TASK-TESTX-curation.mdx"),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(svg.matches("data-card=\"prompt\"").count(), 1);
+        assert_eq!(svg.matches("data-card=\"extract\"").count(), 2);
+        assert_eq!(svg.matches("data-card=\"review\"").count(), 2);
+        assert_eq!(svg.matches("data-card=\"curator\"").count(), 1);
+        assert_eq!(svg.matches("data-arrow=\"review-curator\"").count(), 2);
+    }
+
+    #[test]
+    fn cross_review_contract_surgery_fails_closed_on_spec_drift() {
+        let compiled = "# Output Contract\n- Draft MDX\n- Cross-review tasks\n- Curation task\n";
+        let stripped = strip_cross_review_output_line(compiled).unwrap();
+        assert!(!stripped.contains("Cross-review tasks"));
+        assert!(stripped.contains("- Curation task"));
+        assert!(
+            strip_cross_review_output_line("# Output Contract\n- Draft MDX\n")
+                .unwrap_err()
+                .to_string()
+                .contains("no longer carries")
+        );
+    }
+
+    #[test]
+    fn mixed_fast_and_normal_renderer_routes_each_row_to_the_curator() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let manifest = mixed_fast_manifest();
+        std::fs::write(&path, multi_diagram_json(&manifest).to_string()).unwrap();
+        let fields = load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+        let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
+        let svg = render_multi_round_svg(
+            &manifest.rounds,
+            &curator,
+            "TASK-TESTX.6",
+            Path::new("/tmp/TASK-TESTX-curation.mdx"),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(svg.matches("data-card=\"prompt\"").count(), 2);
+        assert_eq!(svg.matches("data-card=\"extract\"").count(), 3);
+        assert_eq!(svg.matches("data-card=\"review\"").count(), 2);
+        assert_eq!(svg.matches("data-card=\"curator\"").count(), 1);
+        assert_eq!(svg.matches("data-arrow=\"extract-curator\"").count(), 1);
+        assert_eq!(svg.matches("data-arrow=\"review-curator\"").count(), 2);
+        assert!(!svg.contains("data-card=\"review\" data-round=\"1\""));
     }
 
     #[test]
@@ -3963,6 +4244,51 @@ mod tests {
     }
 
     #[test]
+    fn fast_only_curate_uses_stage_one_reports_and_existing_assembly_gates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let mut manifest = mixed_fast_manifest();
+        manifest.rounds.truncate(1);
+        let mut diagram = multi_diagram_json(&manifest);
+        diagram["rounds"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("reviews");
+        std::fs::write(&path, diagram.to_string()).unwrap();
+        let fields = load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+        let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
+        let svg = render_multi_round_svg(
+            &manifest.rounds,
+            &curator,
+            "TASK-TESTX.2",
+            Path::new("/tmp/TASK-TESTX-curation.mdx"),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(svg.matches("data-card=\"extract\"").count(), 1);
+        assert_eq!(svg.matches("data-card=\"review\"").count(), 0);
+        assert_eq!(svg.matches("data-arrow=\"extract-curator\"").count(), 1);
+
+        let raw_tasks = manifest.rounds[0].first_stage_tasks.clone();
+        let draft = format!(
+            "{QUESTION_PLACEHOLDER}\n<Section title=\"Final answer\"><RichText>Answer.</RichText></Section>\n<Section title=\"From question to answer\">\n{DIAGRAM_PLACEHOLDER}\n<RichText>Raw reports: {}</RichText>\n</Section>\n<Section title=\"Knowledge map\"><RichText>Map.</RichText></Section>\n{RUN_STATS_PLACEHOLDER}",
+            raw_tasks.join(" ")
+        );
+        let about = render_forum_about_run(&manifest, &curator).unwrap();
+        assemble_artifact(&draft, &manifest.rounds[0].input, &svg, &about, &raw_tasks).unwrap();
+        assert!(assemble_artifact(
+            &draft.replace(&raw_tasks[0], "TASK-OTHER"),
+            &manifest.rounds[0].input,
+            &svg,
+            &about,
+            &raw_tasks,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("omitted raw-report task ids"));
+    }
+
+    #[test]
     fn renderer_structure_scales_for_two_and_three_participants() {
         for count in [2, 3] {
             let (participants, extraction, reviews) = reports(count);
@@ -3978,6 +4304,7 @@ mod tests {
                     "/ledger/.orgasmic/tasks/{curator_task}/dispatches/tx/report.md"
                 )),
                 &fields,
+                false,
             )
             .unwrap();
             assert!(!svg.contains("<style"));
@@ -4028,6 +4355,50 @@ mod tests {
     }
 
     #[test]
+    fn fast_dispatched_renderer_accepts_one_report_and_about_is_honest() {
+        let (participants, extraction, _) = reports(1);
+        let fields = fields(&extraction, &[]);
+        assert!(render_pipeline_svg(
+            "What is the cheapest useful critique?",
+            &extraction,
+            &[],
+            &participants[0],
+            "TASK-TESTX.2",
+            Path::new("/ledger/.orgasmic/tasks/TASK-TESTX.2/dispatches/tx/report.md"),
+            &fields,
+            false,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("matching extraction and review rosters"));
+        let svg = render_pipeline_svg(
+            "What is the cheapest useful critique?",
+            &extraction,
+            &[],
+            &participants[0],
+            "TASK-TESTX.2",
+            Path::new("/ledger/.orgasmic/tasks/TASK-TESTX.2/dispatches/tx/report.md"),
+            &fields,
+            true,
+        )
+        .unwrap();
+        assert_eq!(svg.matches("data-card=\"extract\"").count(), 1);
+        assert_eq!(svg.matches("data-card=\"review\"").count(), 0);
+        assert_eq!(svg.matches("data-arrow=\"extract-curator\"").count(), 1);
+        assert!(svg.contains("2 · CURATE"));
+        assert!(!svg.contains("CROSS-REVIEW"));
+
+        let about = render_about_run(
+            ForumKind::Critique,
+            &extraction,
+            &[],
+            &participants[0],
+            "2026-08-30T08:00:00+00:00",
+        );
+        assert!(about.contains("1 critique reports · 0 cross-reviews"));
+    }
+
+    #[test]
     fn renderer_matches_stored_python_fixture() {
         let (participants, extraction, reviews) = reports(2);
         let svg = render_pipeline_svg(
@@ -4038,6 +4409,7 @@ mod tests {
             "TASK-TESTX.5",
             Path::new("/ledger/.orgasmic/tasks/TASK-TESTX.5/dispatches/tx/report.md"),
             &fields(&extraction, &reviews),
+            false,
         )
         .unwrap();
         assert_eq!(
