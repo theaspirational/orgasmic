@@ -68,6 +68,29 @@ new promoted reports. Continue the in-chat discussion and offer another round.
 An open self-curated forum accepts `--forum`; an unknown, already curated, or
 dispatched-curator forum does not. `--forum` and `--curator` are contradictory.
 
+## Challenge existing reports with a chosen panel
+
+Use `forum review` when the forum already has stage-1 answers or critiques and
+you want a fresh panel to challenge, add to, and explicitly agree with them
+without producing another answer. Use `forum critique` instead when the object
+being judged is a document supplied with `--file`.
+
+For example, send every answer round so far to one strong reviewer:
+
+```bash
+orgasmic forum review \
+  --forum TASK-XXXXX \
+  --all-rounds \
+  --participant 'stdio,claude,claude-fable-5,high'
+```
+
+`--all-rounds` is the default; use `--round N` to review one earlier answer
+round. `--focus` adds an optional one-line steer. Reviewers need not have
+answered in stage 1. When one did, the CLI excludes that reviewer's own
+stage-1 report; it never exposes review outputs or permits reviews of review
+rounds. A review round remains part of the same open self-curated forum and
+feeds the single later `forum curate` submission.
+
 ## Submit the session's curation
 
 When the operator says the forum is done, write the draft MDX and diagram JSON
