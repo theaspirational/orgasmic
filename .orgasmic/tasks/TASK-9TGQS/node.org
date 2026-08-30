@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-9TGQS
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-9TGQS Forum self-curation: default --curator is the invoking session; new 'forum curate' verb submits its draft :feature:
+* DONE TASK-9TGQS Forum self-curation: default --curator is the invoking session; new 'forum curate' verb submits its draft :feature:
 :PROPERTIES:
 :ID: TASK-9TGQS
 :PRIORITY: P2
@@ -9,3 +9,9 @@
 
 ** Description
 When --curator is omitted, forum ask/critique run stages 1-2 as dispatches and stop: the invoking session's model is the curator. Rounds accumulate: the first call mints the forum (parent task) and later calls join it via --forum TASK-XXXXX, mixing ask and critique rounds freely. The session curates in-chat between rounds; when the operator is satisfied, `orgasmic forum curate` validates the session-written draft + diagram JSON through the same gates and submits ONE artifact whose deterministic diagram renders ALL rounds in one tree converging on the curator. Explicit --curator index/spec keeps today's single-round dispatched-curator behavior.
+** Evidence
+- Implementer: codex/gpt-5.6-sol/xhigh, commit ea57e7a7; merged at 9b76db01
+- Review: claude-fable-5/high, REJECT with merge-after-fixes bar: 1 HIGH (unescaped round prompts in About footer, red-proven), 1 MEDIUM (manifest accepted foreign task ids / unvalidated stored inputs), 3 LOW
+- All 5 findings fixed at 13ec3ed2: footer escaping + hostile-prompt test, manifest task-ownership + input re-validation + tests, curate id reservation/retry reuse + join guard, single-round via multi-round card (no fabricated report path), compiled-contract clause neutralized
+- Gates: 285 CLI bin tests, clippy -D warnings, fmt, byte-identical ask SVG fixture
+- Live two-round self-curated smoke not yet run (operator-owned, post-reinstall)
