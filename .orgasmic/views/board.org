@@ -2429,6 +2429,26 @@ Re-review of TASK-JHWNP.1 (APPROVE, tx-20260827-orgasmic-a374583b) surfaced 1 ME
 
 Full verdict: .orgasmic/tmp/dispatch/task-jhwnp.1-review/ (ledger tmp).
 
+* BACKLOG TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface    :feature:
+:PROPERTIES:
+:ID: TASK-DN1WK
+:PRIORITY: P2
+:END:
+
+** Description
+Pair the shipped orgasmic skill with the sibling okfy tool (~/Documents/code/tools/okfy). `shipped/skills/orgasmic/` becomes an OKF Bundle root: SKILL.md shrinks to the door (what orgasmic is, where the bundle index lives, follow links by raw traversal, use the okfy CLI for BM25 search when present), and the bundle holds small purpose-shaped concepts an agent walks by intent. Concepts are organized as recipes (cheap wide first pass with --fast, adversarial verify via a review round, dispatched fire-and-forget curator, ship a runtime, dispatch lifecycle...) linking to verb-reference concepts, so different preferred workflows coexist in the index. Bundle ships inside the runtime, so installed binaries carry version-accurate discovery.
+
+Bootstrap once with /okfy:new + /okfy:extract over the real corpus (CLI help trees, shipped/skills/orgasmic/references/*.md, prompt specs, AGENTS.md). After bootstrap, maintenance is manual: updating touched concepts joins the implementer definition-of-done, okfy validate becomes a test/CI gate, and the bundle's eval replay (ten standing discovery queries) is the drift test — a new CLI verb with no concept fails the parity gate.
+
+OPERATOR-OWNED CHECKPOINTS (cannot be dispatched): the okfy Purpose Interview and the ten eval-query verdicts — okfy refuses self-certified bundles by design.
+
+** Acceptance Criteria
+- [ ] Skill listing description names the major features (forum ask/critique/review, self- vs dispatched curation, dispatch, runtime install) so fresh sessions open the door
+- [ ] SKILL.md points to the bundle index; a fresh agent can answer 'how do I run a cheap 10-model round' by link traversal alone, no okfy install
+- [ ] Bundle validates with okfy validate; eval queries recorded in-bundle with owner verdicts
+- [ ] Parity gate: every orgasmic CLI subcommand is named by at least one concept; test fails otherwise
+- [ ] Implementer DoD template gains 'update touched OKF concepts'
+
 * BACKLOG TASK-DTCBP orgasmic verify: --all, the verify_artifact drawer property, and the dispatch-close gating decision    :cli:verification:mechanism:
 :PROPERTIES:
 :ID: TASK-DTCBP
@@ -2473,6 +2493,22 @@ tasks whose defects cannot be patch-expressed.
 - No CI wiring here (TASK-S2KM0 owns the lane; it should call `verify --all`).
 
 NIGHTLY REPLAY [2026-07-29, deferred from TASK-S2KM0]: the per-PR CI lane deliberately excludes `orgasmic verify` replays (cost grows with history; some artifacts are load-dependent reproductions or 60s soaks that would flake on shared runners and teach people to ignore the lane). The right home is the nightly: replay every verify/TASK-*/ artifact on a schedule. That is this task's `verify --all` ask with a concrete consumer — wire it into nightly-soak.yml or a sibling scheduled workflow.
+
+* BACKLOG TASK-E1D35 Forum review rounds: 'forum review' challenges existing reports with a chosen panel    :feature:
+:PROPERTIES:
+:DEPENDS_ON: TASK-82KKQ
+:ID: TASK-E1D35
+:PRIORITY: P2
+:END:
+
+** Description
+New verb `orgasmic forum review --forum TASK-XXXXX --participant <model> [--round N | --all-rounds] [--focus <one-line>]`: a detached stage-2 brick. Each participant blind-reviews the named earlier round's promoted stage-1 reports (default: all rounds so far) without writing a new answer — challenge/add/agree deltas like today's cross-review, but the reviewing panel is chosen freely (one strong model reviewing ten cheap answers, or vice versa) and reviewers need not have been stage-1 participants. Recorded in the manifest as its own round kind (`review`), rendered in the tree as a review row hanging off the rounds it reviewed, feeding the curator. Reviews of reviews are out of scope. Self-exclusion still applies when a reviewer's own stage-1 report is in scope. Reuses the cross-reviewer prompt specs where possible.
+
+** Acceptance Criteria
+- [ ] `forum review` joins only open self-curated forums, refuses reviewing a round that does not exist, and records a review round the curate gates and diagram JSON cover exactly once
+- [ ] a reviewer that authored a stage-1 report in scope never receives its own report
+- [ ] multi-round tree renders review rounds distinctly and still converges on one curator card; ask SVG fixture stays byte-identical
+- [ ] skill docs teach the brick (when to review vs critique-a-document)
 
 * BACKLOG TASK-E3K1B doctor reports no vendor-transcript inventory, so dec_Y5MPK's operator-owned retention has no numbers to act on    :doctor:sessions:evidence:
 :PROPERTIES:
@@ -5331,6 +5367,22 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 :PRIORITY: P1
 :CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
+
+* IN_PROGRESS TASK-82KKQ Forum fast rounds: --fast skips cross-review, panel minimum drops to 1 :feature:
+:PROPERTIES:
+:ID: TASK-82KKQ
+:PRIORITY: P2
+:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
+:END:
+
+** Description
+Add a `--fast` flag to `forum ask` and `forum critique` (both fresh forums and `--forum` joins): the round runs stage 1 only — no cross-review dispatches. Panel minimum drops from 2 to 1 for fast rounds (self-excluding review needs 2+; stage-1-only does not). Manifest records empty cross_review_tasks and half the report paths for such rounds; validate_manifest, the compiled contract, diagram JSON validation (reviews optional for fast rounds), the multi-round renderer (extract row feeds curator directly, no review row), and the About footer all accept them. Non-fast rounds keep every current invariant. Also add one skill-docs line: a new ask round's --file may carry the shared understanding so far plus the new question (context-carrying rounds, no code needed).
+
+** Acceptance Criteria
+- [ ] `forum ask --fast --participant x1..N` runs stage 1 only, joins and opens forums, and mixes freely with normal rounds under one forum
+- [ ] `--fast` with a dispatched `--curator` on a single-round forum also works (curator reads stage-1 reports only)
+- [ ] validate_manifest/diagram/renderer/curate gates accept fast rounds and still reject malformed normal rounds; existing ask SVG fixture stays byte-identical
+- [ ] panel of 1 is accepted only with --fast; without it the 2+ rule holds
 
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
