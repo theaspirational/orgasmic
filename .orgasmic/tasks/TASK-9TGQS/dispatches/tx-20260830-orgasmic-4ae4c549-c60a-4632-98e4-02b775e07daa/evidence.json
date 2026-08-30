@@ -1,0 +1,23 @@
+{
+  "event_count": 406,
+  "tool_call_count": 30,
+  "unparsed_events": 2,
+  "bounded_events": 5,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-9TGQS-reviewer-20260830T085508.jsonl",
+    "size_bytes": 620676
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll review TASK-9TGQS. First, I'll read the report, the brief, and the diff.Now I'll read the brief and look at the code.Now the big file. I'll read forum.rs in chunks.I've read the full file. Now let me diff against main to check the dispatched-curator path for drift.The diff is fully mapped now. Let me check two things: how the daemon handles a duplicate task create (curate retry path), and `project_tmp_dir`.Duplicate creates replay idempotently via `request_id` cache. Let me check what happens when the same request_id arrives with a *different* mutation identity (retry with a changed draft path).The idempotency story is clear. Now let me run the test suite (background) and check the prompt specs weren't touched.While tests run, let me check the curator prompt specs for the `# Completion` heading that `without_completion_section` depends on.While tests run, let me check the memory note about `.orgasmic` blindspot — the manifest dir convention — and confirm `project_tmp_dir` location.All 284 tests pass. Now the targeted probe: I'll add a temporary red test to prove the About-footer escaping bug, then revert it.Bug confirmed. Reverting the probe and running cli_parity.All checks done. Writing the review report now."
+    }
+  ],
+  "narrative_truncated": false
+}
