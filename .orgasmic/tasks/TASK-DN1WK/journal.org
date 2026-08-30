@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-DN1WK
+#+orgasmic_version: 2
+
+* tx-20260830-orgasmic-6717 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6717
+:TIME:    [2026-08-30 Sun 10:50:41]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-DN1WK
+:TARGET: .orgasmic/tasks/TASK-DN1WK/node.org
+:REASON: operator chose OKF-bundle pairing for agent discovery of the CLI surface
+:EVENT_ID: f4c0f8a7-0dfc-4f52-88ff-91754803d2b6
+:END:
