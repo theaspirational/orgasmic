@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-E1D35
+#+orgasmic_version: 2
+
+* BACKLOG TASK-E1D35 Forum review rounds: 'forum review' challenges existing reports with a chosen panel    :feature:
+:PROPERTIES:
+:DEPENDS_ON: TASK-82KKQ
+:ID: TASK-E1D35
+:PRIORITY: P2
+:END:
+
+** Description
+New verb `orgasmic forum review --forum TASK-XXXXX --participant <model> [--round N | --all-rounds] [--focus <one-line>]`: a detached stage-2 brick. Each participant blind-reviews the named earlier round's promoted stage-1 reports (default: all rounds so far) without writing a new answer — challenge/add/agree deltas like today's cross-review, but the reviewing panel is chosen freely (one strong model reviewing ten cheap answers, or vice versa) and reviewers need not have been stage-1 participants. Recorded in the manifest as its own round kind (`review`), rendered in the tree as a review row hanging off the rounds it reviewed, feeding the curator. Reviews of reviews are out of scope. Self-exclusion still applies when a reviewer's own stage-1 report is in scope. Reuses the cross-reviewer prompt specs where possible.
+
+** Acceptance Criteria
+- [ ] `forum review` joins only open self-curated forums, refuses reviewing a round that does not exist, and records a review round the curate gates and diagram JSON cover exactly once
+- [ ] a reviewer that authored a stage-1 report in scope never receives its own report
+- [ ] multi-round tree renders review rounds distinctly and still converges on one curator card; ask SVG fixture stays byte-identical
+- [ ] skill docs teach the brick (when to review vs critique-a-document)

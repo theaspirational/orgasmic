@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-E1D35
+#+orgasmic_version: 2
+
+* tx-20260830-orgasmic-6716 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6716
+:TIME:    [2026-08-30 Sun 10:13:51]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-E1D35
+:TARGET: .orgasmic/tasks/TASK-E1D35/node.org
+:REASON: operator wants critique-of-what-we-have without a document detour (lego bricks design)
+:EVENT_ID: ba1a9dd2-6e6d-4d41-8c4c-85aa108063e6
+:END:
