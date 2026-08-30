@@ -27,7 +27,11 @@ fn main() {
         "cargo:rerun-if-changed={}",
         repo_root.join("ui/package-lock.json").display()
     );
-    println!("cargo:rerun-if-changed={}", ui_dist.display());
+    // ui/dist is watched only on the prebuilt-reuse path below. When this
+    // script runs npm itself, dist is its own output — watching it would make
+    // every release build invalidate the next one.
+    println!("cargo:rerun-if-env-changed=ORGASMIC_EMBED_UI");
+    println!("cargo:rerun-if-env-changed=ORGASMIC_UI_PREBUILT");
 
     // Skip the npm build in debug/test builds. Only embed the real UI for
     // release builds or when ORGASMIC_EMBED_UI=1 is set explicitly.
@@ -46,6 +50,8 @@ fn main() {
 
     let dist_dir = if profile == "release" || embed_ui {
         if reuse_prebuilt {
+            // Here dist is a true input (built out-of-band), so watch it.
+            println!("cargo:rerun-if-changed={}", ui_dist.display());
             println!(
                 "cargo:warning=reusing prebuilt UI at {} (ORGASMIC_UI_PREBUILT=1)",
                 ui_dist.display()
