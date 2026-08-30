@@ -1571,3 +1571,16 @@
 :TARGET:       .orgasmic/tasks/TASK-DN1WK
 :EVENT_ID:     fcdb0433-bc57-4716-80fb-288b1633f236
 :END:
+
+* TX 2026-08-30 Sun 12:43:35.421239 task.claimed TASK-DN1WK
+:PROPERTIES:
+:TX_ID:        tx-20260830124335-6d82dfbe
+:TIME:         [2026-08-30 Sun 12:43:35.421239]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DN1WK
+:TARGET:       .orgasmic/tasks/TASK-DN1WK
+:EVENT_ID:     3e251bf4-d07e-428b-a301-26e213b1f647
+:END:
