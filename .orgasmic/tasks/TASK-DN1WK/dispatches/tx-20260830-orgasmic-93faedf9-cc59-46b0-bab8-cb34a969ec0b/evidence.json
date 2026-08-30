@@ -1,0 +1,23 @@
+{
+  "event_count": 646,
+  "tool_call_count": 57,
+  "unparsed_events": 5,
+  "bounded_events": 7,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-DN1WK-reviewer-20260830T124335.jsonl",
+    "size_bytes": 974339
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'm the reviewer for TASK-DN1WK. Plan: read the report and diff, check the docs tell the truth about the CLI, run the validators and tests, then finalize with a verdict.Report read. Now I'll read the bundle files themselves.Operations pages are thin \"check --help\" pointers — low risk. The recipes carry the real claims. Now I'll verify them against the actual CLI.That was my shell quoting bug (zsh doesn't word-split), not the CLI. Retrying properly.Forum help matches the recipes well. Now the dispatch and inspect commands.All flags check out so far. Now the conflict/round-scoped flag claims and install.sh.Recipes are checking out truthful. Now the parity test itself.Eval status confirms zero owner verdicts, ten provisional — honest. My `--version` flag broke that first command; rerunning validate alone.Validate passes clean. Now my own red probe: remove one marker, expect the parity test to fail, restore, then run green.Red probe works: breaking one marker fails the test. File restored, tree clean. Now the full suite in the background while I do the traversal check.While that runs: traversal check. I noticed recipes mix two link styles — `/operations/forum.md` (root-absolute) and `../references/forum.md` (relative). Let me map all links.Suite is green (300 passed). But the SKILL.md rewrite dropped the routing rules and the wake-marker handling. Checking whether those survive anywhere in the bundle.The wake marker is gone from the whole bundle. Checking how the daemon uses it — that decides severity.The wake marker lives in `shipped/entry/router.org` with a test guarding it — SKILL.md's copy was redundant, so dropping it is fine. Now the meta/ honesty pass and one live `okfy query`.The tmp corpus still exists today, but /private/tmp gets wiped. Key question: does the validate gate survive the corpus vanishing? Testing by briefly renaming the corpus dir.Validate passes even with the corpus gone — the manifest hashes carry it. Good. Now the reverse-direction check (docs naming commands that don't exist) and the runtime-shipping claim.Now the reverse parity probe: every doc marker must be a real CLI path.No owner verdicts anywhere — the self-certification ban holds. Last checks: anything else in the repo depending on the old SKILL.md shape, and size discipline of the biggest concept.No `deny_unknown_fields` — the new frontmatter keys are tolerated. One production-path probe: make the daemon-side parser actually load the new SKILL.md.This test boots a daemon against the real repo's shipped tree — perfect production-path probe. Running it.SKILL.md parses through the real daemon route. Last probe: prompt-spec compile after the implementer.org edit.All gates green. Writing the review and finalizing."
+    }
+  ],
+  "narrative_truncated": false
+}
