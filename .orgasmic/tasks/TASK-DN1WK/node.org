@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DN1WK
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface :feature:
+* IN_REVIEW TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface :feature:
 :PROPERTIES:
 :ID: TASK-DN1WK
 :PRIORITY: P2
