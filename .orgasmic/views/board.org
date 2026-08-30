@@ -5433,7 +5433,6 @@ AP971.2/.3: shipped/schema/node-types/{task,decision,glossary,artifact}.org — 
 :PROPERTIES:
 :ID: TASK-82KKQ
 :PRIORITY: P2
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 
 ** Description
