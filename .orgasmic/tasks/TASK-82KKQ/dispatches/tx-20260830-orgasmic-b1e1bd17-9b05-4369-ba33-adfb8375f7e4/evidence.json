@@ -1,0 +1,23 @@
+{
+  "event_count": 552,
+  "tool_call_count": 45,
+  "unparsed_events": 7,
+  "bounded_events": 10,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-82KKQ-reviewer-20260830T112822.jsonl",
+    "size_bytes": 769788
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'm the reviewer for TASK-82KKQ. First I'll read the diff, the report, and the brief.Now the brief and the full diff.The spec changes look in-scope. Now the big one: the forum.rs diff.That's most of the diff. Let me get the rest.Full diff seen. Now I need to check the validation functions the diff did NOT touch — the diagram JSON loaders — because tests claim fast behavior there.The diagram loaders key off manifest task lists, so empty `cross_review_tasks` handles fast rounds without loader changes. Now the ordinal math, footers, and curate gates.The dispatched path looks consistent. Now `run_curate` — the self-curated gate path.Let me compare `run_curate` and `render_multi_round_svg` guards on main, to verify the single-round path wasn't newly loosened incorrectly.Odd: on main, `run_curate` sends 1-round forums into `render_multi_round_svg`, which bails on `rounds.len() < 2`. Let me check main's tests for single-round curation.This looks like a possible pre-existing bug on main (single-round self-curation bails in the renderer). Let me check history.Core paths check out so far. Now the join path and the `reports()` split helper.291 passed. Now mutation probe A: loosen the manifest review-count gate; the new tests must go red.Mutation A caught (the malformed-normal assert went red). Revert, then probe B: the panel-of-1 gate.Caught. Revert and re-verify clean.Clippy clean, stage-1 specs make no false promises. One last check: the exact \"- Cross-review tasks\" context in the specs.All checks done. Everything is green. Writing the review report now."
+    }
+  ],
+  "narrative_truncated": false
+}
