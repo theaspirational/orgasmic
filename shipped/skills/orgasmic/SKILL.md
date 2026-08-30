@@ -23,7 +23,9 @@ Orgasmic coordinates local project state, worker dispatch, and multi-model forum
 
 Start at the [bundle index][bundle-index]; choose the recipe matching the intent, and
 follow its links to operation references and deeper policy. Raw Markdown traversal is
-the complete fallback; OKFy is not required.
+the complete fallback; OKFy is not required. Links starting with `/` (such as
+`/operations/forum.md`) resolve from this bundle root — the directory holding this
+SKILL.md — not the filesystem root.
 
 [bundle-index]: index.md
 

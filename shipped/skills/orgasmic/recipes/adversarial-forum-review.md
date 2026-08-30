@@ -22,7 +22,7 @@ stage-1 reports without producing another answer.
 1. Read [forum operations](/operations/forum.md).
 2. Keep the self-curated forum open.
 3. Run `orgasmic forum review --forum TASK-XXXXX --all-rounds` with one strong participant, or repeat `--participant` for a panel.
-4. Read the new promoted delta reports and fold them into the later curation.
+4. Read the new promoted delta reports and fold them into the later curation; finish via [Run a self-curated forum](self-curated-forum.md).
 
 ## Complete example
 

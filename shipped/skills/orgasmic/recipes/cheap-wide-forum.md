@@ -23,7 +23,7 @@ Get independent first-pass answers cheaply. A ten-model round is ten repeated
 2. Put the question in a UTF-8 file (or use `--question` for ask).
 3. Choose one or more `mode,harness,model,effort` participant specs; use ten for a 10-model round.
 4. Run `orgasmic forum ask --fast`; it skips blind cross-review.
-5. Inspect every promoted stage-1 report and curate in the current chat.
+5. Inspect every promoted stage-1 report and curate in the current chat; finish via [Run a self-curated forum](self-curated-forum.md).
 
 ## Complete example
 
