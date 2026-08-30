@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-82KKQ
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-82KKQ Forum fast rounds: --fast skips cross-review, panel minimum drops to 1 :feature:
+* IN_REVIEW TASK-82KKQ Forum fast rounds: --fast skips cross-review, panel minimum drops to 1 :feature:
 :PROPERTIES:
 :ID: TASK-82KKQ
 :PRIORITY: P2
