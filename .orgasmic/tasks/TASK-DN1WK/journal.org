@@ -46,3 +46,34 @@
 :TO_STATE: in_review
 :EVENT_ID: 7628c5d7-6e75-4176-bb6d-a2a1efff920d
 :END:
+
+* tx-20260830-orgasmic-6730 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6730
+:TIME:    [2026-08-30 Sun 12:55:55]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-DN1WK
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-DN1WK/node.org
+:REASON: edited task node TASK-DN1WK
+:NODE_ID: TASK-DN1WK
+:EVENT_ID: 9663b239-fdc6-4ce8-bb4f-bb83fee7e620
+:END:
+
+* tx-20260830-orgasmic-6731 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6731
+:TIME:    [2026-08-30 Sun 12:55:55]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-DN1WK
+:TARGET: .orgasmic/tasks/TASK-DN1WK/node.org
+:REASON: merged d483ed96; fable-5 review APPROVE; fixes applied; gates green
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 51cf9e40-2dd3-4543-9618-3502a37fc0ca
+:END:

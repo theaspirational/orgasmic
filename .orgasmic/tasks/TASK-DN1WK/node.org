@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DN1WK
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface :feature:
+* DONE TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface :feature:
 :PROPERTIES:
 :ID: TASK-DN1WK
 :PRIORITY: P2
@@ -20,3 +20,13 @@ OPERATOR-OWNED CHECKPOINTS (cannot be dispatched): the okfy Purpose Interview an
 - [ ] Bundle validates with okfy validate; eval queries recorded in-bundle with owner verdicts
 - [ ] Parity gate: every orgasmic CLI subcommand is named by at least one concept; test fails otherwise
 - [ ] Implementer DoD template gains 'update touched OKF concepts'
+** Evidence
+Merged at d483ed96 (--no-ff; impl 4094f9d5 + review fixes dea3979c on orgasmic-okf-bundle-impl).
+
+Shipped: shipped/skills/orgasmic/ is an OKF bundle root — SKILL.md door, index.md, 8 intent recipes, 8 operations references, references/ frontmattered, meta/ (purpose, corpus manifest + regeneration recipe, lexicon, eval.json). Parity gate every_visible_cli_subcommand_is_named_in_the_shipped_okf_bundle in crates/orgasmic-cli/src/main.rs walks the live Clap tree (133 visible paths; red-proven twice, independently by implementer and reviewer). implementer.org DoD line added.
+
+Gates: okfy validate --strict-sources --strict-quality --strict-package --strict-schema --strict-injection ok:true 0 findings (re-run after review fixes + repackage); cargo test -p orgasmic-cli --bin orgasmic 300 passed/0 failed/1 ignored (default target dir); cli_parity 7 passed; prompt specs compile; clippy -D warnings clean (reviewer).
+
+Review: fable-5 (stdio/claude/claude-fable-5/high) APPROVE — 'Would I merge this onto main as-is? Yes'. Reverse-parity probe (every backticked orgasmic marker run against the binary): no invented commands. Findings: MEDIUM /operations/ links ambiguous under raw traversal (resolved by keeping okfy's canonical bundle-root form + SKILL.md sentence defining /-prefixed links, since okfy's link rule rejects ../ form); LOW corpus regeneration recipe recorded in meta/corpus.md; LOW finish links added from cheap-wide-forum and adversarial-forum-review to self-curated-forum. Verdict: /tmp/TASK-DN1WK-review.md.
+
+Open (operator-owned): ten eval verdicts to lift bundle from PROVISIONAL 0/10 owner-confirmed — okfy eval verdict shipped/skills/orgasmic latest <0-9> <pass|fail|partial> --owner --note '<reason>'.
