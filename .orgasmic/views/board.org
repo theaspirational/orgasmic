@@ -5465,26 +5465,6 @@ TWCP9 decision, step 3. Claims live in per-machine append-only logs (`machines/<
 - [ ] double-claim interval is visible in dispatch-status/views
 - [ ] projections fold multi-machine logs identically regardless of ingest order (test)
 
-* IN_REVIEW TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface :feature:
-:PROPERTIES:
-:ID: TASK-DN1WK
-:PRIORITY: P2
-:END:
-
-** Description
-Pair the shipped orgasmic skill with the sibling okfy tool (~/Documents/code/tools/okfy). `shipped/skills/orgasmic/` becomes an OKF Bundle root: SKILL.md shrinks to the door (what orgasmic is, where the bundle index lives, follow links by raw traversal, use the okfy CLI for BM25 search when present), and the bundle holds small purpose-shaped concepts an agent walks by intent. Concepts are organized as recipes (cheap wide first pass with --fast, adversarial verify via a review round, dispatched fire-and-forget curator, ship a runtime, dispatch lifecycle...) linking to verb-reference concepts, so different preferred workflows coexist in the index. Bundle ships inside the runtime, so installed binaries carry version-accurate discovery.
-
-Bootstrap once with /okfy:new + /okfy:extract over the real corpus (CLI help trees, shipped/skills/orgasmic/references/*.md, prompt specs, AGENTS.md). After bootstrap, maintenance is manual: updating touched concepts joins the implementer definition-of-done, okfy validate becomes a test/CI gate, and the bundle's eval replay (ten standing discovery queries) is the drift test — a new CLI verb with no concept fails the parity gate.
-
-OPERATOR-OWNED CHECKPOINTS (cannot be dispatched): the okfy Purpose Interview and the ten eval-query verdicts — okfy refuses self-certified bundles by design.
-
-** Acceptance Criteria
-- [ ] Skill listing description names the major features (forum ask/critique/review, self- vs dispatched curation, dispatch, runtime install) so fresh sessions open the door
-- [ ] SKILL.md points to the bundle index; a fresh agent can answer 'how do I run a cheap 10-model round' by link traversal alone, no okfy install
-- [ ] Bundle validates with okfy validate; eval queries recorded in-bundle with owner verdicts
-- [ ] Parity gate: every orgasmic CLI subcommand is named by at least one concept; test fails otherwise
-- [ ] Implementer DoD template gains 'update touched OKF concepts'
-
 * IN_REVIEW TASK-EPG6H tx split: route node-scoped events to journals per the AP971.5 table :e01mc:node_kernel:
 :PROPERTIES:
 :DEPENDS_ON: TASK-SRBGS
@@ -14875,6 +14855,36 @@ Symmetric fix: extend the daemon enum with =Architector= variant + 4 match arms 
 - *Reviewer pass aborted (NOT clean-blocking)*: =reviewer-codex-stdio= dispatched (pid 36210, run-20260528T100136-bc13f104d2074f64a263d1428de0013a) but starved by the daemon CPU-spin issue (see TASK-ZG01H). Codex session jsonl made it to seq 513 then froze for 7+ min idle at 0.0% CPU; daemon at sustained 200-500% CPU. Manager killed worker + daemon, restarted, closed dispatch as =manager.dispatch_aborted= (tx-20260528-org-0483). Diff identical-shape to TASK-DMTDF which already passed review smoke-test; merging on implementer evidence + manual diff inspection + gate re-verification. Reviewer redo deferred to next manager session after TASK-ZG01H daemon fix.
 - *Gates on merged main =283f108=:* cargo test -p orgasmic-daemon (api::tests::dispatch_endpoint_kind_supports_architector + 117 filtered) ✓; cargo clippy --workspace --all-targets -- -D warnings ✓; cargo fmt --check ✓; git diff --check ✓.
 - *Unblocks (after TASK-ZG01H + TASK-TGGAJ)*: TASK-ENXWA architector dispatch end-to-end. The CLI + daemon now accept =--kind architector=; the smoke-test in TASK-DMTDF review confirmed clap parses it and the daemon endpoint validates correctly. TASK-ENXWA was attempted at 10:01:50Z but silently fell back to =simulated:true= in the claude-acp driver (TASK-TGGAJ); dispatch aborted as =tx-20260528-org-0484=. Genuine TASK-ENXWA dispatch waits on TASK-TGGAJ fix.
+
+* DONE TASK-DN1WK Orgasmic skill becomes an OKF bundle: link-traversal discovery of the full CLI surface :feature:
+:PROPERTIES:
+:ID: TASK-DN1WK
+:PRIORITY: P2
+:END:
+
+** Description
+Pair the shipped orgasmic skill with the sibling okfy tool (~/Documents/code/tools/okfy). `shipped/skills/orgasmic/` becomes an OKF Bundle root: SKILL.md shrinks to the door (what orgasmic is, where the bundle index lives, follow links by raw traversal, use the okfy CLI for BM25 search when present), and the bundle holds small purpose-shaped concepts an agent walks by intent. Concepts are organized as recipes (cheap wide first pass with --fast, adversarial verify via a review round, dispatched fire-and-forget curator, ship a runtime, dispatch lifecycle...) linking to verb-reference concepts, so different preferred workflows coexist in the index. Bundle ships inside the runtime, so installed binaries carry version-accurate discovery.
+
+Bootstrap once with /okfy:new + /okfy:extract over the real corpus (CLI help trees, shipped/skills/orgasmic/references/*.md, prompt specs, AGENTS.md). After bootstrap, maintenance is manual: updating touched concepts joins the implementer definition-of-done, okfy validate becomes a test/CI gate, and the bundle's eval replay (ten standing discovery queries) is the drift test — a new CLI verb with no concept fails the parity gate.
+
+OPERATOR-OWNED CHECKPOINTS (cannot be dispatched): the okfy Purpose Interview and the ten eval-query verdicts — okfy refuses self-certified bundles by design.
+
+** Acceptance Criteria
+- [ ] Skill listing description names the major features (forum ask/critique/review, self- vs dispatched curation, dispatch, runtime install) so fresh sessions open the door
+- [ ] SKILL.md points to the bundle index; a fresh agent can answer 'how do I run a cheap 10-model round' by link traversal alone, no okfy install
+- [ ] Bundle validates with okfy validate; eval queries recorded in-bundle with owner verdicts
+- [ ] Parity gate: every orgasmic CLI subcommand is named by at least one concept; test fails otherwise
+- [ ] Implementer DoD template gains 'update touched OKF concepts'
+** Evidence
+Merged at d483ed96 (--no-ff; impl 4094f9d5 + review fixes dea3979c on orgasmic-okf-bundle-impl).
+
+Shipped: shipped/skills/orgasmic/ is an OKF bundle root — SKILL.md door, index.md, 8 intent recipes, 8 operations references, references/ frontmattered, meta/ (purpose, corpus manifest + regeneration recipe, lexicon, eval.json). Parity gate every_visible_cli_subcommand_is_named_in_the_shipped_okf_bundle in crates/orgasmic-cli/src/main.rs walks the live Clap tree (133 visible paths; red-proven twice, independently by implementer and reviewer). implementer.org DoD line added.
+
+Gates: okfy validate --strict-sources --strict-quality --strict-package --strict-schema --strict-injection ok:true 0 findings (re-run after review fixes + repackage); cargo test -p orgasmic-cli --bin orgasmic 300 passed/0 failed/1 ignored (default target dir); cli_parity 7 passed; prompt specs compile; clippy -D warnings clean (reviewer).
+
+Review: fable-5 (stdio/claude/claude-fable-5/high) APPROVE — 'Would I merge this onto main as-is? Yes'. Reverse-parity probe (every backticked orgasmic marker run against the binary): no invented commands. Findings: MEDIUM /operations/ links ambiguous under raw traversal (resolved by keeping okfy's canonical bundle-root form + SKILL.md sentence defining /-prefixed links, since okfy's link rule rejects ../ form); LOW corpus regeneration recipe recorded in meta/corpus.md; LOW finish links added from cheap-wide-forum and adversarial-forum-review to self-curated-forum. Verdict: /tmp/TASK-DN1WK-review.md.
+
+Open (operator-owned): ten eval verdicts to lift bundle from PROVISIONAL 0/10 owner-confirmed — okfy eval verdict shipped/skills/orgasmic latest <0-9> <pass|fail|partial> --owner --note '<reason>'.
 
 * DONE TASK-DNF8Y Full (run_id, runtime_id, boot_id) ownership tuple guard :runtime:arch_Z3Z3V:
 :PROPERTIES:
