@@ -30,3 +30,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 5a917eb0-478f-4dd0-be23-aa1ba38ab1df
 :END:
+
+* tx-20260830-orgasmic-6724 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6724
+:TIME:    [2026-08-30 Sun 12:00:35]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-E1D35
+:TARGET: .orgasmic/tasks/TASK-E1D35/node.org
+:REASON: implementer finalized; queue fable-5 review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 0e91984e-ea65-43a6-885f-e7577a007d8c
+:END:
