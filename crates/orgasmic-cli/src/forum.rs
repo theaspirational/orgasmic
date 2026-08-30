@@ -1473,8 +1473,18 @@ fn render_multi_round_svg(
     let width =
         (margin * 2 + max_count as i32 * card_width + (max_count as i32 - 1) * gap).max(544);
     let center = width / 2;
-    let round_height = 650i32;
-    let curator_y = 32 + rounds.len() as i32 * round_height;
+    // A review round draws only a header plus one 190px card row, so a
+    // uniform 650px slot leaves a blank band; give each kind its own height.
+    let mut row_tops = Vec::with_capacity(rounds.len());
+    let mut curator_y = 32i32;
+    for round in rounds {
+        row_tops.push(curator_y);
+        curator_y += if round.kind == ForumKind::Review {
+            300
+        } else {
+            650
+        };
+    }
     let height = curator_y + 190;
     let sans = "font-family:-apple-system,'SF Pro Text','Segoe UI',Helvetica,Arial,sans-serif";
     let mono = "font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace";
@@ -1514,7 +1524,7 @@ fn render_multi_round_svg(
             .map(|index| row_left + index * (card_width + gap))
             .collect::<Vec<_>>();
         let centers = xs.iter().map(|x| x + card_width / 2).collect::<Vec<_>>();
-        let top = 32 + (round.round as i32 - 1) * round_height;
+        let top = row_tops[round.round - 1];
         let prompt_lines = wrap_question(&round.input.diagram_prompt());
         write!(
             out,
@@ -1549,7 +1559,7 @@ fn render_multi_round_svg(
                 &[],
             ));
             for reviewed_round in reviewed_rounds {
-                let source_top = 32 + (*reviewed_round as i32 - 1) * round_height;
+                let source_top = row_tops[*reviewed_round - 1];
                 let source_y = source_top + 332;
                 for destination in &centers {
                     write!(
@@ -2126,18 +2136,27 @@ fn parse_participant(raw: &str) -> Result<Participant> {
     if fields.iter().any(|field| field.contains(['\n', '\r', '·'])) {
         bail!("participant fields must be single-line values without `·`");
     }
+    // Vendor/model form the comparison identity for panel uniqueness and
+    // reviewer self-exclusion, so normalize case and stray whitespace here;
+    // dispatch_model below stays byte-exact for the harness.
     let (vendor, model) = if let Some((vendor, model)) = fields[2].split_once('/') {
-        (vendor.to_string(), model.to_string())
+        (
+            vendor.trim().to_ascii_lowercase(),
+            model.trim().to_ascii_lowercase(),
+        )
     } else {
         match fields[1] {
-            "codex" => ("openai".to_string(), fields[2].to_string()),
-            "claude" => ("anthropic".to_string(), fields[2].to_string()),
+            "codex" => ("openai".to_string(), fields[2].to_ascii_lowercase()),
+            "claude" => ("anthropic".to_string(), fields[2].to_ascii_lowercase()),
             harness => bail!(
                 "cannot derive vendor for {harness}/{}; use provider/model",
                 fields[2]
             ),
         }
     };
+    if vendor.is_empty() || model.is_empty() {
+        bail!("participant model must be model or provider/model");
+    }
     Ok(Participant {
         mode: fields[0].to_string(),
         harness: fields[1].to_string(),
@@ -3662,8 +3681,11 @@ fn select_review_rounds(manifest: &ForumManifest, requested: Option<usize>) -> R
         .collect())
 }
 
+/// The author of a report is the model, not the transport: the same
+/// vendor/model reviewing through a different harness must still never see
+/// its own stage-1 report. Mode and effort are likewise irrelevant.
 fn same_reviewer_identity(left: &Participant, right: &Participant) -> bool {
-    left.harness == right.harness && left.vendor == right.vendor && left.model == right.model
+    left.vendor == right.vendor && left.model == right.model
 }
 
 fn review_scope(sources: &[(usize, RunReport)], reviewer: &Participant) -> Vec<(usize, RunReport)> {
@@ -4538,6 +4560,15 @@ mod tests {
         assert!(!compiled_manifest.contains("TASK-TESTX.1"));
         assert!(compiled_manifest.contains("TASK-TESTX.2"));
         assert!(compiled_manifest.contains("Round 1 stage-1 report to review"));
+
+        // The author is the model, not the transport: the same vendor/model
+        // arriving via a different harness/mode/effort is still excluded.
+        let mut cross_harness = reviewer.clone();
+        cross_harness.harness = "hermes".to_string();
+        cross_harness.mode = "stdio".to_string();
+        cross_harness.effort = "high".to_string();
+        let cross_scope = review_scope(&sources, &cross_harness);
+        assert!(!review_report_manifest(&cross_scope).contains("TASK-TESTX.1"));
 
         let only_own_report = review_scope(std::slice::from_ref(&sources[0]), &reviewer);
         assert!(validate_review_scopes(&[reviewer], &[only_own_report])
