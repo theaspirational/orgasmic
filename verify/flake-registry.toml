@@ -75,6 +75,29 @@ evidence = "Manager measurement 2026-07-28 on the merged TASK-5HBST tree at load
 filed = "2026-07-28"
 
 # --------------------------------------------------------------------------
+# TASK-X0PV1 (continued) — two orgasmic-cli dispatch-suite tests in the same
+# fail-under-full-suite-parallelism, pass-alone class the task already owns.
+# Both measured 2026-08-30 during release certification of b00b48bd:
+# `cargo test --workspace --no-fail-fast` red on each, and the classifier's own
+# isolation rerun green on each ("isolation: passed" in the run-tests report),
+# twice in a row (two certification rounds, 20260830).
+# --------------------------------------------------------------------------
+
+[[flake]]
+test = "dispatch_close_records_cleanup_failure_and_status_filter_lists_it"
+owner = "TASK-X0PV1"
+signature = "cleanup failure close should still append tx"
+evidence = "Measured 2026-08-30 on b00b48bd (and previously on 9413059a): full-workspace certification suite red at crates/orgasmic-cli/tests/dispatch.rs assertion 'cleanup failure close should still append tx'; run-tests.sh isolation rerun green both rounds. Same-family entries above measure the shared-daemon/tmux contention trigger."
+filed = "2026-08-30"
+
+[[flake]]
+test = "dispatch_timeout_requests_daemon_cleanup"
+owner = "TASK-X0PV1"
+signature = "daemon cleanup should remove branch after CLI timeout"
+evidence = "Measured 2026-08-30 on b00b48bd (and previously on 9413059a): full-workspace certification suite red at crates/orgasmic-cli/tests/dispatch.rs assertion 'daemon cleanup should remove branch after CLI timeout'; run-tests.sh isolation rerun green both rounds."
+filed = "2026-08-30"
+
+# --------------------------------------------------------------------------
 # TASK-QCG6J — the reattach-fence regression asserts WHICH refusal fired, so it
 # goes red on a safe outcome under load. Two assertions in one test body, so two
 # entries: whichever one trips, the owner is named and the other is not blamed.

@@ -179,6 +179,10 @@ fn seed_dispatch_generation(project_root: &Path) {
         "recovery fault dispatch generation",
     );
     started.project = Some(PROJECT_ID.into());
+    // fold_dispatches only opens a generation for a start entry that names
+    // its tasks and carries a KIND, like every real dispatch record.
+    started.task = Some("TASK-FAULT".into());
+    started.extra = vec![("KIND".into(), "implementer".into())];
     let mut root = TxEntry::new(
         "dispatch-root",
         "run.created",

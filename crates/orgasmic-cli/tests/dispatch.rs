@@ -3480,6 +3480,23 @@ async fn legacy_partial_close_retry_does_not_move_an_advanced_sibling_backwards(
         &project_root,
         &path_env,
         &[
+            "node",
+            "body",
+            "set",
+            "TASK-BUNDLE-A",
+            "--section",
+            "Evidence",
+            "--create",
+            "--body",
+            "legacy-close retry fixture evidence",
+        ],
+    );
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
             "task",
             "update",
             "TASK-BUNDLE-A",
@@ -9552,6 +9569,25 @@ async fn resubmitted_close_and_transition_are_labelled_no_ops() {
     assert!(
         second.contains("already-closed: TASK-CLEANUP started_tx=tx-start-noop (no-op)"),
         "a re-submitted close must be a labelled no-op: {second}"
+    );
+
+    // The done-transition below needs recorded evidence (ART-04FYD gate).
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "node",
+            "body",
+            "set",
+            "TASK-CLEANUP",
+            "--section",
+            "Evidence",
+            "--create",
+            "--body",
+            "no-op relabel fixture evidence",
+        ],
     );
 
     // The lifecycle leg's own no-op contract, on the wire.
