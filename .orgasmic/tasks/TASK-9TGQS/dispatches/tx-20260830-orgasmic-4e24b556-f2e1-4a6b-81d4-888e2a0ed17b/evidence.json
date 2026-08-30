@@ -1,0 +1,20 @@
+{
+  "event_count": 244,
+  "tool_call_count": 142,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-9TGQS-implementer-20260830T083312.jsonl",
+    "size_bytes": 642957
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/08/30/rollout-2026-08-30T11-33-13-01a051cd-22d0-72f0-9e4d-07cdb7d9fab6.jsonl",
+    "session_id": "01a051cd-22d0-72f0-9e4d-07cdb7d9fab6",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
