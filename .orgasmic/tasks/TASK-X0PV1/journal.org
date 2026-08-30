@@ -1,2 +1,17 @@
 #+title: orgasmic journal TASK-X0PV1
 #+orgasmic_version: 2
+
+* tx-20260830-orgasmic-6732 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260830-orgasmic-6732
+:TIME:    [2026-08-30 Sun 16:32:18]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-X0PV1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-X0PV1/node.org
+:REASON: edited task node TASK-X0PV1
+:NODE_ID: TASK-X0PV1
+:EVENT_ID: 85227d6f-f85d-414e-aa0e-c7ad0b73dd5e
+:END:
