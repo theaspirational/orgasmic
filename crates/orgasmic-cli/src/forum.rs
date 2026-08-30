@@ -2247,6 +2247,20 @@ fn self_curation_manifest(manifest: &ForumManifest) -> Result<String> {
     Ok(text)
 }
 
+/// The dispatched curator specs emit a `- Cross-review tasks` output bullet a
+/// fast-only run cannot honor. The removal is string surgery against the
+/// compiled spec, so refuse to continue the moment the line stops matching
+/// instead of silently shipping a contract that demands nonexistent reports.
+fn strip_cross_review_output_line(compiled: &str) -> Result<String> {
+    let stripped = compiled.replace("- Cross-review tasks\n", "");
+    if stripped == compiled {
+        bail!(
+            "curator spec no longer carries the `- Cross-review tasks` output line; update the fast-round contract surgery"
+        );
+    }
+    Ok(stripped)
+}
+
 fn compile_self_contract(api: &Api, manifest: &ForumManifest, contract_path: &Path) -> Result<()> {
     let first = manifest
         .rounds
@@ -2265,7 +2279,7 @@ fn compile_self_contract(api: &Api, manifest: &ForumManifest, contract_path: &Pa
         .iter()
         .all(|round| round.cross_review_tasks.is_empty())
     {
-        contract = contract.replace("- Cross-review tasks\n", "");
+        contract = strip_cross_review_output_line(&contract)?;
     }
     contract.push_str(
         "\n# Self-curated forum submission\n\nThe invoking session, not a dispatch, performs curation. Discuss and iterate before writing the two files, then pass them to `orgasmic forum curate`; do not run `dispatch finalize`. In the draft's Raw reports list, include every report task named in every manifest round; do not invent a curation task id, because the CLI mints it after the draft passes its gates. For more than one round, the diagram JSON replaces the legacy top-level `extracts` and `reviews` with:\n\n```json\n{\n  \"rounds\": [\n    {\"round\": 1, \"kind\": \"ask\", \"extracts\": [...], \"reviews\": [...]},\n    {\"round\": 2, \"kind\": \"critique\", \"extracts\": [...]}\n  ],\n  \"curator_summary\": \"short synthesis summary\",\n  \"headline\": \"short artifact title\"\n}\n```\n\nInclude every manifest round in order and every named task exactly once in its own round. A fast round has no reviews: omit its `reviews` member or use an empty array, and never invent review provenance. The first round controls the draft's verbatim first section and required section shape.\n",
@@ -3063,16 +3077,18 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
 
         let curator = curator.as_ref().expect("dispatched curator is present");
         let curator_task = format!("{parent}.{}", next_task_ordinal(&manifest));
-        let run_manifest = format!(
-            "Parent task: {parent}\nStarted UTC: {}\nParticipants ({}):\n{}\nCurator: {}\n\n{}\n\n{}\n\nCuration task: {curator_task}",
-            manifest.started_at,
-            participants.len(),
-            participants
-                .iter()
-                .map(|participant| format!("- {}", participant.identity()))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            curator.identity(),
+        let mut manifest_segments = vec![
+            format!(
+                "Parent task: {parent}\nStarted UTC: {}\nParticipants ({}):\n{}\nCurator: {}",
+                manifest.started_at,
+                participants.len(),
+                participants
+                    .iter()
+                    .map(|participant| format!("- {}", participant.identity()))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                curator.identity(),
+            ),
             extraction
                 .iter()
                 .map(|report| {
@@ -3086,12 +3102,18 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n"),
-            reviews
-                .iter()
-                .map(|report| manifest_entry("Cross-review", report))
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-        );
+        ];
+        if !reviews.is_empty() {
+            manifest_segments.push(
+                reviews
+                    .iter()
+                    .map(|report| manifest_entry("Cross-review", report))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            );
+        }
+        manifest_segments.push(format!("Curation task: {curator_task}"));
+        let run_manifest = manifest_segments.join("\n\n");
         let curator_brief = tmp.path().join("curator.md");
         std::fs::write(&curator_brief, {
             let mut values = input.prompt_values();
@@ -3099,7 +3121,7 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
             values.insert("task.id".to_string(), curator_task.clone());
             let compiled = api.compile_prompt(kind.curator_spec(), values)?;
             if fast {
-                compiled.replace("- Cross-review tasks\n", "")
+                strip_cross_review_output_line(&compiled)?
             } else {
                 compiled
             }
@@ -3195,16 +3217,20 @@ fn run_forum(home: &Home, input: ForumInput, args: RunArgs) -> Result<RunResult>
         std::fs::remove_file(&fields_path)
             .with_context(|| format!("remove {}", fields_path.display()))?;
 
+        let review_evidence = if review_tasks.is_empty() {
+            String::new()
+        } else {
+            format!("- Cross-review tasks: {}\n", review_tasks.join(" "))
+        };
         api.set_evidence(
             &parent,
             &format!(
-                "- Artifact: {artifact}\n- {} tasks: {}\n- Cross-review tasks: {}\n- Curation task: {curator_task}\n",
+                "- Artifact: {artifact}\n- {} tasks: {}\n{review_evidence}- Curation task: {curator_task}\n",
                 match kind {
                     ForumKind::Ask => "Extraction",
                     ForumKind::Critique => "Critique",
                 },
-                extraction_tasks.join(" "),
-                review_tasks.join(" ")
+                extraction_tasks.join(" ")
             ),
         )?;
         api.finish_task(&parent)?;
@@ -4087,6 +4113,47 @@ mod tests {
         {
             assert!(svg.contains(&format!("data-task=\"{task}\"")));
         }
+    }
+
+    #[test]
+    fn single_normal_round_renders_through_the_multi_round_card() {
+        // Latent-defect regression: before TASK-82KKQ this bailed on
+        // rounds.len() < 2, which broke `forum curate` for every single-round
+        // self-curated forum shipped in TASK-9TGQS.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("diagram.json");
+        let mut manifest = mixed_manifest();
+        manifest.rounds.truncate(1);
+        std::fs::write(&path, multi_diagram_json(&manifest).to_string()).unwrap();
+        let fields = load_multi_round_diagram_fields(&path, &manifest.rounds).unwrap();
+        let curator = parse_participant("session,claude,claude-fable-5,interactive").unwrap();
+        let svg = render_multi_round_svg(
+            &manifest.rounds,
+            &curator,
+            "TASK-TESTX.5",
+            Path::new("/tmp/TASK-TESTX-curation.mdx"),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(svg.matches("data-card=\"prompt\"").count(), 1);
+        assert_eq!(svg.matches("data-card=\"extract\"").count(), 2);
+        assert_eq!(svg.matches("data-card=\"review\"").count(), 2);
+        assert_eq!(svg.matches("data-card=\"curator\"").count(), 1);
+        assert_eq!(svg.matches("data-arrow=\"review-curator\"").count(), 2);
+    }
+
+    #[test]
+    fn cross_review_contract_surgery_fails_closed_on_spec_drift() {
+        let compiled = "# Output Contract\n- Draft MDX\n- Cross-review tasks\n- Curation task\n";
+        let stripped = strip_cross_review_output_line(compiled).unwrap();
+        assert!(!stripped.contains("Cross-review tasks"));
+        assert!(stripped.contains("- Curation task"));
+        assert!(
+            strip_cross_review_output_line("# Output Contract\n- Draft MDX\n")
+                .unwrap_err()
+                .to_string()
+                .contains("no longer carries")
+        );
     }
 
     #[test]
