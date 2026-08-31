@@ -11,7 +11,8 @@ sources:
 Both run inside an existing orgasmic project from on-disk state alone. The
 project root is what `orgasmic entry` prints — post-cutover usually a ledger
 checkout at `~/.orgasmic/ledgers/<id>`, not the repo tree; read `.orgasmic/`
-there. They share one bootstrap and differ only
+there. `PROJECT -` means the cwd is outside any project: `orgasmic board`
+lists the live projects and their checkouts — move there first. They share one bootstrap and differ only
 after the briefing: `recall` stops and waits; `resume` executes the next
 planned action.
 
@@ -58,12 +59,14 @@ Open these only when the condition actually holds:
   `** In flight`): inspect `.orgasmic/tmp/dispatch/<task-stem>/` (brief, last
   message, stdout log) and `git -C <worktree> status`; decide
   resume-integration vs abort.
-- **No CLI but handoff names in-flight work**: scan the most recent
-  `.orgasmic/tx/*.org` for `manager.dispatch_started` entries without a
-  matching close (`implementer.done` / `reviewer.done` /
-  `manager.dispatch_aborted`). A `*.reported` entry (`implementer.reported`
-  etc.) is NOT a close — it means the worker finished but the manager has not
-  integrated yet, so the dispatch is awaiting `dispatch-close`, not orphaned.
+- **No CLI but handoff names in-flight work**: read that task's
+  `tasks/<ID>/journal.org` (node-scoped events; the global `tx/*.org` log is
+  frozen pre-cutover history — do not scan it for current state) and
+  `tasks/<ID>/dispatches/<tx-id>/` (brief, report, evidence). A `report.md`
+  there while the task is still `in_review`/`in_progress` means the worker
+  finished but the manager has not integrated yet — the dispatch is awaiting
+  `dispatch-close`, not orphaned. No report plus a populated
+  `tmp/dispatch/<task-stem>/` means the run may still be live.
 - **Next action targets a specific task**: read that task's heading in
   `tasks/<ID>/node.org` (`views/board.org` only for a cross-task glance).
   Never scan every task node or the whole board wholesale.

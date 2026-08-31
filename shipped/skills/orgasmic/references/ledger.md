@@ -15,13 +15,16 @@ Paths relative to the project root printed by `orgasmic entry` (usually
 
 - `project.org` — baseline, mission, operating constraints.
 - `tasks/<ID>/node.org` — one directory-backed task per id.
+- `tasks/<ID>/journal.org` — that node's event log (post tx-split).
+- `tasks/<ID>/dispatches/<tx-id>/` — dispatch brief, report, evidence.
 - `tasks/goal.org` — manager focus. `tasks/handoff.org` — manager continuity.
 - `decisions/<ID>/node.org` — durable rationale.
 - `glossary/<ID>/node.org` — domain language.
 - `views/*.org` — derived, gitignored read views; never edit.
 - `gotchas.org` — repeated traps; read before source edits.
 - `conventions/` — repo-local working agreements, one file each.
-- `tx/` — agent activity log.
+- `tx/` — frozen pre-cutover activity log; new events land in per-node
+  `journal.org`.
 - `tmp/local_instructions.org` — gitignored, machine-specific notes.
 
 ## Write rules
