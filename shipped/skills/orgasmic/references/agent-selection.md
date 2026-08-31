@@ -11,8 +11,9 @@ sources:
 
 Kind, mode, harness + the harness's own model/effort decide who runs a
 dispatch. `orgasmic manager drivers` lists installed pairs. Model and effort
-are harness vocabulary: per-dispatch flags, passed through unvalidated, never
-stored anywhere in orgasmic.
+are harness vocabulary: per-dispatch flags, passed through unvalidated. The
+dispatch run record stores what was requested (`model`, `reasoning_effort` in
+the run's driver config).
 
 ## The one allowed question
 
@@ -34,7 +35,7 @@ an unasked dispatch with a stated reason is fine.
   stated reason on the dispatch. Author's harness unknown → ask which family
   wrote it; defaulting to your own family risks same-family review.
 - **Review and risky stages carry an explicit `--effort`.** Unset effort means
-  the harness chose silently and the value is unrecoverable afterwards (run
-  records carry no model/effort field). Unset is allowed as a stated choice,
-  never as an oversight.
+  the harness chose silently; the run record then shows only that nothing was
+  requested, not what actually ran. Unset is allowed as a stated choice, never
+  as an oversight.
 - Ordinary/trivial work may run at harness default effort.

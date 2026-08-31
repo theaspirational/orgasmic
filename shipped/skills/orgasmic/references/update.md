@@ -28,6 +28,9 @@ Run:
 ~/.orgasmic/bin/orgasmic update
 ```
 
+`--channel <stable|nightly>` switches the pinned release channel and installs
+that channel's head; without it the pinned channel is used.
+
 The CLI:
 
 1. Reads channel, target, and current version from `install.json`.

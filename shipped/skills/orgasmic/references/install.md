@@ -105,9 +105,11 @@ bash scripts/install.sh --version nightly
 bash scripts/install.sh --bundle /path/to/orgasmic-runtime_0.1.0_darwin_aarch64.tar.gz
 ```
 
-The default channel is `stable`, published by the tag-triggered release workflow
-(`.github/workflows/release-macos.yml`). Use `--channel nightly` to track the
-moving nightly builds from `.github/workflows/nightly-macos.yml`.
+The default channel is `stable`, published by the maintainer's local publish
+flow (`scripts/publish-runtime.sh`). Use `--channel nightly` to track the
+moving nightly bundles from the manually dispatched
+`.github/workflows/nightly-runtime.yml`. (`release-macos.yml` /
+`nightly-macos.yml` are the separate desktop-app line.)
 
 After install, verify:
 
@@ -126,7 +128,7 @@ runtime override for local branch testing:
 git clone https://github.com/theaspirational/orgasmic
 cd orgasmic
 git switch -c feature/my-change
-orgasmic project add "$PWD"
+orgasmic project add --path "$PWD"
 orgasmic daemon restart --from-source "$PWD"
 ```
 
