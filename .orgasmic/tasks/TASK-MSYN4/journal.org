@@ -13,3 +13,16 @@
 :REASON: HIGH crates/orgasmic-daemon/src/ledger_sync.rs:96 — a rebase conflict wedges the sync loop permanently and silently: pull --rebase failure aborts and bails, the next 2s tick repeats it forever, local commits pile up unpushed, and the only surface is tracing::warn (no status field, no orgasmic status line, no rejected-event location). MSYN4 acceptance 'rejected events land in an inspectable location with a reason' is unmet for the whole-sync failure case
 :EVENT_ID: ee9aa6ba-f561-45f3-9f9b-14cf5ba33a75
 :END:
+
+* tx-20260901-orgasmic-6739 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6739
+:TIME:    [2026-09-01 Tue 12:49:05]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4
+:REASON: MEDIUM crates/orgasmic-daemon/src/writer.rs:2959 — the tx id sequence is per-project, not per-machine (tx-{date}-{slug}-{seq:04}, no machine component), so two daemons minting concurrently produce identical TX_IDs for different events; EVENT_ID keeps them from being deduped away, but the dispatch fold identifies generations by TX_ID (close_dispatch matches CLOSED_TX against started.tx_id, attach_initial_run matches DISPATCH_TX, recorded_close_allows_repair matches CLOSED_TX), so a collision mis-attributes a close to the wrong dispatch. next_project_tx_id also serves from an in-memory project_max that is only invalidated when a tx file's inode changes, so a pull that brings in higher remote sequences without touching this machine's own month file remints ids that already exist
+:EVENT_ID: 72d62173-8354-430e-96c0-4f28b5531a6d
+:END:
