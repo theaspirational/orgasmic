@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-CLM6W
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-CLM6W Cross-machine task claims + multi-machine fold :twcp9:distributed:
+* DONE TASK-CLM6W Cross-machine task claims + multi-machine fold :twcp9:distributed:
 :PROPERTIES:
 :ID: TASK-CLM6W
 :PRIORITY: P1

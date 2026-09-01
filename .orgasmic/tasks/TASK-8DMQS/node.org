@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DMQS
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8DMQS Regenerate generalization: node.regenerate:<id> over descriptors :e01mc:node_kernel:
+* DONE TASK-8DMQS Regenerate generalization: node.regenerate:<id> over descriptors :e01mc:node_kernel:
 :PROPERTIES:
 :DEPENDS_ON: TASK-ARRV8
 :ID: TASK-8DMQS

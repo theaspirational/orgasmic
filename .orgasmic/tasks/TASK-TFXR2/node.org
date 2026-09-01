@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-TFXR2
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
+* DONE TASK-TFXR2 Port remaining old-layout test fixtures: daemon api concurrency/watcher + cli manager :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-TFXR2
 :PRIORITY: P1

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KA934
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-KA934 UI: per-node comments and regenerate; OrgView over views :e01mc:node_kernel:
+* DONE TASK-KA934 UI: per-node comments and regenerate; OrgView over views :e01mc:node_kernel:
 :PROPERTIES:
 :DEPENDS_ON:  TASK-8AV8B TASK-8DMQS
 :ID: TASK-KA934

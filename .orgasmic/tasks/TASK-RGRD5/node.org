@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-RGRD5
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-RGRD5 Repair paths bypass the descriptor transition guard; fix last 11 dispatch.rs tests :e01mc:node_kernel:
+* DONE TASK-RGRD5 Repair paths bypass the descriptor transition guard; fix last 11 dispatch.rs tests :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-RGRD5
 :PRIORITY: P1

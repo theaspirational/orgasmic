@@ -67,3 +67,35 @@
 :NODE_ID: TASK-MSYN4
 :EVENT_ID: 83848f51-0a26-45b1-a39f-adc83cc687fa
 :END:
+
+* tx-20260901-orgasmic-6808 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6808
+:TIME:    [2026-09-01 Tue 13:04:34]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4
+:TARGET: .orgasmic/tasks/TASK-MSYN4/node.org
+:REASON: chain merged 543782d7, shipped 0.0.23 stable, reviewed APPROVE WITH FOLLOW-UPS by the whole-chain review tx-1c6d2115 (2026-09-01); follow-ups carried by fix tasks tagged chain-review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: a0cf7be4-217a-4aaa-9a7f-62ede6cb077b
+:END:
+
+* tx-20260901-orgasmic-6809 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6809
+:TIME:    [2026-09-01 Tue 13:04:34]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4
+:TARGET: .orgasmic/tasks/TASK-MSYN4/node.org
+:REASON: chain merged 543782d7, shipped 0.0.23 stable, reviewed APPROVE WITH FOLLOW-UPS by the whole-chain review tx-1c6d2115 (2026-09-01); follow-ups carried by fix tasks tagged chain-review
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: bcfd72ae-815a-431b-8d0c-2a23d2e0253c
+:END:

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-AN992
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-AN992 CLI verbs over node dirs and shipped content for the new layout :e01mc:node_kernel:
+* DONE TASK-AN992 CLI verbs over node dirs and shipped content for the new layout :e01mc:node_kernel:
 :PROPERTIES:
 :DEPENDS_ON: TASK-SRBGS
 :ID: TASK-AN992
