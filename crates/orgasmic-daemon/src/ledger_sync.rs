@@ -59,7 +59,7 @@ pub(crate) enum SyncOutcome {
 }
 
 enum ConflictSource {
-    Worktree,
+    Worktree(String),
     Autostash(String),
     Parked { reference: String, commit: String },
     Unrecoverable,
@@ -103,7 +103,17 @@ fn sync_once_with_park(
     if rebase_in_progress(ledger)?
         && rebase_head_name(ledger)?.as_deref() == Some("refs/heads/orgasmic")
     {
-        git(ledger, &["rebase", "--abort"])?;
+        let paths = unmerged_paths(ledger)?;
+        let salvage_ref = abort_rebase_with_salvage(ledger, machine_id)?;
+        if !paths.is_empty() {
+            return recover_conflict(
+                ledger,
+                machine_id,
+                paths,
+                ConflictSource::Worktree(salvage_ref),
+                &mut park,
+            );
+        }
     }
     if git_optional(ledger, &["symbolic-ref", "--short", "HEAD"])?.as_deref() != Some("orgasmic") {
         return Ok(SyncOutcome::Idle);
@@ -198,8 +208,7 @@ fn sync_once_with_park(
             let paths = unmerged_paths(ledger)?;
             if !paths.is_empty() {
                 let source = if rebase_in_progress(ledger)? {
-                    git(ledger, &["rebase", "--abort"])?;
-                    ConflictSource::Worktree
+                    ConflictSource::Worktree(abort_rebase_with_salvage(ledger, machine_id)?)
                 } else {
                     ConflictSource::Autostash(created_autostash(ledger, &pull)?)
                 };
@@ -337,6 +346,32 @@ fn rebase_head_name(ledger: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
+fn rebase_orig_head(ledger: &Path) -> Result<String> {
+    for marker in ["rebase-merge", "rebase-apply"] {
+        let path = git_optional(ledger, &["rev-parse", "--git-path", marker])?
+            .context("ledger has no git directory")?;
+        let path = PathBuf::from(path);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            ledger.join(path)
+        };
+        match std::fs::read_to_string(path.join("orig-head")) {
+            Ok(head) => return Ok(head.trim().to_string()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("read rebase orig-head"),
+        }
+    }
+    git_optional(ledger, &["rev-parse", "ORIG_HEAD"])?
+        .context("rebase has no orig-head or ORIG_HEAD")
+}
+
+fn abort_rebase_with_salvage(ledger: &Path, machine_id: &str) -> Result<String> {
+    let salvage_ref = salvage_worktree(ledger, machine_id, &rebase_orig_head(ledger)?)?;
+    git(ledger, &["rebase", "--abort"])?;
+    Ok(salvage_ref)
+}
+
 fn created_autostash(ledger: &Path, pull: &Output) -> Result<String> {
     let stdout = String::from_utf8_lossy(&pull.stdout);
     let short = stdout
@@ -372,11 +407,6 @@ fn conflict_source_on_entry(
     machine_id: &str,
     paths: &[String],
 ) -> Result<ConflictSource> {
-    if rebase_in_progress(ledger)? {
-        git(ledger, &["rebase", "--abort"])?;
-        return Ok(ConflictSource::Worktree);
-    }
-
     let prefix = format!("refs/orgasmic/conflicts/{machine_id}/");
     let refs = git_optional(
         ledger,
@@ -479,17 +509,18 @@ fn park_conflict_inner(
 ) -> Result<SyncOutcome> {
     let retained_stash = matches!(&source, ConflictSource::Autostash(_));
     let reentered_parked = matches!(&source, ConflictSource::Parked { .. });
-    let (mut parked_ref, local_head) = match source {
-        ConflictSource::Parked { reference, commit } => (reference, commit),
-        ConflictSource::Unrecoverable => (String::new(), String::new()),
-        ConflictSource::Autostash(commit) => (String::new(), commit),
-        ConflictSource::Worktree => {
+    let (mut parked_ref, local_head, salvage_ref) = match source {
+        ConflictSource::Parked { reference, commit } => (reference, commit, None),
+        ConflictSource::Unrecoverable => (String::new(), String::new(), None),
+        ConflictSource::Autostash(commit) => (String::new(), commit, None),
+        ConflictSource::Worktree(salvage_ref) => {
             stage_ledger(ledger, machine_id, None)?;
             commit_staged(ledger, &format!("ledger: conflict salvage {machine_id}"))?;
             (
                 String::new(),
                 git_optional(ledger, &["rev-parse", "HEAD"])?
                     .context("ledger conflict has no local HEAD")?,
+                Some(salvage_ref),
             )
         }
     };
@@ -517,7 +548,10 @@ fn park_conflict_inner(
     before_reset()?;
     let remote_head = git_optional(ledger, &["rev-parse", "origin/orgasmic"])?
         .context("fetched ledger conflict has no origin/orgasmic")?;
-    let salvage_ref = salvage_worktree(ledger, machine_id, &remote_head)?;
+    let salvage_ref = match salvage_ref {
+        Some(salvage_ref) => salvage_ref,
+        None => salvage_worktree(ledger, machine_id, &remote_head)?,
+    };
     git(ledger, &["reset", "--hard", "origin/orgasmic"])?;
     Ok(SyncOutcome::Conflict {
         parked_ref,
@@ -669,7 +703,9 @@ fn sync_ledger_at_with_park(
                         )
                     };
                     if !salvage_ref.is_empty() {
-                        error.push_str(&format!("; tracked worktree salvage at {salvage_ref}"));
+                        error.push_str(&format!(
+                            "; raw worktree snapshot at {salvage_ref} (conflicted paths carry markers)"
+                        ));
                     }
                     if *parked_ref_push_failed {
                         error.push_str("; parked ref not yet on origin");
@@ -1273,7 +1309,7 @@ mod tests {
     #[tokio::test]
     async fn conflicting_two_writer_tick_parks_recovers_and_records_event() {
         let tmp = tempfile::tempdir().unwrap();
-        let (remote, a, b) = seed_remote(&tmp);
+        let (_remote, a, b) = seed_remote(&tmp);
         let machine_id = uuid::Uuid::new_v4().to_string();
         let relative = ".orgasmic/tasks/T1/node.org";
         let fresh = ".orgasmic/tasks/T2/node.org";
@@ -1311,6 +1347,7 @@ mod tests {
             ],
         );
         run(&b, &["push", "origin", "orgasmic"]);
+        std::fs::write(a.join(fresh), "fresh a write\n").unwrap();
         let statuses = LedgerSyncStatuses::default();
         let now = Utc::now();
 
@@ -1321,7 +1358,6 @@ mod tests {
             paths,
             local_head,
             remote_head,
-            salvage_ref,
             ..
         } = &conflict
         else {
@@ -1381,16 +1417,8 @@ mod tests {
             .extra
             .iter()
             .any(|(key, value)| key == "PARKED_REF" && value == parked_ref));
-        assert!(events[0]
-            .extra
-            .iter()
-            .any(|(key, value)| key == "SALVAGE_REF" && value == salvage_ref));
-
-        std::fs::write(a.join(fresh), "fresh a write\n").unwrap();
-        assert!(sync_ledger_at(&a, &machine_id, &statuses, now + Duration::from_secs(1)).is_none());
-        assert_eq!(statuses.lock().unwrap()[&a].outcome, "synced");
         assert_eq!(
-            git_optional(&remote, &["show", &format!("orgasmic:{fresh}")])
+            git_optional(&a, &["show", &format!("{parked_ref}:{fresh}")])
                 .unwrap()
                 .as_deref(),
             Some("fresh a write")
@@ -1483,9 +1511,15 @@ mod tests {
         let (_remote, a, b) = seed_remote(&tmp);
         let machine_id = uuid::Uuid::new_v4().to_string();
         let relative = ".orgasmic/tasks/T1/node.org";
+        let tracked_path = ".orgasmic/tasks/T2/node.org";
+        let tx_path = format!(".orgasmic/machines/{machine_id}/tx/2026-09.org");
         std::fs::create_dir_all(b.join(relative).parent().unwrap()).unwrap();
         std::fs::write(b.join(relative), "base\n").unwrap();
-        run(&b, &["add", relative]);
+        std::fs::create_dir_all(b.join(tracked_path).parent().unwrap()).unwrap();
+        std::fs::write(b.join(tracked_path), "tracked base\n").unwrap();
+        std::fs::create_dir_all(b.join(&tx_path).parent().unwrap()).unwrap();
+        std::fs::write(b.join(&tx_path), "tx base\n").unwrap();
+        run(&b, &["add", relative, tracked_path, &tx_path]);
         run(
             &b,
             &[
@@ -1537,10 +1571,39 @@ mod tests {
             rebase_head_name(&a).unwrap().as_deref(),
             Some("refs/heads/orgasmic")
         );
+        std::fs::write(a.join(tracked_path), "tracked during outage\n").unwrap();
+        std::fs::write(a.join(&tx_path), "tx base\ntx during outage\n").unwrap();
+        let statuses = LedgerSyncStatuses::default();
 
-        let SyncOutcome::Conflict { parked_ref, .. } = sync_once(&a, &machine_id).unwrap() else {
+        let SyncOutcome::Conflict {
+            parked_ref,
+            salvage_ref,
+            ..
+        } = sync_ledger_at(&a, &machine_id, &statuses, Utc::now())
+            .expect("mid-rebase tick must recover the conflict")
+        else {
             panic!("mid-rebase tick returned idle instead of recovering");
         };
+        assert!(!salvage_ref.is_empty());
+        assert_eq!(
+            git_optional(&a, &["show", &format!("{salvage_ref}:{tracked_path}")])
+                .unwrap()
+                .as_deref(),
+            Some("tracked during outage")
+        );
+        assert_eq!(
+            git_optional(&a, &["show", &format!("{salvage_ref}:{tx_path}")])
+                .unwrap()
+                .as_deref(),
+            Some("tx base\ntx during outage")
+        );
+        assert!(statuses.lock().unwrap()[&a]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains(&format!(
+                "raw worktree snapshot at {salvage_ref} (conflicted paths carry markers)"
+            )));
         assert_eq!(
             std::fs::read_to_string(a.join(relative)).unwrap(),
             "remote bytes\n"
