@@ -1,0 +1,23 @@
+{
+  "event_count": 621,
+  "tool_call_count": 45,
+  "unparsed_events": 4,
+  "bounded_events": 4,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-8DWJP-reviewer-20260901T151330.jsonl",
+    "size_bytes": 918654
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task record and the diff.Diff read. Now let me check the real source and hunt the specifics.Found something. Let me confirm the tx path.Filing the first finding, and probing git's real conflict output.Confirmed a parse bug. Testing more conflict shapes.Big one. Verifying what the next tick does with that state.All checks done. Filing findings.Now the report."
+    }
+  ],
+  "narrative_truncated": false
+}
