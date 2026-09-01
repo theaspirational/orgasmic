@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.1
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-MSYN4.1 H1: org-file denylist no longer covers the moved tx ledger, claims.org, or views/ :e01mc:chain-review:
+* DONE TASK-MSYN4.1 H1: org-file denylist no longer covers the moved tx ledger, claims.org, or views/ :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.1
 :PRIORITY: P1
@@ -19,3 +19,4 @@ Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-st
 - Implementer implementer-codex-chat-stdio (stdio / codex-chat / gpt-5.6-sol, effort not passed) gen tx-20260901-orgasmic-ca5b5a35: worker commit =84bda242=, merged =29f93ba9= (2026-09-01).
 - Manager gates on the merged tree: =cargo test -p orgasmic-daemon --lib -- org_file authz= → 23 passed / 0 failed; =cargo clippy -p orgasmic-daemon --all-targets -- -D warnings= clean; =cargo fmt --all --check= clean. Worker's own log: org_file 5/5, authz 19/19.
 - Change: component-wise =reject_ledger_rewrite= (machines/, views/, tx/, **/journal.org refused; tx-notes.org + gotchas.org allowed); =post_org_file= extracts Identity and authorizes =Action::OrgWrite= (new, granted to no member role → admin-only) before path validation and project load. GET and writer claim gate unchanged.
+- Review gen tx-20260901-orgasmic-fde457e2 (reviewer-claude-sdk-stdio, claude-opus-5 high, ~12 min): APPROVE WITH FOLLOW-UPS. Traversal shapes, admin-path parity, role floor (dec_KF2MR: non-artifact mutation routes stay admin-only) and test ordering all confirmed. 2 MEDIUM (APFS case-fold bypass; tmp/ missing) + 3 LOW carried by fix round TASK-MSYN4.1.1. Premise correction recorded: /org/file was already absent from MEMBER_ALLOWED_ROUTES, so H1 was admin-reachable only; OrgWrite is defense-in-depth.

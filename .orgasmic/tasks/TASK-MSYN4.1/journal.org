@@ -141,3 +141,34 @@
 :REASON: LOW authz.rs:26 — org.write is a vocabulary addition beyond dec_KF2MR node.org:16 but is not documented as such the way ProjectRead is, and ui/src/lib/types.ts:706 MemberCapability lacks org.write which admin GET /me now returns (harmless: MeProject.capabilities is string[])
 :EVENT_ID: 0edc37b9-c2ea-4155-b1bd-b57dc3984090
 :END:
+
+* tx-20260901-orgasmic-6827 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6827
+:TIME:    [2026-09-01 Tue 13:47:01]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-MSYN4.1/node.org
+:REASON: edited task node TASK-MSYN4.1
+:NODE_ID: TASK-MSYN4.1
+:EVENT_ID: cd2f6cf3-d4a2-4d7e-9310-9ef674d782e6
+:END:
+
+* tx-20260901-orgasmic-6828 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6828
+:TIME:    [2026-09-01 Tue 13:47:02]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1
+:TARGET: .orgasmic/tasks/TASK-MSYN4.1/node.org
+:REASON: merged 29f93ba9, reviewed approve-with-follow-ups (tx-fde457e2); residual MEDIUM/LOW findings carried by fix round TASK-MSYN4.1.1 (dispatched)
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 54e64fc2-fc2d-4ba3-8791-b80a1b82121f
+:END:
