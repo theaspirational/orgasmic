@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-SRBGS.1.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-SRBGS.1.1 Fix round 2 for SRBGS.1: honest route-list drift test, anomalies line, phantom apply-failure owner, branch-cutover recovery text, owner-side 503 pin    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-SRBGS.1.1
+:PRIORITY: P2
+:RELATES_TO: TASK-SRBGS.1
+:FIX_SUBTASK: t
+:END:
+
+Residuals of the SRBGS.1 review (claude-opus-5 high, tx-1d1b2d9d, APPROVE WITH FOLLOW-UPS; merged c56b0bbe).
+
+F1 MEDIUM — crates/orgasmic-daemon/src/api.rs:~24292 the L4 test filters DISPATCH_PROJECT_TX_TYPES by !event_routes_to_journal, but event_routes_to_journal (~8783) short-circuits to false for exactly that constant, so the test compares the shipped doc to a hand-maintained constant (a second source of truth) and cannot catch a newly added type that routes to tx/ but is missing from shipped/schema/tx.org. Scoping decision (manager): the doc's 'complete routed type set' is the DISPATCH LIFECYCLE types routed to tx/. Fix: derive the Rust side from behaviour — take the exhaustive (type, routes_to_journal) pin table already at api.rs:~24150-24240, collect every type whose value is false, subtract a small NAMED non-dispatch exclusion set (ledger.sync_conflict, manager.action, manager.correction, task.claimed, *.deleted, …), and assert equality with the shipped bullet block. Delete the dead DISPATCH_PROJECT_TX_TYPES short-circuit in event_routes_to_journal (it changed no routing). A new type must then force a decision.
+
+F2 LOW — crates/orgasmic-cli/src/project_migrate.rs:~89,204 anomalies is incremented and immediately bail!ed, and run_at does plan(root)? first, so the print is unreachable with a non-zero count. Fix (ponytail: deletion): remove the anomalies line; the bail already names the failing file. Do not make plan() survey the whole tree.
+
+F3 LOW — crates/orgasmic-daemon/src/writer.rs:~1421 mutate_file mints Uuid::new_v4() as the apply-failure owner; no caller can take it, so every journal write can leave an unclaimable entry (cleared only by a later successful repair_projection) and each later take_apply_failure logs a spurious 'belongs to another request' warn. Fix: make the owner Option<&str> and skip the map insert when there is no claimant (queue-only), or pass the request id. Kill the phantom key and the misleading warn.
+
+F4 LOW — project_migrate.rs:~71 migrate_to_branch (create_orphan_branch, git worktree add, remove_dir_all(root/.orgasmic)) is not wrapped; a half-cutover leaves refuse_dirty_tree or 'ledger target already exists but is incomplete' with no printed recovery, and the L2 checkout/clean text would be WRONG advice there. Fix: its own error context listing the exact undo for THIS run (worktree remove path, branch delete, restore .orgasmic from git) derived from the steps actually completed.
+
+F5 LOW — api.rs:~32874 apply_failure_is_not_reported_by_the_next_request drives request A via writer.append_tx directly, bypassing refresh_after_tx, so it proves only that B escapes. Extend it: A goes through refresh_after_tx and asserts A's own committed-503 with A's tx id, then B gets 200.
+
+Acceptance: F1 test goes red when a new tx/-routed type is added to the pin table without a doc entry (prove it by a temporary local edit, describe in report); anomalies line gone; no Uuid owner in mutate_file and no foreign-failure warn on a plain journal write (test or log assertion); branch cutover failure prints a recovery block (test with a forced failure after create_orphan_branch); F5 extended. Gates: cargo test -p orgasmic-daemon --lib -- shipped_tx_types apply_failure ledger_route comment; cargo test -p orgasmic-cli --bin orgasmic -- project_migrate; clippy daemon+cli -D warnings; fmt.

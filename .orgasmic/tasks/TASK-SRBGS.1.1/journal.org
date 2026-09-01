@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-SRBGS.1.1
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6930 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6930
+:TIME:    [2026-09-01 Tue 15:43:37]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1.1
+:TARGET: .orgasmic/tasks/TASK-SRBGS.1.1/node.org
+:REASON: created task TASK-SRBGS.1.1
+:EVENT_ID: 9043f6f9-8bd2-4dda-99d8-a8eba1a6ebaa
+:END:
+
+* tx-20260901-orgasmic-6931 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6931
+:TIME:    [2026-09-01 Tue 15:43:37]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1.1
+:TARGET: .orgasmic/tasks/TASK-SRBGS.1.1/node.org
+:REASON: Fix round 2 of the chain-review L1-L5 fix; parent TASK-SRBGS.1 is done
+:FIX_SUBTASK: t
+:EVENT_ID: 27153720-20dc-489f-bc4f-34fb72b6f5cd
+:END:
