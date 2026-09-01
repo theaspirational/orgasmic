@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DWJP.1.4
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8DWJP.1.4 Round 6 for 8DWJP.1.3: run the rebase abort under the writer barrier; carry pending salvage; restore SALVAGE_REF assertion :e01mc:chain-review:
+* IN_REVIEW TASK-8DWJP.1.4 Round 6 for 8DWJP.1.3: run the rebase abort under the writer barrier; carry pending salvage; restore SALVAGE_REF assertion :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-8DWJP.1.4
 :PRIORITY: P1
@@ -22,3 +22,5 @@ LOWs: (a) empty unmerged set at entry (~:103-117) mints a salvage ref that is ne
 - [ ] daemon ledger_sync/status/sync_conflict/barrier tests, cli daemon_lifecycle, clippy -D, fmt green.
 ** Notes
 Implementer: opencode / zai-coding-plan/glm-5.3 variant max (first opencode dispatch in this ledger), commit 641ec6c8, merged 62f986e0. Deviation on LOW (c): the verbatim SALVAGE_REF assertion cannot hold in conflicting_two_writer_tick (its pull stops mid-rebase, source Worktree; abort-time salvage tree == orig-head tree, so salvage_ref is empty; verbatim restore fails - probe log cited in the report). Assertion relocated to mid_rebase_tick_aborts_and_recovers_instead_of_idling; the negative is pinned in conflicting_two_writer_tick. Salvage-failure trade chosen: degrade (warn, empty salvage_ref, still abort) - keeps the 1.2 unwedge guarantee. Residual: synced+pending-salvage note lives in LedgerSyncStatus.error with outcome synced, which CLI status/doctor do not render (daemon log warn + API only).
+** Evidence
+Worker commit 641ec6c8 (opencode zai-coding-plan/glm-5.3 variant max) merged to main as 62f986e0 (--no-ff, from 1ff48c3a). Manager gates on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict barrier = 32 passed 0 failed (/private/tmp/claude-501/-Users-aspirational-Documents-code-tools-orgasmic/25219e20-4403-4221-9eb2-cd596e21be27/scratchpad/gates-8DWJP.1.4-daemon.log); cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle = 22 passed 0 failed (/private/tmp/claude-501/-Users-aspirational-Documents-code-tools-orgasmic/25219e20-4403-4221-9eb2-cd596e21be27/scratchpad/gates-8DWJP.1.4-cli.log); clippy -p orgasmic-daemon -p orgasmic-cli --all-targets -D warnings rc=0; cargo fmt --all --check rc=0. Worker gates in its worktree matched (32/22/clippy/fmt; logs under /tmp/orgasmic-8dwjp14-logs/). Manager pre-check of production hunks: abort closure runs under run_barrier at both sites mirroring park; pending_salvage carried on Synced/Conflict + PENDING_SALVAGE_REF event extra; salvage-failure degrade pinned with a ponytail comment.

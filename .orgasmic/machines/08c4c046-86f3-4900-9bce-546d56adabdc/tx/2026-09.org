@@ -5347,3 +5347,59 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     0c669a4d-2f04-4efc-bec1-6fb33b0430d9
 :END:
+
+* TX 2026-09-01 Tue 18:23:30 manager.dispatch_started TASK-8DWJP.1.4
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-bac902c5-f76f-48f4-8ac9-a940c061a132
+:TIME:         [2026-09-01 Tue 18:23:30]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.4
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1.4-review
+:BRANCH:       task-8dwjp.1.4-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.4-review/brief-TASK-8DWJP.1.4-review.md
+:STARTED_AT:   [2026-09-01 Tue 18:23:30]
+:LIVENESS:     62f986e004828f2d55fde2275dbf2b9098c338d0
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260901-orgasmic-4f2f42ec-ef25-4425-b15e-b79b67611f24
+:REASON_INITIAL: round-6 review of merge 62f986e0: abort under the writer barrier + pending salvage + SALVAGE_REF pin (8DWJP.1.3 follow-ups)
+:EVENT_ID:     3eb62d14-dc28-48d0-a5e7-a28890d1e3ac
+:END:
+
+* TX 2026-09-01 Tue 18:23:30 run.created TASK-8DWJP.1.4
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-e18ce2d9-3ed4-49f0-9d93-27cf1f9fe018
+:TIME:         [2026-09-01 Tue 18:23:30]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.4
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-8DWJP.1.4-reviewer-20260901T182330.jsonl
+:REASON:       round-6 review of merge 62f986e0: abort under the writer barrier + pending salvage + SALVAGE_REF pin (8DWJP.1.3 follow-ups)
+:RUN_ID:       run-01M1F3CH9F0WPX6CQAA58R5J6T
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1.4-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.4-review/brief-TASK-8DWJP.1.4-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.4-review/brief-TASK-8DWJP.1.4-review-15adfb793c4240c99753ee1388ea8069-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.4-review/brief-TASK-8DWJP.1.4-review-15adfb793c4240c99753ee1388ea8069-stdout.log
+:DISPATCH_ATTEMPT: 15adfb793c4240c99753ee1388ea8069
+:PID:          99701
+:DISPATCH_TX:  tx-20260901-orgasmic-bac902c5-f76f-48f4-8ac9-a940c061a132
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     d554f320-df4b-4f98-87a4-c46ce564f1dd
+:END:
