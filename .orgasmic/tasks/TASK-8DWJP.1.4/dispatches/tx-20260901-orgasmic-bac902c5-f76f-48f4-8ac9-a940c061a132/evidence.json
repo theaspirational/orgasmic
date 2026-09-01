@@ -1,0 +1,23 @@
+{
+  "event_count": 298,
+  "tool_call_count": 26,
+  "unparsed_events": 3,
+  "bounded_events": 3,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-8DWJP.1.4-reviewer-20260901T182330.jsonl",
+    "size_bytes": 513734
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll review this diff. Let me start by reading the task record and the change.Now let me file the findings."
+    }
+  ],
+  "narrative_truncated": false
+}
