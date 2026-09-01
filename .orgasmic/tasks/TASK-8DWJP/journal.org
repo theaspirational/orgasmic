@@ -217,3 +217,19 @@
 :TO_STATE: in_review
 :EVENT_ID: 471edc01-8019-42f1-9922-8b47cae73c91
 :END:
+
+* tx-20260901-orgasmic-6956 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6956
+:TIME:    [2026-09-01 Tue 16:04:42]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:TARGET: .orgasmic/tasks/TASK-8DWJP/node.org
+:REASON: Conflict path still open pending TASK-8DWJP.1.1
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: 1a3316ed-1acc-4df6-a72e-00bce04eeac5
+:END:

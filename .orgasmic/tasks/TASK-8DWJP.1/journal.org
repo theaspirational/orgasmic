@@ -154,3 +154,19 @@
 :REASON: LOW ledger_sync.rs:495 PATHS is paths.join(" ") so a ledger path containing a space is unrecoverable from the ledger.sync_conflict event, even though the -z read at :271 parses it correctly
 :EVENT_ID: 5586eeb4-cdfd-443e-81c3-eb9f2e23c3e8
 :END:
+
+* tx-20260901-orgasmic-6955 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6955
+:TIME:    [2026-09-01 Tue 16:04:41]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1
+:TARGET: .orgasmic/tasks/TASK-8DWJP.1/node.org
+:REASON: Review rejected on new findings; fix round TASK-8DWJP.1.1 in flight
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: 168016ea-cc06-4b9f-82d9-3245b065db9e
+:END:
