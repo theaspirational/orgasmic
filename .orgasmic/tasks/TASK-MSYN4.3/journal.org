@@ -76,3 +76,16 @@
 :TO_STATE: in_review
 :EVENT_ID: 0737c75d-65e5-460e-8d67-cf9d37de8529
 :END:
+
+* tx-20260901-orgasmic-6908 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6908
+:TIME:    [2026-09-01 Tue 15:21:25]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.3
+:REASON: LOW crates/orgasmic-daemon/src/index.rs:4315 — same-second activity ordering became random: the numeric tail used to reproduce insertion order, uuids do not; display-only (activity_index is served solely by GET /tasks/:id/activity)
+:EVENT_ID: 3b6b2b07-3356-4bdd-8697-ff5cc30c9bc7
+:END:
