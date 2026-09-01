@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         a4372f03
+:LIVENESS:         1ff48c3a
 :LIVENESS_AT:      [2026-09-01 Tue 16:10]
 :UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
@@ -656,6 +656,7 @@ operator + agent sessions, no manager handoff write in between).
 - 2026-09-01 (session, cont.): TASK-8DWJP.1.2 manager gates green on =a4372f03= (daemon 30, cli 22, clippy, fmt); Evidence recorded (pre-check: rebase abort is head-name guarded); round-4 reviewer opus-5 high dispatched.
 - 2026-09-01 (session, cont.): TASK-8DWJP.1.2 review (opus-5 high, tx-878e798d) REJECT, narrow — 5 of 6 items correct; HIGH: the new entry-path rebase --abort (:106) hard-resets before any salvage → outage-window tracked writes lost (proved); same shape bounded at the in-tick abort (:201). 3 LOW (status wording, dead branch, test placement). Both generations closed; merge a4372f03 KEPT; TASK-8DWJP.1.3 (P1, narrow: hoist salvage_worktree above both aborts, base = rebase orig-head) filed with brief =scratchpad/brief-TASK-8DWJP.1.3.md=. Operator has not yet answered iterate-vs-stop; manager proceeded per its own recommendation because the fix is one move; operator can say stop.
 - 2026-09-01 (session, cont.): TASK-8DWJP.1.3 reported (worker 5846e9bb: abort_rebase_with_salvage helper at both abort sites, base = rebase orig-head → ORIG_HEAD fallback; salvage ref in status/event; dead entry-path rebase branch removed; wording 'raw worktree snapshot'; red-then-green mid-rebase regression writing a task node + machine tx file during the outage; 4 gates PASS) — merging, then gates, then a short opus-5 review.
+- 2026-09-01 (session, cont.): TASK-8DWJP.1.3 merged =1ff48c3a= (20 unpushed merges); manager gates running (=scratchpad/gates-8DWJP.1.3-*.log=); short review brief =scratchpad/brief-TASK-8DWJP.1.3-review.md=. Implementer gen tx-20260901-orgasmic-7c5c0058-9a5e-4bc2-8bd8-0404ce5da303 closes after the verdict with =--merge-sha 1ff48c3a --worker-commit 5846e9bb --worktree-remove --branch-delete=.
 
 ** Next likely actions
 1. Land the 8DWJP.1 verdict (see In flight). If a fix round is needed, it is the last one of chain step 2.
