@@ -35,6 +35,8 @@ use uuid::Uuid;
 
 use crate::events::{EventBus, EventPayload, Topic};
 
+pub(crate) const DAEMON_OWNED_SURFACES: [&str; 4] = ["machines", "tx", "tmp", "views"];
+
 /// The multi-tx append reached the ledger, but the writer could not confirm
 /// that the retained descriptor was synced. Callers must distinguish this
 /// committed outcome from an ordinary failed transaction without parsing its
@@ -1749,7 +1751,10 @@ fn guard_node_write(path: &Path, machine_id: &str) -> Result<()> {
     let Some(collection) = parts.next() else {
         return Ok(());
     };
-    if matches!(collection, "machines" | "tx" | "tmp" | "views") {
+    if DAEMON_OWNED_SURFACES
+        .iter()
+        .any(|surface| collection.eq_ignore_ascii_case(surface))
+    {
         return Ok(());
     }
     let Some(node_id) = parts.next() else {

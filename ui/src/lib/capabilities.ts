@@ -40,7 +40,7 @@ export const NAV_CAPABILITY: Partial<Record<string, MemberCapability>> = {
 // Activity reads the daemon tx log and Prompts is the authoring studio, neither
 // exposed to members. Hide them outright even for a member who holds the read
 // capability the page is otherwise keyed on, so members never see nav that 403s.
-const MEMBER_HIDDEN_PAGES = new Set(['activity', 'prompts']);
+const MEMBER_HIDDEN_PAGES = new Set(['activity', 'org', 'prompts']);
 
 export function navPageVisible(
   me: Me | null,
