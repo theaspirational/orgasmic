@@ -77,3 +77,18 @@
 :TO_STATE: done
 :EVENT_ID: c2dff640-3ef1-4ee4-ab06-2276c2bad467
 :END:
+
+* tx-20260901-orgasmic-7013 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7013
+:TIME:    [2026-09-01 Tue 21:43:44]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.2
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-KA934.2/node.org
+:REASON: edited task node TASK-KA934.2
+:NODE_ID: TASK-KA934.2
+:EVENT_ID: db65e223-9035-4d7b-b67f-55e1b35c94c2
+:END:

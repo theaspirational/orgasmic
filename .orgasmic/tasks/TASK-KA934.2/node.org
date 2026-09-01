@@ -15,4 +15,4 @@ Option 2 — close the surface: drop TasksComment from the viewer/editor capabil
 
 Manager lean: Option 1 — three places already say members comment; the allow-list is the odd one out. It is an auth-surface change on a LAN/tunnel-exposed daemon, so the operator decides; record as a decision (orgasmic decision create) then file the implementing task with IMPLEMENTS.
 ** Evidence
-Decided 2026-09-02 by the operator: option 1 (open the routes). Recorded as ; implementation filed as TASK-KA934.3 (IMPLEMENTS ).
+Decided 2026-09-02 by the operator: option 1 (open the routes). Recorded as dec_Q78QN; implementation filed as TASK-KA934.3 (IMPLEMENTS dec_Q78QN).

@@ -14,3 +14,18 @@
 :REASON: created task TASK-KA934.3
 :EVENT_ID: 83937d57-cc7d-4183-88e7-9f023b026bee
 :END:
+
+* tx-20260901-orgasmic-7012 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7012
+:TIME:    [2026-09-01 Tue 21:43:43]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:TARGET: .orgasmic/tasks/TASK-KA934.3/node.org
+:REASON: repair: decision create timed out client-side but landed as dec_Q78QN
+:IMPLEMENTS: dec_Q78QN
+:EVENT_ID: f00f2d0e-a5fb-48e7-bf83-c1ffed83799a
+:END:
