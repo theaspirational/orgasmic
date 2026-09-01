@@ -1,2 +1,15 @@
 #+title: orgasmic journal TASK-KA934
 #+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6743 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6743
+:TIME:    [2026-09-01 Tue 12:52:26]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934
+:REASON: MEDIUM crates/orgasmic-daemon/src/api.rs:2386 — comment edit and delete are gated only on Action::TasksComment, which authz.rs:77 grants to the lowest role (viewer), and neither handler checks authorship, so any viewer can rewrite or tombstone anyone else's journal comment including reviewer.finding and review.verdict prose; the UI hiding Edit/Delete on automated rows is cosmetic. The edit is in place and the tombstone records no actor and no time (node_kernel.rs:291 only rewrites TYPE and drops the body), so the append-only journal cannot say who destroyed a comment
+:EVENT_ID: 008e8d63-6e4b-4eff-ae14-a3a70e74d867
+:END:
