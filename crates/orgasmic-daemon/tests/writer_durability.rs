@@ -1,4 +1,4 @@
-//! TASK-149: tx append fsync-before-ack, group commit, cached project-tx sequence.
+//! TASK-149: tx append fsync-before-ack and group commit.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -31,7 +31,7 @@ fn sample_entry(tx_id: &str) -> TxEntry {
     e
 }
 
-fn project_seq_append(tx_path: PathBuf, placeholder: &str, request_id: &str) -> TxAppend {
+fn minted_tx_append(tx_path: PathBuf, placeholder: &str, request_id: &str) -> TxAppend {
     TxAppend {
         tx_path,
         entry: sample_entry(placeholder),
@@ -473,52 +473,7 @@ async fn concurrent_tx_appends_group_commit_single_fsync() {
 
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
-async fn project_tx_sequence_cache_avoids_rescan_on_hot_path() {
-    let _guard = hook_test_lock();
-    test_hooks::reset();
-    let tmp = tempfile::tempdir().unwrap();
-    let tx_dir = tmp.path().join("tx");
-    std::fs::create_dir_all(&tx_dir).unwrap();
-
-    for month in 1..=12 {
-        let path = tx_dir.join(format!("2025-{month:02}.org"));
-        let body = format!(
-            "#+title: orgasmic project tx 2025-{month:02}\n#+orgasmic_version: 1\n\n* TX 2025-{month:02}-01 10:00 manager.action orgasmic\n:PROPERTIES:\n:TX_ID:        tx-2025{month:02}01-orgasmic-{month:04}\n:TIME:         [2025-{month:02}-01 Sat 10:00:00]\n:TYPE:         manager.action\n:ACTOR:        dev@example.com\n:MACHINE:      host.local\n:PROJECT:      orgasmic\n:END:\n"
-        );
-        std::fs::write(&path, body).unwrap();
-    }
-
-    let tx_path = tx_dir.join("2026-06.org");
-    let handle = spawn_writer(EventBus::new());
-
-    let first = handle
-        .append_tx(
-            project_seq_append(tx_path.clone(), "first", "req-seq-1"),
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(test_hooks::scan_count(), 1, "first append should scan once");
-
-    let second = handle
-        .append_tx(
-            project_seq_append(tx_path.clone(), "second", "req-seq-2"),
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        test_hooks::scan_count(),
-        1,
-        "hot-path append must not re-scan tx directory"
-    );
-    assert_eq!(first.tx_id, "tx-20260612-orgasmic-0013");
-    assert_eq!(second.tx_id, "tx-20260612-orgasmic-0014");
-}
-
-#[tokio::test]
-#[allow(clippy::await_holding_lock)]
-async fn tx_append_reopens_after_path_inode_swap_and_rescans_sequence() {
+async fn tx_append_reopens_after_path_inode_swap() {
     let _guard = hook_test_lock();
     test_hooks::reset();
     let tmp = tempfile::tempdir().unwrap();
@@ -534,12 +489,11 @@ async fn tx_append_reopens_after_path_inode_swap_and_rescans_sequence() {
     let handle = spawn_writer(EventBus::new());
     let first = handle
         .append_tx(
-            project_seq_append(tx_path.clone(), "first", "req-swap-1"),
+            minted_tx_append(tx_path.clone(), "first", "req-swap-1"),
             None,
         )
         .await
         .expect("first append");
-    assert_eq!(first.tx_id, "tx-20260612-orgasmic-0013");
 
     let replacement = tx_dir.join("replacement.org");
     std::fs::write(
@@ -551,51 +505,17 @@ async fn tx_append_reopens_after_path_inode_swap_and_rescans_sequence() {
 
     let second = handle
         .append_tx(
-            project_seq_append(tx_path.clone(), "second", "req-swap-2"),
+            minted_tx_append(tx_path.clone(), "second", "req-swap-2"),
             None,
         )
         .await
         .expect("append after inode swap");
-    assert_eq!(second.tx_id, "tx-20260612-orgasmic-0041");
 
     let source = std::fs::read_to_string(&tx_path).unwrap();
     assert!(source.contains(":TX_ID:        tx-20260612-orgasmic-0040"));
-    assert!(source.contains(":TX_ID:        tx-20260612-orgasmic-0041"));
+    assert!(source.contains(&format!(":TX_ID:        {}", second.tx_id)));
     assert!(
-        !source.contains(":TX_ID:        tx-20260612-orgasmic-0013"),
+        !source.contains(&format!(":TX_ID:        {}", first.tx_id)),
         "post-swap append must land in the replacement file at the path, not the orphaned inode"
     );
-}
-
-#[tokio::test]
-#[allow(clippy::await_holding_lock)]
-async fn corrupt_sibling_tx_file_does_not_block_appends() {
-    let _guard = hook_test_lock();
-    test_hooks::reset();
-    let tmp = tempfile::tempdir().unwrap();
-    let tx_dir = tmp.path().join("tx");
-    std::fs::create_dir_all(&tx_dir).unwrap();
-    std::fs::write(
-        tx_dir.join("2026-05.org"),
-        "#+title: orgasmic project tx 2026-05\n#+orgasmic_version: 1\n\n* TX 2026-05-21 22:10 manager.action orgasmic\n:PROPERTIES:\n:TX_ID:        tx-20260521-orgasmic-0036\n:TIME:         [2026-05-21 Thu 22:10:00]\n:TYPE:         manager.action\n:ACTOR:        dev@example.com\n:MACHINE:      host.local\n:PROJECT:      orgasmic\n:END:\n",
-    )
-    .unwrap();
-    std::fs::write(
-        tx_dir.join("2026-04.org"),
-        "this is not a valid org tx file\n* broken heading with body\nnot a drawer only\n",
-    )
-    .unwrap();
-
-    let tx_path = tx_dir.join("2026-06.org");
-    let handle = spawn_writer(EventBus::new());
-    let res = handle
-        .append_tx(
-            project_seq_append(tx_path.clone(), "placeholder", "req-corrupt-sibling"),
-            None,
-        )
-        .await
-        .expect("append must succeed despite corrupt sibling");
-    assert_eq!(res.tx_id, "tx-20260612-orgasmic-0037");
-    let source = std::fs::read_to_string(&tx_path).unwrap();
-    assert!(source.contains(":TX_ID:        tx-20260612-orgasmic-0037"));
 }
