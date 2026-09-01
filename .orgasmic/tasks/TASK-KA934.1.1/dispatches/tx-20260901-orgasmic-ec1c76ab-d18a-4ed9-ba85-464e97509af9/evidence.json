@@ -1,0 +1,20 @@
+{
+  "event_count": 221,
+  "tool_call_count": 118,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-KA934.1.1-implementer-20260901T153128.jsonl",
+    "size_bytes": 501140
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/01/rollout-2026-09-01T18-31-29-01a05d98-cabf-7831-91c0-5e13b4f9d694.jsonl",
+    "session_id": "01a05d98-cabf-7831-91c0-5e13b4f9d694",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
