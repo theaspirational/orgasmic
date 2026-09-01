@@ -14,6 +14,7 @@ use serde::Deserialize;
 
 use crate::content_lifecycle::{self, RegistryFinding};
 use crate::daemon_client;
+use crate::daemon_lifecycle::LedgerSyncStatus;
 use crate::daemon_service;
 use crate::home::Home;
 use crate::install_state::{self, InstallMode};
@@ -145,6 +146,8 @@ pub struct DaemonStatus {
     started_at: DateTime<Utc>,
     boot_id: String,
     pid: u32,
+    #[serde(default)]
+    ledger_sync: std::collections::BTreeMap<String, LedgerSyncStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,6 +276,7 @@ fn push_daemon_findings(out: &mut Vec<Finding>, home: &Home) {
             if let Some(finding) = diagnose_daemon_staleness(home, &status) {
                 out.push(finding);
             }
+            push_ledger_sync_findings(out, &status.ledger_sync);
         }
         DaemonLiveness::Unavailable => out.push(Finding::Warn(
             "daemon not running (`orgasmic status` auto-starts the local daemon)".to_string(),
@@ -280,6 +284,31 @@ fn push_daemon_findings(out: &mut Vec<Finding>, home: &Home) {
         DaemonLiveness::Unauthorized => out.push(Finding::Warn(
             "daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token)".to_string(),
         )),
+    }
+}
+
+fn push_ledger_sync_findings(
+    out: &mut Vec<Finding>,
+    statuses: &std::collections::BTreeMap<String, LedgerSyncStatus>,
+) {
+    for (path, status) in statuses {
+        let error = status
+            .error
+            .as_deref()
+            .unwrap_or("unknown error")
+            .lines()
+            .next()
+            .unwrap_or("unknown error");
+        match status.outcome.as_str() {
+            "conflict" => out.push(Finding::Warn(format!(
+                "ledger sync: {path} (conflict): {error}"
+            ))),
+            "failed" | "backed_off" => out.push(Finding::Warn(format!(
+                "ledger sync: {path} ({} failures): {error}",
+                status.consecutive_failures
+            ))),
+            _ => {}
+        }
     }
 }
 
@@ -611,6 +640,7 @@ mod tests {
             started_at,
             boot_id: "boot-test".to_string(),
             pid: 42,
+            ledger_sync: Default::default(),
         }
     }
 
@@ -703,6 +733,38 @@ mod tests {
             .iter()
             .filter(|finding| matches!(finding, Finding::Warn(message) if message.contains(needle)))
             .count()
+    }
+
+    #[test]
+    fn ledger_sync_failures_are_doctor_warnings() {
+        let statuses = serde_json::from_value(serde_json::json!({
+            "/tmp/backed-off": {
+                "outcome": "backed_off",
+                "error": "push failed\nsecond line",
+                "consecutive_failures": 3
+            },
+            "/tmp/conflict": {
+                "outcome": "conflict",
+                "error": "paths parked\nsecond line",
+                "consecutive_failures": 0
+            },
+            "/tmp/healthy": {
+                "outcome": "synced",
+                "consecutive_failures": 0
+            }
+        }))
+        .unwrap();
+        let mut findings = Vec::new();
+
+        push_ledger_sync_findings(&mut findings, &statuses);
+
+        assert_eq!(
+            findings,
+            vec![
+                Finding::Warn("ledger sync: /tmp/backed-off (3 failures): push failed".into()),
+                Finding::Warn("ledger sync: /tmp/conflict (conflict): paths parked".into()),
+            ]
+        );
     }
 
     fn assert_human_duration(secs: u64, expected: &str) {
