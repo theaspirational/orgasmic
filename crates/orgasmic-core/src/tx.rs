@@ -41,6 +41,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -81,6 +82,11 @@ pub struct TxEntry {
     /// (key, value) tuples to preserve insertion order; keys are written
     /// in the order they appear here.
     pub extra: Vec<(String, String)>,
+}
+
+/// Parse the full-width timestamp carried by tx and journal entries.
+pub fn parse_org_timestamp(value: &str) -> Option<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(value, "[%Y-%m-%d %a %H:%M:%S]").ok()
 }
 
 /// One dispatch generation derived from the project tx ledger.
@@ -739,6 +745,12 @@ pub fn parse_tx_file(source: &str, display: &str) -> Result<Vec<TxEntry>, TxErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_org_timestamp_parser_rejects_date_only_stamps() {
+        assert!(parse_org_timestamp("[2026-09-01 Tue 10:00:00]").is_some());
+        assert!(parse_org_timestamp("[2026-09-01 Tue]").is_none());
+    }
 
     fn sample_entry() -> TxEntry {
         let mut e = TxEntry::new(

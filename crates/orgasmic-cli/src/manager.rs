@@ -27,7 +27,7 @@ use orgasmic_drivers::{
 // orgasmic:task_ZKZBF.2 — the ONE key-shape rule (this used to be a verbatim
 // copy of core's; a copy drifting is how the drawer check and the ledger
 // writer came to disagree on `FOO-BAR`).
-use orgasmic_core::tx::is_uppercase_snake_key;
+use orgasmic_core::tx::{is_uppercase_snake_key, parse_org_timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -9802,21 +9802,26 @@ fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransi
 
     let mut candidates = Vec::new();
     for (started_tx, transition, close_time) in pending {
+        let Some(close_time) = parse_org_timestamp(&close_time) else {
+            continue;
+        };
         let journal_path = task_node_file_path(project_root, &transition.task)
             .with_file_name(orgasmic_core::node_kernel::JOURNAL_FILE);
         if journal_path.is_file() {
-            let source = std::fs::read_to_string(&journal_path)
-                .with_context(|| format!("read {}", journal_path.display()))?;
-            let entries = orgasmic_core::node_kernel::parse_journal(
+            let Ok(source) = std::fs::read_to_string(&journal_path) else {
+                continue;
+            };
+            let Ok(entries) = orgasmic_core::node_kernel::parse_journal(
                 &source,
                 journal_path.to_string_lossy().as_ref(),
-            )
-            .with_context(|| format!("parse {}", journal_path.display()))?;
+            ) else {
+                continue;
+            };
             if entries.iter().any(|entry| {
                 matches!(
                     entry.ty.as_str(),
                     "task.state_transitioned" | "manager.dispatch_started"
-                ) && entry.time >= close_time
+                ) && parse_org_timestamp(&entry.time).is_none_or(|time| time >= close_time)
             }) {
                 continue;
             }
@@ -12348,16 +12353,36 @@ mod tests {
                 "* TX 2026-07-29 Wed 11:00:00 manager.dispatch_started {task}\n:PROPERTIES:\n:TX_ID:        tx-next-{task}\n:TIME:         [2026-07-29 Wed 11:00:00]\n:TYPE:         manager.dispatch_started\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n:KIND:         reviewer\n:END:\n"
             )
         };
+        let journal_transitioned = |task: &str, time: &str| {
+            orgasmic_core::node_kernel::append_entry(
+                "",
+                task,
+                &orgasmic_core::node_kernel::JournalEntry {
+                    entry_id: format!("tx-moved-{task}"),
+                    time: time.into(),
+                    ty: "task.state_transitioned".into(),
+                    actor: "a@example.com".into(),
+                    machine: "host".into(),
+                    extras: Vec::new(),
+                    body: String::new(),
+                },
+            )
+        };
         std::fs::write(
             tx_dir.join("2026-07.org"),
             format!(
-                "#+title: tx\n#+orgasmic_version: 1\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+                "#+title: tx\n#+orgasmic_version: 1\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                 close("tx-1", "TASK-TORN", "in_progress", "in_review"),
                 close("tx-2", "TASK-LANDED", "in_progress", "in_review"),
                 transitioned("TASK-LANDED"),
                 close("tx-4", "TASK-REDISPATCHED", "in_progress", "in_review"),
                 dispatched("TASK-REDISPATCHED"),
                 close("tx-5", "TASK-JOURNAL", "in_progress", "in_review"),
+                close("tx-6", "TASK-EARLIER", "in_progress", "in_review"),
+                close("tx-7", "TASK-BAD-STAMP", "in_progress", "in_review"),
+                close("tx-8", "TASK-BAD-JOURNAL", "in_progress", "in_review"),
+                close("tx-9", "TASK-DATE-ONLY", "in_progress", "in_review")
+                    .replace("[2026-07-29 Wed 10:00:00]", "[2026-07-29 Wed]"),
                 // No LIFECYCLE_* at all: a close written before this task
                 // shipped carries no intent and is not repairable.
                 "* TX 2026-07-29 Wed 12:00:00 implementer.done TASK-LEGACY\n:PROPERTIES:\n:TX_ID:        tx-3\n:TIME:         [2026-07-29 Wed 12:00:00]\n:TYPE:         implementer.done\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-LEGACY\n:CLOSED_TX:    tx-start-legacy\n:END:\n",
@@ -12368,33 +12393,46 @@ mod tests {
         std::fs::create_dir_all(&journal_dir).unwrap();
         std::fs::write(
             journal_dir.join("journal.org"),
-            orgasmic_core::node_kernel::append_entry(
-                "",
-                "TASK-JOURNAL",
-                &orgasmic_core::node_kernel::JournalEntry {
-                    entry_id: "tx-moved-TASK-JOURNAL".into(),
-                    time: "[2026-07-29 Wed 11:00:00]".into(),
-                    ty: "task.state_transitioned".into(),
-                    actor: "a@example.com".into(),
-                    machine: "host".into(),
-                    extras: Vec::new(),
-                    body: String::new(),
-                },
-            ),
+            journal_transitioned("TASK-JOURNAL", "[2026-07-29 Wed 11:00:00]"),
         )
         .unwrap();
+        for (task, time) in [
+            ("TASK-EARLIER", "[2026-07-29 Wed 09:00:00]"),
+            ("TASK-BAD-STAMP", "[2026-07-29 Wed]"),
+        ] {
+            let journal_dir = tmp.path().join(".orgasmic/tasks").join(task);
+            std::fs::create_dir_all(&journal_dir).unwrap();
+            std::fs::write(
+                journal_dir.join("journal.org"),
+                journal_transitioned(task, time),
+            )
+            .unwrap();
+        }
+        let bad_journal_dir = tmp.path().join(".orgasmic/tasks/TASK-BAD-JOURNAL");
+        std::fs::create_dir_all(&bad_journal_dir).unwrap();
+        std::fs::write(bad_journal_dir.join("journal.org"), "* missing drawer\n").unwrap();
 
         let candidates = torn_close_candidates(tmp.path()).unwrap();
         assert_eq!(
             candidates,
-            vec![(
-                "tx-start-TASK-TORN".to_string(),
-                CloseTransition {
-                    task: "TASK-TORN".to_string(),
-                    from: LifecycleStage::InProgress,
-                    to: LifecycleStage::InReview,
-                }
-            )]
+            vec![
+                (
+                    "tx-start-TASK-TORN".to_string(),
+                    CloseTransition {
+                        task: "TASK-TORN".to_string(),
+                        from: LifecycleStage::InProgress,
+                        to: LifecycleStage::InReview,
+                    },
+                ),
+                (
+                    "tx-start-TASK-EARLIER".to_string(),
+                    CloseTransition {
+                        task: "TASK-EARLIER".to_string(),
+                        from: LifecycleStage::InProgress,
+                        to: LifecycleStage::InReview,
+                    },
+                ),
+            ]
         );
     }
 
