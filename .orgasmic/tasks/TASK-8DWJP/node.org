@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-8DWJP
+#+orgasmic_version: 2
+
+* BACKLOG TASK-8DWJP CLM6W H6: claim gate only refuses CLAIMED nodes; every node is unclaimed between dispatches, so two daemons both land — the sync premise is false (fix round for TASK-CLM6W; id grammar refuses TASK-CLM6W.1)    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-8DWJP
+:PRIORITY: P1
+:RELATES_TO: TASK-CLM6W TASK-AS0FS
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-stdio, claude-opus-5 high, 2026-09-01), verdict APPROVE WITH FOLLOW-UPS; report promoted under tasks/<chain-task>/dispatches/tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07/report.md.
+=guard_node_write= (crates/orgasmic-daemon/src/writer.rs:1766) returns Ok for any node with no claim row. Claims are per dispatch (live log: 62 task.claimed / 70 task.claim_released), so between dispatches a comment or task update from two daemons both land. ledger_sync.rs:52 states the opposite premise (a foreign node dir can only appear modified here if something wrote outside its pen, which the claim gate refuses); the consequence is the H5 rebase wedge. This is a DESIGN choice, overlapping TASK-AS0FS (singleton ownership): either claim on first write and hold until sync (make the pen real), or drop the two-machines-never-write-the-same-node claim and give the sync loop a conflict path. Half of each is shipped. Decide first (grill), then implement; record the decision.
+** Acceptance
+- [ ] A recorded decision (dec_) choosing pen-on-write vs conflict-path, folded with TASK-AS0FS.
+- [ ] Implementation + a two-writer test proving the chosen property; ledger_sync.rs:52 comment matches reality.
+- [ ] clippy -D; fmt.

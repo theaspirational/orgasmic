@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-8DWJP
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6764 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6764
+:TIME:    [2026-09-01 Tue 13:01:28]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:TARGET: .orgasmic/tasks/TASK-8DWJP/node.org
+:REASON: filed from the whole-chain review tx-1c6d2115; subtask id refused (parent id contains L)
+:EVENT_ID: 26398cb1-cf37-4580-873e-207678c02eae
+:END:
+
+* tx-20260901-orgasmic-6765 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6765
+:TIME:    [2026-09-01 Tue 13:01:28]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:TARGET: .orgasmic/tasks/TASK-8DWJP/node.org
+:REASON: fix round from chain review
+:FIX_SUBTASK: t
+:EVENT_ID: db1d9f4b-a4c2-4746-9b1e-25c89eacbd6e
+:END:
