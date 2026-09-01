@@ -6,8 +6,8 @@
 :PROPERTIES:
 :ID:               handoff-current
 :LIVENESS:         1f7e642a
-:LIVENESS_AT:      [2026-09-01 Tue]
-:UPDATED_AT:       [2026-09-01 Tue]
+:LIVENESS_AT:      [2026-09-01 Tue 16:10]
+:UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
 :END:
 
@@ -614,40 +614,34 @@ operator + agent sessions, no manager handoff write in between).
 - Reviewer generation closed =--verdict approve-with-follow-ups --reviewed-diff 543782d7^1..31344134= (17 reviewer.done tx); the verdict steered 16 tasks to in_progress; all 17 chain tasks then moved to DONE with seeded Evidence (integration sha + verdict), per the ZKZBF.2 precedent (parent done, follow-ups carry the work). Review worktree removed, branch deleted; dispatch-status empty.
 
 ** Next likely actions
-Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 (chain landed, crates green for the 0.0.23 stable
-certification) is DONE. Step 2 — "one review over the whole chain and fix everything it finds" — has only a
-manager-inline pass (2026-08-27, five fixes + TASK-AS0FS). No independent reviewer has read the chain.
+Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 DONE (chain landed, 0.0.23 certified). Step 2 half done:
+the independent whole-chain review ran 2026-09-01 (APPROVE WITH FOLLOW-UPS, 6H/5M/5L) and its findings are filed;
+"fix everything it finds" is what remains. The goal is reached when the fix tasks below are done and reviewed.
 
-1. *WHOLE-CHAIN REVIEW — DISPATCHED 2026-09-01* (see In flight: tx-1c6d2115, opus-5 high). When it reports: verify, close with --verdict, fix rounds, then done. Original plan kept below for a re-dispatch: One read-only reviewer over =543782d7^..366c4b5b= (the chain merge through
-   its 08-27 fixes; =git log --first-parent= lists 17 integrations). Cross-family from the implementers (chain was
-   codex/claude mixed; fable-5 or gpt-5.6-sol both qualify). Operator picks model + effort at session start.
-   Brief must: name the AP971.x Resolutions as the spec, forbid bulk-reading =verify/*/injection.patch= (52NJS
-   content-filter kill), require =reviewer.finding= tx as findings appear, expect REJECT on some of it, and say what
-   is already established (8b092d27 fmt/clippy clean; 9acfba79 suite certified). Arm =manager dispatch-wait=.
-   Then fix rounds as TASK-<id>.N, then move the 19 in_review chain tasks to done with evidence — they are NOT done
-   until this review passes.
-2. *TASK-AS0FS* (P2, singleton ledger file ownership across machines) is a DECISION the chain review surfaced —
-   grill before implementing; two machines editing goal.org between syncs is a real rebase conflict today.
-3. *TASK-56NRX is DONE* — the typed approve close on tx-6c3d6953 steered it there (2026-09-01). Round 4 =fca620d4= (review follow-ups) landed AFTER the reviewed diff and was never independently read; fold it into the whole-chain review scope or accept it as follow-ups.
-4. *Board debris decision*: cancel 02JJW/2XT9J/NMV4P/V6JW4 + their seven todo children, or explain why they stay.
-5. Older P1s still stand (08-18 list): BX5SR.2/.3 (writer idempotency + supervision), YBCYQ (worker commits to
-   main), 48SFW (staged home kills dispatches), C7NVH (--effort never reaches codex). vscode-orsl letter items:
-   XQCNA, ZMYEN (b)(c), XC9N4 remainder. AJP4A ancestors still in_progress-by-bookkeeping.
-6. Consider compacting this handoff: no cap exists, it is ~60 KB, and the durable lessons are the five preamble
-   rules + the Divergence blocks; the session narratives are in git.
+1. *FIX ROUNDS, in this order* (all tag =chain-review=; one implementer per task, reviewer cross-family; ask the
+   operator for the implementer model/effort at the first dispatch):
+   a. TASK-MSYN4.1 (P1) H1 denylist — SECURITY, live today, smallest diff; go first.
+   b. TASK-JWHXH.1 (P1) H4 code side + M1 views regeneration.
+   c. TASK-EPG6H.1 (P1) H3 torn-close repair reads journals / drops the dead arm.
+   d. TASK-MSYN4.2 (P1) H2 writer lease or sidecar exclusion + H5 surface the wedge.
+   e. TASK-8DWJP (P1) H6 — a DECISION first (pen-on-write vs conflict path), folded with TASK-AS0FS; grill, record dec_, then implement.
+   f. TASK-KA934.1 (P1) M4 comment authorship + actor stamps.
+   g. TASK-TP593.1 (P2) M2+M3 tests that cannot fail. h. TASK-MSYN4.3 (P2) M5 tx ids. i. TASK-SRBGS.1 (P3) LOWs.
+   Every fix round closes in_review (FIX_SUBTASK) and gets its own review; the parents are already DONE.
+2. *in_review leftovers that are NOT this chain*: TASK-W97C8 and W97C8.1 (approve-with-follow-ups 08-28 — check
+   whether follow-ups were filed, then move to done), TASK-JHWNP.1 (fix round landed 3503b86b — has it been
+   reviewed? no reviewer.done found since 08-27).
+3. *Board debris decision*: cancel 02JJW/2XT9J/NMV4P/V6JW4 + their seven todo children, or explain why they stay.
+4. Older P1s still stand (08-18 list): BX5SR.2/.3, YBCYQ, 48SFW, C7NVH. vscode-orsl letter items: XQCNA, ZMYEN
+   (b)(c), XC9N4 remainder. AJP4A ancestors still in_progress-by-bookkeeping.
+5. Consider compacting this handoff: no cap exists (~65 KB now); durable content = the five preamble rules +
+   Divergence blocks + this list; session narratives are in git.
 
-DONE SINCE LAST HANDOFF (do not re-propose): E01MC/TWCP9 chain merges; ledger cutover; W97C8/.1; JHWNP/.1; forum
-suite (56NRX FBSZ2 FAS8R 295X1 9TGQS 82KKQ E1D35 DN1WK); runtime 0.0.23 stable publish; skill door audit.
+DONE SINCE LAST HANDOFF (do not re-propose): whole-chain review dispatched, reported, verified, closed; 17 chain
+tasks done; 9 follow-up tasks filed; H4 live-ledger fix; 9 orphan/verdict-less generations closed; TFXR2 orphan.
 
 ** In flight
-ONE LIVE DISPATCH (opened 2026-09-01, manager session): the whole-chain E01MC/TWCP9 review, goal step 2.
-- started_tx =tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07=, run =run-01M1EFVA10Y0FMXCFW01JAY501=, pid 28402
-- worker =reviewer-claude-sdk-stdio= (driver stdio, harness claude-sdk, canonical chat runtime), model =claude-opus-5=, effort =high= (operator's session choice), governance =stall_timeout_secs=3600=
-- bound to all 17 in_review chain tasks (TP593 7A0H4 GCXB7 SRBGS JWHXH EPG6H ARRV8 AN992 IXPD4 TFXR2 RGRD5 LBRX7 8AV8B MSYN4 8DMQS CLM6W KA934); range =543782d7^1..31344134= code-only; branch =e01mc-chain-review-r1=; worktree =~/.orgasmic/worktrees/orgasmic/task-tp593-review=
-- brief =.orgasmic/tmp/dispatch/brief-E01MC-chain-review/brief-E01MC-chain-review.md=; report lands beside it as =*-last.txt= then promotes on close
-- watcher armed: =orgasmic manager dispatch-wait --started-tx tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07 --timeout 240m= (exit 0 reported / 2 run gone without report / 3 timeout)
-WHEN IT REPORTS: read the last.txt, verify each HIGH against source before acting, close the generation with =dispatch-close --task <all 17> --started-tx <above> --status done --verdict <approve|approve-with-follow-ups|reject> --reviewed-diff 543782d7^1..31344134=, file fix rounds as TASK-<id>.N with :FIX_SUBTASK: t, then move the chain tasks to done with evidence once the review passes. Expect this claude-sdk reviewer to self-close WITHOUT a typed verdict — you still must run dispatch-close.
-Runtime 0.0.23-dev.20260830i under launchd, pid 2682. vscode-orsl's manager dispatches on its own schedule — not this board's.
+NOTHING IN FLIGHT (2026-09-01 16:10). The whole-chain review generation tx-1c6d2115 is closed; dispatch-status is empty; no worker worktrees. Runtime 0.0.23-dev.20260830i under launchd, pid 2682. The ledger sync loop is live and commits every ~2s — commit any manual ledger index change in the same command or autostash drops it. vscode-orsl's manager dispatches on its own schedule — not this board's. Fix-round dispatches need the operator's IMPLEMENTER model/effort for this session (review ran on claude-opus-5 high; the implementer should differ in family or state why).
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
