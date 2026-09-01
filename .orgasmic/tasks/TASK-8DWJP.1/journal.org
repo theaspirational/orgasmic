@@ -128,3 +128,29 @@
 :REASON: MEDIUM writer.rs:2421 WriterCommand::Barrier runs run() inline in writer_loop, which is a plain tokio::spawn task (writer.rs:1765) with no spawn_blocking/block_in_place, and the barrier body park_conflict does git push origin (:236) and git fetch origin orgasmic (:250) with no timeout - a blackholed remote blocks the whole writer actor and one runtime worker indefinitely, hanging every daemon write; only salvage->park->reset needs the fence, hoist the fetch before the barrier and the best-effort push after it
 :EVENT_ID: 20817919-6cc5-4965-8654-74825714bb14
 :END:
+
+* tx-20260901-orgasmic-6948 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6948
+:TIME:    [2026-09-01 Tue 16:01:07]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1
+:REASON: LOW writer.rs:2421 the Barrier arm calls run() with no catch_unwind and sends reply only after it returns, so a panic inside any barrier body aborts writer_loop and every later write fails with 'writer task is gone'; park_conflict is Result-based today but run_barrier is a generic public API that any future caller inherits
+:EVENT_ID: f1f87c83-9710-4664-af6a-9c777d14c510
+:END:
+
+* tx-20260901-orgasmic-6949 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6949
+:TIME:    [2026-09-01 Tue 16:01:07]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1
+:REASON: LOW ledger_sync.rs:495 PATHS is paths.join(" ") so a ledger path containing a space is unrecoverable from the ledger.sync_conflict event, even though the -z read at :271 parses it correctly
+:EVENT_ID: 5586eeb4-cdfd-443e-81c3-eb9f2e23c3e8
+:END:
