@@ -60,3 +60,19 @@
 :NODE_ID: TASK-MSYN4.2
 :EVENT_ID: cff0e931-db0d-46b7-9bd5-72ffcaddb0bf
 :END:
+
+* tx-20260901-orgasmic-6868 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6868
+:TIME:    [2026-09-01 Tue 14:51:34]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2
+:TARGET: .orgasmic/tasks/TASK-MSYN4.2/node.org
+:REASON: transition TASK-MSYN4.2 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 431b8991-b539-4276-b4a3-7a3d02c926ac
+:END:
