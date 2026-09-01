@@ -76,3 +76,16 @@
 :TO_STATE: in_review
 :EVENT_ID: 0bcbf57d-2392-4847-8a3f-d2645499632a
 :END:
+
+* tx-20260901-orgasmic-6983 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6983
+:TIME:    [2026-09-01 Tue 17:10:16]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.3
+:REASON: MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:370-372 — abort_rebase_with_salvage runs outside the writer barrier (only park_conflict is wrapped at :893), so a tracked ledger write landing between salvage_worktree and git rebase --abort is still discarded with no copy in any ref
+:EVENT_ID: edfdf7b2-03d1-4a34-a5fb-5197c23bf02c
+:END:
