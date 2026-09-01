@@ -1,0 +1,23 @@
+{
+  "event_count": 905,
+  "tool_call_count": 74,
+  "unparsed_events": 7,
+  "bounded_events": 9,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-EPG6H.1-reviewer-20260901T142942.jsonl",
+    "size_bytes": 1310517
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the diff and the task record."
+    }
+  ],
+  "narrative_truncated": false
+}
