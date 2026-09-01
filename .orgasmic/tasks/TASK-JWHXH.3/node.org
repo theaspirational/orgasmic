@@ -1,10 +1,10 @@
 #+title: orgasmic task TASK-JWHXH.3
 #+orgasmic_version: 2
 
-* BACKLOG TASK-JWHXH.3 views/ ignore+untrack for non-synced checkouts: project migrate + doctor warning    :e01mc:chain-review:
+* IN_PROGRESS TASK-JWHXH.3 Stop writing .orgasmic/views/*.org; render on demand; project migrate + doctor for stragglers :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-JWHXH.3
-:IMPLEMENTS: dec_AF61D
+:IMPLEMENTS: dec_AF61D dec_XH2XY
 :PRIORITY: P2
 :RELATES_TO: TASK-JWHXH.2 TASK-JWHXH.1
 :END:
@@ -16,3 +16,5 @@ Implement dec_AF61D. Reuse the sync-loop code from TASK-JWHXH.1 (ledger_sync.rs 
 - [ ] Ledger-without-remote fixture behaves the same.
 - [ ] Daemon never runs git rm --cached outside the synced-ledger loop.
 - [ ] clippy -D; fmt; targeted cli/daemon tests green.
+** Notes
+Scope rewritten 2026-09-02 per dec_XH2XY: DELETE the on-disk views instead of ignoring them. Renderer stays pure (render_view), GET /org/file renders board/decisions/glossary on demand, index rebuild sites + debounce + CLI views build deleted, scaffold no longer creates views/, unreferenced context packs deleted, prompt prose repointed to the CLI. Migration: orgasmic project migrate untracks+deletes .orgasmic/views/ idempotently; doctor warns while present. Off-limits: KA934.3 files (MEMBER_ALLOWED_ROUTES, post_task_comment*, writer comment fns, authz.rs). Brief: scratchpad/brief-TASK-JWHXH.3.md.

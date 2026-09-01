@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_XH2XY
+#+orgasmic_version: 2
+
+* dec_XH2XY The on-disk views/ files are removed; board, decisions and glossary views render on demand
+:PROPERTIES:
+:ID: dec_XH2XY
+:RELATES_TO: dec_AF61D TASK-JWHXH.3 TASK-JWHXH.2
+:END:
+
+Operator decision 2026-09-02 (option 1), refining dec_AF61D: instead of keeping and gitignoring .orgasmic/views/*.org, the daemon stops writing them at all.
+
+** Decision
+- No more .orgasmic/views/ directory. board.org / decisions.org / glossary.org are rendered on demand (daemon GET /org/file for those paths; the UI raw org viewer keeps working unchanged).
+- The rebuild machinery (core build_views, the daemon index rebuild sites and their debounce, CLI views build) is deleted.
+- Migration stays explicit for repos the daemon does not sync: orgasmic project migrate untracks (git rm -r --cached) and deletes .orgasmic/views/; orgasmic doctor warns while it is still there. The daemon never mutates a foreign index. Synced ledgers clean their own dir inside the sync loop.
+- Prompt-studio context packs pointing at the files are deleted (nothing includes them); prompt prose points at the CLI (orgasmic decision list / glossary list / task get).
+
+** Why
+The joined view already lives in the daemon index (which skips views/); the files had one dropdown reader and a 3 MB rewrite on every change. Deleting the renderer-to-disk is less code than keeping it plus an ignore path.

@@ -14,3 +14,64 @@
 :REASON: created task TASK-JWHXH.3
 :EVENT_ID: a1084702-f895-4ded-b74d-cb3e347e8aa1
 :END:
+
+* tx-20260901-orgasmic-7021 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7021
+:TIME:    [2026-09-01 Tue 22:03:29]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-JWHXH.3/node.org
+:REASON: edited task node TASK-JWHXH.3
+:NODE_ID: TASK-JWHXH.3
+:EVENT_ID: 39d4fa75-cfa7-45b9-b5ba-4866f50b5e9f
+:END:
+
+* tx-20260901-orgasmic-7022 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7022
+:TIME:    [2026-09-01 Tue 22:03:29]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:TARGET: .orgasmic/tasks/TASK-JWHXH.3/node.org
+:REASON: operator chose option 1: delete the on-disk views (dec_XH2XY)
+:IMPLEMENTS: dec_AF61D dec_XH2XY
+:EVENT_ID: 28dc3774-7359-4639-abaf-b2fcb81620fc
+:END:
+
+* tx-20260901-orgasmic-7023 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7023
+:TIME:    [2026-09-01 Tue 22:03:29]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-JWHXH.3/node.org
+:REASON: edited task node TASK-JWHXH.3
+:NODE_ID: TASK-JWHXH.3
+:EVENT_ID: 4ac0f7a3-3daf-4551-810a-1b66ca77f204
+:END:
+
+* tx-20260901-orgasmic-7025 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7025
+:TIME:    [2026-09-01 Tue 22:03:56]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:TARGET: .orgasmic/tasks/TASK-JWHXH.3/node.org
+:REASON: transition TASK-JWHXH.3 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: dea28b74-60ff-491f-8ec0-6533d69a8f72
+:END:
