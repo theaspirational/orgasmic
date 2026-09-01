@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-SRBGS.1
 #+orgasmic_version: 2
 
-* BACKLOG TASK-SRBGS.1 LOW follow-ups from the chain review: lint swallows IO errors, migrator partial-failure dead end, daemon-wide apply-failure slot, tx.org type list drift, literal anomalies line    :e01mc:chain-review:
+* IN_PROGRESS TASK-SRBGS.1 LOW follow-ups from the chain review: lint swallows IO errors, migrator partial-failure dead end, daemon-wide apply-failure slot, tx.org type list drift, literal anomalies line :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-SRBGS.1
 :PRIORITY: P3
