@@ -143,3 +143,18 @@
 :REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:884 — record_sync_conflict's request_id ignores pending_salvage, so in the unrecoverable case (parked_ref and salvage_ref both empty) the key is remote_head+paths and a later tick with the same remote head but a different PENDING_SALVAGE_REF dedups against the first event and never records its ref.
 :EVENT_ID: 45b34253-ec51-4d56-b69b-b01f8fce3e02
 :END:
+
+* tx-20260901-orgasmic-6999 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6999
+:TIME:    [2026-09-01 Tue 18:29:36]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.4
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-8DWJP.1.4/node.org
+:REASON: edited task node TASK-8DWJP.1.4
+:NODE_ID: TASK-8DWJP.1.4
+:EVENT_ID: 3c7c5de3-09d1-4e45-bd3f-451a053f3117
+:END:
