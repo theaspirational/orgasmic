@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-MSYN4.1 H1: org-file denylist no longer covers the moved tx ledger, claims.org, or views/ :e01mc:chain-review:
+* IN_REVIEW TASK-MSYN4.1 H1: org-file denylist no longer covers the moved tx ledger, claims.org, or views/ :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.1
 :PRIORITY: P1
@@ -15,3 +15,7 @@ Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-st
 - [ ] One structural predicate refuses any path under =.orgasmic/machines/=, any =.orgasmic/views/=, plus the existing =tx/= and =journal.org= rules; pinned by a test with the four cases from the report (machines tx, claims.org, views/board.org, tx/, journal.org).
 - [ ] =post_org_file= requires an identity and an Action like every sibling write.
 - [ ] cargo test -p orgasmic-daemon --lib <new tests>; clippy -D warnings; fmt.
+** Evidence
+- Implementer implementer-codex-chat-stdio (stdio / codex-chat / gpt-5.6-sol, effort not passed) gen tx-20260901-orgasmic-ca5b5a35: worker commit =84bda242=, merged =29f93ba9= (2026-09-01).
+- Manager gates on the merged tree: =cargo test -p orgasmic-daemon --lib -- org_file authz= → 23 passed / 0 failed; =cargo clippy -p orgasmic-daemon --all-targets -- -D warnings= clean; =cargo fmt --all --check= clean. Worker's own log: org_file 5/5, authz 19/19.
+- Change: component-wise =reject_ledger_rewrite= (machines/, views/, tx/, **/journal.org refused; tx-notes.org + gotchas.org allowed); =post_org_file= extracts Identity and authorizes =Action::OrgWrite= (new, granted to no member role → admin-only) before path validation and project load. GET and writer claim gate unchanged.
