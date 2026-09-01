@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-8DWJP.1.2
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6966 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6966
+:TIME:    [2026-09-01 Tue 16:29:28]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.2
+:TARGET: .orgasmic/tasks/TASK-8DWJP.1.2/node.org
+:REASON: created task TASK-8DWJP.1.2
+:EVENT_ID: 7f2ee276-c46e-47a1-939e-f255cc3da5f0
+:END:
+
+* tx-20260901-orgasmic-6967 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6967
+:TIME:    [2026-09-01 Tue 16:29:28]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.2
+:TARGET: .orgasmic/tasks/TASK-8DWJP.1.2/node.org
+:REASON: Fix round after the 8DWJP.1.1 review REJECT
+:FIX_SUBTASK: t
+:EVENT_ID: a2340b59-2b37-4759-8e08-17f1f386a08b
+:END:
