@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-JWHXH.2
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6842 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6842
+:TIME:    [2026-09-01 Tue 14:21:57]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.2
+:TARGET: .orgasmic/tasks/TASK-JWHXH.2/node.org
+:REASON: created task TASK-JWHXH.2
+:EVENT_ID: d0b85668-ae02-4f59-a6b3-d4c30c8e8061
+:END:

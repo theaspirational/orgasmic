@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-JWHXH.2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-JWHXH.2 Decide where views/ ignore+untrack migration belongs for NON-synced project checkouts (H4 residual)    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-JWHXH.2
+:PRIORITY: P2
+:RELATES_TO: TASK-JWHXH.1 TASK-AS0FS
+:END:
+
+Source: review of TASK-JWHXH.1 (=c3d779af=, reviewer gen tx-20260901-orgasmic-a4acf9f4, claude-opus-5 high), finding 2 (MEDIUM, unmet acceptance partial).
+TASK-JWHXH.1 fixed H4 only for ledgers the daemon syncs (branch =orgasmic= with an =origin=): =sync_once_inner= ensures =.orgasmic/.gitignore= has =views/= and untracks the files. Two populations are never fixed: (a) an ordinary project checkout that carries =.orgasmic/= committed in its own tree (branch main etc.) — the majority of orgasmic-using repos; (b) an =orgasmic=-branch ledger with no remote. Nothing else closes the gap: =init_project= skips any file that already exists (crates/orgasmic-core/src/projects.rs:188), so the scaffold =tmp/ views/= never reaches a project whose .gitignore already says =tmp/=; =project_migrate.rs= never touches .gitignore. Those repos keep committing a 3 MB derived board.org into user history.
+Open design question (decide first): should the DAEMON run =git rm --cached= in a repo it only observes (a mutating git op on the user index), or should this be an explicit operator verb (=orgasmic project migrate= / doctor --fix) plus a doctor warning? The manager leans to the explicit verb + doctor warning: the daemon must not rewrite a user repo index it does not own.
+
+** Acceptance
+- [ ] Decision recorded (where the migration lives; daemon vs explicit verb) — a short dec_ or a Resolution here.
+- [ ] Implementation: every registered project that is a git repo with tracked =.orgasmic/views/*= gets the ignore rule and the untrack through the chosen path, idempotently; a doctor check reports the tracked state when it is not auto-fixed.
+- [ ] Test on a plain-branch fixture; clippy -D; fmt.
