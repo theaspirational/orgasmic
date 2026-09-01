@@ -14,3 +14,66 @@
 :REASON: created task TASK-JWHXH.2
 :EVENT_ID: d0b85668-ae02-4f59-a6b3-d4c30c8e8061
 :END:
+
+* tx-20260901-orgasmic-7016 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7016
+:TIME:    [2026-09-01 Tue 21:53:44]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.2
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-JWHXH.2/node.org
+:REASON: edited task node TASK-JWHXH.2
+:NODE_ID: TASK-JWHXH.2
+:EVENT_ID: 52dee250-5a08-4d49-8707-4d532a717425
+:END:
+
+* tx-20260901-orgasmic-7017 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7017
+:TIME:    [2026-09-01 Tue 21:53:44]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.2
+:TARGET: .orgasmic/tasks/TASK-JWHXH.2/node.org
+:REASON: decision recorded as dec_AF61D; implementation is TASK-JWHXH.3
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: e5d4cdbe-73ca-433b-a0ce-c400d9e2af81
+:END:
+
+* tx-20260901-orgasmic-7018 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7018
+:TIME:    [2026-09-01 Tue 21:53:44]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.2
+:TARGET: .orgasmic/tasks/TASK-JWHXH.2/node.org
+:REASON: decision recorded as dec_AF61D; implementation is TASK-JWHXH.3
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: c0d0cd89-f154-4c27-8ecd-77bba2f5762e
+:END:
+
+* tx-20260901-orgasmic-7019 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7019
+:TIME:    [2026-09-01 Tue 21:53:44]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.2
+:TARGET: .orgasmic/tasks/TASK-JWHXH.2/node.org
+:REASON: decision recorded as dec_AF61D; implementation is TASK-JWHXH.3
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 7f9c178e-b187-4d41-b24b-0459ddd7f1ea
+:END:

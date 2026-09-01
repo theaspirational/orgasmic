@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-JWHXH.3
+#+orgasmic_version: 2
+
+* BACKLOG TASK-JWHXH.3 views/ ignore+untrack for non-synced checkouts: project migrate + doctor warning    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-JWHXH.3
+:IMPLEMENTS: dec_AF61D
+:PRIORITY: P2
+:RELATES_TO: TASK-JWHXH.2 TASK-JWHXH.1
+:END:
+
+Implement dec_AF61D. Reuse the sync-loop code from TASK-JWHXH.1 (ledger_sync.rs ~:140-160: ensure views/ in .orgasmic/.gitignore, git rm --cached tracked views/*) behind an explicit path: orgasmic project migrate (project_migrate.rs) applies it idempotently to a git-repo project; orgasmic doctor reports 'views/* tracked in git' with the exact command while it is not applied. init_project must not skip the ignore rule when .gitignore already exists (projects.rs:188).
+
+** Acceptance
+- [ ] Plain-branch fixture with tracked .orgasmic/views/board.org: doctor warns; project migrate untracks + ignores; second run is a no-op; doctor is quiet.
+- [ ] Ledger-without-remote fixture behaves the same.
+- [ ] Daemon never runs git rm --cached outside the synced-ledger loop.
+- [ ] clippy -D; fmt; targeted cli/daemon tests green.

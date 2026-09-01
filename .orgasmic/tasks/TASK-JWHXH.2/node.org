@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JWHXH.2
 #+orgasmic_version: 2
 
-* BACKLOG TASK-JWHXH.2 Decide where views/ ignore+untrack migration belongs for NON-synced project checkouts (H4 residual)    :e01mc:chain-review:
+* DONE TASK-JWHXH.2 Decide where views/ ignore+untrack migration belongs for NON-synced project checkouts (H4 residual) :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-JWHXH.2
 :PRIORITY: P2
@@ -16,3 +16,5 @@ Open design question (decide first): should the DAEMON run =git rm --cached= in 
 - [ ] Decision recorded (where the migration lives; daemon vs explicit verb) — a short dec_ or a Resolution here.
 - [ ] Implementation: every registered project that is a git repo with tracked =.orgasmic/views/*= gets the ignore rule and the untrack through the chosen path, idempotently; a doctor check reports the tracked state when it is not auto-fixed.
 - [ ] Test on a plain-branch fixture; clippy -D; fmt.
+** Evidence
+Decided 2026-09-02 by the operator: derived views/ are gitignored everywhere; non-synced repos migrate via explicit verb + doctor warning. Recorded as dec_AF61D; implementation filed as TASK-JWHXH.3 (IMPLEMENTS dec_AF61D).

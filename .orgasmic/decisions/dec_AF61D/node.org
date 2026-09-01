@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_AF61D
+#+orgasmic_version: 2
+
+* dec_AF61D Derived views/ files are never committed; non-synced repos migrate via an explicit verb plus a doctor warning
+:PROPERTIES:
+:ID: dec_AF61D
+:RELATES_TO: TASK-JWHXH.2 TASK-JWHXH.1
+:END:
+
+Operator decision 2026-09-02: derived data (.orgasmic/views/*.org: board.org, decisions.org, glossary.org) is gitignored in every orgasmic checkout, synced or not.
+
+** Decision
+- Every registered project gets views/ in .orgasmic/.gitignore and any tracked .orgasmic/views/* untracked (git rm --cached), idempotently.
+- For ledgers the daemon syncs this already happens inside the sync loop (TASK-JWHXH.1).
+- For everything else (a project repo carrying .orgasmic/ on its own branch; a ledger with no remote) the migration runs through an EXPLICIT operator verb (orgasmic project migrate, or doctor --fix) and orgasmic doctor warns while views/* is still tracked. The daemon never mutates the index of a repo it only observes.
+
+** Why
+views/*.org is a pure re-rendering of tasks/ decisions/ glossary/ (the daemon index skips views/ entirely); committing it stores every task twice and re-commits a 3 MB file on each rebuild. A background daemon rewriting a user repo index is a surprise; a one-time explicit command plus a visible warning is not.
