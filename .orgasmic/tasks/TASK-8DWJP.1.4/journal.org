@@ -130,3 +130,16 @@
 :REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:986 — no test exercises the production barrier wiring: ledger_sync::spawn is called only from daemon lib.rs:1105, the new test builds its own barrier closure and calls sync_ledger_at_with_park directly, so reverting the abort hunk to a bare abort_rebase_with_salvage compiles and leaves all 21 ledger_sync tests green (same pre-existing gap as the park barrier).
 :EVENT_ID: b2cfc321-4622-4bb9-9fb7-c59db3e53329
 :END:
+
+* tx-20260901-orgasmic-6998 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6998
+:TIME:    [2026-09-01 Tue 18:27:53]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.4
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:884 — record_sync_conflict's request_id ignores pending_salvage, so in the unrecoverable case (parked_ref and salvage_ref both empty) the key is remote_head+paths and a later tick with the same remote head but a different PENDING_SALVAGE_REF dedups against the first event and never records its ref.
+:EVENT_ID: 45b34253-ec51-4d56-b69b-b01f8fce3e02
+:END:
