@@ -1,0 +1,20 @@
+{
+  "event_count": 113,
+  "tool_call_count": 59,
+  "unparsed_events": 1,
+  "bounded_events": 1,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-JWHXH.1-implementer-20260901T140232.jsonl",
+    "size_bytes": 268403
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/01/rollout-2026-09-01T17-02-33-01a05d47-6013-7f41-9fc1-95bfe55bab19.jsonl",
+    "session_id": "01a05d47-6013-7f41-9fc1-95bfe55bab19",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
