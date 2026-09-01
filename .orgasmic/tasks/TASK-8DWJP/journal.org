@@ -172,3 +172,16 @@
 :REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:272 — the only durable pointer at a parked conflict is the ref itself: LedgerSyncStatus is in-memory, the event append happens after the reset so a crash in between leaves the salvage commit reachable by nothing but a tracing warn, and refs/orgasmic/conflicts/ is never pruned or listed, so on a shared-refstore worktree those commits are permanently un-GC-able.
 :EVENT_ID: a392f8b0-5588-4da7-9f3d-c4ead2946c8b
 :END:
+
+* tx-20260901-orgasmic-6907 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6907
+:TIME:    [2026-09-01 Tue 15:19:48]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:768 — the two-writer test calls record_sync_conflict directly with a literal project-a and re-derives the same tx path expression it is asserting, so it exercises neither the spawn loop's project_id resolution nor the routing of the event into machines/<id>/tx/, which is why the misrouted path in finding 1 passes green.
+:EVENT_ID: 5f6ffb22-f37b-45c5-90df-0753cb8f0b76
+:END:
