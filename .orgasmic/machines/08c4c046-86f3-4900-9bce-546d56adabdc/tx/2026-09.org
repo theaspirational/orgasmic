@@ -3505,3 +3505,59 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-MSYN4.2.1/dispatches/tx-20260901-orgasmic-29227358-99ad-4a5b-9f56-f60e8dd7f316/report.md
 :EVENT_ID:     31a59370-6e73-41c1-80e8-300ce6ba5c32
 :END:
+
+* TX 2026-09-01 Tue 15:36:02 manager.dispatch_started TASK-SRBGS.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-1d1b2d9d-2e6c-4481-b6e6-f739bc4c8127
+:TIME:         [2026-09-01 Tue 15:36:02]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-SRBGS.1
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-srbgs.1-review
+:BRANCH:       task-srbgs.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-SRBGS.1-review/brief-TASK-SRBGS.1-review.md
+:STARTED_AT:   [2026-09-01 Tue 15:36:02]
+:LIVENESS:     c56b0bbe5017ca514cf3410dbc7d87862d9875de
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260901-orgasmic-2c75f6bd-619c-4c51-98c1-e3b77b538819
+:REASON_INITIAL: Review round for chain-review L1-L5 merged c56b0bbe; the per-tx apply-failure keying in the writer and the fail-closed lint scope need an adversarial read
+:EVENT_ID:     6b363c47-62aa-4e58-abc7-dee46d8757a8
+:END:
+
+* TX 2026-09-01 Tue 15:36:02 run.created TASK-SRBGS.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-1d1f306c-05af-4d6e-b19b-8f1276bd7776
+:TIME:         [2026-09-01 Tue 15:36:02]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-SRBGS.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-SRBGS.1-reviewer-20260901T153601.jsonl
+:REASON:       Review round for chain-review L1-L5 merged c56b0bbe; the per-tx apply-failure keying in the writer and the fail-closed lint scope need an adversarial read
+:RUN_ID:       run-01M1ESSWKVWC363ZRMJBGYQYPA
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-srbgs.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-SRBGS.1-review/brief-TASK-SRBGS.1-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-SRBGS.1-review/brief-TASK-SRBGS.1-review-083e547fb681479ebdf2cd988893145e-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-SRBGS.1-review/brief-TASK-SRBGS.1-review-083e547fb681479ebdf2cd988893145e-stdout.log
+:DISPATCH_ATTEMPT: 083e547fb681479ebdf2cd988893145e
+:PID:          88839
+:DISPATCH_TX:  tx-20260901-orgasmic-1d1b2d9d-2e6c-4481-b6e6-f739bc4c8127
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     c3678b27-8273-4f75-aede-c5a4e467c041
+:END:

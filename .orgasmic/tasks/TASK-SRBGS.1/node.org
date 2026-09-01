@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-SRBGS.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-SRBGS.1 LOW follow-ups from the chain review: lint swallows IO errors, migrator partial-failure dead end, daemon-wide apply-failure slot, tx.org type list drift, literal anomalies line :e01mc:chain-review:
+* IN_REVIEW TASK-SRBGS.1 LOW follow-ups from the chain review: lint swallows IO errors, migrator partial-failure dead end, daemon-wide apply-failure slot, tx.org type list drift, literal anomalies line :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-SRBGS.1
 :PRIORITY: P3
@@ -17,3 +17,5 @@ Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-st
 ** Acceptance
 - [ ] L1 propagates errors; L3 keys the failure by request; L4 list matches the Rust route table with a test; L5 prints the counted value; L2 documents the recovery or makes apply() resumable.
 - [ ] clippy -D; fmt.
+** Evidence
+Merged c56b0bbe (worker 79caf335, codex gpt-5.6-sol): L1 identity_lint errors propagate (id_repair + index callers surface them), L2 project_migrate prints exact recovery commands on partial apply, L3 writer apply failures keyed per owning tx (api takes only its own), L4 tx.org routed list gains implementer.commit_pending + fixer.done with a shipped-list-vs-code test, L5 real anomaly count; also routed ledger.sync_conflict under machines/<id>/tx/ (8DWJP review HIGH 1). Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-core --lib identity_lint → 11 passed (1 ignored); cargo test -p orgasmic-cli --bin orgasmic -- project_migrate → 3 passed; cargo test -p orgasmic-cli --test id_collision_repair → 2 passed; cargo test -p orgasmic-daemon --lib -- apply_failure shipped_tx_types ledger_route ledger_sync → 12 passed; clippy core+cli+daemon -D warnings clean; fmt clean. Logs: scratchpad/gates-SRBGS.1-*.log. Review round (claude-opus-5 high) dispatched on the merged diff.
