@@ -5047,3 +5047,88 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     b20b5a5b-66cd-4831-b1fa-c2dda023d80f
 :END:
+
+* TX 2026-09-01 Tue 17:05:06 manager.dispatch_started TASK-8DWJP.1.3
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-8bf79b46-eb03-4d15-89a2-64115c1769a1
+:TIME:         [2026-09-01 Tue 17:05:06]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.3
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1.3-review
+:BRANCH:       task-8dwjp.1.3-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.3-review/brief-TASK-8DWJP.1.3-review.md
+:STARTED_AT:   [2026-09-01 Tue 17:05:06]
+:LIVENESS:     1ff48c3aac04416a9383a23e3b0cfee4c7baf121
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260901-orgasmic-7c5c0058-9a5e-4bc2-8bd8-0404ce5da303
+:REASON_INITIAL: Round-5 (narrow) review of the conflict path merged 1ff48c3a: salvage before both rebase aborts; asked to classify precisely so the operator can close 8DWJP or decide on residuals
+:EVENT_ID:     856cff86-b2a7-418d-8a7e-9e38969c5a6e
+:END:
+
+* TX 2026-09-01 Tue 17:05:06 run.created TASK-8DWJP.1.3
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-971f46f7-96e8-4f4e-a2cb-eb450b3b3547
+:TIME:         [2026-09-01 Tue 17:05:06]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-8DWJP.1.3-reviewer-20260901T170506.jsonl
+:REASON:       Round-5 (narrow) review of the conflict path merged 1ff48c3a: salvage before both rebase aborts; asked to classify precisely so the operator can close 8DWJP or decide on residuals
+:RUN_ID:       run-01M1EYWZZZDYQWYA85GFK4RXSG
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1.3-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.3-review/brief-TASK-8DWJP.1.3-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.3-review/brief-TASK-8DWJP.1.3-review-8ddbe86234644e5696b7be962050aecd-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.3-review/brief-TASK-8DWJP.1.3-review-8ddbe86234644e5696b7be962050aecd-stdout.log
+:DISPATCH_ATTEMPT: 8ddbe86234644e5696b7be962050aecd
+:PID:          37928
+:DISPATCH_TX:  tx-20260901-orgasmic-8bf79b46-eb03-4d15-89a2-64115c1769a1
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     e1f85900-e79c-444f-bf8f-432772caf503
+:END:
+
+* TX 2026-09-01 Tue 17:05:07 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-0ea7017b-07a8-4eca-adf0-4eee3bcd50a1
+:TIME:         [2026-09-01 Tue 17:05:07]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     dbeacc08-7d8f-45da-b616-6c0bc71a6ca4
+:END:
+
+
+* TX 2026-09-01 Tue 17:05:22 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-f70d2564-8a69-4f55-86e4-0eb6a7f5f4d4
+:TIME:         [2026-09-01 Tue 17:05:22]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     72521731-a7ea-492b-a4c6-b45f9df43386
+:END:
