@@ -1,0 +1,23 @@
+{
+  "event_count": 457,
+  "tool_call_count": 29,
+  "unparsed_events": 3,
+  "bounded_events": 5,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-MSYN4.2-reviewer-20260901T145134.jsonl",
+    "size_bytes": 624085
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task record and the diff.Now filing the findings.Now the report."
+    }
+  ],
+  "narrative_truncated": false
+}
