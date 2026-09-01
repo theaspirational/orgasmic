@@ -2425,7 +2425,7 @@ async fn writer_loop(
                 }
             }
             WriterCommand::Barrier { run, reply } => {
-                run();
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
                 let _ = reply.send(());
             }
             WriterCommand::Shutdown { reply } => {
@@ -3607,6 +3607,17 @@ mod tests {
         let tx = parse_tx_file(&std::fs::read_to_string(tx_path).unwrap(), "barrier tx").unwrap();
         assert_eq!(tx.len(), 1);
         assert_eq!(tx[0].tx_id, "tx-after-reset");
+    }
+
+    #[tokio::test]
+    async fn panicking_barrier_does_not_stop_the_writer() {
+        let handle = spawn(EventBus::new());
+
+        assert!(handle
+            .run_barrier(|| panic!("injected panic"))
+            .await
+            .is_err());
+        assert_eq!(handle.run_barrier(|| 7).await.unwrap(), 7);
     }
 
     #[tokio::test]
