@@ -91,3 +91,42 @@
 :TO_STATE: in_review
 :EVENT_ID: f2932760-796f-4e95-a718-c08437a95778
 :END:
+
+* tx-20260901-orgasmic-6995 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6995
+:TIME:    [2026-09-01 Tue 18:27:41]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.4
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:123 — the entry-abort pending_salvage ref is dropped on every Err return of the tick (pull bail :235, push-exhaustion bail :247, any ? in stage/commit): status becomes 'failed' with the git error, the minted ref is named nowhere, and no later tick re-mints it because the rebase is already aborted.
+:EVENT_ID: 87904da2-8c8b-473b-920a-453d418b2553
+:END:
+
+* tx-20260901-orgasmic-6996 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6996
+:TIME:    [2026-09-01 Tue 18:27:45]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.4
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:730 — the synced+pending-salvage note rides LedgerSyncStatus.error under outcome 'synced', which orgasmic status (cli/main.rs:2791) and doctor (cli/doctor.rs:301) both skip, and the next tick recomputes status with pending_salvage=None so the note self-erases; only the daemon warn log at :804 persists.
+:EVENT_ID: a9b53d66-4f67-41b8-8742-2a7f3701600f
+:END:
+
+* tx-20260901-orgasmic-6997 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6997
+:TIME:    [2026-09-01 Tue 18:27:49]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.4
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:986 — no test exercises the production barrier wiring: ledger_sync::spawn is called only from daemon lib.rs:1105, the new test builds its own barrier closure and calls sync_ledger_at_with_park directly, so reverting the abort hunk to a bare abort_rebase_with_salvage compiles and leaves all 21 ledger_sync tests green (same pre-existing gap as the park barrier).
+:EVENT_ID: b2cfc321-4622-4bb9-9fb7-c59db3e53329
+:END:
