@@ -7,7 +7,7 @@
 :ID:               handoff-current
 :LIVENESS:         1f7e642a
 :LIVENESS_AT:      [2026-09-01 Tue]
-:UPDATED_AT:       [2026-08-22 Sat]
+:UPDATED_AT:       [2026-09-01 Tue]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
 :END:
 
@@ -623,7 +623,7 @@ manager-inline pass (2026-08-27, five fixes + TASK-AS0FS). No independent review
    until this review passes.
 2. *TASK-AS0FS* (P2, singleton ledger file ownership across machines) is a DECISION the chain review surfaced —
    grill before implementing; two machines editing goal.org between syncs is a real rebase conflict today.
-3. *TASK-56NRX*: round 4 merged =fca620d4= after the r3 APPROVE; decide done vs another review, then move it.
+3. *TASK-56NRX is DONE* — the typed approve close on tx-6c3d6953 steered it there (2026-09-01). Round 4 =fca620d4= (review follow-ups) landed AFTER the reviewed diff and was never independently read; fold it into the whole-chain review scope or accept it as follow-ups.
 4. *Board debris decision*: cancel 02JJW/2XT9J/NMV4P/V6JW4 + their seven todo children, or explain why they stay.
 5. Older P1s still stand (08-18 list): BX5SR.2/.3 (writer idempotency + supervision), YBCYQ (worker commits to
    main), 48SFW (staged home kills dispatches), C7NVH (--effort never reaches codex). vscode-orsl letter items:
