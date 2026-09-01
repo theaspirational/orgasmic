@@ -607,6 +607,7 @@ operator + agent sessions, no manager handoff write in between).
   RRT4T, 6AYEJ, D6N77.1, BX5SR — codex acp/tmux era, never reported, worktrees gone). Closed the two reviewer
   generations that self-closed without a typed verdict (56NRX tx-6c3d6953, FBSZ2 tx-45c4c0ed) with =--verdict approve=.
   TFXR2 in_progress→in_review (landed =62dc3e8a=, no dispatch).
+- 2026-09-01 12:45 — dispatched the whole-chain review (see In flight, tx-1c6d2115, opus-5 high, 17 tasks). Moving TFXR2 to in_review surfaced a hidden 08-26 implementer orphan (tx-6420, codex-chat, never finalized); closed done with merge-sha 62dc3e8a and --no-review-required, reason recorded.
 
 ** Next likely actions
 Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 (chain landed, crates green for the 0.0.23 stable
