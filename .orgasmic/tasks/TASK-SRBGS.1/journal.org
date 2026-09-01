@@ -126,3 +126,19 @@
 :REASON: LOW api.rs:32874 — the new L3 test calls writer.append_tx directly, bypassing refresh_after_tx, so it only proves request B escapes and never that request A still receives its own committed-503; that contract is covered only incidentally by the pre-existing test at api.rs:32735.
 :EVENT_ID: 20545a04-65b1-4191-8e04-deffbaf8730a
 :END:
+
+* tx-20260901-orgasmic-6929 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6929
+:TIME:    [2026-09-01 Tue 15:43:25]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1
+:TARGET: .orgasmic/tasks/TASK-SRBGS.1/node.org
+:REASON: Chain-review L1-L5 merged c56b0bbe and reviewed approve-with-follow-ups; MEDIUM+LOW residuals tracked in TASK-SRBGS.1.1
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: b066e9ed-5d47-4da9-87c0-b11837818e33
+:END:
