@@ -1288,3 +1288,57 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     d0523f25-ca46-4361-90d3-f6e42eb89466
 :END:
+
+
+* TX 2026-09-01 Tue 14:02:34 manager.dispatch_started TASK-JWHXH.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-fc68afdc-8377-4f35-b829-dbb8e64a9168
+:TIME:         [2026-09-01 Tue 14:02:34]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.1
+:BRANCH:       task-jwhxh.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1/brief-TASK-JWHXH.1.md
+:STARTED_AT:   [2026-09-01 Tue 14:02:34]
+:LIVENESS:     1a0fd5e44c2bb74d95d141a243570ba84eacc291
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:REASON_INITIAL: Fix round 1b of the E01MC chain review: H4 (views/ tracked on existing ledgers) + M1 (build_views never runs after incremental node writes); implementer codex gpt-5.6-sol per the session pair
+:EVENT_ID:     556fc57e-9513-464e-96b9-cec03ad687dc
+:END:
+
+* TX 2026-09-01 Tue 14:02:34 run.created TASK-JWHXH.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-b1813c25-5a0d-4ff9-9c09-7ea888b07046
+:TIME:         [2026-09-01 Tue 14:02:34]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-JWHXH.1-implementer-20260901T140232.jsonl
+:REASON:       Fix round 1b of the E01MC chain review: H4 (views/ tracked on existing ledgers) + M1 (build_views never runs after incremental node writes); implementer codex gpt-5.6-sol per the session pair
+:RUN_ID:       run-01M1EMEQ18J8CGXGZJ2XRXCMRM
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1/brief-TASK-JWHXH.1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1/brief-TASK-JWHXH.1-b5bc093212bc4ac89db31f463a940b46-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1/brief-TASK-JWHXH.1-b5bc093212bc4ac89db31f463a940b46-stdout.log
+:DISPATCH_ATTEMPT: b5bc093212bc4ac89db31f463a940b46
+:PID:          11088
+:DISPATCH_TX:  tx-20260901-orgasmic-fc68afdc-8377-4f35-b829-dbb8e64a9168
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EVENT_ID:     c1fa8613-2f49-40c1-a802-37c4bee48ae1
+:END:
