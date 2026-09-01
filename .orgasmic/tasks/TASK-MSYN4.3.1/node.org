@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.3.1
 #+orgasmic_version: 2
 
-* BACKLOG TASK-MSYN4.3.1 Test-only: pin the fold contract for one tx id shared by two machine generations    :e01mc:chain-review:
+* IN_PROGRESS TASK-MSYN4.3.1 Test-only: pin the fold contract for one tx id shared by two machine generations :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.3.1
 :PRIORITY: P3

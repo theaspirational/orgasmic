@@ -3916,3 +3916,56 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1/dispatches/tx-20260901-orgasmic-6d10e68b-0b17-45ad-91c2-b44eb671217a/report.md
 :EVENT_ID:     30c16da7-93e8-453b-854c-9a4f5d29f8e6
 :END:
+
+* TX 2026-09-01 Tue 15:51:21 manager.dispatch_started TASK-MSYN4.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-325c23cc-8850-4af2-8c12-3853bdafb239
+:TIME:         [2026-09-01 Tue 15:51:21]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.3.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-msyn4.3.1
+:BRANCH:       task-msyn4.3.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-MSYN4.3.1/brief-TASK-MSYN4.3.1.md
+:STARTED_AT:   [2026-09-01 Tue 15:51:21]
+:LIVENESS:     a64d5cf8166d00f860667bd826a51bf03e0c6974
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:REASON_INITIAL: Test-only follow-up of MSYN4.3: pin the fold contract for one tx id shared by two machine generations; slot freed by 8DWJP.1 reporting
+:EVENT_ID:     0f6ab2c3-87c7-44a0-9e8e-6918d76c8988
+:END:
+
+* TX 2026-09-01 Tue 15:51:21 run.created TASK-MSYN4.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-1f3d980d-06e6-4e30-8cae-7573f06ea75a
+:TIME:         [2026-09-01 Tue 15:51:21]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.3.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-MSYN4.3.1-implementer-20260901T155119.jsonl
+:REASON:       Test-only follow-up of MSYN4.3: pin the fold contract for one tx id shared by two machine generations; slot freed by 8DWJP.1 reporting
+:RUN_ID:       run-01M1ETNWVEWX64DSA5QWND3NFW
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-msyn4.3.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-MSYN4.3.1/brief-TASK-MSYN4.3.1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-MSYN4.3.1/brief-TASK-MSYN4.3.1-d9d003993bfd44f9afe4e46d754d4a48-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-MSYN4.3.1/brief-TASK-MSYN4.3.1-d9d003993bfd44f9afe4e46d754d4a48-stdout.log
+:DISPATCH_ATTEMPT: d9d003993bfd44f9afe4e46d754d4a48
+:PID:          19719
+:DISPATCH_TX:  tx-20260901-orgasmic-325c23cc-8850-4af2-8c12-3853bdafb239
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EVENT_ID:     796d8b6d-f697-4079-85ff-605dc8c9f0bc
+:END:
