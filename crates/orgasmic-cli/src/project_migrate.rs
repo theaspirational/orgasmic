@@ -53,6 +53,65 @@ struct Migration {
     project_source: String,
 }
 
+/// dec_AF61D/dec_XH2XY: `.orgasmic/views/` is derived state that must be
+/// neither tracked nor kept on disk. This is the explicit operator path for
+/// repos the daemon does not sync (the daemon only cleans ledgers it syncs).
+#[derive(Default)]
+struct ViewsMigration {
+    tracked: Vec<String>,
+    dir_present: bool,
+}
+
+impl ViewsMigration {
+    fn plan(root: &Path) -> Result<Self> {
+        let tracked = if git_ok(root, &["rev-parse", "--is-inside-work-tree"]) {
+            git_capture(root, &["ls-files", "--", ".orgasmic/views"])
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            tracked,
+            dir_present: root.join(".orgasmic/views").is_dir(),
+        })
+    }
+
+    fn is_clean(&self) -> bool {
+        self.tracked.is_empty() && !self.dir_present
+    }
+
+    /// Returns whether anything changed. Idempotent: a second run on a clean
+    /// tree is a no-op.
+    fn apply(&self, root: &Path) -> Result<bool> {
+        if self.is_clean() {
+            return Ok(false);
+        }
+        if !self.tracked.is_empty() {
+            git(
+                root,
+                &[
+                    "rm",
+                    "-r",
+                    "-q",
+                    "--cached",
+                    "--ignore-unmatch",
+                    "--",
+                    ".orgasmic/views",
+                ],
+            )?;
+        }
+        match std::fs::remove_dir_all(root.join(".orgasmic/views")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("remove .orgasmic/views"),
+        }
+        Ok(true)
+    }
+}
+
 pub(crate) fn run(home: &Home, dry_run: bool, to_branch: bool) -> Result<()> {
     let root = crate::manager::find_project_root()?;
     run_at(home, &root, dry_run, to_branch)
@@ -60,19 +119,24 @@ pub(crate) fn run(home: &Home, dry_run: bool, to_branch: bool) -> Result<()> {
 
 fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()> {
     let migration = plan(root)?;
+    let views = ViewsMigration::plan(root)?;
     if to_branch
         && migration.old_files.is_empty()
+        && views.is_clean()
         && is_ledger_root(home, root, &migration.project_source)?
     {
         println!("already migrated");
         return Ok(());
     }
     refuse_dirty_tree(root)?;
+    let views_applied = if dry_run { false } else { views.apply(root)? };
     if to_branch && !dry_run && !is_ledger_root(home, root, &migration.project_source)? {
         migrate_to_branch(home, root, &migration)?;
     } else if migration.old_files.is_empty() {
-        println!("already migrated");
-        return Ok(());
+        if views.is_clean() {
+            println!("already migrated");
+            return Ok(());
+        }
     } else if !dry_run {
         apply_with_recovery(root, &migration)?;
     }
@@ -86,6 +150,26 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
     );
     println!("  bytes {}", migration.bytes);
     println!("  heading_round_trip byte-for-byte");
+    if !views.tracked.is_empty() {
+        println!(
+            "  views {} tracked file(s){}",
+            views.tracked.len(),
+            if views.dir_present {
+                " + directory on disk"
+            } else {
+                ""
+            }
+        );
+        if dry_run {
+            println!(
+                "  views plan: git rm -r --cached -- .orgasmic/views, then delete the directory"
+            );
+        }
+    } else if views.dir_present {
+        println!("  views directory on disk (untracked)");
+    } else if views_applied {
+        println!("  views untracked and directory removed");
+    }
     if to_branch {
         println!("  target orphan branch orgasmic");
         if !dry_run {
@@ -112,8 +196,18 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
 }
 
 fn refuse_dirty_tree(root: &Path) -> Result<()> {
+    // `.orgasmic/views/` is exempt: a migrate run untracks and deletes it, and
+    // the operator commits that deletion afterwards, so a re-run before the
+    // commit must still count as clean (idempotency).
     let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .args([
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ":(exclude).orgasmic/views",
+        ])
         .current_dir(root)
         .output()
         .context("git status")?;
@@ -616,6 +710,102 @@ fn git_capture_env(repo: &Path, work_tree: &Path, index: &Path, args: &[&str]) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn views_warns(home: &Home) -> Vec<String> {
+        let mut findings = Vec::new();
+        crate::doctor::push_tracked_views_findings(&mut findings, home);
+        findings
+            .into_iter()
+            .filter_map(|finding| match finding {
+                crate::doctor::Finding::Warn(message) => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn seed_views_repo(home: &Home, id: &str, root: &Path) {
+        std::fs::create_dir(root).unwrap();
+        git(root, &["init", "-b", "main"]).unwrap();
+        git(root, &["config", "user.name", "test"]).unwrap();
+        git(root, &["config", "user.email", "test@example.com"]).unwrap();
+        let dotorg = root.join(".orgasmic");
+        std::fs::create_dir_all(dotorg.join("views")).unwrap();
+        std::fs::write(
+            dotorg.join("project.org"),
+            format!("#+orgasmic_version: 2\n\n* PROJECT {id}\n:PROPERTIES:\n:ID: {id}\n:END:\n"),
+        )
+        .unwrap();
+        // A pre-dec_AF61D straggler: views tracked *before* any ignore rule
+        // existed, so its .gitignore carries no `views/` line.
+        std::fs::write(dotorg.join(".gitignore"), "tmp/\n").unwrap();
+        std::fs::write(dotorg.join("views/board.org"), "#+title: derived\n").unwrap();
+        projects::register_project(home, root, id, "main").unwrap();
+        git(root, &["add", ".orgasmic"]).unwrap();
+        git(root, &["commit", "-m", "track views"]).unwrap();
+    }
+
+    #[test]
+    fn plain_branch_views_doctor_warns_migrate_untracks_then_doctor_quiet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        let repo = tmp.path().join("repo");
+        seed_views_repo(&home, "plain", &repo);
+
+        let warns = views_warns(&home);
+        assert_eq!(warns.len(), 1, "{warns:?}");
+        assert!(warns[0].contains("tracked in git"), "{}", warns[0]);
+        assert!(
+            warns[0].contains("orgasmic project migrate"),
+            "{}",
+            warns[0]
+        );
+
+        run_at(&home, &repo, false, false).unwrap();
+        assert!(!repo.join(".orgasmic/views").exists());
+        assert_eq!(
+            git_capture(&repo, &["ls-files", "--", ".orgasmic/views"]).unwrap(),
+            ""
+        );
+        assert!(repo.join(".orgasmic/project.org").is_file());
+        let head_after_first = git_capture(&repo, &["rev-parse", "HEAD"]).unwrap();
+
+        // Second run before the operator commits the staged deletion is a
+        // no-op, not a dirty-tree refusal.
+        run_at(&home, &repo, false, false).unwrap();
+        assert_eq!(
+            git_capture(&repo, &["rev-parse", "HEAD"]).unwrap(),
+            head_after_first
+        );
+
+        assert!(views_warns(&home).is_empty());
+    }
+
+    #[test]
+    fn ledger_without_remote_views_doctor_warns_migrate_untracks_then_doctor_quiet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        // The registered root IS the ledger and has no `origin`, so the
+        // daemon's sync loop goes Idle and never cleans it (dec_AF61D):
+        // doctor and the explicit migrate verb are the only paths left.
+        let ledger = home.project_ledger("orphan");
+        std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+        seed_views_repo(&home, "orphan", &ledger);
+        assert_eq!(git_capture(&ledger, &["remote"]).unwrap(), "");
+
+        let warns = views_warns(&home);
+        assert_eq!(warns.len(), 1, "{warns:?}");
+        assert!(warns[0].contains("tracked in git"), "{}", warns[0]);
+
+        run_at(&home, &ledger, false, false).unwrap();
+        assert!(!ledger.join(".orgasmic/views").exists());
+        assert_eq!(
+            git_capture(&ledger, &["ls-files", "--", ".orgasmic/views"]).unwrap(),
+            ""
+        );
+
+        run_at(&home, &ledger, false, false).unwrap();
+        assert!(views_warns(&home).is_empty());
+    }
 
     #[test]
     fn migration_is_verbatim_dry_run_and_idempotent() {

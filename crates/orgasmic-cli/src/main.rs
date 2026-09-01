@@ -189,11 +189,6 @@ Examples:
         #[command(subcommand)]
         cmd: ProjectCmd,
     },
-    /// Build derived aggregate read views for the current project.
-    Views {
-        #[command(subcommand)]
-        cmd: ViewsCmd,
-    },
     /// Show the global board.
     Board,
     /// Start the daemon (HTTP + WS), foreground.
@@ -491,12 +486,6 @@ enum ProjectCmd {
         #[arg(long)]
         to_branch: bool,
     },
-}
-
-#[derive(Subcommand, Debug)]
-enum ViewsCmd {
-    /// Build .orgasmic/views/{board,glossary,decisions}.org from node directories.
-    Build,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1521,9 +1510,6 @@ fn main() -> Result<()> {
                 project_migrate::run(&home, dry_run, to_branch)
             }
         },
-        Cmd::Views {
-            cmd: ViewsCmd::Build,
-        } => cmd_views_build(&home),
         Cmd::Board => cmd_project_list(&home, false),
         Cmd::Serve {
             bind,
@@ -1977,13 +1963,6 @@ fn inject_default_workflow(router: &str, workflow: &str) -> Result<String> {
 
 fn find_project_root_optional(home: &Home) -> Result<Option<PathBuf>> {
     manager::find_project_root_optional_from(home, &std::env::current_dir().context("cwd")?)
-}
-
-fn cmd_views_build(home: &Home) -> Result<()> {
-    let root = find_project_root_optional(home)?.context("no .orgasmic/project.org found")?;
-    let changed = orgasmic_core::build_views(&root)?;
-    println!("built .orgasmic/views ({changed} changed)");
-    Ok(())
 }
 
 fn entry_version_notice(project_root: &Path) -> Option<String> {

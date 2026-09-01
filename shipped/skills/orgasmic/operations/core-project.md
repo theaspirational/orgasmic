@@ -10,7 +10,6 @@ aliases:
 - orgasmic path
 - orgasmic update
 - orgasmic project
-- orgasmic views
 - orgasmic board
 - orgasmic status
 - orgasmic reindex
@@ -22,7 +21,6 @@ aliases:
 - orgasmic project add
 - orgasmic project list
 - orgasmic project migrate
-- orgasmic views build
 sources:
 - cli-help/init.txt
 - cli-help/entry.txt
@@ -31,7 +29,6 @@ sources:
 - cli-help/path.txt
 - cli-help/update.txt
 - cli-help/project.txt
-- cli-help/views.txt
 - cli-help/board.txt
 - cli-help/status.txt
 - cli-help/reindex.txt
@@ -43,7 +40,6 @@ sources:
 - cli-help/project/add.txt
 - cli-help/project/list.txt
 - cli-help/project/migrate.txt
-- cli-help/views/build.txt
 tags:
 - cli-reference
 ---
@@ -63,7 +59,6 @@ Canonical commands in this family:
 - `orgasmic path`
 - `orgasmic update`
 - `orgasmic project`
-- `orgasmic views`
 - `orgasmic board`
 - `orgasmic status`
 - `orgasmic reindex`
@@ -75,7 +70,6 @@ Canonical commands in this family:
 - `orgasmic project add`
 - `orgasmic project list`
 - `orgasmic project migrate`
-- `orgasmic views build`
 
 ## Parameters
 
@@ -95,7 +89,7 @@ or a reported worker result as evidence to inspect, not as lifecycle closure.
 ## Example
 
 ```bash
-orgasmic views build --help
+orgasmic project migrate --help
 ```
 
 For installation and updating depth, see [Install](../references/install.md) and [Update](../references/update.md).
