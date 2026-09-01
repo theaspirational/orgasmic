@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.2
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-MSYN4.2 H2+H5: sync loop races the writer (commits .bak/.tmp sidecars, torn closes) and wedges silently on rebase conflict :e01mc:chain-review:
+* DONE TASK-MSYN4.2 H2+H5: sync loop races the writer (commits .bak/.tmp sidecars, torn closes) and wedges silently on rebase conflict :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.2
 :PRIORITY: P1

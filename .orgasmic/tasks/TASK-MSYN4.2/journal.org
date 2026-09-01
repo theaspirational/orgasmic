@@ -173,3 +173,19 @@
 :TO_STATE: in_review
 :EVENT_ID: 9926184d-701e-4d57-b35c-6b3d83de8e50
 :END:
+
+* tx-20260901-orgasmic-6923 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6923
+:TIME:    [2026-09-01 Tue 15:38:59]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2
+:TARGET: .orgasmic/tasks/TASK-MSYN4.2/node.org
+:REASON: H2+H5 fix (d75dee5a) reviewed approve-with-follow-ups; residuals landed in TASK-MSYN4.2.1 (9909a41e)
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 8fe22818-a486-4935-b785-c0060e5771ae
+:END:

@@ -3656,3 +3656,41 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     548be32c-18d3-401a-a245-06e008d696f6
 :END:
+
+* TX 2026-09-01 Tue 15:38:58 implementer.done TASK-MSYN4.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-d789b531-2983-493a-86c5-af73b7bcad22
+:TIME:         [2026-09-01 Tue 15:38:58]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.2.1
+:REASON:       Fix round 2 of MSYN4.2: untrack tracked sidecars, comment correction, status hygiene, doctor warning; gates green on merged main 9909a41e; review waived because the 8DWJP.1 review (opus-5 high) reads this same ledger_sync.rs hunk — findings there become MSYN4.2.2
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: be2f3868ef8e6c0a12288eb5d9c0bf05f1b5c622
+:MERGE_SHA:    9909a41e1387c9f99bacac23c760e18b7a7de4ee
+:BRANCH:       task-msyn4.2.1-impl
+:NO_REVIEW_REQUIRED: true
+:FIX_ROUND_FINAL: true
+:CLOSED_TX:    tx-20260901-orgasmic-29227358-99ad-4a5b-9f56-f60e8dd7f316
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-MSYN4.2.1/dispatches/tx-20260901-orgasmic-29227358-99ad-4a5b-9f56-f60e8dd7f316/report.md
+:EVENT_ID:     a3a79063-61b6-43f7-b5da-523bf76cac9a
+:END:
+
+* TX 2026-09-01 Tue 15:38:59 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-743f38e2-f3f2-4fca-a8fa-2b9e2642b9f7
+:TIME:         [2026-09-01 Tue 15:38:59]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     4252a33a-306c-4aa4-8400-94f25a9ba1d2
+:END:

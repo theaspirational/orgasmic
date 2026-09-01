@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.2.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-MSYN4.2.1 Fix round 2 for MSYN4.2: untrack already-tracked sidecars, correct the torn-window comment, idle/prune/doctor status hygiene :e01mc:chain-review:
+* DONE TASK-MSYN4.2.1 Fix round 2 for MSYN4.2: untrack already-tracked sidecars, correct the torn-window comment, idle/prune/doctor status hygiene :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.2.1
 :PRIORITY: P1
@@ -21,3 +21,5 @@ Source: review of TASK-MSYN4.2 (=d75dee5a=, reviewer gen tx-20260901-orgasmic-bf
 - [ ] Ceiling comment says until the next SUCCESSFUL sync (backoff can stretch it to MAX_BACKOFF) and names both torn orders.
 - [ ] Idle leaves last_success_at untouched (None if never synced); status map is retained against the live ledger set each tick; doctor prints a warning line per failed/backed_off/conflict ledger. One test each where cheap.
 - [ ] Gates: cargo test -p orgasmic-daemon --lib -- ledger_sync status; cargo test -p orgasmic-cli --bin orgasmic -- doctor daemon_lifecycle; clippy -D daemon+cli; fmt.
+** Evidence
+Merged 9909a41e (worker be2f3868, codex gpt-5.6-sol): tracked writer sidecars untracked each tick (git rm --cached on the three globs) so a deleted sidecar leaves the index; torn-window comment names both orders and the successful-sync/backoff ceiling; Idle preserves last_success_at; status map pruned to the current ledger set; doctor warns per failed/backed_off/conflict ledger reusing LedgerSyncStatus. Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- ledger_sync status → 19 passed; cargo test -p orgasmic-cli --bin orgasmic -- doctor daemon_lifecycle → 46 passed; clippy daemon+cli -D warnings clean; fmt clean. Logs: scratchpad/gates-MSYN4.2.1-*.log. Review round waived: the same ledger_sync.rs hunk is read by the TASK-8DWJP.1 review (opus-5 high) dispatched on top of this merge; any finding there is filed as MSYN4.2.2.
