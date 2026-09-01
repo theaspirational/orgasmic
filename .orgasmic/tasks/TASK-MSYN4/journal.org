@@ -1,2 +1,15 @@
 #+title: orgasmic journal TASK-MSYN4
 #+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6737 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6737
+:TIME:    [2026-09-01 Tue 12:48:38]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4
+:REASON: HIGH crates/orgasmic-daemon/src/ledger_sync.rs:96 — a rebase conflict wedges the sync loop permanently and silently: pull --rebase failure aborts and bails, the next 2s tick repeats it forever, local commits pile up unpushed, and the only surface is tracing::warn (no status field, no orgasmic status line, no rejected-event location). MSYN4 acceptance 'rejected events land in an inspectable location with a reason' is unmet for the whole-sync failure case
+:EVENT_ID: ee9aa6ba-f561-45f3-9f9b-14cf5ba33a75
+:END:
