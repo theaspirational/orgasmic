@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.3
 #+orgasmic_version: 2
 
-* BACKLOG TASK-MSYN4.3 M5: tx ids collide across machines (no machine component; per-project seq; stale in-memory max after pull)    :e01mc:chain-review:
+* IN_PROGRESS TASK-MSYN4.3 M5: tx ids collide across machines (no machine component; per-project seq; stale in-memory max after pull) :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.3
 :PRIORITY: P2
