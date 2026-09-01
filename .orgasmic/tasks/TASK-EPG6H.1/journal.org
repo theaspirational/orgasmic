@@ -89,3 +89,42 @@
 :REASON: MEDIUM crates/orgasmic-cli/src/manager.rs:12331 — torn_close_candidates_yield_to_any_later_lifecycle_event never exercises the entry.time >= close_time compare: TASK-JOURNAL's journal entry is at 11:00:00 vs its close at 10:00:00 and TASK-TORN has no journal, so replacing the predicate with a bare type match leaves the assertion unchanged; no CLI case covers a journal transition that predates the close.
 :EVENT_ID: 885fe67c-ded6-4ebf-8989-c001cc94e08d
 :END:
+
+* tx-20260901-orgasmic-6858 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6858
+:TIME:    [2026-09-01 Tue 14:37:18]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1
+:REASON: MEDIUM crates/orgasmic-cli/src/manager.rs:9814 and crates/orgasmic-daemon/src/api.rs:18541 — both guards order org TIME strings lexicographically but nothing validates TIME shape (TxEntry::validate checks key syntax only); the live ledger already holds 20 date-only [YYYY-MM-DD Fri] TIMEs on implementer.done/reviewer.done in .orgasmic/tx/2026-06.org, and since ' ' < ']' a date-only close_time outranks every same-day full-width journal stamp, so the guard would silently fail open.
+:EVENT_ID: 3bbcb86b-8f1f-495a-84e4-5b57381d8be1
+:END:
+
+* tx-20260901-orgasmic-6859 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6859
+:TIME:    [2026-09-01 Tue 14:37:23]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1
+:REASON: LOW crates/orgasmic-cli/src/manager.rs:9800 — one unreadable or unparseable task journal now aborts the whole reconciliation via ?, so every other repairable torn close is skipped with a single 'torn-close reconciliation skipped' warning; parse_journal also runs JournalEntry::validate on every entry, and the daemon indexer (index.rs:3711) already tolerates the same failure by recording a ParseError. Daemon twin at api.rs:18523 returns 500 instead of refusing the repair.
+:EVENT_ID: 2e5e9455-8851-4f05-9b74-60745906e29a
+:END:
+
+* tx-20260901-orgasmic-6860 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6860
+:TIME:    [2026-09-01 Tue 14:37:28]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1
+:REASON: LOW crates/orgasmic-daemon/src/api.rs:18420 — with the repair exception gone, a torn close carrying LIFECYCLE_TO done on a task with an empty Evidence section is permanently unrepairable and reconcile_torn_closes_best_effort reprints its warning on every manager command (manager.rs:955, 1120, 2975); the live ledger holds 40 LIFECYCLE_TO done closes and most closed tasks have an empty Evidence section, though zero currently sit at their LIFECYCLE_FROM so nothing is stuck today.
+:EVENT_ID: 6667f1c5-008f-4124-89b9-6034455aecd3
+:END:
