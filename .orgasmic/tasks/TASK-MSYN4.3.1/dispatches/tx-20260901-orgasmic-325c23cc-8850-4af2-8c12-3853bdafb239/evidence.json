@@ -1,0 +1,20 @@
+{
+  "event_count": 117,
+  "tool_call_count": 67,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-MSYN4.3.1-implementer-20260901T155119.jsonl",
+    "size_bytes": 256294
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/01/rollout-2026-09-01T18-51-20-01a05daa-f66a-7ae3-a981-b3fe05472bcf.jsonl",
+    "session_id": "01a05daa-f66a-7ae3-a981-b3fe05472bcf",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
