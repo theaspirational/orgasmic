@@ -6006,3 +6006,76 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.3/dispatches/tx-20260901-orgasmic-1e50f79f-0304-4b1e-95ac-fccfdc18f63b/report.md
 :EVENT_ID:     e5b64f43-6270-4d2d-a8f5-5188891bd279
 :END:
+
+* TX 2026-09-01 Tue 22:37:19 reviewer.done TASK-JWHXH.3
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-ef0b3fb3-0c38-42d3-b659-5fd1c8d9a36e
+:TIME:         [2026-09-01 Tue 22:37:19]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.3
+:REASON:       opus-5 review of ad642ca7: APPROVE WITH FOLLOW-UPS - deletes safe (symlink probe), rm --cached confined to the sync loop, exclude pathspec probed, render bytes unchanged, claims reload intact; 1 MEDIUM (doctor.rs:254 skips non-git projects so a stale views dir is never reported), 6 LOW (render on async thread 24-41ms, stale refusal string, render bails on one corrupt node, unreachable migrate arm + pre-apply count, stale tx.org/corpus-manifest docs, tmp/ ignore gap on existing .gitignore)
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: ad642ca7^1..ad642ca7
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260901-orgasmic-1e50f79f-0304-4b1e-95ac-fccfdc18f63b
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.3/dispatches/tx-20260901-orgasmic-1e50f79f-0304-4b1e-95ac-fccfdc18f63b/report.md
+:EVENT_ID:     d6565d22-0e69-486c-8c42-98a9afd1f746
+:END:
+
+* TX 2026-09-01 Tue 22:37:22 implementer.done TASK-JWHXH.3
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-5b5ddd0d-9ece-4221-ba37-4839eaf12850
+:TIME:         [2026-09-01 Tue 22:37:22]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.3
+:REASON:       merged ad642ca7; six gates green on main; reviewer verdict approve-with-follow-ups
+:MODEL:        zai-coding-plan/glm-5.3
+:EFFORT:       max
+:WORKER_COMMIT: 9af6548dc2352e92b356754dbfc0565abdac8dbc
+:MERGE_SHA:    ad642ca71cb247d4b7e619d6b736e386a349508a
+:BRANCH:       task-jwhxh.3-impl
+:CLOSED_TX:    tx-20260901-orgasmic-7a97fc31-44fd-4587-9ad2-89d0170809f6
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.3/dispatches/tx-20260901-orgasmic-7a97fc31-44fd-4587-9ad2-89d0170809f6/report.md
+:EVENT_ID:     c0934f6a-441b-438a-bf79-bffe34f53087
+:END:
+
+* TX 2026-09-01 Tue 22:37:23 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-50bef662-c2fa-4416-90cf-60557bad9489
+:TIME:         [2026-09-01 Tue 22:37:23]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     8eb58851-5cb8-498c-864d-9c2cb49476eb
+:END:
+
+* TX 2026-09-01 Tue 22:37:23 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-d2faef1c-9662-4ef8-8aa6-d0e5ed93bf7b
+:TIME:         [2026-09-01 Tue 22:37:23]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     3143b5f0-33cf-4dc9-8de6-49a0b89b05f5
+:END:

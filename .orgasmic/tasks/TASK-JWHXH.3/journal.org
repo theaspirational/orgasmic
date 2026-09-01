@@ -197,3 +197,18 @@
 :REASON: LOW crates/orgasmic-core/src/projects.rs:188 — the task's own line 'init_project must not skip the ignore rule when .gitignore already exists' is not implemented; init still skips a pre-existing .orgasmic/.gitignore wholesale, so it never gains tmp/. dec_XH2XY removes the views/ motivation, so only the pre-existing tmp/ gap remains — needs an explicit manager call to drop the line.
 :EVENT_ID: f99407de-51cf-4256-8aad-39f5a503b4ec
 :END:
+
+* tx-20260901-orgasmic-7045 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7045
+:TIME:    [2026-09-01 Tue 22:37:22]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-JWHXH.3/node.org
+:REASON: edited task node TASK-JWHXH.3
+:NODE_ID: TASK-JWHXH.3
+:EVENT_ID: 3c42a994-4a40-46b2-88d2-87530e76c8c5
+:END:
