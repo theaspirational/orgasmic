@@ -15,3 +15,5 @@ Implement : add the three task-comment routes to MEMBER_ALLOWED_ROUTES (api.rs:~
 - [ ] Member session can POST comment/edit/delete over HTTP; admin :ACTOR: collision refused or explicitly overridden (test each).
 - [ ] task_comments_use_member_session_attribution_and_refresh_activity exercises the real route.
 - [ ] Rename semantics stated in the code or docs; daemon lib tests + clippy -D + fmt green.
+** Notes
+Implementer opencode / zai-coding-plan/glm-5.3 variant max, commit 3181651c, merged 9f6874f0. Manager collision check 2026-09-02: live members.org (~/.orgasmic/user/auth/members.org) has one member, Victor; the live daemon actor is aspirational (212 tx entries this month) - no collision, admin comments keep working after upgrade. Residual disclosed by the implementer: POST /artifacts/:id/comments shares the attribution pattern and is not guarded (candidate follow-up). Guard fails open on a members.org read error (admin-owned file).
