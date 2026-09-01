@@ -1749,7 +1749,9 @@ pub(crate) fn spawn_with_catalog_index_and_machine(
     }
 }
 
-/// A node write refused because another machine holds the claim (TASK-CLM6W).
+/// A node write refused because another dispatch currently holds the claim
+/// (TASK-CLM6W). Claims are not a cross-machine barrier between dispatches;
+/// overlapping free writes are preserved by the ledger sync conflict path.
 /// Typed rather than a bare message so the API can answer 409 naming the holder
 /// instead of the generic 500 every other writer error collapses to — the
 /// refusal is the operator's answer, not an internal failure. It carries no

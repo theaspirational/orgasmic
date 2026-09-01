@@ -23,8 +23,9 @@ Paths relative to the project root printed by `orgasmic entry` (usually
 - `views/*.org` — derived, gitignored read views; never edit.
 - `gotchas.org` — repeated traps; read before source edits.
 - `conventions/` — repo-local working agreements, one file each.
-- `tx/` — frozen pre-cutover activity log; new events land in per-node
-  `journal.org`.
+- `tx/` — frozen pre-cutover activity log; node events land in `journal.org`.
+- `machines/<machine-id>/tx/` — machine-routed events, including parked ledger
+  sync conflicts.
 - `tmp/local_instructions.org` — gitignored, machine-specific notes.
 
 ## Write rules
@@ -34,6 +35,9 @@ Paths relative to the project root printed by `orgasmic entry` (usually
   or start the runtime. Never hand-edit.
 - Tasks/decisions/glossary: create via their verbs; revise via
   `orgasmic node body set|append` / `orgasmic node prop set`.
+- Claims prevent overlapping dispatch writes while held, not free writes between
+  dispatches. A cross-machine Git conflict parks the local side before following
+  the remote; reconcile from the parked ref reported by daemon status.
 
 ## Content rules
 

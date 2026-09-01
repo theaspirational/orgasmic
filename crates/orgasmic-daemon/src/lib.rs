@@ -1106,6 +1106,7 @@ impl Daemon {
             index.clone(),
             machine_id.clone(),
             ledger_sync.clone(),
+            writer.clone(),
             shutdown_signal_rx.clone(),
         );
         let api_state = ApiState {

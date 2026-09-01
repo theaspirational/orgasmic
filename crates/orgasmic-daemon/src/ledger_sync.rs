@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::index::Index;
+use crate::writer::{TxAppend, TxIdPolicy, WriterHandle};
 
 const SYNC_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_BACKOFF: Duration = Duration::from_secs(5 * 60);
@@ -44,7 +45,15 @@ pub(crate) type LedgerSyncStatuses = Arc<Mutex<BTreeMap<PathBuf, LedgerSyncStatu
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SyncOutcome {
     Idle,
-    Synced { push_retries: usize },
+    Synced {
+        push_retries: usize,
+    },
+    Conflict {
+        parked_ref: String,
+        paths: Vec<String>,
+        local_head: String,
+        remote_head: String,
+    },
 }
 
 /// Commit, rebase, and push one hidden `orgasmic` ledger worktree.
@@ -98,8 +107,7 @@ fn sync_once_inner(
             ],
         )?;
 
-        // Stage everything this machine changed inside the ledger, minus other
-        // machines' pens.
+        // Stage everything this machine changed inside the ledger.
         //
         // Staging only the node dirs it holds a claim on *right now* dropped every
         // edit whose claim had already been released: a dispatch releases its claim
@@ -110,14 +118,56 @@ fn sync_once_inner(
         // `gotchas.org` — which were left as permanent uncommitted changes for
         // `--autostash` to churn on every tick.
         //
-        // A foreign node dir can only appear modified here if something wrote
-        // outside its pen, which the claim gate refuses. Staging it makes the next
-        // rebase conflict loudly instead of losing the edit silently.
+        // Writes are free between dispatch claims. If two machines edit the same
+        // path, the pull conflict parks this machine's side before following remote.
         //
         // ponytail: excluding writer sidecars still lets a tick commit node rewrites
         // before their close tx lands; a peer can see that torn state for one sync
         // interval. Add a writer-published quiescence barrier or ledger-wide lease if
         // that bounded window becomes unacceptable.
+    }
+    stage_ledger(ledger, machine_id)?;
+    commit_staged(ledger, &format!("ledger: sync {machine_id}"))?;
+
+    let has_remote_branch = git_success(
+        ledger,
+        &["ls-remote", "--exit-code", "--heads", "origin", "orgasmic"],
+    )?;
+    for retry in 0..PUSH_ATTEMPTS {
+        if has_remote_branch || retry > 0 {
+            let pull = git_output(
+                ledger,
+                &["pull", "--rebase", "--autostash", "origin", "orgasmic"],
+            )?;
+            if !pull.status.success() {
+                let paths = conflict_paths(&pull);
+                if !paths.is_empty() {
+                    git(ledger, &["rebase", "--abort"])?;
+                    return park_conflict(ledger, machine_id, paths);
+                }
+                let _ = git_output(ledger, &["rebase", "--abort"]);
+                bail!("git pull --rebase failed: {}", output_message(&pull));
+            }
+        }
+        before_push(retry);
+        let push = git_output(ledger, &["push", "origin", "HEAD:orgasmic"])?;
+        if push.status.success() {
+            return Ok(SyncOutcome::Synced {
+                push_retries: retry,
+            });
+        }
+        if retry + 1 == PUSH_ATTEMPTS {
+            bail!(
+                "git push still failed after {PUSH_ATTEMPTS} attempts: {}",
+                output_message(&push)
+            );
+        }
+    }
+    unreachable!()
+}
+
+fn stage_ledger(ledger: &Path, machine_id: &str) -> Result<()> {
+    if ledger.join(".orgasmic").exists() {
         git(
             ledger,
             &[
@@ -151,6 +201,10 @@ fn sync_once_inner(
             ],
         )?;
     }
+    Ok(())
+}
+
+fn commit_staged(ledger: &Path, message: &str) -> Result<()> {
     if !git_success(ledger, &["diff", "--cached", "--quiet"])? {
         git(
             ledger,
@@ -161,41 +215,71 @@ fn sync_once_inner(
                 "user.email=daemon@orgasmic.local",
                 "commit",
                 "-m",
-                &format!("ledger: sync {machine_id}"),
+                message,
             ],
         )?;
     }
+    Ok(())
+}
 
-    let has_remote_branch = git_success(
-        ledger,
-        &["ls-remote", "--exit-code", "--heads", "origin", "orgasmic"],
-    )?;
-    for retry in 0..PUSH_ATTEMPTS {
-        if has_remote_branch || retry > 0 {
-            let pull = git_output(
-                ledger,
-                &["pull", "--rebase", "--autostash", "origin", "orgasmic"],
-            )?;
-            if !pull.status.success() {
-                let _ = git_output(ledger, &["rebase", "--abort"]);
-                bail!("git pull --rebase failed: {}", output_message(&pull));
+fn conflict_paths(output: &Output) -> Vec<String> {
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let mut paths = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.starts_with("CONFLICT (") {
+            if let Some((_, path)) = line.rsplit_once(" in ") {
+                if !paths.iter().any(|known| known == path) {
+                    paths.push(path.to_string());
+                }
             }
         }
-        before_push(retry);
-        let push = git_output(ledger, &["push", "origin", "HEAD:orgasmic"])?;
-        if push.status.success() {
-            return Ok(SyncOutcome::Synced {
-                push_retries: retry,
-            });
-        }
-        if retry + 1 == PUSH_ATTEMPTS {
-            bail!(
-                "git push still failed after {PUSH_ATTEMPTS} attempts: {}",
-                output_message(&push)
-            );
-        }
     }
-    unreachable!()
+    paths
+}
+
+fn park_conflict(ledger: &Path, machine_id: &str, paths: Vec<String>) -> Result<SyncOutcome> {
+    stage_ledger(ledger, machine_id)?;
+    commit_staged(ledger, &format!("ledger: conflict salvage {machine_id}"))?;
+    let local_head = git_optional(ledger, &["rev-parse", "HEAD"])?
+        .context("ledger conflict has no local HEAD")?;
+    let base = format!(
+        "refs/orgasmic/conflicts/{machine_id}/{}",
+        Utc::now().format("%Y%m%dT%H%M%SZ")
+    );
+    let mut parked_ref = base.clone();
+    for suffix in 2.. {
+        if !git_success(ledger, &["show-ref", "--verify", "--quiet", &parked_ref])? {
+            break;
+        }
+        parked_ref = format!("{base}-{suffix}");
+    }
+    git(ledger, &["update-ref", &parked_ref, "HEAD"])?;
+    match git_output(
+        ledger,
+        &["push", "origin", &format!("{parked_ref}:{parked_ref}")],
+    ) {
+        Ok(push) if push.status.success() => {}
+        Ok(push) => tracing::warn!(
+            parked_ref,
+            error = %output_message(&push),
+            "push parked ledger conflict ref failed"
+        ),
+        Err(error) => tracing::warn!(parked_ref, %error, "push parked ledger conflict ref failed"),
+    }
+    git(ledger, &["fetch", "origin", "orgasmic"])?;
+    let remote_head = git_optional(ledger, &["rev-parse", "origin/orgasmic"])?
+        .context("fetched ledger conflict has no origin/orgasmic")?;
+    git(ledger, &["reset", "--hard", "origin/orgasmic"])?;
+    Ok(SyncOutcome::Conflict {
+        parked_ref,
+        paths,
+        local_head,
+        remote_head,
+    })
 }
 
 fn sync_ledger_at(
@@ -203,7 +287,7 @@ fn sync_ledger_at(
     machine_id: &str,
     statuses: &LedgerSyncStatuses,
     now: DateTime<Utc>,
-) {
+) -> Option<SyncOutcome> {
     let previous = {
         let mut statuses = statuses.lock().expect("ledger sync status lock");
         let status = statuses.entry(ledger.to_path_buf()).or_default();
@@ -213,7 +297,7 @@ fn sync_ledger_at(
             .is_some_and(|next| now < *next)
         {
             status.outcome = "backed_off";
-            return;
+            return None;
         }
         status.clone()
     };
@@ -221,15 +305,26 @@ fn sync_ledger_at(
     match sync_once(ledger, machine_id) {
         Ok(outcome) => {
             let recovered = previous.consecutive_failures > 0;
+            let (status_outcome, error) = match &outcome {
+                SyncOutcome::Idle => ("idle", None),
+                SyncOutcome::Synced { .. } => ("synced", None),
+                SyncOutcome::Conflict {
+                    parked_ref, paths, ..
+                } => (
+                    "conflict",
+                    Some(format!(
+                        "{} conflicting paths parked at {parked_ref}: {}",
+                        paths.len(),
+                        paths.join(" ")
+                    )),
+                ),
+            };
             let mut statuses = statuses.lock().expect("ledger sync status lock");
             statuses.insert(
                 ledger.to_path_buf(),
                 LedgerSyncStatus {
-                    outcome: match outcome {
-                        SyncOutcome::Idle => "idle",
-                        SyncOutcome::Synced { .. } => "synced",
-                    },
-                    error: None,
+                    outcome: status_outcome,
+                    error: error.clone(),
                     consecutive_failures: 0,
                     last_attempt_at: Some(now),
                     last_success_at: Some(now),
@@ -240,6 +335,10 @@ fn sync_ledger_at(
             if recovered {
                 tracing::info!(ledger = %ledger.display(), "ledger sync recovered");
             }
+            if let Some(error) = error {
+                tracing::warn!(ledger = %ledger.display(), %error, "ledger sync conflict parked");
+            }
+            matches!(outcome, SyncOutcome::Conflict { .. }).then_some(outcome)
         }
         Err(error) => {
             let error = format!("{error:#}");
@@ -262,8 +361,63 @@ fn sync_ledger_at(
             if changed {
                 tracing::warn!(ledger = %ledger.display(), %error, "ledger sync failed; backing off");
             }
+            None
         }
     }
+}
+
+async fn record_sync_conflict(
+    writer: &WriterHandle,
+    ledger: &Path,
+    project_id: &str,
+    machine_id: &str,
+    now: DateTime<Utc>,
+    outcome: &SyncOutcome,
+) -> Result<()> {
+    let SyncOutcome::Conflict {
+        parked_ref,
+        paths,
+        local_head,
+        remote_head,
+    } = outcome
+    else {
+        return Ok(());
+    };
+    let mut entry = orgasmic_core::tx::TxEntry::new(
+        "pending-project-sequence",
+        "ledger.sync_conflict",
+        now.format("[%Y-%m-%d %a %H:%M:%S]").to_string(),
+        "agent.daemon",
+        machine_id,
+    );
+    entry.project = Some(project_id.to_string());
+    entry.extra = vec![
+        ("EVENT_ID".into(), uuid::Uuid::new_v4().to_string()),
+        ("PARKED_REF".into(), parked_ref.clone()),
+        ("PATHS".into(), paths.join(" ")),
+        ("LOCAL_HEAD".into(), local_head.clone()),
+        ("REMOTE_HEAD".into(), remote_head.clone()),
+    ];
+    let request_id = format!("ledger-sync-conflict:{parked_ref}");
+    writer
+        .append_tx(
+            TxAppend {
+                tx_path: ledger
+                    .join(".orgasmic/machines")
+                    .join(machine_id)
+                    .join(format!("{}.org", now.format("%Y-%m"))),
+                entry,
+                project_id: Some(project_id.to_string()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: project_id.to_string(),
+                    date: now.format("%Y%m%d").to_string(),
+                },
+                request_id: Some(request_id.clone()),
+            },
+            Some(request_id),
+        )
+        .await?;
+    Ok(())
 }
 
 /// The daemon's coalescing loop. A missing remote is deliberately silent.
@@ -271,6 +425,7 @@ pub(crate) fn spawn(
     index: Index,
     machine_id: String,
     statuses: LedgerSyncStatuses,
+    writer: WriterHandle,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
@@ -291,17 +446,39 @@ pub(crate) fn spawn(
                 .await
                 .board
                 .into_iter()
-                .map(|entry| entry.path)
+                .map(|entry| (entry.path, entry.id))
                 .collect();
-            for ledger in ledgers {
-                let machine_id = machine_id.clone();
+            for (ledger, project_id) in ledgers {
+                let sync_machine_id = machine_id.clone();
                 let statuses = statuses.clone();
+                let sync_ledger = ledger.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    sync_ledger_at(&ledger, &machine_id, &statuses, Utc::now())
+                    sync_ledger_at(&sync_ledger, &sync_machine_id, &statuses, Utc::now())
                 })
                 .await;
-                if let Err(error) = result {
-                    tracing::warn!(%error, "ledger sync task failed; will retry");
+                match result {
+                    Ok(Some(conflict)) => {
+                        if let Err(error) = record_sync_conflict(
+                            &writer,
+                            &ledger,
+                            &project_id,
+                            &machine_id,
+                            Utc::now(),
+                            &conflict,
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                ledger = %ledger.display(),
+                                %error,
+                                "record ledger sync conflict event failed"
+                            );
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "ledger sync task failed; will retry");
+                    }
                 }
             }
         }
@@ -336,6 +513,7 @@ fn git(cwd: &Path, args: &[&str]) -> Result<()> {
 fn git_output(cwd: &Path, args: &[&str]) -> Result<Output> {
     Command::new("git")
         .args(args)
+        .env("LC_ALL", "C")
         .current_dir(cwd)
         .output()
         .with_context(|| format!("run git {} in {}", args.join(" "), cwd.display()))
@@ -524,13 +702,13 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn failed_pull_is_reported_and_backed_off() {
+    #[tokio::test]
+    async fn conflicting_two_writer_tick_parks_recovers_and_records_event() {
         let tmp = tempfile::tempdir().unwrap();
-        let (_remote, a, b) = seed_remote(&tmp);
+        let (remote, a, b) = seed_remote(&tmp);
         let machine_id = uuid::Uuid::new_v4().to_string();
         let relative = ".orgasmic/tasks/T1/node.org";
-        for (repo, contents) in [(&a, "local\n"), (&b, "remote\n")] {
+        for (repo, contents) in [(&a, "a\n"), (&b, "b\n")] {
             let path = repo.join(relative);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, contents).unwrap();
@@ -552,7 +730,104 @@ mod tests {
         let statuses = LedgerSyncStatuses::default();
         let now = Utc::now();
 
-        sync_ledger_at(&a, &machine_id, &statuses, now);
+        let conflict = sync_ledger_at(&a, &machine_id, &statuses, now)
+            .expect("conflicting pull must be parked");
+        let SyncOutcome::Conflict {
+            parked_ref,
+            paths,
+            local_head,
+            remote_head,
+        } = &conflict
+        else {
+            panic!("unexpected outcome: {conflict:?}");
+        };
+
+        let status = statuses.lock().unwrap()[&a].clone();
+        assert_eq!(status.outcome, "conflict");
+        assert_eq!(status.consecutive_failures, 0);
+        assert!(status.next_attempt_at.is_none());
+        assert!(status.error.as_deref().unwrap().contains(parked_ref));
+        assert_eq!(paths, &[relative]);
+        assert_eq!(
+            git_optional(&a, &["show", &format!("{parked_ref}:{relative}")])
+                .unwrap()
+                .as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            git_optional(&a, &["rev-parse", parked_ref])
+                .unwrap()
+                .as_deref(),
+            Some(local_head.as_str())
+        );
+        assert_eq!(
+            git_optional(&a, &["rev-parse", "HEAD"]).unwrap().as_deref(),
+            Some(remote_head.as_str())
+        );
+        assert_eq!(
+            git_optional(&a, &["rev-parse", "origin/orgasmic"])
+                .unwrap()
+                .as_deref(),
+            Some(remote_head.as_str())
+        );
+        assert_eq!(std::fs::read_to_string(a.join(relative)).unwrap(), "b\n");
+
+        let writer = crate::writer::spawn(crate::events::EventBus::new());
+        record_sync_conflict(&writer, &a, "project-a", &machine_id, now, &conflict)
+            .await
+            .unwrap();
+        let tx_path = a
+            .join(".orgasmic/machines")
+            .join(&machine_id)
+            .join(format!("{}.org", now.format("%Y-%m")));
+        let tx = orgasmic_core::tx::parse_tx_file(
+            &std::fs::read_to_string(&tx_path).unwrap(),
+            "machine conflict tx",
+        )
+        .unwrap();
+        let events: Vec<_> = tx
+            .iter()
+            .filter(|entry| entry.ty == "ledger.sync_conflict")
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].machine, machine_id);
+        assert!(events[0]
+            .extra
+            .iter()
+            .any(|(key, value)| key == "PARKED_REF" && value == parked_ref));
+
+        let fresh = ".orgasmic/tasks/T2/node.org";
+        std::fs::create_dir_all(a.join(fresh).parent().unwrap()).unwrap();
+        std::fs::write(a.join(fresh), "fresh a write\n").unwrap();
+        assert!(sync_ledger_at(&a, &machine_id, &statuses, now + Duration::from_secs(1)).is_none());
+        assert_eq!(statuses.lock().unwrap()[&a].outcome, "synced");
+        assert_eq!(
+            git_optional(&remote, &["show", &format!("orgasmic:{fresh}")])
+                .unwrap()
+                .as_deref(),
+            Some("fresh a write")
+        );
+    }
+
+    #[test]
+    fn non_conflict_failure_is_reported_and_backed_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_remote, a, _b) = seed_remote(&tmp);
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        run(
+            &a,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                path_arg(&tmp.path().join("missing.git")).unwrap(),
+            ],
+        );
+        std::fs::write(a.join(".orgasmic/local.org"), "local\n").unwrap();
+        let statuses = LedgerSyncStatuses::default();
+        let now = Utc::now();
+
+        assert!(sync_ledger_at(&a, &machine_id, &statuses, now).is_none());
 
         let failed = statuses.lock().unwrap()[&a].clone();
         assert_eq!(failed.outcome, "failed");
@@ -562,9 +837,10 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("git pull --rebase failed"));
+        assert!(!failed.error.as_deref().unwrap().contains("parked at"));
         let reflog = git_optional(&a, &["reflog", "--format=%H"]).unwrap();
 
-        sync_ledger_at(&a, &machine_id, &statuses, now + Duration::from_secs(1));
+        assert!(sync_ledger_at(&a, &machine_id, &statuses, now + Duration::from_secs(1)).is_none());
 
         let backed_off = statuses.lock().unwrap()[&a].clone();
         assert_eq!(backed_off.outcome, "backed_off");

@@ -1231,24 +1231,28 @@ mod tests {
     use crate::test_support::{env_guard, RecordingDaemon, ScopedEnv};
 
     #[test]
-    fn daemon_status_decodes_ledger_sync_failures() {
+    fn daemon_status_decodes_ledger_sync_conflict() {
         let status: DaemonStatus = serde_json::from_value(serde_json::json!({
             "boot_id": "boot-test",
             "pid": 42,
             "ledger_sync": {
                 "/tmp/ledger": {
-                    "outcome": "backed_off",
-                    "error": "git pull --rebase failed: conflict\nmore detail",
-                    "consecutive_failures": 2
+                    "outcome": "conflict",
+                    "error": "1 conflicting paths parked at refs/orgasmic/conflicts/machine/20260901T120000Z: .orgasmic/tasks/T1/node.org",
+                    "consecutive_failures": 0
                 }
             }
         }))
         .unwrap();
 
         let sync = &status.ledger_sync["/tmp/ledger"];
-        assert_eq!(sync.outcome, "backed_off");
-        assert_eq!(sync.consecutive_failures, 2);
-        assert!(sync.error.as_deref().unwrap().starts_with("git pull"));
+        assert_eq!(sync.outcome, "conflict");
+        assert_eq!(sync.consecutive_failures, 0);
+        assert!(sync
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("refs/orgasmic/conflicts/machine/20260901T120000Z"));
     }
 
     /// A board whose durable recovery history cannot be read at all: the
