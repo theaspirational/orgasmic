@@ -152,3 +152,47 @@
 :CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/TASK-BX5SR/impl
 :EVENT_ID:     c29da882-9cd0-451e-a457-b368651d9e9a
 :END:
+
+* TX 2026-09-01 Tue 12:17:03 reviewer.done TASK-FBSZ2
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-4bbf6265-733c-4eb8-b5f6-fe3ecfa71358
+:TIME:         [2026-09-01 Tue 12:17:03]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FBSZ2
+:REASON:       reviewer (claude-sdk stdio, fable-5 high) reported APPROVE 2026-08-29 18:49 and self-closed without a typed verdict; typed close recorded 2026-09-01, task already done via merges b8723a5c 2c8c81f3
+:MODEL:        claude-fable-5
+:EFFORT:       high
+:REVIEWED_DIFF: main..32377f68
+:VERDICT:      approve
+:CLOSED_TX:    tx-20260829-orgasmic-45c4c0ed-3180-4cc2-8e3f-cf78e1d3222f
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-fbsz2-review
+:EVENT_ID:     9360a0d9-aef0-4eb4-9dab-bf31a25a04b4
+:END:
+
+* TX 2026-09-01 Tue 12:17:03 reviewer.done TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-4e104b93-e111-4a85-b5d8-b17ba27abc77
+:TIME:         [2026-09-01 Tue 12:17:03]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:REASON:       reviewer (claude-sdk stdio, fable-5 high) reported APPROVE 2026-08-29 16:11 on f7b35c9d..ca70ab3f (merged a13b6896) and self-closed without a typed verdict; typed close recorded 2026-09-01
+:MODEL:        claude-fable-5
+:EFFORT:       high
+:REVIEWED_DIFF: f7b35c9d..ca70ab3f
+:VERDICT:      approve
+:CLOSED_TX:    tx-20260829-orgasmic-6c3d6953-6d91-4438-8274-f558ff453be6
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx-review
+:EVENT_ID:     afb0a110-75b9-4624-a490-82cccb65053a
+:END:

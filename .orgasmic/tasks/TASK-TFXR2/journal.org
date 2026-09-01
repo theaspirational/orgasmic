@@ -1,2 +1,18 @@
 #+title: orgasmic journal TASK-TFXR2
 #+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6733 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6733
+:TIME:    [2026-09-01 Tue 12:17:06]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TFXR2
+:TARGET: .orgasmic/tasks/TASK-TFXR2/node.org
+:REASON: integrated on main 62dc3e8a (2026-08-26, session 01Km9mF); sat in_progress with no dispatch — joins the chain siblings awaiting the whole-chain review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 70a16dbb-bc6c-4ba7-a0e0-6311001c6543
+:END:

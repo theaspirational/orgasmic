@@ -1715,3 +1715,29 @@
 :TARGET:       .orgasmic/tasks/TASK-BX5SR
 :EVENT_ID:     3fbd3d10-6453-4a60-be70-e04022bae2a9
 :END:
+
+* TX 2026-09-01 Tue 12:17:03.123139 task.claim_released TASK-FBSZ2
+:PROPERTIES:
+:TX_ID:        tx-20260901121703-e1224086
+:TIME:         [2026-09-01 Tue 12:17:03.123139]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FBSZ2
+:TARGET:       .orgasmic/tasks/TASK-FBSZ2
+:EVENT_ID:     892d24a9-f73c-47ee-8ef4-5568d3874afa
+:END:
+
+* TX 2026-09-01 Tue 12:17:03.841532 task.claim_released TASK-56NRX
+:PROPERTIES:
+:TX_ID:        tx-20260901121703-329d6365
+:TIME:         [2026-09-01 Tue 12:17:03.841532]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-56NRX
+:TARGET:       .orgasmic/tasks/TASK-56NRX
+:EVENT_ID:     f1a2c27a-67a2-4daa-8519-7b6a28a02863
+:END:

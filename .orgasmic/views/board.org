@@ -6716,13 +6716,6 @@ Participants: hermes · openai · gpt-5.6-luna · effort low — hermes · googl
 ** Acceptance Criteria
 - [ ] All extraction and blind-review reports are promoted and one curated artifact is submitted.
 
-* IN_PROGRESS TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
-:PROPERTIES:
-:ID: TASK-56NRX
-:PRIORITY: P1
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
-:END:
-
 * IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-NMV4P
@@ -10688,6 +10681,12 @@ Fix direction: persist last_path + stdout_path (and worktree_path) in the RunMet
 Workaround already in effect: prefer in-process agent reviewers over rmux dispatches while the report path is fragile; rescue from harness transcript when a dispatch loses its report.
 ** Evidence
 [2026-07-06 Mon] DONE (goal-20260706-drain-the-full 3/10). Dispatched implementer-claude-rmux (sonnet-5 high), run-20260706T120221, worker commit b2e9654, merged --no-ff to main @ 53c354c (touched only crates/, live .orgasmic state untouched). Fix: RunMeta lifecycle event gains last_path/stdout_path (Option, #[serde(default,skip_serializing_if)] back-compat); AcquireRequest carries them, populated from req at dispatch (post_task_dispatch); non-dispatch acquires (manager/recovery/stage/babysitter) pass None,None; RunMetaFields/BootReattachCandidate/boot_reattach_candidate thread them through reattach reconstruction; reattach_live_runs_on_boot signature changed to (state:&ApiState, roots) with the call moved after ApiState construction in lib.rs — after a successful reattach, when (last_path,stdout_path,project_id,worktree) are all Some it reconstructs a DispatchCompletion and respawns spawn_dispatch_completion_watcher; partial/missing paths log warn! + skip (matches prior behaviour). MANAGER REVIEW (inline, accepted per 2026-07-04 ruling): reviewed session.rs back-compat, the four-Some guard, the boot-sequence reorder (reattach now runs after fs-watcher spawn + ApiState build; independent of file-watching/indexing, low risk), and supervisor plumbing — clean, matches brief. GATES (manager re-ran independently on merged tree): cargo test -p orgasmic-daemon 256 passed incl the new e2e test boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt (verified it RUNS not tmux-skips, 0.33s real tmux, proves last.txt written after simulated restart); orgasmic-core green; clippy --workspace --all-targets -D warnings clean; cargo test -p orgasmic-cli green standalone. Only cargo test --workspace failure = pre-existing TASK-SJQ9V concurrency flake (doctor.rs:569, unrelated to this daemon change; passes standalone). implementer.done tx-1442. RESIDUAL: new e2e test self-skips on a tmux-less CI runner (deterministic candidate/back-compat coverage still runs unconditionally).
+
+* DONE TASK-56NRX Multi-model knowledge extraction mode: orchestrator skill, extract/cross-review/curate prompt specs, final artifact per ART-MKRG1 :feature:
+:PROPERTIES:
+:ID: TASK-56NRX
+:PRIORITY: P1
+:END:
 
 * DONE TASK-5CCZM Empty-git-remote-under-load flake class: three observers of refresh_repo_url's give-up path, no owner
 :PROPERTIES:
@@ -17169,7 +17168,6 @@ Wire daemon's tracing-subscriber to honor =RUST_LOG=. Look at =crates/orgasmic-c
 :PROPERTIES:
 :ID: TASK-FBSZ2
 :PRIORITY: P2
-:CLAIM_HOLDER: 08c4c046-86f3-4900-9bce-546d56adabdc
 :END:
 ** Evidence
 Merges: b8723a5c (native extract verb + report-only close, review APPROVE by claude-fable-5 gen tx-45c4c0ed) and 2c8c81f3 (review fix directions 1-4, red-proofed decoy-Question regression). Smoke: native binary run TASK-8XXEC -> ART-PT7ZX v1, all stage closes implementer.done REPORT_ONLY=true. Gates: cargo test -p orgasmic-cli (274 unit + extract::tests 6/6 incl Python SVG parity fixture), clippy -D warnings, fmt.
