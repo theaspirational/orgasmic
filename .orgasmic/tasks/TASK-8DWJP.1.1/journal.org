@@ -76,3 +76,16 @@
 :TO_STATE: in_review
 :EVENT_ID: 1d58f821-f2e4-4b81-9a06-b375df36ca75
 :END:
+
+* tx-20260901-orgasmic-6960 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6960
+:TIME:    [2026-09-01 Tue 16:26:36]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.1
+:REASON: HIGH ledger_sync.rs:98-104 — an interrupted pull --rebase leaves HEAD detached, so the Idle gate returns before the new unmerged-paths entry guard at :104 and every tick reports idle forever: a crash between the conflicting pull and rebase --abort is a permanent silent wedge, unmet acceptance 're-entrant across a crashed or interrupted attempt'
+:EVENT_ID: c5686996-3d2e-4b3a-9ff0-ab4cc7ab9f35
+:END:
