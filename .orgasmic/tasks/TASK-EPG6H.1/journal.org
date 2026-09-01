@@ -76,3 +76,16 @@
 :TO_STATE: in_review
 :EVENT_ID: a0f7e166-acf1-41d5-b268-b9954c06e12b
 :END:
+
+* tx-20260901-orgasmic-6857 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6857
+:TIME:    [2026-09-01 Tue 14:37:14]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1
+:REASON: MEDIUM crates/orgasmic-cli/src/manager.rs:12331 — torn_close_candidates_yield_to_any_later_lifecycle_event never exercises the entry.time >= close_time compare: TASK-JOURNAL's journal entry is at 11:00:00 vs its close at 10:00:00 and TASK-TORN has no journal, so replacing the predicate with a bare type match leaves the assertion unchanged; no CLI case covers a journal transition that predates the close.
+:EVENT_ID: 885fe67c-ded6-4ebf-8989-c001cc94e08d
+:END:
