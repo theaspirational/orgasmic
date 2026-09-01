@@ -1664,3 +1664,17 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EVENT_ID:     f4ff43c3-b09c-4713-af60-b2ca6bd962ac
 :END:
+
+* TX 2026-09-01 Tue 14:23:21 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-659c1b88-0a12-4025-83c4-643fc95a5618
+:TIME:         [2026-09-01 Tue 14:23:21]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     182d7290-10f5-4585-a45b-ff4f123ec98b
+:END:
