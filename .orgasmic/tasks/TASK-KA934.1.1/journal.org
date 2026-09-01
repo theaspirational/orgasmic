@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-KA934.1.1
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6893 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6893
+:TIME:    [2026-09-01 Tue 15:09:54]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1.1
+:TARGET: .orgasmic/tasks/TASK-KA934.1.1/node.org
+:REASON: created task TASK-KA934.1.1
+:EVENT_ID: 595b0910-795e-4079-9d3f-3bb184e7dbcd
+:END:
+
+* tx-20260901-orgasmic-6894 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6894
+:TIME:    [2026-09-01 Tue 15:09:54]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1.1
+:TARGET: .orgasmic/tasks/TASK-KA934.1.1/node.org
+:REASON: Fix round 2 of the M4 chain-review fix; parent TASK-KA934.1 is done
+:FIX_SUBTASK: t
+:EVENT_ID: 7a6ce9cb-44fd-47ca-ae76-cf0d5ffd7138
+:END:

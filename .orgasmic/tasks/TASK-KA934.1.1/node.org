@@ -1,0 +1,20 @@
+#+title: orgasmic task TASK-KA934.1.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-KA934.1.1 Fix round 2 for KA934.1: OCC conflict → 409, surface edit/delete stamps and tombstones in activity, pin the two test gaps    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-KA934.1.1
+:PRIORITY: P2
+:RELATES_TO: TASK-KA934.1
+:FIX_SUBTASK: t
+:END:
+
+LOW residuals of the KA934.1 review (claude-opus-5 high, tx-5cfb04f1, APPROVE WITH FOLLOW-UPS; merged cffb986b).
+
+1. crates/orgasmic-daemon/src/api.rs:~1777 writer_comment_error maps only CommentAuthorshipForbidden to 403; the OCC lost-update ('journal comment X changed since it was read', writer.rs:~1663) falls through to a generic 500. Its text carries no filesystem path, so the 500-hides-paths rationale (api.rs:~1761) does not apply. Add a typed OCC error in writer.rs and one arm mapping it to 409, mirroring claim_conflict. If it stays a few lines, map 'not found' to 404 as well.
+
+2. crates/orgasmic-daemon/src/index.rs:~4321 activity_entry_from_tx returns None for TYPE comment.deleted and ActivityEntry has no EDITED_BY/EDITED_AT/DELETED_BY/DELETED_AT. The new audit stamps have no reader, and a tombstoned row vanishes from GET /tasks/:id/activity so IN_REPLY_TO chains dangle (contradicts node_kernel.rs:~311). Add optional edited_by/edited_at/deleted_by/deleted_at to ActivityEntry, return tombstone rows (empty body, type comment.deleted), and render a one-line tombstone in ui/src/components/TaskDialog.tsx ActivityRow (update ui/src/lib/types.ts).
+
+3. Tests: api.rs:~38268 the bob refusals assert only status == 403 — also assert the authorship message so the test goes red if the check is removed (a role change also yields 403). node_kernel: add two sequential edits on one comment and assert EDITED_BY appears once and holds the SECOND editor (the upsert replace branch is unpinned).
+
+Acceptance: OCC edit/delete returns 409 with a test; activity lists tombstones with stamps and a test; both test pins present; gates: cargo test -p orgasmic-daemon --lib -- comment activity, cargo test -p orgasmic-core --lib node_kernel, clippy core+daemon -D warnings, fmt, cd ui && npm run typecheck.

@@ -1,0 +1,16 @@
+#+title: orgasmic task TASK-KA934.2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-KA934.2 Decision: are task-comment routes member-reachable? (MEMBER_ALLOWED_ROUTES gap + :ACTOR: namespace)    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-KA934.2
+:PRIORITY: P2
+:RELATES_TO: TASK-KA934.1
+:END:
+
+Raised by the KA934.1 review (tx-5cfb04f1, two MEDIUMs, both pre-existing). crates/orgasmic-daemon/src/api.rs:~897 MEMBER_ALLOWED_ROUTES omits POST /tasks/:id/comments and its /edit and /delete siblings; identity_middleware (api.rs:~960) 403s every Identity::Member before the handler. So: the viewer role advertises tasks.comment (authz.rs:~80), /me reports it, the UI composer enables (ui/src/components/TaskDialog.tsx:~179), and the POST always fails with 'forbidden for this member role'. The member-attribution branch in post_task_comment (api.rs:~2348) and the test task_comments_use_member_session_attribution_and_refresh_activity describe a path that does not exist. The KA934.1 authorship check is defense-in-depth until this is decided.
+
+Option 1 — open the routes: add the three routes to MEMBER_ALLOWED_ROUTES in the SAME change that makes :ACTOR: a safe identity namespace: post_task_comment must refuse (or override) an admin req.actor that equals a members.org member name, since require_comment_body (writer.rs:~1657) compares raw strings and Identity::Member carries only a name (authz.rs:~110); also state what a member rename does to edit rights on existing comments. Follow with one live HTTP probe as a member session.
+Option 2 — close the surface: drop TasksComment from the viewer/editor capability lists (or stop advertising it in /me) so the UI hides the composer; delete the dead member-attribution branch and its test.
+
+Manager lean: Option 1 — three places already say members comment; the allow-list is the odd one out. It is an auth-surface change on a LAN/tunnel-exposed daemon, so the operator decides; record as a decision (orgasmic decision create) then file the implementing task with IMPLEMENTS.
