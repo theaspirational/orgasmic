@@ -613,7 +613,7 @@ Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 (chain landed, crates gree
 certification) is DONE. Step 2 — "one review over the whole chain and fix everything it finds" — has only a
 manager-inline pass (2026-08-27, five fixes + TASK-AS0FS). No independent reviewer has read the chain.
 
-1. *DISPATCH THE WHOLE-CHAIN REVIEW.* One read-only reviewer over =543782d7^..366c4b5b= (the chain merge through
+1. *WHOLE-CHAIN REVIEW — DISPATCHED 2026-09-01* (see In flight: tx-1c6d2115, opus-5 high). When it reports: verify, close with --verdict, fix rounds, then done. Original plan kept below for a re-dispatch: One read-only reviewer over =543782d7^..366c4b5b= (the chain merge through
    its 08-27 fixes; =git log --first-parent= lists 17 integrations). Cross-family from the implementers (chain was
    codex/claude mixed; fable-5 or gpt-5.6-sol both qualify). Operator picks model + effort at session start.
    Brief must: name the AP971.x Resolutions as the spec, forbid bulk-reading =verify/*/injection.patch= (52NJS
@@ -635,7 +635,14 @@ DONE SINCE LAST HANDOFF (do not re-propose): E01MC/TWCP9 chain merges; ledger cu
 suite (56NRX FBSZ2 FAS8R 295X1 9TGQS 82KKQ E1D35 DN1WK); runtime 0.0.23 stable publish; skill door audit.
 
 ** In flight
-NOTHING IN FLIGHT (2026-09-01, manager reconciliation session). Every dispatch generation is closed — dispatch-status is empty for the first time since July (eight dead orphans + two verdict-less reviews closed today). No worker worktrees; the only extra worktree is a stale detached probe at scratchpad/probe-3a4c219f from session 94dc2a46. Runtime 0.0.23-dev.20260830i under launchd, pid 2682. vscode-orsl's manager dispatches on its own schedule — its runs are not this board's. Dispatching needs the operator's model/effort choice for this session (no project default).
+ONE LIVE DISPATCH (opened 2026-09-01, manager session): the whole-chain E01MC/TWCP9 review, goal step 2.
+- started_tx =tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07=, run =run-01M1EFVA10Y0FMXCFW01JAY501=, pid 28402
+- worker =reviewer-claude-sdk-stdio= (driver stdio, harness claude-sdk, canonical chat runtime), model =claude-opus-5=, effort =high= (operator's session choice), governance =stall_timeout_secs=3600=
+- bound to all 17 in_review chain tasks (TP593 7A0H4 GCXB7 SRBGS JWHXH EPG6H ARRV8 AN992 IXPD4 TFXR2 RGRD5 LBRX7 8AV8B MSYN4 8DMQS CLM6W KA934); range =543782d7^1..31344134= code-only; branch =e01mc-chain-review-r1=; worktree =~/.orgasmic/worktrees/orgasmic/task-tp593-review=
+- brief =.orgasmic/tmp/dispatch/brief-E01MC-chain-review/brief-E01MC-chain-review.md=; report lands beside it as =*-last.txt= then promotes on close
+- watcher armed: =orgasmic manager dispatch-wait --started-tx tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07 --timeout 240m= (exit 0 reported / 2 run gone without report / 3 timeout)
+WHEN IT REPORTS: read the last.txt, verify each HIGH against source before acting, close the generation with =dispatch-close --task <all 17> --started-tx <above> --status done --verdict <approve|approve-with-follow-ups|reject> --reviewed-diff 543782d7^1..31344134=, file fix rounds as TASK-<id>.N with :FIX_SUBTASK: t, then move the chain tasks to done with evidence once the review passes. Expect this claude-sdk reviewer to self-close WITHOUT a typed verdict — you still must run dispatch-close.
+Runtime 0.0.23-dev.20260830i under launchd, pid 2682. vscode-orsl's manager dispatches on its own schedule — not this board's.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
