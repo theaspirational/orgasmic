@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-25HSE
 #+orgasmic_version: 2
 
-* DONE TASK-25HSE TASK-35TK4 fix: preserve machine identity and Git config truth :fix:daemon:
+* TODO TASK-25HSE TASK-35TK4 fix: preserve machine identity and Git config truth :fix:daemon:
 :PROPERTIES:
 :ID: TASK-25HSE
 :READ_SCOPE: .orgasmic/gotchas.org crates/orgasmic-daemon crates/orgasmic-cli

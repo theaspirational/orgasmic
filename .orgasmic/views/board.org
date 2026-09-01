@@ -5232,6 +5232,25 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
 
+* TODO TASK-25HSE TASK-35TK4 fix: preserve machine identity and Git config truth :fix:daemon:
+:PROPERTIES:
+:ID: TASK-25HSE
+:READ_SCOPE: .orgasmic/gotchas.org crates/orgasmic-daemon crates/orgasmic-cli
+:TEST_CMD: cargo test -p orgasmic-daemon && cargo test -p orgasmic-cli
+:WRITE_SCOPE: crates/orgasmic-daemon crates/orgasmic-cli Cargo.toml Cargo.lock
+:PARENT_TASK: TASK-35TK4
+:FIX_SUBTASK: t
+:END:
+
+Manager pre-merge review found two blocking regressions in candidate 714bf09.
+
+Acceptance:
+- Preserve stable daemon machine identity without spawning a subprocess before the instance lock. On macOS/Unix where HOSTNAME is not exported, normal tx/status paths must not fall back to unknown; use a bounded/non-spawning OS source or resolve after lock while respecting explicit DaemonOptions overrides. Add a deterministic regression with HOSTNAME absent.
+- Do not make a hand-written partial Git-config parser authoritative for repo_url. Preserve git config semantics for quoted values, includes, and worktrees while keeping every git subprocess strictly post-bind, bounded, killed, and reaped. Prefer asynchronous git-backed resolution after bind over duplicating Git syntax. Add regressions for a quoted origin and the no-pre-bind-spawn invariant.
+- Re-run focused boot/index tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings. Baseline watcher refresh tests currently fail identically on b18808c and must be reported distinctly, not attributed to this fix.
+** Notes
+Landed in bd3d7bd as part of the reviewed TASK-35TK4 slice. Independent Claude Opus 4.8/high review returned SHIP; focused daemon and CLI boot tests passed. Baseline watcher-refresh failures were reproduced on b18808c and were not attributed to this fix.
+
 * TODO TASK-2XT9J.1 Extract — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-2XT9J.1
@@ -6113,25 +6132,6 @@ as regressions.
 
 - Do not revert `edc68b4`; its replacement-association work is sound and reviewed.
 - Do not weaken generation binding or the mandatory-close rule from `.1` and `.2`.
-
-* DONE TASK-25HSE TASK-35TK4 fix: preserve machine identity and Git config truth :fix:daemon:
-:PROPERTIES:
-:ID: TASK-25HSE
-:READ_SCOPE: .orgasmic/gotchas.org crates/orgasmic-daemon crates/orgasmic-cli
-:TEST_CMD: cargo test -p orgasmic-daemon && cargo test -p orgasmic-cli
-:WRITE_SCOPE: crates/orgasmic-daemon crates/orgasmic-cli Cargo.toml Cargo.lock
-:PARENT_TASK: TASK-35TK4
-:FIX_SUBTASK: t
-:END:
-
-Manager pre-merge review found two blocking regressions in candidate 714bf09.
-
-Acceptance:
-- Preserve stable daemon machine identity without spawning a subprocess before the instance lock. On macOS/Unix where HOSTNAME is not exported, normal tx/status paths must not fall back to unknown; use a bounded/non-spawning OS source or resolve after lock while respecting explicit DaemonOptions overrides. Add a deterministic regression with HOSTNAME absent.
-- Do not make a hand-written partial Git-config parser authoritative for repo_url. Preserve git config semantics for quoted values, includes, and worktrees while keeping every git subprocess strictly post-bind, bounded, killed, and reaped. Prefer asynchronous git-backed resolution after bind over duplicating Git syntax. Add regressions for a quoted origin and the no-pre-bind-spawn invariant.
-- Re-run focused boot/index tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings. Baseline watcher refresh tests currently fail identically on b18808c and must be reported distinctly, not attributed to this fix.
-** Notes
-Landed in bd3d7bd as part of the reviewed TASK-35TK4 slice. Independent Claude Opus 4.8/high review returned SHIP; focused daemon and CLI boot tests passed. Baseline watcher-refresh failures were reproduced on b18808c and were not attributed to this fix.
 
 * DONE TASK-295X1 Forum critic mode: 'orgasmic forum critique' — multi-model blind critique of a supplied target :feature:
 :PROPERTIES:

@@ -1,0 +1,21 @@
+#+title: orgasmic tx 2026-09
+#+orgasmic_version: 1
+
+* TX 2026-09-01 Tue 12:13:13 manager.dispatch_aborted TASK-25HSE
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-573487a6-9f05-418c-aebb-ec52f1a822fa
+:TIME:         [2026-09-01 Tue 12:13:13]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-25HSE
+:REASON:       orphan since 2026-07-23: codex acp-stdio worker pid/run/worktree all gone, never reported; acp driver removed in 010a32b (board hygiene 2026-09-01)
+:CLOSED_TX:    tx-20260723-orgasmic-2442
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-25hse/worktree
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-25hse/worktree
+:EVENT_ID:     b98ef4ae-c946-44d8-9f28-75b1e8cfa363
+:END:
