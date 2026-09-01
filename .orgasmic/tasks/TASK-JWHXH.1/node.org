@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JWHXH.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-JWHXH.1 H4+M1: views/ tracked on existing ledgers (only the scaffold ignores it) and never regenerated after incremental writes :e01mc:chain-review:
+* IN_REVIEW TASK-JWHXH.1 H4+M1: views/ tracked on existing ledgers (only the scaffold ignores it) and never regenerated after incremental writes :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-JWHXH.1
 :PRIORITY: P1

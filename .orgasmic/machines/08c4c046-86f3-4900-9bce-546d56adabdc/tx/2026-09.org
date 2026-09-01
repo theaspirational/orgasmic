@@ -1597,3 +1597,70 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.1/dispatches/tx-20260901-orgasmic-fc68afdc-8377-4f35-b829-dbb8e64a9168/report.md
 :EVENT_ID:     d622abe2-835c-4f83-9085-271a5d863156
 :END:
+
+* TX 2026-09-01 Tue 14:22:54 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-003a1666-aa27-4004-97fe-c70479080a6c
+:TIME:         [2026-09-01 Tue 14:22:54]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     6a4aca4a-c2cc-4933-809c-6b825abac9f3
+:END:
+
+* TX 2026-09-01 Tue 14:23:05 manager.dispatch_started TASK-JWHXH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-16cd679c-d02c-489c-bfc0-5e0b96336857
+:TIME:         [2026-09-01 Tue 14:23:05]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.1.1
+:BRANCH:       task-jwhxh.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1.1/brief-TASK-JWHXH.1.1.md
+:STARTED_AT:   [2026-09-01 Tue 14:23:05]
+:LIVENESS:     c3d779aff75c5d26c6f8bdcb24e68bcc24374e6c
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:REASON_INITIAL: Fix round 2 of TASK-JWHXH.1: review tx-a4acf9f4 residuals (views tmp-name race, rebuild scope, exists guard, drain teardown); implementer codex gpt-5.6-sol per the session pair; parallel with EPG6H.1 (disjoint files)
+:EVENT_ID:     1b1b72cf-5ab9-4f86-b995-35cc6d347620
+:END:
+
+* TX 2026-09-01 Tue 14:23:05 run.created TASK-JWHXH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-aa9ca3a9-2a1e-45e9-8644-6d46da1b36f4
+:TIME:         [2026-09-01 Tue 14:23:05]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-JWHXH.1.1-implementer-20260901T142304.jsonl
+:REASON:       Fix round 2 of TASK-JWHXH.1: review tx-a4acf9f4 residuals (views tmp-name race, rebuild scope, exists guard, drain teardown); implementer codex gpt-5.6-sol per the session pair; parallel with EPG6H.1 (disjoint files)
+:RUN_ID:       run-01M1ENM9ZCNC964CFKJEGQ5WZ4
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1.1/brief-TASK-JWHXH.1.1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1.1/brief-TASK-JWHXH.1.1-bb5bb38c9c3d4c948e7d7d79fcacbc4b-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1.1/brief-TASK-JWHXH.1.1-bb5bb38c9c3d4c948e7d7d79fcacbc4b-stdout.log
+:DISPATCH_ATTEMPT: bb5bb38c9c3d4c948e7d7d79fcacbc4b
+:PID:          45446
+:DISPATCH_TX:  tx-20260901-orgasmic-16cd679c-d02c-489c-bfc0-5e0b96336857
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EVENT_ID:     f4ff43c3-b09c-4713-af60-b2ca6bd962ac
+:END:
