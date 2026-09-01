@@ -1,0 +1,23 @@
+{
+  "event_count": 532,
+  "tool_call_count": 43,
+  "unparsed_events": 6,
+  "bounded_events": 7,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-KA934.3-reviewer-20260901T222044.jsonl",
+    "size_bytes": 847446
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task record and the diff.Now filing findings."
+    }
+  ],
+  "narrative_truncated": false
+}
