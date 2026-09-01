@@ -1166,4 +1166,65 @@ mod tests {
             .unwrap();
         assert!(c.closed && !c.reported);
     }
+
+    #[test]
+    fn dispatch_fold_keeps_two_machine_generations_distinct_by_uuid_tx_id() {
+        let start = |tx_id: &str, machine: &str| {
+            let mut entry = TxEntry::new(
+                tx_id,
+                "manager.dispatch_started",
+                "[2026-09-01 Tue 10:00:00]",
+                "test",
+                machine,
+            );
+            entry.project = Some("orgasmic".into());
+            entry.task = Some("TASK-SAME".into());
+            entry.extra.push(("KIND".into(), "implementer".into()));
+            entry
+        };
+        let close = |tx_id: &str, closed_tx: &str, machine: &str| {
+            let mut entry = TxEntry::new(
+                tx_id,
+                "implementer.done",
+                "[2026-09-01 Tue 10:01:00]",
+                "test",
+                machine,
+            );
+            entry.project = Some("orgasmic".into());
+            entry.task = Some("TASK-SAME".into());
+            entry.extra.push(("CLOSED_TX".into(), closed_tx.into()));
+            entry
+        };
+        let a = "tx-20260901-orgasmic-11111111-1111-4111-8111-111111111111";
+        let b = "tx-20260901-orgasmic-22222222-2222-4222-8222-222222222222";
+        let mut entries = vec![start(a, "machine-a"), start(b, "machine-b")];
+
+        entries.push(close(
+            "tx-20260901-orgasmic-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            a,
+            "machine-a",
+        ));
+        let folded = fold_dispatches(&entries);
+        assert!(
+            folded
+                .iter()
+                .find(|d| d.started.machine == "machine-a")
+                .unwrap()
+                .closed
+        );
+        assert!(
+            !folded
+                .iter()
+                .find(|d| d.started.machine == "machine-b")
+                .unwrap()
+                .closed
+        );
+
+        entries.push(close(
+            "tx-20260901-orgasmic-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            b,
+            "machine-b",
+        ));
+        assert!(fold_dispatches(&entries).iter().all(|d| d.closed));
+    }
 }

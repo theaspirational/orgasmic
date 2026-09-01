@@ -106,7 +106,6 @@ pub mod test_hooks {
 
     static SYNC_COUNT: AtomicU64 = AtomicU64::new(0);
     static SYNC_ATTEMPT_COUNT: AtomicU64 = AtomicU64::new(0);
-    static SCAN_COUNT: AtomicU64 = AtomicU64::new(0);
     static FLOCK_COUNT: AtomicU64 = AtomicU64::new(0);
     static FAIL_NEXT_SYNC: AtomicUsize = AtomicUsize::new(0);
     static FAIL_NEXT_MULTI_BEFORE_COMMIT: AtomicUsize = AtomicUsize::new(0);
@@ -153,7 +152,6 @@ pub mod test_hooks {
     pub fn reset() {
         SYNC_COUNT.store(0, Ordering::SeqCst);
         SYNC_ATTEMPT_COUNT.store(0, Ordering::SeqCst);
-        SCAN_COUNT.store(0, Ordering::SeqCst);
         FLOCK_COUNT.store(0, Ordering::SeqCst);
         FAIL_NEXT_SYNC.store(0, Ordering::SeqCst);
         FAIL_NEXT_MULTI_BEFORE_COMMIT.store(0, Ordering::SeqCst);
@@ -165,10 +163,6 @@ pub mod test_hooks {
 
     pub fn sync_attempt_count() -> u64 {
         SYNC_ATTEMPT_COUNT.load(Ordering::SeqCst)
-    }
-
-    pub fn scan_count() -> u64 {
-        SCAN_COUNT.load(Ordering::SeqCst)
     }
 
     pub fn flock_count() -> u64 {
@@ -254,18 +248,6 @@ pub mod test_hooks {
     pub(crate) fn after_sync() {
         SYNC_COUNT.fetch_add(1, Ordering::SeqCst);
     }
-
-    pub(crate) fn record_scan() {
-        SCAN_COUNT.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-type ProjectMonthKey = (String, String);
-
-#[derive(Debug, Clone, Default)]
-struct ProjectTxSeqCache {
-    by_project_month: HashMap<ProjectMonthKey, u32>,
-    project_max: HashMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1958,7 +1940,6 @@ async fn writer_loop(
     // Session paths a maintenance transaction currently holds.
     let mut leased: HashSet<PathBuf> = HashSet::new();
     let mut deferred: Vec<DeferredSessionAppend> = Vec::new();
-    let mut seq_cache = ProjectTxSeqCache::default();
     let mut cmd = rx.recv().await;
     while let Some(current) = cmd.take() {
         // orgasmic:TASK-Q07Y5 — publish the head-of-line write before running
@@ -1991,7 +1972,7 @@ async fn writer_loop(
                         }
                     }
                 }
-                let outcomes = process_tx_batch(&mut tx_handles, &mut seq_cache, batch);
+                let outcomes = process_tx_batch(&mut tx_handles, batch);
                 for (req, result, reply) in outcomes {
                     command_failed |= result.is_err();
                     if let Ok(ref ok) = result {
@@ -2095,7 +2076,6 @@ async fn writer_loop(
                 if execute {
                     let result = transaction_inner(
                         &mut tx_handles,
-                        &mut seq_cache,
                         &req.rewrites,
                         req.tx.clone(),
                         &req.request_id,
@@ -2177,7 +2157,6 @@ async fn writer_loop(
                     Ok(None) => {
                         let result = transaction_multi_inner(
                             &mut tx_handles,
-                            &mut seq_cache,
                             &req.rewrites,
                             &req.txs,
                             &req.request_id,
@@ -2241,7 +2220,6 @@ async fn writer_loop(
                 if execute {
                     let result = transaction_mutate_file_inner(
                         &mut tx_handles,
-                        &mut seq_cache,
                         req.file,
                         req.tx.clone(),
                         &req.request_id,
@@ -2557,7 +2535,6 @@ fn publish_multi_events(events: &EventBus, txs: &[TxAppend], results: &[TxAppend
 
 fn process_tx_batch(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
-    seq_cache: &mut ProjectTxSeqCache,
     batch: Vec<(TxAppend, oneshot::Sender<Result<TxAppendResult>>)>,
 ) -> Vec<(
     TxAppend,
@@ -2578,12 +2555,10 @@ fn process_tx_batch(
         .iter()
         .map(|item| item.req.tx_path.clone())
         .collect();
-    if tx_handles_detached_from_paths(handles, &paths_in_batch) {
-        seq_cache.clear();
-    }
+    tx_handles_detached_from_paths(handles, &paths_in_batch);
     for item in &mut pending {
         item.result = (|| -> Result<TxAppendResult> {
-            let entry = prepare_tx_entry(seq_cache, &item.req)?;
+            let entry = prepare_tx_entry(&item.req)?;
             let res = write_tx_append(handles, &item.req.tx_path, &entry)?;
             paths_to_sync.insert(item.req.tx_path.clone());
             Ok(res)
@@ -2818,17 +2793,10 @@ fn unescape_property_value(value: &str) -> String {
     out
 }
 
-impl ProjectTxSeqCache {
-    fn clear(&mut self) {
-        self.by_project_month.clear();
-        self.project_max.clear();
-    }
-}
-
 fn tx_handles_detached_from_paths(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
     paths: &HashSet<PathBuf>,
-) -> bool {
+) {
     let mut detached = Vec::new();
     for path in paths {
         if let Some(handle) = handles.get(path) {
@@ -2837,29 +2805,23 @@ fn tx_handles_detached_from_paths(
             }
         }
     }
-    let had_detached = !detached.is_empty();
     for path in detached {
         handles.remove(&path);
         warn!(
             path = %path.display(),
-            "tx append handle no longer matches path; reopening and invalidating tx sequence cache"
+            "tx append handle no longer matches path; reopening"
         );
     }
-    had_detached
 }
 
-fn prepare_tx_entry(seq_cache: &mut ProjectTxSeqCache, req: &TxAppend) -> Result<TxEntry> {
+fn prepare_tx_entry(req: &TxAppend) -> Result<TxEntry> {
     let mut entry = req.entry.clone();
     if let TxIdPolicy::ProjectSequence { project_id, date } = &req.tx_id_policy {
-        entry.tx_id = if is_machine_tx_path(&req.tx_path) {
-            format!(
-                "tx-{date}-{}-{}",
-                project_tx_slug(project_id),
-                Uuid::new_v4()
-            )
-        } else {
-            next_project_tx_id(seq_cache, project_id, &project_tx_dir(&req.tx_path)?, date)?
-        };
+        entry.tx_id = format!(
+            "tx-{date}-{}-{}",
+            project_tx_slug(project_id),
+            Uuid::new_v4()
+        );
     }
     let supplied: Vec<_> = entry
         .extra
@@ -2877,44 +2839,6 @@ fn prepare_tx_entry(seq_cache: &mut ProjectTxSeqCache, req: &TxAppend) -> Result
         _ => bail!("event has duplicate EVENT_ID properties"),
     }
     Ok(entry)
-}
-
-fn is_machine_tx_path(path: &Path) -> bool {
-    let parts: Vec<_> = path
-        .components()
-        .filter_map(|part| part.as_os_str().to_str())
-        .collect();
-    parts
-        .windows(4)
-        .any(|parts| parts[0] == "machines" && parts[2] == "tx")
-}
-
-fn project_tx_dir(ledger_path: &Path) -> Result<PathBuf> {
-    if is_machine_tx_path(ledger_path) {
-        return ledger_path
-            .ancestors()
-            .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
-            .map(|dotorg| dotorg.join("tx"))
-            .ok_or_else(|| anyhow!("machine tx path is not under .orgasmic"));
-    }
-    if ledger_path
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-        == Some("tx")
-    {
-        return Ok(ledger_path.parent().expect("checked parent").to_path_buf());
-    }
-    ledger_path
-        .ancestors()
-        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
-        .map(|dotorg| dotorg.join("tx"))
-        .ok_or_else(|| {
-            anyhow!(
-                "project journal is not under .orgasmic: {}",
-                ledger_path.display()
-            )
-        })
 }
 
 fn write_tx_append(
@@ -2956,7 +2880,6 @@ fn sync_tx_writer(handles: &HashMap<PathBuf, CachedTxWriter>, path: &Path) -> Re
 
 fn append_txs_inner(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
-    seq_cache: &mut ProjectTxSeqCache,
     reqs: &[TxAppend],
 ) -> Result<Vec<TxAppendResult>> {
     let first = reqs
@@ -2966,13 +2889,10 @@ fn append_txs_inner(
         bail!("multi transaction tx entries must target one ledger");
     }
     let paths = HashSet::from([first.tx_path.clone()]);
-    if tx_handles_detached_from_paths(handles, &paths) {
-        seq_cache.clear();
-    }
-    let mut staged_seq_cache = seq_cache.clone();
+    tx_handles_detached_from_paths(handles, &paths);
     let entries = reqs
         .iter()
-        .map(|req| prepare_tx_entry(&mut staged_seq_cache, req))
+        .map(prepare_tx_entry)
         .collect::<Result<Vec<_>>>()?;
     if let Some(parent) = first.tx_path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -2988,7 +2908,6 @@ fn append_txs_inner(
     let tx_ids = writer
         .append_many(&entries)
         .with_context(|| format!("append to {}", first.tx_path.display()))?;
-    *seq_cache = staged_seq_cache;
     Ok(tx_ids
         .into_iter()
         .map(|tx_id| TxAppendResult {
@@ -2996,162 +2915,6 @@ fn append_txs_inner(
             tx_path: first.tx_path.clone(),
         })
         .collect())
-}
-
-fn next_project_tx_id(
-    cache: &mut ProjectTxSeqCache,
-    project_id: &str,
-    tx_dir: &Path,
-    date: &str,
-) -> Result<String> {
-    let month = date.get(..6).unwrap_or(date).to_string();
-    let key = (project_id.to_string(), month);
-    let next = if let Some(&cached) = cache.by_project_month.get(&key) {
-        cached + 1
-    } else if let Some(&max) = cache.project_max.get(project_id) {
-        max + 1
-    } else {
-        let max_seen = scan_project_tx_max_seq(project_id, tx_dir)?;
-        max_seen + 1
-    };
-    cache.by_project_month.insert(key, next);
-    cache.project_max.insert(project_id.to_string(), next);
-    let slug = project_tx_slug(project_id);
-    Ok(format!("tx-{date}-{slug}-{next:04}"))
-}
-
-fn scan_project_tx_max_seq(project_id: &str, tx_dir: &Path) -> Result<u32> {
-    test_hooks::record_scan();
-    let slug = project_tx_slug(project_id);
-    let mut max_seen = 0_u32;
-    let mut entries_scanned = 0_usize;
-    let mut tx_dirs = vec![tx_dir.to_path_buf()];
-    if let Some(dotorg) = tx_dir
-        .parent()
-        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
-    {
-        if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
-            tx_dirs.extend(
-                machines
-                    .flatten()
-                    .map(|machine| machine.path().join("tx"))
-                    .filter(|path| path.is_dir()),
-            );
-        }
-    }
-    for tx_dir in tx_dirs.into_iter().filter(|path| path.is_dir()) {
-        let dir_entries =
-            std::fs::read_dir(&tx_dir).with_context(|| format!("read {}", tx_dir.display()))?;
-        for entry in dir_entries {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    warn!(
-                        dir = %tx_dir.display(),
-                        error = %e,
-                        "skip unreadable tx dir entry during sequence scan"
-                    );
-                    continue;
-                }
-            };
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("org") {
-                continue;
-            }
-            let source = match std::fs::read_to_string(&path) {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!(
-                        path = %path.display(),
-                        error = %e,
-                        "skip unreadable tx file during sequence scan"
-                    );
-                    continue;
-                }
-            };
-            let entries = match parse_tx_file(&source, &path.to_string_lossy()) {
-                Ok(e) => e,
-                Err(e) => {
-                    warn!(
-                        path = %path.display(),
-                        error = %e,
-                        "skip corrupt tx file during sequence scan"
-                    );
-                    continue;
-                }
-            };
-            entries_scanned += entries.len();
-            for entry in entries {
-                if let Some(seq) = project_tx_sequence(&entry.tx_id, &slug) {
-                    max_seen = max_seen.max(seq);
-                }
-            }
-        }
-    }
-    if let Some(dotorg) = tx_dir
-        .parent()
-        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
-    {
-        for collection in std::fs::read_dir(dotorg)
-            .with_context(|| format!("read {}", dotorg.display()))?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry.path().is_dir()
-                    && entry.file_name() != "tx"
-                    && entry.file_name() != "machines"
-            })
-        {
-            let nodes = match std::fs::read_dir(collection.path()) {
-                Ok(nodes) => nodes,
-                Err(error) => {
-                    warn!(path = %collection.path().display(), %error, "skip unreadable node collection during sequence scan");
-                    continue;
-                }
-            };
-            for node in nodes.filter_map(|entry| entry.ok()) {
-                let path = node.path().join("journal.org");
-                if !path.is_file() {
-                    continue;
-                }
-                let source = match std::fs::read_to_string(&path) {
-                    Ok(source) => source,
-                    Err(error) => {
-                        warn!(path = %path.display(), %error, "skip unreadable journal during sequence scan");
-                        continue;
-                    }
-                };
-                let entries = match orgasmic_core::node_kernel::parse_journal(
-                    &source,
-                    &path.to_string_lossy(),
-                ) {
-                    Ok(entries) => entries,
-                    Err(error) => {
-                        warn!(path = %path.display(), %error, "skip corrupt journal during sequence scan");
-                        continue;
-                    }
-                };
-                entries_scanned += entries.len();
-                for entry in entries {
-                    if let Some(seq) = project_tx_sequence(&entry.entry_id, &slug) {
-                        max_seen = max_seen.max(seq);
-                    }
-                }
-            }
-        }
-    }
-    // A populated ledger whose ids all fail the slug/format match means the
-    // sequence is about to restart at 1 — usually an id-format or project-id
-    // drift, and worth a loud trace before any collision-shaped surprise.
-    if max_seen == 0 && entries_scanned > 0 {
-        warn!(
-            project = %project_id,
-            slug = %slug,
-            dir = %tx_dir.display(),
-            entries = entries_scanned,
-            "no ledger entry matched the project tx id format; sequence restarts at 1"
-        );
-    }
-    Ok(max_seen)
 }
 
 fn project_tx_slug(project_id: &str) -> String {
@@ -3165,28 +2928,6 @@ fn project_tx_slug(project_id: &str) -> String {
     } else {
         slug
     }
-}
-
-fn project_tx_sequence(tx_id: &str, slug: &str) -> Option<u32> {
-    let mut parts = tx_id.split('-');
-    let prefix = parts.next()?;
-    let date = parts.next()?;
-    let got_slug = parts.next()?;
-    let seq = parts.next()?;
-    // Sequences are minted `{:04}`, so beyond 9999 the field is 5+ digits.
-    // Requiring exactly 4 made those ids invisible to a cold rescan, which
-    // would restart the counter and mint a duplicate tx id after a restart.
-    if parts.next().is_some()
-        || prefix != "tx"
-        || date.len() != 8
-        || !date.chars().all(|c| c.is_ascii_digit())
-        || got_slug != slug
-        || seq.len() < 4
-        || !seq.chars().all(|c| c.is_ascii_digit())
-    {
-        return None;
-    }
-    seq.parse().ok()
 }
 
 #[cfg_attr(test, allow(clippy::too_many_arguments))]
@@ -3318,7 +3059,6 @@ enum MultiTransactionCommit {
 
 fn transaction_inner<F>(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
-    seq_cache: &mut ProjectTxSeqCache,
     rewrites: &[FileRewrite],
     tx: TxAppend,
     request_id: &str,
@@ -3329,7 +3069,6 @@ where
 {
     let mut results = transaction_multi_inner(
         handles,
-        seq_cache,
         rewrites,
         std::slice::from_ref(&tx),
         request_id,
@@ -3346,7 +3085,6 @@ where
 
 fn transaction_multi_inner<F>(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
-    seq_cache: &mut ProjectTxSeqCache,
     rewrites: &[FileRewrite],
     txs: &[TxAppend],
     request_id: &str,
@@ -3393,7 +3131,6 @@ where
     let result = locked.and_then(|()| {
         transaction_multi_locked_inner(
             handles,
-            seq_cache,
             rewrites,
             txs,
             request_id,
@@ -3411,7 +3148,6 @@ where
 
 fn transaction_mutate_file_inner(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
-    seq_cache: &mut ProjectTxSeqCache,
     req: FileMutate,
     tx: TxAppend,
     request_id: &str,
@@ -3438,7 +3174,6 @@ fn transaction_mutate_file_inner(
         };
         transaction_locked_inner(
             handles,
-            seq_cache,
             std::slice::from_ref(&rewrite),
             tx,
             request_id,
@@ -3453,7 +3188,6 @@ fn transaction_mutate_file_inner(
 
 fn transaction_locked_inner<F>(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
-    seq_cache: &mut ProjectTxSeqCache,
     rewrites: &[FileRewrite],
     tx: TxAppend,
     request_id: &str,
@@ -3464,7 +3198,6 @@ where
 {
     let mut results = transaction_multi_locked_inner(
         handles,
-        seq_cache,
         rewrites,
         std::slice::from_ref(&tx),
         request_id,
@@ -3481,7 +3214,6 @@ where
 
 fn transaction_multi_locked_inner<F>(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
-    seq_cache: &mut ProjectTxSeqCache,
     rewrites: &[FileRewrite],
     txs: &[TxAppend],
     request_id: &str,
@@ -3550,7 +3282,7 @@ where
             }
             renamed.push(idx);
         }
-        let appended = match append_txs_inner(handles, seq_cache, txs) {
+        let appended = match append_txs_inner(handles, txs) {
             Ok(appended) => appended,
             Err(error) => {
                 rollback_renamed_rewrites(&staged, &renamed);
@@ -3691,30 +3423,6 @@ mod tests {
         e.project = Some("orgasmic".into());
         e.reason = Some("test".into());
         e
-    }
-
-    #[test]
-    fn project_tx_sequence_survives_the_five_digit_rollover() {
-        assert_eq!(
-            project_tx_sequence("tx-20260814-orgasmic-9999", "orgasmic"),
-            Some(9999)
-        );
-        assert_eq!(
-            project_tx_sequence("tx-20260814-orgasmic-10000", "orgasmic"),
-            Some(10000)
-        );
-        assert_eq!(
-            project_tx_sequence("tx-20260814-orgasmic-123", "orgasmic"),
-            None
-        );
-        assert_eq!(
-            project_tx_sequence("tx-20260814-other-0001", "orgasmic"),
-            None
-        );
-        assert_eq!(
-            project_tx_sequence("tx-20260814T093806Z-abcd1234", "orgasmic"),
-            None
-        );
     }
 
     #[tokio::test]
@@ -4271,32 +3979,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ap971_project_sequence_cold_start_scans_tx_and_node_journals() {
+    async fn project_sequence_policy_mints_uuid_for_node_journal() {
         let tmp = tempfile::tempdir().unwrap();
         let dotorg = tmp.path().join(".orgasmic");
-        let tx_path = dotorg.join("tx").join("2026-06.org");
-        std::fs::create_dir_all(tx_path.parent().unwrap()).unwrap();
-        std::fs::write(
-            tx_path.parent().unwrap().join("2026-05.org"),
-            "#+title: orgasmic project tx 2026-05\n#+orgasmic_version: 1\n\n* TX 2026-05-21 22:10 manager.action orgasmic\n:PROPERTIES:\n:TX_ID:        tx-20260521-orgasmic-0036\n:TIME:         [2026-05-21 Thu 22:10:00]\n:TYPE:         manager.action\n:ACTOR:        dev@example.com\n:MACHINE:      host.local\n:PROJECT:      orgasmic\n:END:\n",
-        )
-        .unwrap();
-        let journal_path = dotorg.join("tasks/TASK-X/journal.org");
-        std::fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
-        let journal = orgasmic_core::node_kernel::append_entry(
-            "",
-            "TASK-X",
-            &orgasmic_core::node_kernel::JournalEntry {
-                entry_id: "tx-20260522-orgasmic-0041".into(),
-                time: "[2026-05-22 Fri 10:00:00]".into(),
-                ty: "comment".into(),
-                actor: "dev@example.com".into(),
-                machine: "host.local".into(),
-                extras: vec![],
-                body: "journal wins the cold-start max".into(),
-            },
-        );
-        std::fs::write(journal_path, journal).unwrap();
         let bus = EventBus::new();
         let handle = spawn(bus);
         let target_journal = dotorg.join("tasks/TASK-Y/journal.org");
@@ -4314,11 +3999,50 @@ mod tests {
             .append_tx(req, Some("req-project-seq".into()))
             .await
             .unwrap();
-        assert_eq!(res.tx_id, "tx-20260601-orgasmic-0042");
+        let uuid = res
+            .tx_id
+            .strip_prefix("tx-20260601-orgasmic-")
+            .expect("date and project slug prefix");
+        Uuid::parse_str(uuid).expect("UUID suffix");
         let source = std::fs::read_to_string(target_journal).unwrap();
         let entries = orgasmic_core::node_kernel::parse_journal(&source, "journal.org").unwrap();
-        assert_eq!(entries[0].entry_id, "tx-20260601-orgasmic-0042");
+        assert_eq!(entries[0].entry_id, res.tx_id);
         assert!(!source.contains("placeholder"));
+    }
+
+    #[tokio::test]
+    async fn two_writers_cannot_mint_the_same_node_journal_tx_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let request = |machine: &str| TxAppend {
+            tx_path: tmp
+                .path()
+                .join(machine)
+                .join(".orgasmic/tasks/TASK-X/journal.org"),
+            entry: sample_entry("placeholder"),
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::ProjectSequence {
+                project_id: "orgasmic".into(),
+                date: "20260901".into(),
+            },
+            request_id: None,
+        };
+        let a = spawn(EventBus::new());
+        let b = spawn(EventBus::new());
+        let (a, b) = tokio::join!(
+            a.append_tx(request("machine-a"), None),
+            b.append_tx(request("machine-b"), None)
+        );
+        let (a, b) = (a.unwrap().tx_id, b.unwrap().tx_id);
+
+        assert_ne!(a, b);
+        for tx_id in [a, b] {
+            Uuid::parse_str(
+                tx_id
+                    .strip_prefix("tx-20260901-orgasmic-")
+                    .expect("date and project slug prefix"),
+            )
+            .expect("UUID suffix");
+        }
     }
 
     #[tokio::test]
@@ -4539,15 +4263,9 @@ mod tests {
             request_id: Some("req-rollback".into()),
         };
         let mut handles = HashMap::new();
-        let mut seq_cache = ProjectTxSeqCache::default();
-        let err = transaction_inner(
-            &mut handles,
-            &mut seq_cache,
-            &rewrites,
-            tx,
-            "req-rollback",
-            || bail!("injected failure after stale propagation"),
-        )
+        let err = transaction_inner(&mut handles, &rewrites, tx, "req-rollback", || {
+            bail!("injected failure after stale propagation")
+        })
         .unwrap_err();
         assert!(err
             .to_string()
@@ -4604,15 +4322,9 @@ mod tests {
             request_id: Some("req-cross-file".into()),
         };
         let mut handles = HashMap::new();
-        let mut seq_cache = ProjectTxSeqCache::default();
-        let err = transaction_inner(
-            &mut handles,
-            &mut seq_cache,
-            &rewrites,
-            tx,
-            "req-cross-file",
-            || bail!("injected crash before commit"),
-        )
+        let err = transaction_inner(&mut handles, &rewrites, tx, "req-cross-file", || {
+            bail!("injected crash before commit")
+        })
         .unwrap_err();
         assert!(err.to_string().contains("injected crash before commit"));
         let backlog = std::fs::read_to_string(&backlog_path).unwrap();
