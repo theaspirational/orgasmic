@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         59c351dc
+:LIVENESS:         a4372f03
 :LIVENESS_AT:      [2026-09-01 Tue 16:10]
 :UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
@@ -652,6 +652,7 @@ operator + agent sessions, no manager handoff write in between).
 - 2026-09-01 (session, cont.): TASK-8DWJP.1.1 manager gates green on =59c351dc= (daemon 26, cli 22, clippy, fmt); Evidence recorded (manager pre-check: parked-ref/autostash reuse is content-based via index stage 3, ledger_sync.rs:320-372); reviewer opus-5 high dispatched.
 - 2026-09-01 (session, cont.): TASK-8DWJP.1.1 review (opus-5 high, tx-6a92d428) REJECT — six assigned items verified; NEW: HIGH symbolic-ref Idle gate before the unmerged guard → a mid-rebase ledger (crash between pull and abort) reports idle forever; HIGH Parked/Autostash/Unrecoverable branches reset without salvaging tracked writes made after the conflicting pull (dec_EWY0K violation); MEDIUM None==None stage-3 match; LOW orphan autostash, LOW push warn only, LOW test under-assertion. Both generations closed; merge 59c351dc KEPT; TASK-8DWJP.1.2 (P1, FIX_SUBTASK) filed with brief =scratchpad/brief-TASK-8DWJP.1.2.md= — manager decided salvage (scratch-index commit) over labelling. Fourth round on this path; each round's items have held, the reviewer keeps finding new edges in the non-transactional git sequence.
 - 2026-09-01 (session, cont.): TASK-8DWJP.1.2 reported (worker b273c465: origin check + rebase abort before the idle gate, strict stage-3 parked-ref match with autostash fallback, scratch-index salvage into <ts>-salvage ref + SALVAGE_REF extra + status text, orphan autostash drop on re-entry, unpushed-parked-ref text; 30 daemon tests; 4 gates PASS) — merging, then gates, then reviewer opus-5 high.
+- 2026-09-01 (session, cont.): TASK-8DWJP.1.2 merged =a4372f03= (19 unpushed merges); manager gates running (=scratchpad/gates-8DWJP.1.2-*.log=); review brief written =scratchpad/brief-TASK-8DWJP.1.2-review.md=. Implementer gen tx-20260901-orgasmic-f0f1bb5d-1282-4298-8d5b-695b018a1f16 closes after the verdict with =--merge-sha a4372f03 --worker-commit b273c465 --worktree-remove --branch-delete=.
 
 ** Next likely actions
 1. Land the 8DWJP.1 verdict (see In flight). If a fix round is needed, it is the last one of chain step 2.
