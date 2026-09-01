@@ -1,0 +1,16 @@
+#+title: orgasmic journal dec_Q78QN
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-7006 graph.decision.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7006
+:TIME:    [2026-09-01 Tue 21:43:10]
+:TYPE:    graph.decision.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/decisions/dec_Q78QN/node.org
+:REASON: created graph node dec_Q78QN
+:NODE_ID: dec_Q78QN
+:EVENT_ID: 9d0e5441-8b82-4612-96fe-cd87343b24d7
+:END:

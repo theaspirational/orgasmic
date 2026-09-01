@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KA934.2
 #+orgasmic_version: 2
 
-* BACKLOG TASK-KA934.2 Decision: are task-comment routes member-reachable? (MEMBER_ALLOWED_ROUTES gap + :ACTOR: namespace)    :e01mc:chain-review:
+* DONE TASK-KA934.2 Decision: are task-comment routes member-reachable? (MEMBER_ALLOWED_ROUTES gap + :ACTOR: namespace) :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-KA934.2
 :PRIORITY: P2
@@ -14,3 +14,5 @@ Option 1 — open the routes: add the three routes to MEMBER_ALLOWED_ROUTES in t
 Option 2 — close the surface: drop TasksComment from the viewer/editor capability lists (or stop advertising it in /me) so the UI hides the composer; delete the dead member-attribution branch and its test.
 
 Manager lean: Option 1 — three places already say members comment; the allow-list is the odd one out. It is an auth-surface change on a LAN/tunnel-exposed daemon, so the operator decides; record as a decision (orgasmic decision create) then file the implementing task with IMPLEMENTS.
+** Evidence
+Decided 2026-09-02 by the operator: option 1 (open the routes). Recorded as ; implementation filed as TASK-KA934.3 (IMPLEMENTS ).

@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-KA934.3
+#+orgasmic_version: 2
+
+* BACKLOG TASK-KA934.3 Open task-comment routes to members with the :ACTOR: collision guard    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-KA934.3
+:IMPLEMENTS: 
+:PRIORITY: P2
+:RELATES_TO: TASK-KA934.2 TASK-KA934.1
+:END:
+
+Implement : add the three task-comment routes to MEMBER_ALLOWED_ROUTES (api.rs:~897); make :ACTOR: a guarded identity namespace (refuse or override an admin req.actor that equals a members.org member name - require_comment_body compares raw strings, writer.rs:~1657); document what a member rename does to edit rights on existing comments; re-enable the member-attribution path test; finish with one live HTTP probe as a member session.
+
+** Acceptance
+- [ ] Member session can POST comment/edit/delete over HTTP; admin :ACTOR: collision refused or explicitly overridden (test each).
+- [ ] task_comments_use_member_session_attribution_and_refresh_activity exercises the real route.
+- [ ] Rename semantics stated in the code or docs; daemon lib tests + clippy -D + fmt green.

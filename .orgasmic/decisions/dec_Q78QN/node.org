@@ -1,0 +1,21 @@
+#+title: orgasmic decision dec_Q78QN
+#+orgasmic_version: 2
+
+* dec_Q78QN Task-comment routes are member-reachable; :ACTOR: becomes a guarded identity namespace
+:PROPERTIES:
+:ID: dec_Q78QN
+:RELATES_TO: TASK-KA934.2 TASK-KA934.1
+:END:
+
+Operator decision 2026-09-02 (option 1 of TASK-KA934.2): members CAN use the task-comment routes.
+
+** Decision
+Add POST /tasks/:id/comments and its /edit and /delete siblings to MEMBER_ALLOWED_ROUTES (crates/orgasmic-daemon/src/api.rs:~897) so the already-advertised tasks.comment capability (authz.rs:~80, /me, UI composer) actually works for Identity::Member.
+
+** Constraints (same change, not follow-ups)
+- :ACTOR: is an identity namespace: post_task_comment must refuse (or explicitly override) an admin req.actor equal to a members.org member name, since require_comment_body compares raw strings (writer.rs:~1657) and Identity::Member carries only a name (authz.rs:~110).
+- State what a member rename does to edit rights on existing comments (KA934.1 authorship checks compare the stored :ACTOR: string).
+- One live HTTP probe as a member session after the change.
+
+** Why
+Three surfaces already promise member commenting (capability list, /me, UI composer); the allow-list is the odd one out and the member-attribution branch in post_task_comment plus its test describe a path that cannot run. KA934.1 authorship/tombstone checks stay as defense-in-depth.
