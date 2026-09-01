@@ -73,3 +73,18 @@
 :REASON: LOW ledger_sync.rs:123-133 the per-tick git rm --cached over :(glob).orgasmic/**/*.tmp, *.tmp.*, *.bak.* has no ownership check, so any legitimately tracked ledger file whose basename ends in .tmp or contains .bak. is silently untracked and its deletion pushed to every machine; today only writer sidecars match, so this is a latent naming-collision hazard, not a live bug
 :EVENT_ID: deed9627-d88a-4c38-933f-85fb2d87a954
 :END:
+
+* tx-20260901-orgasmic-6953 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6953
+:TIME:    [2026-09-01 Tue 16:04:06]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2.1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-MSYN4.2.1/node.org
+:REASON: edited task node TASK-MSYN4.2.1
+:NODE_ID: TASK-MSYN4.2.1
+:EVENT_ID: d6a1ce46-12e2-44c9-968a-ad61984d1511
+:END:
