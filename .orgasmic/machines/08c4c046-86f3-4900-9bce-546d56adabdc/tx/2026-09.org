@@ -309,3 +309,58 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     792b717e-f005-403f-a72c-2746e09c55b6
 :END:
+
+* TX 2026-09-01 Tue 12:42:02 manager.dispatch_started TASK-TP593 TASK-7A0H4 TASK-GCXB7 TASK-SRBGS TASK-JWHXH TASK-EPG6H TASK-ARRV8 TASK-AN992 TASK-IXPD4 TASK-TFXR2 TASK-RGRD5 TASK-LBRX7 TASK-8AV8B TASK-MSYN4 TASK-8DMQS TASK-CLM6W TASK-KA934
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07
+:TIME:         [2026-09-01 Tue 12:42:02]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-TP593 TASK-7A0H4 TASK-GCXB7 TASK-SRBGS TASK-JWHXH TASK-EPG6H TASK-ARRV8 TASK-AN992 TASK-IXPD4 TASK-TFXR2 TASK-RGRD5 TASK-LBRX7 TASK-8AV8B TASK-MSYN4 TASK-8DMQS TASK-CLM6W TASK-KA934
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-tp593-review
+:BRANCH:       e01mc-chain-review-r1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-E01MC-chain-review/brief-E01MC-chain-review.md
+:STARTED_AT:   [2026-09-01 Tue 12:42:02]
+:LIVENESS:     1f7e642a42b3fc4a6899626eb316df95de1bd491
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: goal step 2: first independent whole-chain review of E01MC/TWCP9 (543782d7^1..31344134); operator chose claude-opus-5 high this session; cross-family from the codex-heavy implementers; stdio chat lane per the 08-29/30 review precedent; stall_timeout raised to 3600s as insurance for long provider-bound thinking on a ~12k-line diff
+:EVENT_ID:     0e8c462d-fbee-4a4d-803f-0623d573f25f
+:END:
+
+* TX 2026-09-01 Tue 12:42:03 run.created TASK-TP593 TASK-7A0H4 TASK-GCXB7 TASK-SRBGS TASK-JWHXH TASK-EPG6H TASK-ARRV8 TASK-AN992 TASK-IXPD4 TASK-TFXR2 TASK-RGRD5 TASK-LBRX7 TASK-8AV8B TASK-MSYN4 TASK-8DMQS TASK-CLM6W TASK-KA934
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-a985c953-a811-4310-b84a-3d7bf5b43c01
+:TIME:         [2026-09-01 Tue 12:42:03]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-TP593 TASK-7A0H4 TASK-GCXB7 TASK-SRBGS TASK-JWHXH TASK-EPG6H TASK-ARRV8 TASK-AN992 TASK-IXPD4 TASK-TFXR2 TASK-RGRD5 TASK-LBRX7 TASK-8AV8B TASK-MSYN4 TASK-8DMQS TASK-CLM6W TASK-KA934
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-TP593_TASK-7A0H4_TASK-GCXB7_TASK-SRBGS_TASK-JWHXH_TASK-EPG6H_TASK-ARRV8_TASK-AN992_TASK-IXPD4_TASK-TFXR2_TASK-RGRD5_TASK-LBRX7_TASK-8AV8B_TASK-MSYN4_TASK-8DMQS_TASK-CLM6W_TASK-KA934-reviewer-20260901T124202.jsonl
+:REASON:       goal step 2: first independent whole-chain review of E01MC/TWCP9 (543782d7^1..31344134); operator chose claude-opus-5 high this session; cross-family from the codex-heavy implementers; stdio chat lane per the 08-29/30 review precedent; stall_timeout raised to 3600s as insurance for long provider-bound thinking on a ~12k-line diff
+:RUN_ID:       run-01M1EFVA10Y0FMXCFW01JAY501
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-tp593-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-E01MC-chain-review/brief-E01MC-chain-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-E01MC-chain-review/brief-E01MC-chain-review-98aacf1110a6450a93a45a5dac64e6d3-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-E01MC-chain-review/brief-E01MC-chain-review-98aacf1110a6450a93a45a5dac64e6d3-stdout.log
+:DISPATCH_ATTEMPT: 98aacf1110a6450a93a45a5dac64e6d3
+:PID:          28402
+:DISPATCH_TX:  tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     8a54024d-63b1-4376-a6db-fb7bd3a3a709
+:END:
