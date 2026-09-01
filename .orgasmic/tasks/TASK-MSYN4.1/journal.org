@@ -76,3 +76,68 @@
 :TO_STATE: in_review
 :EVENT_ID: 9ae8d7f7-fa8d-4188-a419-3d0e463c9d11
 :END:
+
+* tx-20260901-orgasmic-6819 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6819
+:TIME:    [2026-09-01 Tue 13:43:26]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1
+:REASON: MEDIUM api.rs:14575 — reject_ledger_rewrite compares components case-sensitively, so on macOS/APFS (case-insensitive) .orgasmic/TX/2026-09.org, .orgasmic/Machines/<uuid>/claims.org and .orgasmic/Views/board.org pass the predicate and the OS resolves them to the real ledger/view files; verified ls .orgasmic/TX and ls .orgasmic/Views both list the real contents on this host
+:EVENT_ID: 347eaab7-480d-4768-8f88-8a8e908a0703
+:END:
+
+* tx-20260901-orgasmic-6820 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6820
+:TIME:    [2026-09-01 Tue 13:43:32]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1
+:REASON: MEDIUM api.rs:14575 — the predicate copies 3 of the 4 daemon-owned surfaces from the writer claim gate (writer.rs:1752 exempts machines|tx|tmp|views); tmp is missing, so POST /org/file can still whole-file rewrite live dispatch prompt bodies such as .orgasmic/tmp/dispatch/implementation/implementation.org with neither gate applying
+:EVENT_ID: 8cb979f9-3fdb-4da7-95f0-cd23a75a132f
+:END:
+
+* tx-20260901-orgasmic-6821 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6821
+:TIME:    [2026-09-01 Tue 13:43:32]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1
+:REASON: LOW api.rs:896-918 — H1 premise correction: /org/file is absent from MEMBER_ALLOWED_ROUTES so identity_middleware (api.rs:959) already 403d every member request before the handler ran; the new Action::OrgWrite gate is sound defense-in-depth but closed no member-reachable hole, and Admin was the only identity reaching post_org_file before and after
+:EVENT_ID: 1ce5550c-9638-423e-aa7d-07efa27e8833
+:END:
+
+* tx-20260901-orgasmic-6822 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6822
+:TIME:    [2026-09-01 Tue 13:43:37]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1
+:REASON: LOW ui/src/lib/capabilities.ts:29 — pre-existing, out of scope: NAV_CAPABILITY has no org key and MEMBER_HIDDEN_PAGES omits org, so members see the Org nav item while both GET and POST /org/file are admin-only, giving a 403 load and a 403 Save-failed toast; violates that file's own stated rule that members never see nav that 403s
+:EVENT_ID: c0e288a9-60b9-423d-b632-626afdfce494
+:END:
+
+* tx-20260901-orgasmic-6823 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6823
+:TIME:    [2026-09-01 Tue 13:43:37]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1
+:REASON: LOW authz.rs:26 — org.write is a vocabulary addition beyond dec_KF2MR node.org:16 but is not documented as such the way ProjectRead is, and ui/src/lib/types.ts:706 MemberCapability lacks org.write which admin GET /me now returns (harmless: MeProject.capabilities is string[])
+:EVENT_ID: 0edc37b9-c2ea-4155-b1bd-b57dc3984090
+:END:
