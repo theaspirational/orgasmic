@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-EPG6H
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-EPG6H tx split: route node-scoped events to journals per the AP971.5 table :e01mc:node_kernel:
+* IN_PROGRESS TASK-EPG6H tx split: route node-scoped events to journals per the AP971.5 table :e01mc:node_kernel:
 :PROPERTIES:
 :DEPENDS_ON: TASK-SRBGS
 :ID: TASK-EPG6H

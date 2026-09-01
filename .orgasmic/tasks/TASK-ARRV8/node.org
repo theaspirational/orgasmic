@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-ARRV8
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-ARRV8 Artifacts onto the node kernel :e01mc:node_kernel:
+* IN_PROGRESS TASK-ARRV8 Artifacts onto the node kernel :e01mc:node_kernel:
 :PROPERTIES:
 :DEPENDS_ON:  TASK-TP593 TASK-7A0H4
 :ID: TASK-ARRV8

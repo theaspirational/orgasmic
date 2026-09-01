@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8AV8B
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-8AV8B Incremental refresh: per-node reload and writer apply-own-write :e01mc:node_kernel:
+* IN_PROGRESS TASK-8AV8B Incremental refresh: per-node reload and writer apply-own-write :e01mc:node_kernel:
 :PROPERTIES:
 :DEPENDS_ON: TASK-EPG6H
 :ID: TASK-8AV8B
