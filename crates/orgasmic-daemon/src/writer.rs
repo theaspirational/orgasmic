@@ -321,7 +321,6 @@ impl std::fmt::Debug for FileMutate {
     }
 }
 
-#[derive(Debug)]
 enum WriterCommand {
     Tx {
         req: TxAppend,
@@ -364,6 +363,10 @@ enum WriterCommand {
     /// Release a hold and run the appends that queued behind it, in order.
     ReleaseSessions {
         paths: Vec<PathBuf>,
+        reply: oneshot::Sender<()>,
+    },
+    Barrier {
+        run: Box<dyn FnOnce() + Send>,
         reply: oneshot::Sender<()>,
     },
     Shutdown {
@@ -847,6 +850,29 @@ fn cached_transaction_from_map(
 impl WriterHandle {
     pub(crate) fn applies_own_writes(&self) -> bool {
         self.index.is_some()
+    }
+
+    /// Run blocking maintenance after all accepted writes and before later ones.
+    pub async fn run_barrier<T, F>(&self, run: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let (result_tx, result_rx) = oneshot::channel();
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(WriterCommand::Barrier {
+                run: Box::new(move || {
+                    let _ = result_tx.send(run());
+                }),
+                reply,
+            })
+            .await
+            .map_err(|_| anyhow!("writer task is gone"))?;
+        rx.await.map_err(|_| anyhow!("writer reply dropped"))?;
+        result_rx
+            .await
+            .map_err(|_| anyhow!("writer barrier result dropped"))
     }
 
     /// Apply the paths this write just produced to the live projection.
@@ -1907,6 +1933,12 @@ fn describe_command(cmd: &WriterCommand) -> PendingWrite {
             tx_type: None,
             path: paths.first().cloned(),
         },
+        WriterCommand::Barrier { .. } => PendingWrite {
+            kind: "barrier".to_string(),
+            run_id: None,
+            tx_type: None,
+            path: None,
+        },
         WriterCommand::Shutdown { .. } => PendingWrite {
             kind: "shutdown".to_string(),
             run_id: None,
@@ -2350,6 +2382,10 @@ async fn writer_loop(
                             .saturating_add(ready_count.saturating_sub(offset + 1)),
                     );
                 }
+            }
+            WriterCommand::Barrier { run, reply } => {
+                run();
+                let _ = reply.send(());
             }
             WriterCommand::Shutdown { reply } => {
                 tx_handles.clear();
@@ -3473,6 +3509,63 @@ mod tests {
         assert_eq!(res.tx_id, "tx-test-1");
         let source = std::fs::read_to_string(&tx_path).unwrap();
         assert!(source.contains("tx-test-1"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn barrier_runs_before_an_append_queued_during_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tx_path = tmp.path().join("tx/2026-09.org");
+        let handle = spawn(EventBus::new());
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+        let barrier_handle = handle.clone();
+        let reset_path = tx_path.clone();
+        let barrier = tokio::spawn(async move {
+            barrier_handle
+                .run_barrier(move || {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    std::fs::create_dir_all(reset_path.parent().unwrap()).unwrap();
+                    std::fs::write(reset_path, "#+title: reset tx\n#+orgasmic_version: 1\n")
+                        .unwrap();
+                })
+                .await
+                .unwrap();
+        });
+        tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())
+            .await
+            .unwrap();
+
+        let append_handle = handle.clone();
+        let append_path = tx_path.clone();
+        let append = tokio::spawn(async move {
+            append_handle
+                .append_tx(
+                    TxAppend {
+                        tx_path: append_path,
+                        entry: sample_entry("tx-after-reset"),
+                        project_id: Some("orgasmic".into()),
+                        tx_id_policy: TxIdPolicy::Preserve,
+                        request_id: None,
+                    },
+                    None,
+                )
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while handle.status().queue_depth != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        release_tx.send(()).unwrap();
+        barrier.await.unwrap();
+        append.await.unwrap().unwrap();
+        let tx = parse_tx_file(&std::fs::read_to_string(tx_path).unwrap(), "barrier tx").unwrap();
+        assert_eq!(tx.len(), 1);
+        assert_eq!(tx[0].tx_id, "tx-after-reset");
     }
 
     #[tokio::test]

@@ -60,14 +60,32 @@ pub(crate) enum SyncOutcome {
 ///
 /// `Idle` includes the normal single-machine cases: an ordinary project
 /// checkout or no `origin`.
+#[cfg(test)]
 pub(crate) fn sync_once(ledger: &Path, machine_id: &str) -> Result<SyncOutcome> {
     sync_once_inner(ledger, machine_id, |_| {})
 }
 
+#[cfg(test)]
 fn sync_once_inner(
     ledger: &Path,
     machine_id: &str,
+    before_push: impl FnMut(usize),
+) -> Result<SyncOutcome> {
+    sync_once_with_park(
+        ledger,
+        machine_id,
+        before_push,
+        |ledger, machine_id, paths, local_commit| {
+            park_conflict(ledger, machine_id, paths, local_commit)
+        },
+    )
+}
+
+fn sync_once_with_park(
+    ledger: &Path,
+    machine_id: &str,
     mut before_push: impl FnMut(usize),
+    mut park: impl FnMut(&Path, &str, Vec<String>, Option<String>) -> Result<SyncOutcome>,
 ) -> Result<SyncOutcome> {
     uuid::Uuid::parse_str(machine_id).context("machine-id is not a UUID")?;
     if git_optional(ledger, &["symbolic-ref", "--short", "HEAD"])?.as_deref() != Some("orgasmic")
@@ -156,12 +174,20 @@ fn sync_once_inner(
                 ledger,
                 &["pull", "--rebase", "--autostash", "origin", "orgasmic"],
             )?;
-            if !pull.status.success() {
-                let paths = conflict_paths(&pull);
-                if !paths.is_empty() {
+            let paths = unmerged_paths(ledger)?;
+            if !paths.is_empty() {
+                let local_commit = if rebase_in_progress(ledger)? {
                     git(ledger, &["rebase", "--abort"])?;
-                    return park_conflict(ledger, machine_id, paths);
-                }
+                    None
+                } else {
+                    Some(
+                        git_optional(ledger, &["rev-parse", "stash@{0}"])?
+                            .context("autostash conflict has no retained stash")?,
+                    )
+                };
+                return park(ledger, machine_id, paths, local_commit);
+            }
+            if !pull.status.success() {
                 let _ = git_output(ledger, &["rebase", "--abort"]);
                 bail!("git pull --rebase failed: {}", output_message(&pull));
             }
@@ -239,30 +265,55 @@ fn commit_staged(ledger: &Path, message: &str) -> Result<()> {
     Ok(())
 }
 
-fn conflict_paths(output: &Output) -> Vec<String> {
-    let text = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let mut paths = Vec::new();
-    for line in text.lines().map(str::trim) {
-        if line.starts_with("CONFLICT (") {
-            if let Some((_, path)) = line.rsplit_once(" in ") {
-                if !paths.iter().any(|known| known == path) {
-                    paths.push(path.to_string());
-                }
-            }
-        }
+fn unmerged_paths(ledger: &Path) -> Result<Vec<String>> {
+    let output = git_output(
+        ledger,
+        &["diff", "--name-only", "--diff-filter=U", "-z", "--"],
+    )?;
+    if !output.status.success() {
+        bail!("read unmerged paths: {}", output_message(&output));
     }
-    paths
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
+        .collect())
 }
 
-fn park_conflict(ledger: &Path, machine_id: &str, paths: Vec<String>) -> Result<SyncOutcome> {
-    stage_ledger(ledger, machine_id)?;
-    commit_staged(ledger, &format!("ledger: conflict salvage {machine_id}"))?;
-    let local_head = git_optional(ledger, &["rev-parse", "HEAD"])?
-        .context("ledger conflict has no local HEAD")?;
+fn rebase_in_progress(ledger: &Path) -> Result<bool> {
+    for marker in ["rebase-merge", "rebase-apply"] {
+        let path = git_optional(ledger, &["rev-parse", "--git-path", marker])?
+            .context("ledger has no git directory")?;
+        let path = PathBuf::from(path);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            ledger.join(path)
+        };
+        if path.exists() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn park_conflict(
+    ledger: &Path,
+    machine_id: &str,
+    paths: Vec<String>,
+    local_commit: Option<String>,
+) -> Result<SyncOutcome> {
+    let retained_stash = local_commit.is_some();
+    let local_head = match local_commit {
+        Some(commit) => commit,
+        None => {
+            stage_ledger(ledger, machine_id)?;
+            commit_staged(ledger, &format!("ledger: conflict salvage {machine_id}"))?;
+            git_optional(ledger, &["rev-parse", "HEAD"])?
+                .context("ledger conflict has no local HEAD")?
+        }
+    };
     let base = format!(
         "refs/orgasmic/conflicts/{machine_id}/{}",
         Utc::now().format("%Y%m%dT%H%M%SZ")
@@ -274,7 +325,7 @@ fn park_conflict(ledger: &Path, machine_id: &str, paths: Vec<String>) -> Result<
         }
         parked_ref = format!("{base}-{suffix}");
     }
-    git(ledger, &["update-ref", &parked_ref, "HEAD"])?;
+    git(ledger, &["update-ref", &parked_ref, &local_head])?;
     match git_output(
         ledger,
         &["push", "origin", &format!("{parked_ref}:{parked_ref}")],
@@ -286,6 +337,9 @@ fn park_conflict(ledger: &Path, machine_id: &str, paths: Vec<String>) -> Result<
             "push parked ledger conflict ref failed"
         ),
         Err(error) => tracing::warn!(parked_ref, %error, "push parked ledger conflict ref failed"),
+    }
+    if retained_stash {
+        git(ledger, &["stash", "drop"])?;
     }
     git(ledger, &["fetch", "origin", "orgasmic"])?;
     let remote_head = git_optional(ledger, &["rev-parse", "origin/orgasmic"])?
@@ -299,11 +353,30 @@ fn park_conflict(ledger: &Path, machine_id: &str, paths: Vec<String>) -> Result<
     })
 }
 
+#[cfg(test)]
 fn sync_ledger_at(
     ledger: &Path,
     machine_id: &str,
     statuses: &LedgerSyncStatuses,
     now: DateTime<Utc>,
+) -> Option<SyncOutcome> {
+    sync_ledger_at_with_park(
+        ledger,
+        machine_id,
+        statuses,
+        now,
+        |ledger, machine_id, paths, local_commit| {
+            park_conflict(ledger, machine_id, paths, local_commit)
+        },
+    )
+}
+
+fn sync_ledger_at_with_park(
+    ledger: &Path,
+    machine_id: &str,
+    statuses: &LedgerSyncStatuses,
+    now: DateTime<Utc>,
+    park: impl FnMut(&Path, &str, Vec<String>, Option<String>) -> Result<SyncOutcome>,
 ) -> Option<SyncOutcome> {
     let previous = {
         let mut statuses = statuses.lock().expect("ledger sync status lock");
@@ -319,7 +392,7 @@ fn sync_ledger_at(
         status.clone()
     };
 
-    match sync_once(ledger, machine_id) {
+    match sync_once_with_park(ledger, machine_id, |_| {}, park) {
         Ok(outcome) => {
             let recovered = previous.consecutive_failures > 0;
             let (status_outcome, error) = match &outcome {
@@ -487,8 +560,24 @@ pub(crate) fn spawn(
                 let sync_machine_id = machine_id.clone();
                 let statuses = statuses.clone();
                 let sync_ledger = ledger.clone();
+                let barrier_writer = writer.clone();
+                let runtime = tokio::runtime::Handle::current();
                 let result = tokio::task::spawn_blocking(move || {
-                    sync_ledger_at(&sync_ledger, &sync_machine_id, &statuses, Utc::now())
+                    sync_ledger_at_with_park(
+                        &sync_ledger,
+                        &sync_machine_id,
+                        &statuses,
+                        Utc::now(),
+                        move |ledger, machine_id, paths, local_commit| {
+                            let ledger = ledger.to_path_buf();
+                            let machine_id = machine_id.to_string();
+                            runtime
+                                .block_on(barrier_writer.run_barrier(move || {
+                                    park_conflict(&ledger, &machine_id, paths, local_commit)
+                                }))
+                                .context("run ledger conflict writer barrier")?
+                        },
+                    )
                 })
                 .await;
                 match result {
@@ -835,11 +924,8 @@ mod tests {
         let (remote, a, b) = seed_remote(&tmp);
         let machine_id = uuid::Uuid::new_v4().to_string();
         let relative = ".orgasmic/tasks/T1/node.org";
-        for (repo, contents) in [(&a, "a\n"), (&b, "b\n")] {
-            let path = repo.join(relative);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, contents).unwrap();
-        }
+        std::fs::create_dir_all(b.join(relative).parent().unwrap()).unwrap();
+        std::fs::write(b.join(relative), "base\n").unwrap();
         run(&b, &["add", relative]);
         run(
             &b,
@@ -850,7 +936,23 @@ mod tests {
                 "user.email=test@example.com",
                 "commit",
                 "-m",
-                "remote conflict",
+                "base conflict file",
+            ],
+        );
+        run(&b, &["push", "origin", "orgasmic"]);
+        run(&a, &["pull", "--ff-only", "origin", "orgasmic"]);
+        std::fs::write(a.join(relative), "a\n").unwrap();
+        run(&b, &["rm", relative]);
+        run(
+            &b,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "remote conflict deletion",
             ],
         );
         run(&b, &["push", "origin", "orgasmic"]);
@@ -897,17 +999,16 @@ mod tests {
                 .as_deref(),
             Some(remote_head.as_str())
         );
-        assert_eq!(std::fs::read_to_string(a.join(relative)).unwrap(), "b\n");
+        assert!(!a.join(relative).exists());
 
         let writer = crate::writer::spawn(crate::events::EventBus::new());
         record_sync_conflict(&writer, &a, "project-a", &machine_id, now, &conflict)
             .await
             .unwrap();
-        let tx_path = a
-            .join(".orgasmic/machines")
-            .join(&machine_id)
-            .join("tx")
-            .join(format!("{}.org", now.format("%Y-%m")));
+        let tx_path = a.join(format!(
+            ".orgasmic/machines/{machine_id}/tx/{}.org",
+            now.format("%Y-%m")
+        ));
         let tx = orgasmic_core::tx::parse_tx_file(
             &std::fs::read_to_string(&tx_path).unwrap(),
             "machine conflict tx",
@@ -935,6 +1036,84 @@ mod tests {
                 .as_deref(),
             Some("fresh a write")
         );
+    }
+
+    #[test]
+    fn autostash_pop_conflict_parks_stash_and_cleans_the_next_tick() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (remote, a, b) = seed_remote(&tmp);
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        let foreign_machine = uuid::Uuid::new_v4().to_string();
+        let relative = format!(".orgasmic/machines/{foreign_machine}/state.org");
+        std::fs::create_dir_all(b.join(&relative).parent().unwrap()).unwrap();
+        std::fs::write(b.join(&relative), "base\n").unwrap();
+        run(&b, &["add", &relative]);
+        run(
+            &b,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "base foreign machine file",
+            ],
+        );
+        run(&b, &["push", "origin", "orgasmic"]);
+        run(&a, &["pull", "--ff-only", "origin", "orgasmic"]);
+
+        std::fs::write(a.join(&relative), "local bytes\n").unwrap();
+        std::fs::write(b.join(&relative), "remote bytes\n").unwrap();
+        run(&b, &["add", &relative]);
+        run(
+            &b,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "remote foreign machine edit",
+            ],
+        );
+        run(&b, &["push", "origin", "orgasmic"]);
+
+        let SyncOutcome::Conflict {
+            parked_ref, paths, ..
+        } = sync_once(&a, &machine_id).unwrap()
+        else {
+            panic!("autostash-pop conflict was not parked");
+        };
+        assert_eq!(paths, [relative.as_str()]);
+        assert_eq!(
+            git_optional(&a, &["show", &format!("{parked_ref}:{relative}")])
+                .unwrap()
+                .as_deref(),
+            Some("local bytes")
+        );
+        assert_eq!(
+            std::fs::read_to_string(a.join(&relative)).unwrap(),
+            "remote bytes\n"
+        );
+        assert!(unmerged_paths(&a).unwrap().is_empty());
+        assert_eq!(
+            git_optional(&a, &["status", "--porcelain"])
+                .unwrap()
+                .as_deref(),
+            Some("")
+        );
+
+        assert!(matches!(
+            sync_once(&a, &machine_id).unwrap(),
+            SyncOutcome::Synced { .. }
+        ));
+        let remote_bytes = git_optional(&remote, &["show", &format!("orgasmic:{relative}")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(remote_bytes, "remote bytes");
+        assert!(!remote_bytes.contains("<<<<<<<"));
     }
 
     #[test]
