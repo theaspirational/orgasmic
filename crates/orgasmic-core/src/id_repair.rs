@@ -183,7 +183,11 @@ pub fn repair_id_collisions(
     base_ref: &str,
     incoming_ref: &str,
 ) -> Result<Vec<IdRepairMapping>, IdRepairError> {
-    let occurrences = collect_identity_occurrences(project_root);
+    let occurrences =
+        collect_identity_occurrences(project_root).map_err(|error| IdRepairError::Io {
+            path: project_root.join(".orgasmic"),
+            detail: error.to_string(),
+        })?;
     let dupes = duplicate_id_groups(&occurrences);
     if dupes.is_empty() {
         return Err(IdRepairError::NoDuplicates);
@@ -217,7 +221,11 @@ pub fn repair_id_collisions_with_incoming(
     project_root: &Path,
     incoming_paths: &HashMap<String, PathBuf>,
 ) -> Result<Vec<IdRepairMapping>, IdRepairError> {
-    let occurrences = collect_identity_occurrences(project_root);
+    let occurrences =
+        collect_identity_occurrences(project_root).map_err(|error| IdRepairError::Io {
+            path: project_root.join(".orgasmic"),
+            detail: error.to_string(),
+        })?;
     let dupes = duplicate_id_groups(&occurrences);
     if dupes.is_empty() {
         return Err(IdRepairError::NoDuplicates);

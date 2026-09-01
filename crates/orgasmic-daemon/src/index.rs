@@ -3478,17 +3478,20 @@ pub(crate) fn cross_reference_status(
             CrossRefStatus::MissingId
         };
     }
-    let ids = cache.entry(project.to_string()).or_insert_with(|| {
-        snap.board
+    let ids =
+        cache.entry(project.to_string()).or_insert_with(|| {
+            snap.board
             .iter()
             .find(|entry| entry.id == project)
             .filter(|entry| entry.path.join(".orgasmic").is_dir())
-            .map(|entry| {
-                orgasmic_core::known_ids_from_occurrences(
-                    &orgasmic_core::collect_identity_occurrences(&entry.path),
-                )
+            .and_then(|entry| match orgasmic_core::collect_identity_occurrences(&entry.path) {
+                Ok(occurrences) => Some(orgasmic_core::known_ids_from_occurrences(&occurrences)),
+                Err(error) => {
+                    warn!(project = %project, %error, "foreign project identity lint failed");
+                    None
+                }
             })
-    });
+        });
     match ids {
         None => CrossRefStatus::UnknownProject,
         Some(ids) if ids.contains(id) => CrossRefStatus::Resolved,
@@ -3504,7 +3507,18 @@ pub(crate) fn cross_reference_status(
 fn lint_cross_project_references(project_root: &Path, snap: &mut IndexSnapshot) {
     let mut cache = CrossRefCache::new();
     let mut findings = Vec::new();
-    for (token, path, _, context) in orgasmic_core::collect_reference_occurrences(project_root) {
+    let references = match orgasmic_core::collect_reference_occurrences(project_root) {
+        Ok(references) => references,
+        Err(error) => {
+            push_parse_error(
+                snap,
+                project_root.join(".orgasmic"),
+                format!("identity lint failed: {error:#}"),
+            );
+            return;
+        }
+    };
+    for (token, path, _, context) in references {
         let Some((project, id)) = orgasmic_core::split_cross_project_reference(&token) else {
             continue;
         };
@@ -3824,8 +3838,17 @@ fn tx_event_id(entry: &TxEntry) -> &str {
 }
 
 fn lint_project_identity_state(project_root: &Path, snap: &mut IndexSnapshot) {
-    for finding in lint_project_identities(project_root) {
-        push_parse_error(snap, finding.path, finding.message);
+    match lint_project_identities(project_root) {
+        Ok(findings) => {
+            for finding in findings {
+                push_parse_error(snap, finding.path, finding.message);
+            }
+        }
+        Err(error) => push_parse_error(
+            snap,
+            project_root.join(".orgasmic"),
+            format!("identity lint failed: {error:#}"),
+        ),
     }
 }
 

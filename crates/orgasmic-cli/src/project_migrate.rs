@@ -48,6 +48,7 @@ struct Migration {
     rewrites: BTreeMap<PathBuf, String>,
     old_files: Vec<PathBuf>,
     headings: BTreeMap<&'static str, usize>,
+    anomalies: usize,
     in_place_nodes: usize,
     bytes: usize,
     project_source: String,
@@ -74,7 +75,7 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
         println!("already migrated");
         return Ok(());
     } else if !dry_run {
-        apply(root, &migration)?;
+        apply_with_recovery(root, &migration)?;
     }
     println!("{}", if dry_run { "DRY RUN" } else { "MIGRATED" });
     for (collection, count) in &migration.headings {
@@ -85,7 +86,7 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
         migration.nodes.len() + migration.in_place_nodes
     );
     println!("  bytes {}", migration.bytes);
-    println!("  anomalies 0");
+    println!("  anomalies {}", migration.anomalies);
     println!("  heading_round_trip byte-for-byte");
     if to_branch {
         println!("  target orphan branch orgasmic");
@@ -200,6 +201,7 @@ fn plan(root: &Path) -> Result<Migration> {
                     .map(|heading| file.slice(heading.span.clone()))
                     .collect::<String>();
             if reassembled != file.source() {
+                migration.anomalies += 1;
                 bail!(
                     "byte-for-byte heading round trip failed: {}",
                     source_path.display()
@@ -372,6 +374,17 @@ fn apply(root: &Path, migration: &Migration) -> Result<()> {
     )
     .context("write .orgasmic/project.org")?;
     Ok(())
+}
+
+fn apply_with_recovery(root: &Path, migration: &Migration) -> Result<()> {
+    apply(root, migration).with_context(|| {
+        format!(
+            "migration partially applied; recover {} with:\n  git -C {} checkout -- .orgasmic\n  git -C {} clean -fd -- .orgasmic",
+            root.display(),
+            root.display(),
+            root.display()
+        )
+    })
 }
 
 fn project_id(source: &str) -> Result<String> {
@@ -631,6 +644,34 @@ mod tests {
             "keep me"
         );
         assert!(plan(tmp.path()).unwrap().old_files.is_empty());
+    }
+
+    #[test]
+    fn partial_apply_error_names_exact_recovery_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tasks = tmp.path().join(".orgasmic/tasks");
+        std::fs::create_dir_all(tasks.join("TASK-B")).unwrap();
+        let mut migration = Migration::default();
+        migration.nodes.insert(
+            tasks.join("TASK-A"),
+            ("node a".to_string(), "journal a".to_string()),
+        );
+        migration.nodes.insert(
+            tasks.join("TASK-B"),
+            ("node b".to_string(), "journal b".to_string()),
+        );
+
+        let error = apply_with_recovery(tmp.path(), &migration).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(tasks.join("TASK-A/node.org").is_file());
+        assert!(message.contains(&format!(
+            "git -C {} checkout -- .orgasmic",
+            tmp.path().display()
+        )));
+        assert!(message.contains(&format!(
+            "git -C {} clean -fd -- .orgasmic",
+            tmp.path().display()
+        )));
     }
 
     #[test]

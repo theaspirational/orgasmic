@@ -405,6 +405,7 @@ async fn record_sync_conflict(
                 tx_path: ledger
                     .join(".orgasmic/machines")
                     .join(machine_id)
+                    .join("tx")
                     .join(format!("{}.org", now.format("%Y-%m"))),
                 entry,
                 project_id: Some(project_id.to_string()),
@@ -779,6 +780,7 @@ mod tests {
         let tx_path = a
             .join(".orgasmic/machines")
             .join(&machine_id)
+            .join("tx")
             .join(format!("{}.org", now.format("%Y-%m")));
         let tx = orgasmic_core::tx::parse_tx_file(
             &std::fs::read_to_string(&tx_path).unwrap(),

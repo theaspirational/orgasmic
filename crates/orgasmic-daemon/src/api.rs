@@ -8589,7 +8589,7 @@ async fn refresh_after_tx(
     if state.writer.applies_own_writes() {
         // The writer already applied this write inline. If that apply failed,
         // the bytes are still durable — answer the committed-503 contract.
-        if let Some(error) = state.writer.take_apply_failure() {
+        if let Some(error) = state.writer.take_apply_failure(tx_id) {
             return Err(committed_refresh_error(tx_id, error));
         }
         // A prior write left paths unprojected. The retry that gets here has
@@ -8634,7 +8634,7 @@ async fn refresh_after_project_mutation(
     if state.writer.applies_own_writes() {
         // The writer already applied this write inline. If that apply failed,
         // the bytes are still durable — answer the committed-503 contract.
-        if let Some(error) = state.writer.take_apply_failure() {
+        if let Some(error) = state.writer.take_apply_failure(tx_id) {
             return Err(committed_refresh_error(tx_id, error));
         }
         // A prior write left paths unprojected. The retry that gets here has
@@ -8763,8 +8763,23 @@ struct TxDestination {
     tx_id_policy: TxIdPolicy,
 }
 
+const DISPATCH_PROJECT_TX_TYPES: &[&str] = &[
+    "manager.dispatch_started",
+    "run.created",
+    "implementer.commit_pending",
+    "implementer.reported",
+    "reviewer.reported",
+    "architector.reported",
+    "implementer.done",
+    "reviewer.done",
+    "architector.done",
+    "fixer.done",
+    "manager.dispatch_aborted",
+    "manager.dispatch_orphaned",
+];
+
 fn event_routes_to_journal(ty: &str) -> bool {
-    if ty.ends_with(".deleted") {
+    if ty.ends_with(".deleted") || DISPATCH_PROJECT_TX_TYPES.contains(&ty) {
         return false;
     }
     matches!(
@@ -24179,6 +24194,7 @@ pub(crate) mod tests {
             ("implementer.commit_pending", false),
             ("manager.dispatch_aborted", false),
             ("manager.dispatch_orphaned", false),
+            ("ledger.sync_conflict", false),
             ("manager.action", false),
             ("manager.board_reconciled", false),
             ("manager.correction", false),
@@ -24250,6 +24266,37 @@ pub(crate) mod tests {
                 destination.tx_path.display()
             );
         }
+    }
+
+    #[test]
+    fn shipped_tx_types_match_rust_routes_to_journal() {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../shipped/schema/tx.org"
+        ));
+        let block = source
+            .split_once("complete routed type set is:\n")
+            .expect("shipped tx schema has routed type block")
+            .1
+            .split("\n\n")
+            .next()
+            .unwrap();
+        let shipped = block
+            .lines()
+            .map(|line| {
+                line.strip_prefix("- =")
+                    .and_then(|line| line.strip_suffix('='))
+                    .expect("routed type block contains only bullets")
+            })
+            .collect::<BTreeSet<_>>();
+        let rust = DISPATCH_PROJECT_TX_TYPES
+            .iter()
+            .copied()
+            .filter(|ty| !event_routes_to_journal(ty))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(shipped, rust);
+        assert!(!event_routes_to_journal("ledger.sync_conflict"));
     }
 
     #[test]
@@ -32821,6 +32868,44 @@ pub(crate) mod tests {
             "the second project's write must repair the first project's queued \
              path, not discard the record of it"
         );
+    }
+
+    #[tokio::test]
+    async fn apply_failure_is_not_reported_by_the_next_request() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let mut state = direct_stage_test_state(home).await;
+        state.tx_commit_to_project = true;
+
+        state.index.fail_next_refresh();
+        let first = prepare_api_tx(
+            &state,
+            ApiTxRequest {
+                ty: "manager.note".to_string(),
+                actor: None,
+                project: Some("orgasmic".to_string()),
+                task: None,
+                target: None,
+                reason: "first request".to_string(),
+                request_id: Some("apply-failure-owner".to_string()),
+                extra: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+        state.writer.append_tx(first.tx, None).await.unwrap();
+
+        let second = post_task_create(
+            State(state.clone()),
+            Path("orgasmic".to_string()),
+            Json(task_create_request("TASK-SCND2", "apply-failure-next")),
+        )
+        .await
+        .expect("the next request must repair, not inherit, the first request's failure");
+        assert_eq!(second.0.id, "TASK-SCND2");
     }
 
     #[tokio::test]

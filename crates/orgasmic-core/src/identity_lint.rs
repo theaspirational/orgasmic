@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
+
 use crate::collection_node_file_paths;
 use crate::id::is_valid_greenfield_identity;
 use crate::org::{Heading, OrgFile};
@@ -16,6 +18,8 @@ pub struct IdentityOccurrence {
     pub line: Option<usize>,
     pub context: String,
 }
+
+pub type ReferenceOccurrence = (String, PathBuf, Option<usize>, String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdentityLintKind {
@@ -190,7 +194,7 @@ fn collect_glossary_identities(path: &Path, file: &OrgFile, out: &mut Vec<Identi
 fn collect_dangling_reference_tokens(
     path: &Path,
     file: &OrgFile,
-    out: &mut Vec<(String, PathBuf, Option<usize>, String)>,
+    out: &mut Vec<ReferenceOccurrence>,
 ) {
     for heading in &file.headings {
         let owner = heading
@@ -213,16 +217,20 @@ fn collect_dangling_reference_tokens(
 }
 
 /// Collect every node identity position under `.orgasmic/`.
-pub fn collect_identity_occurrences(project_root: &Path) -> Vec<IdentityOccurrence> {
+pub fn collect_identity_occurrences(project_root: &Path) -> Result<Vec<IdentityOccurrence>> {
     let mut out = Vec::new();
-    for path in collection_node_file_paths(project_root, "tasks").unwrap_or_default() {
+    for path in collection_node_file_paths(project_root, "tasks")
+        .context("list .orgasmic/tasks for identity lint")?
+    {
         let Some(file) = read_org(&path) else {
             continue;
         };
         collect_task_identities(&path, &file, &mut out);
     }
     for collection in ["decisions", "glossary"] {
-        for path in collection_node_file_paths(project_root, collection).unwrap_or_default() {
+        for path in collection_node_file_paths(project_root, collection)
+            .with_context(|| format!("list .orgasmic/{collection} for identity lint"))?
+        {
             let Some(file) = read_org(&path) else {
                 continue;
             };
@@ -233,22 +241,22 @@ pub fn collect_identity_occurrences(project_root: &Path) -> Vec<IdentityOccurren
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Collect `:RELATES_TO:` / `:GLOSSARY_REFS:` / `:PARENT:` / task drawer reference tokens.
-pub fn collect_reference_occurrences(
-    project_root: &Path,
-) -> Vec<(String, PathBuf, Option<usize>, String)> {
+pub fn collect_reference_occurrences(project_root: &Path) -> Result<Vec<ReferenceOccurrence>> {
     let mut out = Vec::new();
     for collection in ["tasks", "decisions", "glossary"] {
-        for path in collection_node_file_paths(project_root, collection).unwrap_or_default() {
+        for path in collection_node_file_paths(project_root, collection)
+            .with_context(|| format!("list .orgasmic/{collection} for reference lint"))?
+        {
             if let Some(file) = read_org(&path) {
                 collect_dangling_reference_tokens(&path, &file, &mut out);
             }
         }
     }
-    out
+    Ok(out)
 }
 
 pub fn lint_identity_occurrences(occurrences: &[IdentityOccurrence]) -> Vec<IdentityLintFinding> {
@@ -296,7 +304,7 @@ pub fn lint_identity_occurrences(occurrences: &[IdentityOccurrence]) -> Vec<Iden
 
 pub fn lint_dangling_references(
     known_ids: &BTreeSet<String>,
-    references: &[(String, PathBuf, Option<usize>, String)],
+    references: &[ReferenceOccurrence],
 ) -> Vec<IdentityLintFinding> {
     let mut findings = Vec::new();
     for (token, path, line, context) in references {
@@ -346,13 +354,13 @@ pub fn known_ids_from_occurrences(occurrences: &[IdentityOccurrence]) -> BTreeSe
 }
 
 /// Scan a project tree for identity lint findings.
-pub fn lint_project_identities(project_root: &Path) -> Vec<IdentityLintFinding> {
-    let occurrences = collect_identity_occurrences(project_root);
+pub fn lint_project_identities(project_root: &Path) -> Result<Vec<IdentityLintFinding>> {
+    let occurrences = collect_identity_occurrences(project_root)?;
     let mut findings = lint_identity_occurrences(&occurrences);
     let known = known_ids_from_occurrences(&occurrences);
-    let references = collect_reference_occurrences(project_root);
+    let references = collect_reference_occurrences(project_root)?;
     findings.extend(lint_dangling_references(&known, &references));
-    findings
+    Ok(findings)
 }
 
 /// Paths (relative to project root) that hold org identities or references.
@@ -500,7 +508,7 @@ mod tests {
             &root.join(".orgasmic/tasks/TASK-001/node.org"),
             "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 Legacy-only\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
         );
-        let findings = lint_project_identities(root);
+        let findings = lint_project_identities(root).unwrap();
         assert!(
             !findings
                 .iter()
@@ -537,7 +545,7 @@ mod tests {
                 "#+title: orgasmic decision {anchor}\n#+orgasmic_version: 2\n\n* {anchor} Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"
             ),
         );
-        let findings = lint_project_identities(root);
+        let findings = lint_project_identities(root).unwrap();
         assert!(
             findings.iter().any(
                 |f| matches!(f.kind, IdentityLintKind::DuplicateId) && f.message.contains(&dup)
@@ -564,7 +572,7 @@ mod tests {
                 "#+title: orgasmic glossary term {id}\n#+orgasmic_version: 2\n\n* {id} Example\n:PROPERTIES:\n:ID: {id}\n:RELATES_TO: missing-slug\n:END:\n"
             ),
         );
-        let findings = lint_project_identities(root);
+        let findings = lint_project_identities(root).unwrap();
         assert!(
             findings
                 .iter()
@@ -585,7 +593,7 @@ mod tests {
                 "#+title: orgasmic glossary term {id}\n#+orgasmic_version: 2\n\n* {id} Example\n:PROPERTIES:\n:ID: {id}\n:RELATES_TO: other-project:TASK-AB2DE\n:END:\n"
             ),
         );
-        let findings = lint_project_identities(root);
+        let findings = lint_project_identities(root).unwrap();
         assert!(
             !findings
                 .iter()
@@ -598,6 +606,22 @@ mod tests {
     fn retired_architecture_id_remains_unresolved_for_write_time_guards() {
         let unresolved = unresolved_reference_tokens("RELATES_TO", "arch_GONE99", &BTreeSet::new());
         assert_eq!(unresolved, vec!["arch_GONE99"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_collection_is_an_error_not_a_clean_lint() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let tasks = tmp.path().join(".orgasmic/tasks");
+        fs::create_dir_all(&tasks).unwrap();
+        fs::set_permissions(&tasks, fs::Permissions::from_mode(0o000)).unwrap();
+        let result = lint_project_identities(tmp.path());
+        fs::set_permissions(&tasks, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let error = result.expect_err("unreadable collection must fail closed");
+        assert!(error.to_string().contains(".orgasmic/tasks"), "{error:#}");
     }
 
     #[test]
@@ -647,7 +671,7 @@ mod tests {
         let root = std::env::var_os("ORGASMIC_LINT_ROOT")
             .map(PathBuf::from)
             .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-        let findings = lint_project_identities(&root);
+        let findings = lint_project_identities(&root).unwrap();
         let malformed: Vec<_> = findings
             .iter()
             .filter(|f| matches!(f.kind, IdentityLintKind::MalformedIdentity))
