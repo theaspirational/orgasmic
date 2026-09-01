@@ -3728,7 +3728,7 @@ fn collect_journal_file(path: &Path, project_id: &str, snap: &mut IndexSnapshot)
     }
 }
 
-fn journal_tx_entry(
+pub(crate) fn journal_tx_entry(
     entry: orgasmic_core::node_kernel::JournalEntry,
     project_id: &str,
     node_id: Option<&str>,
