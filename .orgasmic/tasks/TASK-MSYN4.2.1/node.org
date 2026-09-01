@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.2.1
 #+orgasmic_version: 2
 
-* BACKLOG TASK-MSYN4.2.1 Fix round 2 for MSYN4.2: untrack already-tracked sidecars, correct the torn-window comment, idle/prune/doctor status hygiene    :e01mc:chain-review:
+* IN_PROGRESS TASK-MSYN4.2.1 Fix round 2 for MSYN4.2: untrack already-tracked sidecars, correct the torn-window comment, idle/prune/doctor status hygiene :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.2.1
 :PRIORITY: P1

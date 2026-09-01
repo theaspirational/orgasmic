@@ -2887,3 +2887,57 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     67f31c4c-7ca9-4c7b-ad6d-a4f07a574797
 :END:
+
+
+* TX 2026-09-01 Tue 15:11:03 manager.dispatch_started TASK-MSYN4.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-29227358-99ad-4a5b-9f56-f60e8dd7f316
+:TIME:         [2026-09-01 Tue 15:11:03]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.2.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-msyn4.2.1
+:BRANCH:       task-msyn4.2.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-MSYN4.2.1/brief-TASK-MSYN4.2.1.md
+:STARTED_AT:   [2026-09-01 Tue 15:11:03]
+:LIVENESS:     200892f270d1d87b1d713fe8f98a10c5dc35096d
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:REASON_INITIAL: Fix round 2 for MSYN4.2 (review residuals: tracked sidecars, torn-window comment, status hygiene); sequenced after TASK-8DWJP merged 200892f2 since both edit ledger_sync.rs
+:EVENT_ID:     00c1129d-cc67-48ff-9d96-a24543552d14
+:END:
+
+* TX 2026-09-01 Tue 15:11:03 run.created TASK-MSYN4.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-e02a7d7b-47b7-44c5-89c6-e11dbe15c98e
+:TIME:         [2026-09-01 Tue 15:11:03]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.2.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-MSYN4.2.1-implementer-20260901T151056.jsonl
+:REASON:       Fix round 2 for MSYN4.2 (review residuals: tracked sidecars, torn-window comment, status hygiene); sequenced after TASK-8DWJP merged 200892f2 since both edit ledger_sync.rs
+:RUN_ID:       run-01M1ERBYJN5GKG441V3AMDYY93
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-msyn4.2.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-MSYN4.2.1/brief-TASK-MSYN4.2.1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-MSYN4.2.1/brief-TASK-MSYN4.2.1-0c6a6700f2ff4823bc3d2334ce0a51e2-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-MSYN4.2.1/brief-TASK-MSYN4.2.1-0c6a6700f2ff4823bc3d2334ce0a51e2-stdout.log
+:DISPATCH_ATTEMPT: 0c6a6700f2ff4823bc3d2334ce0a51e2
+:PID:          49958
+:DISPATCH_TX:  tx-20260901-orgasmic-29227358-99ad-4a5b-9f56-f60e8dd7f316
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EVENT_ID:     ece3a2ac-0946-432f-90a6-1bf1f84308ac
+:END:
