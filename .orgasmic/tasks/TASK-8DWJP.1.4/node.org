@@ -1,0 +1,22 @@
+#+title: orgasmic task TASK-8DWJP.1.4
+#+orgasmic_version: 2
+
+* BACKLOG TASK-8DWJP.1.4 Round 6 for 8DWJP.1.3: run the rebase abort under the writer barrier; carry pending salvage; restore SALVAGE_REF assertion    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-8DWJP.1.4
+:PRIORITY: P1
+:RELATES_TO: TASK-8DWJP.1.3
+:FIX_SUBTASK: t
+:END:
+
+Follow-ups of the 8DWJP.1.3 review (claude-opus-5 high, tx-20260901-orgasmic-8bf79b46, APPROVE WITH FOLLOW-UPS; merged 1ff48c3a stays on local main). Round 6 of the conflict path; scope is deliberately tiny.
+
+MEDIUM: abort_rebase_with_salvage (ledger_sync.rs ~:369-373, called at ~:107 and ~:211) runs outside the writer barrier; only park_conflict is wrapped in run_barrier (~:895-903). A writer rename onto machines/<id>/tx/<month>.org between salvage_worktree add and git rebase --abort is hard-reset away with no copy in any ref. Run salvage+abort under the same barrier at both sites.
+
+LOWs: (a) empty unmerged set at entry (~:103-117) mints a salvage ref that is never reported and the later in-tick ref the status names lacks the outage writes - carry a pending_salvage ref into status/event (PENDING_SALVAGE_REF) or warn + status note; (b) salvage failure at ~:370 propagates before the abort = ledger wedged; decide the trade (preferred: warn, empty salvage_ref, still abort) and pin it with a ponytail comment; (c) restore the SALVAGE_REF event assertion in conflicting_two_writer_tick (~:1417). NOT in scope: salvage-skip noise / conflict-ref retention.
+
+** Acceptance
+- [ ] A writer append issued while the abort runs lands after the abort and survives (test).
+- [ ] pending salvage ref from the empty-unmerged entry case is named in status/event or warned + noted.
+- [ ] salvage-failure trade recorded in code; SALVAGE_REF event assertion restored.
+- [ ] daemon ledger_sync/status/sync_conflict/barrier tests, cli daemon_lifecycle, clippy -D, fmt green.
