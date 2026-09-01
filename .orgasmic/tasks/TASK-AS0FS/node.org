@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-AS0FS
 #+orgasmic_version: 2
 
-* BACKLOG TASK-AS0FS Decide who owns the ledger's singleton files across machines    :work:
+* IN_PROGRESS TASK-AS0FS Decide who owns the ledger's singleton files across machines :work:
 :PROPERTIES:
 :ID: TASK-AS0FS
 :PRIORITY: P2

@@ -61,3 +61,19 @@
 :IMPLEMENTS: dec_EWY0K
 :EVENT_ID: 2f8be02a-2994-485a-b82b-7363f501e742
 :END:
+
+* tx-20260901-orgasmic-6939 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6939
+:TIME:    [2026-09-01 Tue 15:57:30]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-AS0FS
+:TARGET: .orgasmic/tasks/TASK-AS0FS/node.org
+:REASON: Decision recorded as dec_EWY0K; closing out
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: ce20fc4f-6314-492c-8148-1857cb0e98fc
+:END:
