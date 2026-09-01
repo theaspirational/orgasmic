@@ -1,0 +1,23 @@
+{
+  "event_count": 320,
+  "tool_call_count": 22,
+  "unparsed_events": 1,
+  "bounded_events": 4,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-8DWJP.1.2-reviewer-20260901T164448.jsonl",
+    "size_bytes": 477631
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll review this fix round. Let me start by reading the diff and task record.Let me verify a suspicion about `rebase --abort` and run the targeted tests.Confirmed a real problem. Let me build the exact production-path repro.Now the report."
+    }
+  ],
+  "narrative_truncated": false
+}
