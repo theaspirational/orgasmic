@@ -113,12 +113,14 @@ The authoritative dispatch lifecycle stays in project =tx/YYYY-MM.org=. The
 complete routed type set is:
 - =manager.dispatch_started=
 - =run.created=
+- =implementer.commit_pending=
 - =implementer.reported=
 - =reviewer.reported=
 - =architector.reported=
 - =implementer.done=
 - =reviewer.done=
 - =architector.done=
+- =fixer.done=
 - =manager.dispatch_aborted=
 - =manager.dispatch_orphaned=
 

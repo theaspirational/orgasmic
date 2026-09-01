@@ -46,7 +46,7 @@ fn repair_re_mints_decision_duplicate_and_rerun_is_noop() {
     assert!(!incoming_text.contains(&format!(":ID: {dup}")));
     assert!(incoming_text.contains(&new_id));
     assert!(incoming_text.contains(&format!(":DEPENDS_ON: {new_id}")));
-    assert!(duplicate_id_groups(&collect_identity_occurrences(root)).is_empty());
+    assert!(duplicate_id_groups(&collect_identity_occurrences(root).unwrap()).is_empty());
 }
 
 #[test]
