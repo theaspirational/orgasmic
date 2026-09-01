@@ -152,6 +152,14 @@ pub struct ActivityEntry {
     pub body: String,
     pub artifacts: Vec<String>,
     pub in_reply_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -4341,7 +4349,7 @@ fn build_activity_index(
 }
 
 fn activity_entry_from_tx(entry: &TxEntry) -> Option<ActivityEntry> {
-    let kind = if entry.ty == "comment" {
+    let kind = if matches!(entry.ty.as_str(), "comment" | "comment.deleted") {
         ActivityKind::Comment
     } else if entry.ty == "task.state_transitioned" {
         ActivityKind::StateTransition
@@ -4362,10 +4370,17 @@ fn activity_entry_from_tx(entry: &TxEntry) -> Option<ActivityEntry> {
             .map(|value| value.split_whitespace().map(str::to_string).collect())
             .unwrap_or_default(),
         in_reply_to: extra_value(entry, "IN_REPLY_TO").map(str::to_string),
+        edited_by: extra_value(entry, "EDITED_BY").map(str::to_string),
+        edited_at: extra_value(entry, "EDITED_AT").map(str::to_string),
+        deleted_by: extra_value(entry, "DELETED_BY").map(str::to_string),
+        deleted_at: extra_value(entry, "DELETED_AT").map(str::to_string),
     })
 }
 
 fn activity_body(entry: &TxEntry) -> String {
+    if entry.ty == "comment.deleted" {
+        return String::new();
+    }
     if entry.ty == "comment" {
         return extra_value(entry, "BODY")
             .map(unescape_property_value)

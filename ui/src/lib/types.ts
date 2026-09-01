@@ -165,6 +165,10 @@ export type ActivityEntry = {
   body: string;
   artifacts: string[];
   in_reply_to?: string | null;
+  edited_by?: string | null;
+  edited_at?: string | null;
+  deleted_by?: string | null;
+  deleted_at?: string | null;
 };
 
 export type TaskCommentRequest = {

@@ -1758,7 +1758,7 @@ fn tx_entry_write_error(entry: &TxEntry) -> Result<(), ApiError> {
 
 /// A claim refusal is the operator's answer, not an internal failure: it says
 /// which machine holds the node, and no retry against this daemon will change
-/// that. Every other writer error stays a generic 500 on purpose — its text can
+/// that. Every untyped writer error stays a generic 500 on purpose — its text can
 /// carry filesystem paths, which must not reach a response body.
 fn claim_conflict(error: &anyhow::Error) -> Option<ApiError> {
     error
@@ -1777,6 +1777,12 @@ fn writer_append_error(error: anyhow::Error) -> ApiError {
 fn writer_comment_error(error: anyhow::Error) -> ApiError {
     if let Some(forbidden) = error.downcast_ref::<crate::writer::CommentAuthorshipForbidden>() {
         return ApiError::forbidden(forbidden.to_string());
+    }
+    if let Some(conflict) = error.downcast_ref::<crate::writer::CommentConflict>() {
+        return ApiError::conflict(conflict.to_string());
+    }
+    if let Some(not_found) = error.downcast_ref::<crate::writer::CommentNotFound>() {
+        return ApiError::not_found(not_found.to_string());
     }
     writer_append_error(error)
 }
@@ -21758,6 +21764,10 @@ pub(crate) mod tests {
                 body: "CANONICAL-ACTIVITY-ONLY".to_string(),
                 artifacts: Vec::new(),
                 in_reply_to: None,
+                edited_by: None,
+                edited_at: None,
+                deleted_by: None,
+                deleted_at: None,
             }],
         );
 
@@ -38420,6 +38430,10 @@ pub(crate) mod tests {
         .await
         .unwrap_err();
         assert_eq!(edit_error.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            edit_error.message,
+            "only the author may edit journal comment tx-comment-1"
+        );
         let delete_error = post_task_comment_delete(
             State(state.clone()),
             Extension(bob),
@@ -38432,6 +38446,10 @@ pub(crate) mod tests {
         .await
         .unwrap_err();
         assert_eq!(delete_error.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            delete_error.message,
+            "only the author may edit journal comment tx-comment-1"
+        );
         assert_eq!(std::fs::read(&journal).unwrap(), before_refusals);
 
         for status in [
@@ -38477,6 +38495,39 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+        let before_occ_refusals = std::fs::read(&journal).unwrap();
+        for error in [
+            post_task_comment_edit(
+                State(state.clone()),
+                Extension(id.clone()),
+                Path(("TASK-001".into(), "tx-comment-1".into())),
+                Query(graph_query("proj-a")),
+                Json(TaskCommentEditRequest {
+                    expected_body: "original".into(),
+                    body: "stale edit".into(),
+                }),
+            )
+            .await
+            .unwrap_err(),
+            post_task_comment_delete(
+                State(state.clone()),
+                Extension(id.clone()),
+                Path(("TASK-001".into(), "tx-comment-1".into())),
+                Query(graph_query("proj-a")),
+                Json(TaskCommentDeleteRequest {
+                    expected_body: "original".into(),
+                }),
+            )
+            .await
+            .unwrap_err(),
+        ] {
+            assert_eq!(error.status, StatusCode::CONFLICT);
+            assert_eq!(
+                error.message,
+                "journal comment tx-comment-1 changed since it was read"
+            );
+        }
+        assert_eq!(std::fs::read(&journal).unwrap(), before_occ_refusals);
         let _ = post_task_comment_edit(
             State(state.clone()),
             Extension(Identity::Admin),
@@ -38539,6 +38590,26 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(finding.ty, "reviewer.finding");
         assert_eq!(finding.body, "automated finding");
+
+        let activity = get_task_activity(
+            State(state),
+            Extension(Identity::Admin),
+            Path("TASK-001".into()),
+            Query(graph_query("proj-a")),
+        )
+        .await
+        .unwrap();
+        let deleted = activity
+            .0
+            .iter()
+            .find(|entry| entry.tx_id == "tx-comment-1")
+            .unwrap();
+        assert_eq!(deleted.kind, crate::index::ActivityKind::Comment);
+        assert!(deleted.body.is_empty());
+        assert_eq!(deleted.edited_by.as_deref(), Some("alice"));
+        assert!(deleted.edited_at.is_some());
+        assert_eq!(deleted.deleted_by.as_deref(), Some("alice"));
+        assert!(deleted.deleted_at.is_some());
     }
 
     /// An `artifacts`-role member reaches artifact + project-detail reads but is
