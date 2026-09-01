@@ -60,3 +60,19 @@
 :NODE_ID: TASK-JWHXH.1
 :EVENT_ID: 97fdd98b-df94-426e-96c2-c288eaac3ed6
 :END:
+
+* tx-20260901-orgasmic-6832 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6832
+:TIME:    [2026-09-01 Tue 14:12:58]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:TARGET: .orgasmic/tasks/TASK-JWHXH.1/node.org
+:REASON: transition TASK-JWHXH.1 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: f2f60506-91d2-4e01-b88a-830972cac3ff
+:END:

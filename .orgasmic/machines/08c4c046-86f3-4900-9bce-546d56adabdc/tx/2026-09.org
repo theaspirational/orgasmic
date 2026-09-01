@@ -1386,3 +1386,140 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.1/dispatches/tx-20260901-orgasmic-fc68afdc-8377-4f35-b829-dbb8e64a9168/report.md
 :EVENT_ID:     e9bad7d8-185b-4bbb-8171-c5dbfb1d7ffb
 :END:
+
+* TX 2026-09-01 Tue 14:12:59 manager.dispatch_started TASK-JWHXH.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-a4acf9f4-58b4-46e4-9e1d-c503d4ff114e
+:TIME:         [2026-09-01 Tue 14:12:59]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.1
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.1-review
+:BRANCH:       task-jwhxh.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1-review/brief-TASK-JWHXH.1-review.md
+:STARTED_AT:   [2026-09-01 Tue 14:12:59]
+:LIVENESS:     c3d779aff75c5d26c6f8bdcb24e68bcc24374e6c
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260901-orgasmic-fc68afdc-8377-4f35-b829-dbb8e64a9168
+:REASON_INITIAL: Review of fix round 1b (H4+M1) merged as c3d779af; cross-family reviewer claude-opus-5 high per the session pair
+:EVENT_ID:     3d59748d-5aee-4e53-bc2e-59adba559631
+:END:
+
+* TX 2026-09-01 Tue 14:12:59 run.created TASK-JWHXH.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-c3b9d221-adba-4b0b-86eb-b06ef1fdea25
+:TIME:         [2026-09-01 Tue 14:12:59]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-JWHXH.1-reviewer-20260901T141259.jsonl
+:REASON:       Review of fix round 1b (H4+M1) merged as c3d779af; cross-family reviewer claude-opus-5 high per the session pair
+:RUN_ID:       run-01M1EN1TGR67J6WTA4Q3A1KBXF
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1-review/brief-TASK-JWHXH.1-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1-review/brief-TASK-JWHXH.1-review-818c1e2464114599ad45530400c32609-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1-review/brief-TASK-JWHXH.1-review-818c1e2464114599ad45530400c32609-stdout.log
+:DISPATCH_ATTEMPT: 818c1e2464114599ad45530400c32609
+:PID:          68151
+:DISPATCH_TX:  tx-20260901-orgasmic-a4acf9f4-58b4-46e4-9e1d-c503d4ff114e
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     8fc2d72c-a7f1-45ae-970f-a98e360cf647
+:END:
+
+* TX 2026-09-01 Tue 14:13:15 manager.dispatch_started TASK-EPG6H.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-c8349451-8947-4f48-9519-56d5050c4fc8
+:TIME:         [2026-09-01 Tue 14:13:15]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EPG6H.1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-epg6h.1
+:BRANCH:       task-epg6h.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-EPG6H.1/brief-TASK-EPG6H.1.md
+:STARTED_AT:   [2026-09-01 Tue 14:13:15]
+:LIVENESS:     c3d779aff75c5d26c6f8bdcb24e68bcc24374e6c
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:REASON_INITIAL: Fix round 1c of the E01MC chain review: H3 torn-close repair guards read tx surfaces task.state_transitioned no longer lands on; implementer codex gpt-5.6-sol per the session pair; runs in parallel with the JWHXH.1 review (disjoint files)
+:EVENT_ID:     99e70f70-6e03-40bb-a9b5-587a3e800352
+:END:
+
+* TX 2026-09-01 Tue 14:13:15 run.created TASK-EPG6H.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-2ba48e7f-5d39-4aea-a3fe-b8021c297d50
+:TIME:         [2026-09-01 Tue 14:13:15]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EPG6H.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-EPG6H.1-implementer-20260901T141313.jsonl
+:REASON:       Fix round 1c of the E01MC chain review: H3 torn-close repair guards read tx surfaces task.state_transitioned no longer lands on; implementer codex gpt-5.6-sol per the session pair; runs in parallel with the JWHXH.1 review (disjoint files)
+:RUN_ID:       run-01M1EN28EZTZP18AVQCFG7Z316
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-epg6h.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-EPG6H.1/brief-TASK-EPG6H.1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-EPG6H.1/brief-TASK-EPG6H.1-df8b84c103c940289c89fdc60fb22116-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-EPG6H.1/brief-TASK-EPG6H.1-df8b84c103c940289c89fdc60fb22116-stdout.log
+:DISPATCH_ATTEMPT: df8b84c103c940289c89fdc60fb22116
+:PID:          70685
+:DISPATCH_TX:  tx-20260901-orgasmic-c8349451-8947-4f48-9519-56d5050c4fc8
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EVENT_ID:     188f7e63-3663-4449-8069-6564fc225d96
+:END:
+
+* TX 2026-09-01 Tue 14:13:16 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-cb898c2e-0d73-40a2-b950-0145a0614c22
+:TIME:         [2026-09-01 Tue 14:13:16]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     f7a30a71-5b0a-41dc-80b0-880e377bf535
+:END:
+
+* TX 2026-09-01 Tue 14:13:16 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-459f264a-8d54-483b-a4fd-626446deb927
+:TIME:         [2026-09-01 Tue 14:13:16]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     109829d5-ead0-4c17-b116-bd0c88c9b2e1
+:END:
