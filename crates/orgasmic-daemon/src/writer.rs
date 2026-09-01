@@ -1680,6 +1680,14 @@ fn reject_journal_prose(body: &str) -> Result<()> {
     Ok(())
 }
 
+/// Authorship gate for comment edit/delete (KA934.1) over the guarded
+/// `:ACTOR:` namespace (dec_Q78QN).
+///
+/// Authorship is the raw stored `:ACTOR:` string compared verbatim against
+/// the member-session name. Rename semantics: a member renamed in
+/// `members.org` immediately loses edit/delete rights on comments made
+/// under the old name — the stored `:ACTOR:` no longer matches, and no
+/// migration rewrites journals on rename. Accepted behavior.
 fn require_comment_body(
     current: &str,
     entry_id: &str,

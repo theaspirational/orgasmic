@@ -902,6 +902,9 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("GET", "/projects/:id/tasks/:task_id"),
     ("GET", "/tasks/:id/activity"),
     ("GET", "/tasks/:id/dispatches"),
+    ("POST", "/tasks/:id/comments"),
+    ("POST", "/tasks/:id/comments/:entry_id/edit"),
+    ("POST", "/tasks/:id/comments/:entry_id/delete"),
     ("GET", "/graph/nodes"),
     ("GET", "/graph/edges"),
     ("GET", "/decisions"),
@@ -2330,6 +2333,29 @@ fn task_node_rel(task_id: &str) -> String {
     format!(".orgasmic/tasks/{task_id}/node.org")
 }
 
+/// dec_Q78QN — `:ACTOR:` is a guarded identity namespace. A member-session
+/// name is the only legitimate producer of an actor string naming that
+/// member: the authorship check compares the raw stored `:ACTOR:` string, so
+/// an admin-supplied actor equal to a `members.org` name would forge
+/// attribution the named member's session can then edit or delete. Refuse
+/// the collision instead of stamping it.
+fn ensure_actor_namespace_free(state: &ApiState, actor: &str) -> Result<(), ApiError> {
+    let actor = actor.trim();
+    if actor.is_empty() {
+        return Ok(());
+    }
+    let collides = orgasmic_core::read_members(&state.home)
+        .map(|members| members.iter().any(|member| member.name == actor))
+        .unwrap_or(false);
+    if collides {
+        return Err(ApiError::forbidden(format!(
+            "actor `{actor}` collides with a members.org member name; \
+             member names are reserved for member sessions"
+        )));
+    }
+    Ok(())
+}
+
 async fn post_task_comment(
     State(state): State<ApiState>,
     Extension(identity): Extension<Identity>,
@@ -2351,9 +2377,19 @@ async fn post_task_comment(
     // Mirror artifact comments: member attribution comes from the authenticated
     // session and cannot be spoofed by a request body. Admin scripts may still
     // provide an explicit actor; omitting it falls back to the daemon actor.
+    // Either way the effective admin actor must stay out of the member
+    // namespace (dec_Q78QN) — `choose_actor` applies the same fallback chain.
     let actor = match identity.member_name() {
         Some(name) => Some(name.to_string()),
-        None => req.actor.filter(|value| !value.trim().is_empty()),
+        None => {
+            let requested = req.actor.filter(|value| !value.trim().is_empty());
+            let effective = requested
+                .as_deref()
+                .or(state.manager_actor.as_deref())
+                .unwrap_or(&state.actor);
+            ensure_actor_namespace_free(&state, effective)?;
+            requested
+        }
     };
     let mut extra = vec![("BODY".to_string(), escape_property_value(&req.body))];
     if let Some(run_id) = req.run_id.filter(|value| !value.trim().is_empty()) {
@@ -2408,7 +2444,12 @@ async fn post_task_comment_edit(
         task_comment_journal(&state, &identity, &task_id, q.project.as_deref()).await?;
     let actor = match identity.member_name() {
         Some(name) => crate::writer::CommentMutationActor::Member(name.to_string()),
-        None => crate::writer::CommentMutationActor::Admin(state.actor.clone()),
+        None => {
+            // dec_Q78QN — the daemon actor is about to become `:EDITED_BY:`;
+            // refuse when it collides with a member name.
+            ensure_actor_namespace_free(&state, &state.actor)?;
+            crate::writer::CommentMutationActor::Admin(state.actor.clone())
+        }
     };
     state
         .writer
@@ -2448,7 +2489,12 @@ async fn post_task_comment_delete(
         task_comment_journal(&state, &identity, &task_id, q.project.as_deref()).await?;
     let actor = match identity.member_name() {
         Some(name) => crate::writer::CommentMutationActor::Member(name.to_string()),
-        None => crate::writer::CommentMutationActor::Admin(state.actor.clone()),
+        None => {
+            // dec_Q78QN — the daemon actor is about to become `:DELETED_BY:`;
+            // refuse when it collides with a member name.
+            ensure_actor_namespace_free(&state, &state.actor)?;
+            crate::writer::CommentMutationActor::Admin(state.actor.clone())
+        }
     };
     state
         .writer
@@ -38392,6 +38438,11 @@ pub(crate) mod tests {
         );
     }
 
+    /// dec_Q78QN — the member-attribution path over the REAL route: a member
+    /// session (login cookie) drives comment create/edit/delete through the
+    /// router + identity middleware, attribution is the session name, the
+    /// `:ACTOR:` namespace refuses admin collisions, and authorship/OCC gates
+    /// hold exactly as they do for the writer seam.
     #[tokio::test]
     async fn task_comments_use_member_session_attribution_and_refresh_activity() {
         let tmp = tempfile::tempdir().unwrap();
@@ -38400,243 +38451,56 @@ pub(crate) mod tests {
         let root_a = tmp.path().join("proj-a");
         let root_b = tmp.path().join("proj-b");
         seed_two_projects(&home, &root_a, &root_b);
-        let state = direct_catalog_test_state(home).await;
-        let id = member(&[("proj-a", "viewer")]);
-
-        let _ = post_task_comment(
-            State(state.clone()),
-            Extension(id.clone()),
-            Path("TASK-001".into()),
-            Query(graph_query("proj-a")),
-            Json(TaskCommentRequest {
-                actor: Some("spoofed-name".into()),
-                body: "Please check the fallback.".into(),
-                run_id: None,
-                artifacts: Vec::new(),
-                in_reply_to: None,
-                request_id: None,
-            }),
+        let alice_token = orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "viewer".to_string())],
         )
-        .await
-        .expect("viewer may comment on a visible task");
-
-        let activity = get_task_activity(
-            State(state.clone()),
-            Extension(id.clone()),
-            Path("TASK-001".into()),
-            Query(graph_query("proj-a")),
+        .unwrap();
+        let bob_token = orgasmic_core::add_member(
+            &home,
+            "bob",
+            &[("proj-a".to_string(), "viewer".to_string())],
         )
-        .await
-        .expect("activity refreshes after the comment");
-        assert_eq!(activity.0.len(), 1);
-        assert_eq!(activity.0[0].actor, "alice");
-        assert_eq!(activity.0[0].kind, crate::index::ActivityKind::Comment);
-        assert_eq!(activity.0[0].body, "Please check the fallback.");
+        .unwrap();
 
-        let journal = task_node_file_path(&root_a, "TASK-001")
-            .with_file_name(orgasmic_core::node_kernel::JOURNAL_FILE);
-        state
-            .writer
-            .append_journal_entry(
-                journal.clone(),
-                "TASK-001".into(),
-                orgasmic_core::node_kernel::JournalEntry {
-                    entry_id: "tx-comment-1".into(),
-                    time: "[2026-08-26 Wed 12:00:00]".into(),
-                    ty: "comment".into(),
-                    actor: "alice".into(),
-                    machine: "test".into(),
-                    extras: Vec::new(),
-                    body: "original".into(),
-                },
-            )
+        let mut options = test_options();
+        options.actor = "daemon-admin".into();
+        let running = crate::Daemon::run(home.clone(), options)
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let alice_cookie = member_session_cookie(running.addr, &alice_token).await;
+        let bob_cookie = member_session_cookie(running.addr, &bob_token).await;
+        let client = reqwest::Client::new();
+        let base = format!("http://{}/api", running.addr);
+
+        // (1) Member create over the real route: the spoofed body actor is
+        // ignored; the session name is the attribution.
+        let created = client
+            .post(format!("{base}/tasks/TASK-001/comments?project=proj-a"))
+            .header("cookie", &alice_cookie)
+            .json(&serde_json::json!({
+                "actor": "spoofed-name",
+                "body": "Please check the fallback.",
+            }))
+            .send()
             .await
             .unwrap();
-        state
-            .writer
-            .append_journal_entry(
-                journal.clone(),
-                "TASK-001".into(),
-                orgasmic_core::node_kernel::JournalEntry {
-                    entry_id: "tx-admin-1".into(),
-                    time: "[2026-08-26 Wed 12:01:00]".into(),
-                    ty: "comment".into(),
-                    actor: "alice".into(),
-                    machine: "test".into(),
-                    extras: Vec::new(),
-                    body: "admin target".into(),
-                },
-            )
-            .await
-            .unwrap();
-        state
-            .writer
-            .append_journal_entry(
-                journal.clone(),
-                "TASK-001".into(),
-                orgasmic_core::node_kernel::JournalEntry {
-                    entry_id: "tx-finding-1".into(),
-                    time: "[2026-08-26 Wed 12:02:00]".into(),
-                    ty: "reviewer.finding".into(),
-                    actor: "alice".into(),
-                    machine: "test".into(),
-                    extras: Vec::new(),
-                    body: "automated finding".into(),
-                },
-            )
-            .await
-            .unwrap();
-
-        let bob = Identity::Member {
-            name: "bob".into(),
-            grants: vec![("proj-a".into(), "viewer".into())],
-        };
-        let before_refusals = std::fs::read(&journal).unwrap();
-        let edit_error = post_task_comment_edit(
-            State(state.clone()),
-            Extension(bob.clone()),
-            Path(("TASK-001".into(), "tx-comment-1".into())),
-            Query(graph_query("proj-a")),
-            Json(TaskCommentEditRequest {
-                expected_body: "original".into(),
-                body: "hijacked".into(),
-            }),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(edit_error.status, StatusCode::FORBIDDEN);
         assert_eq!(
-            edit_error.message,
-            "only the author may edit journal comment tx-comment-1"
+            created.status(),
+            StatusCode::OK,
+            "member may comment on a visible task"
         );
-        let delete_error = post_task_comment_delete(
-            State(state.clone()),
-            Extension(bob),
-            Path(("TASK-001".into(), "tx-comment-1".into())),
-            Query(graph_query("proj-a")),
-            Json(TaskCommentDeleteRequest {
-                expected_body: "original".into(),
-            }),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(delete_error.status, StatusCode::FORBIDDEN);
-        assert_eq!(
-            delete_error.message,
-            "only the author may edit journal comment tx-comment-1"
-        );
-        assert_eq!(std::fs::read(&journal).unwrap(), before_refusals);
+        let created: Value = created.json().await.unwrap();
+        let alice_comment = created["tx_id"].as_str().unwrap().to_string();
 
-        for status in [
-            post_task_comment_edit(
-                State(state.clone()),
-                Extension(id.clone()),
-                Path(("TASK-001".into(), "tx-finding-1".into())),
-                Query(graph_query("proj-a")),
-                Json(TaskCommentEditRequest {
-                    expected_body: "automated finding".into(),
-                    body: "rewritten".into(),
-                }),
-            )
-            .await
-            .unwrap_err()
-            .status,
-            post_task_comment_delete(
-                State(state.clone()),
-                Extension(id.clone()),
-                Path(("TASK-001".into(), "tx-finding-1".into())),
-                Query(graph_query("proj-a")),
-                Json(TaskCommentDeleteRequest {
-                    expected_body: "automated finding".into(),
-                }),
-            )
-            .await
-            .unwrap_err()
-            .status,
-        ] {
-            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        }
-        assert_eq!(std::fs::read(&journal).unwrap(), before_refusals);
-
-        let _ = post_task_comment_edit(
-            State(state.clone()),
-            Extension(id.clone()),
-            Path(("TASK-001".into(), "tx-comment-1".into())),
-            Query(graph_query("proj-a")),
-            Json(TaskCommentEditRequest {
-                expected_body: "original".into(),
-                body: "edited".into(),
-            }),
-        )
-        .await
-        .unwrap();
-        let before_occ_refusals = std::fs::read(&journal).unwrap();
-        for error in [
-            post_task_comment_edit(
-                State(state.clone()),
-                Extension(id.clone()),
-                Path(("TASK-001".into(), "tx-comment-1".into())),
-                Query(graph_query("proj-a")),
-                Json(TaskCommentEditRequest {
-                    expected_body: "original".into(),
-                    body: "stale edit".into(),
-                }),
-            )
-            .await
-            .unwrap_err(),
-            post_task_comment_delete(
-                State(state.clone()),
-                Extension(id.clone()),
-                Path(("TASK-001".into(), "tx-comment-1".into())),
-                Query(graph_query("proj-a")),
-                Json(TaskCommentDeleteRequest {
-                    expected_body: "original".into(),
-                }),
-            )
-            .await
-            .unwrap_err(),
-        ] {
-            assert_eq!(error.status, StatusCode::CONFLICT);
-            assert_eq!(
-                error.message,
-                "journal comment tx-comment-1 changed since it was read"
-            );
-        }
-        assert_eq!(std::fs::read(&journal).unwrap(), before_occ_refusals);
-        let _ = post_task_comment_edit(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(("TASK-001".into(), "tx-admin-1".into())),
-            Query(graph_query("proj-a")),
-            Json(TaskCommentEditRequest {
-                expected_body: "admin target".into(),
-                body: "admin edited".into(),
-            }),
-        )
-        .await
-        .unwrap();
-        let _ = post_task_comment_delete(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(("TASK-001".into(), "tx-admin-1".into())),
-            Query(graph_query("proj-a")),
-            Json(TaskCommentDeleteRequest {
-                expected_body: "admin edited".into(),
-            }),
-        )
-        .await
-        .unwrap();
-        let _ = post_task_comment_delete(
-            State(state.clone()),
-            Extension(id),
-            Path(("TASK-001".into(), "tx-comment-1".into())),
-            Query(graph_query("proj-a")),
-            Json(TaskCommentDeleteRequest {
-                expected_body: "edited".into(),
-            }),
-        )
-        .await
-        .unwrap();
+        // The journal carries the member session name as `:ACTOR:`.
+        let journal = root_a
+            .join(".orgasmic")
+            .join("tasks")
+            .join("TASK-001")
+            .join("journal.org");
         let entries = orgasmic_core::node_kernel::parse_journal(
             &std::fs::read_to_string(&journal).unwrap(),
             "journal.org",
@@ -38644,7 +38508,237 @@ pub(crate) mod tests {
         .unwrap();
         let own = entries
             .iter()
-            .find(|entry| entry.entry_id == "tx-comment-1")
+            .find(|entry| entry.entry_id == alice_comment)
+            .unwrap();
+        assert_eq!(own.actor, "alice");
+        assert_eq!(own.body, "Please check the fallback.");
+
+        // (2) Activity refreshes and carries the same attribution.
+        let activity = client
+            .get(format!("{base}/tasks/TASK-001/activity?project=proj-a"))
+            .header("cookie", &alice_cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(activity.status(), StatusCode::OK);
+        let activity: Value = activity.json().await.unwrap();
+        let tail = activity.as_array().unwrap().last().unwrap();
+        assert_eq!(tail["tx_id"], alice_comment);
+        assert_eq!(tail["kind"], "comment");
+        assert_eq!(tail["actor"], "alice");
+        assert_eq!(tail["body"], "Please check the fallback.");
+
+        // (3) Admin cannot forge a member name as `:ACTOR:`.
+        let collision = client
+            .post(format!("{base}/tasks/TASK-001/comments?project=proj-a"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "actor": "alice",
+                "body": "forged attribution",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(collision.status(), StatusCode::FORBIDDEN);
+        let collision_body: Value = collision.json().await.unwrap();
+        let collision_message = collision_body["error"].as_str().unwrap();
+        assert!(
+            collision_message.contains("alice"),
+            "collision message must name the actor: {collision_message}"
+        );
+        assert!(
+            collision_message.contains("member"),
+            "collision message must name the namespace: {collision_message}"
+        );
+
+        // (4) A non-colliding admin actor is still allowed (admin scripts).
+        let admin_created = client
+            .post(format!("{base}/tasks/TASK-001/comments?project=proj-a"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "actor": "admin-script",
+                "body": "admin target",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(admin_created.status(), StatusCode::OK);
+        let admin_created: Value = admin_created.json().await.unwrap();
+        let admin_comment = admin_created["tx_id"].as_str().unwrap().to_string();
+
+        // (5) Cross-member authorship: bob may neither edit nor delete
+        // alice's comment.
+        for (path, body) in [
+            (
+                "edit",
+                serde_json::json!({
+                    "expected_body": "Please check the fallback.",
+                    "body": "hijacked",
+                }),
+            ),
+            (
+                "delete",
+                serde_json::json!({ "expected_body": "Please check the fallback." }),
+            ),
+        ] {
+            let refusal = client
+                .post(format!(
+                    "{base}/tasks/TASK-001/comments/{alice_comment}/{path}?project=proj-a"
+                ))
+                .header("cookie", &bob_cookie)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refusal.status(), StatusCode::FORBIDDEN, "{path} as bob");
+            let refusal: Value = refusal.json().await.unwrap();
+            assert_eq!(
+                refusal["error"].as_str().unwrap(),
+                format!("only the author may edit journal comment {alice_comment}"),
+                "{path} as bob"
+            );
+        }
+
+        // (6) Member edit over the real route, then OCC refusals on the
+        // stale expected body.
+        let edited = client
+            .post(format!(
+                "{base}/tasks/TASK-001/comments/{alice_comment}/edit?project=proj-a"
+            ))
+            .header("cookie", &alice_cookie)
+            .json(&serde_json::json!({
+                "expected_body": "Please check the fallback.",
+                "body": "edited",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(edited.status(), StatusCode::OK);
+        for (path, body) in [
+            (
+                "edit",
+                serde_json::json!({
+                    "expected_body": "Please check the fallback.",
+                    "body": "stale edit",
+                }),
+            ),
+            (
+                "delete",
+                serde_json::json!({ "expected_body": "Please check the fallback." }),
+            ),
+        ] {
+            let stale = client
+                .post(format!(
+                    "{base}/tasks/TASK-001/comments/{alice_comment}/{path}?project=proj-a"
+                ))
+                .header("cookie", &alice_cookie)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(stale.status(), StatusCode::CONFLICT, "{path} stale");
+            let stale: Value = stale.json().await.unwrap();
+            assert_eq!(
+                stale["error"].as_str().unwrap(),
+                format!("journal comment {alice_comment} changed since it was read"),
+                "{path} stale"
+            );
+        }
+
+        // (7) Automated rows are not editable comments even for their
+        // recorded actor. Seed one directly in the journal on disk — the
+        // mutation seam parses the file fresh at edit time.
+        let finding = orgasmic_core::node_kernel::journal_entry_block(
+            &orgasmic_core::node_kernel::JournalEntry {
+                entry_id: "tx-finding-1".into(),
+                time: "[2026-09-02 Wed 12:02:00]".into(),
+                ty: "reviewer.finding".into(),
+                actor: "alice".into(),
+                machine: "test".into(),
+                extras: Vec::new(),
+                body: "automated finding".into(),
+            },
+        );
+        let mut journal_source = std::fs::read_to_string(&journal).unwrap();
+        journal_source.push_str(&finding);
+        std::fs::write(&journal, journal_source).unwrap();
+        for (path, body) in [
+            (
+                "edit",
+                serde_json::json!({
+                    "expected_body": "automated finding",
+                    "body": "rewritten",
+                }),
+            ),
+            (
+                "delete",
+                serde_json::json!({ "expected_body": "automated finding" }),
+            ),
+        ] {
+            let refusal = client
+                .post(format!(
+                    "{base}/tasks/TASK-001/comments/tx-finding-1/{path}?project=proj-a"
+                ))
+                .header("cookie", &alice_cookie)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                refusal.status(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{path} on an automated row"
+            );
+        }
+
+        // (8) Admin moderation still bypasses authorship (no member named
+        // `daemon-admin` exists, so the namespace guard passes).
+        let admin_edited = client
+            .post(format!(
+                "{base}/tasks/TASK-001/comments/{admin_comment}/edit?project=proj-a"
+            ))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "expected_body": "admin target",
+                "body": "admin edited",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(admin_edited.status(), StatusCode::OK);
+        let admin_deleted = client
+            .post(format!(
+                "{base}/tasks/TASK-001/comments/{admin_comment}/delete?project=proj-a"
+            ))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "expected_body": "admin edited" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(admin_deleted.status(), StatusCode::OK);
+
+        // (9) Member delete of her own comment over the real route.
+        let deleted = client
+            .post(format!(
+                "{base}/tasks/TASK-001/comments/{alice_comment}/delete?project=proj-a"
+            ))
+            .header("cookie", &alice_cookie)
+            .json(&serde_json::json!({ "expected_body": "edited" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::OK);
+
+        // (10) Final journal state: tombstones with honest stamps, and the
+        // automated row untouched.
+        let entries = orgasmic_core::node_kernel::parse_journal(
+            &std::fs::read_to_string(&journal).unwrap(),
+            "journal.org",
+        )
+        .unwrap();
+        let own = entries
+            .iter()
+            .find(|entry| entry.entry_id == alice_comment)
             .unwrap();
         assert_eq!(own.ty, "comment.deleted");
         assert!(own.body.is_empty());
@@ -38654,11 +38748,11 @@ pub(crate) mod tests {
         assert!(own.extra("DELETED_AT").is_some());
         let admin = entries
             .iter()
-            .find(|entry| entry.entry_id == "tx-admin-1")
+            .find(|entry| entry.entry_id == admin_comment)
             .unwrap();
         assert_eq!(admin.ty, "comment.deleted");
-        assert_eq!(admin.extra("EDITED_BY"), Some(state.actor.as_str()));
-        assert_eq!(admin.extra("DELETED_BY"), Some(state.actor.as_str()));
+        assert_eq!(admin.extra("EDITED_BY"), Some("daemon-admin"));
+        assert_eq!(admin.extra("DELETED_BY"), Some("daemon-admin"));
         let finding = entries
             .iter()
             .find(|entry| entry.entry_id == "tx-finding-1")
@@ -38666,25 +38760,131 @@ pub(crate) mod tests {
         assert_eq!(finding.ty, "reviewer.finding");
         assert_eq!(finding.body, "automated finding");
 
-        let activity = get_task_activity(
-            State(state),
-            Extension(Identity::Admin),
-            Path("TASK-001".into()),
-            Query(graph_query("proj-a")),
-        )
-        .await
-        .unwrap();
-        let deleted = activity
-            .0
-            .iter()
-            .find(|entry| entry.tx_id == "tx-comment-1")
+        // (11) The tombstone is visible through the activity route with its
+        // member attribution intact.
+        let activity = client
+            .get(format!("{base}/tasks/TASK-001/activity?project=proj-a"))
+            .bearer_auth(&token)
+            .send()
+            .await
             .unwrap();
-        assert_eq!(deleted.kind, crate::index::ActivityKind::Comment);
-        assert!(deleted.body.is_empty());
-        assert_eq!(deleted.edited_by.as_deref(), Some("alice"));
-        assert!(deleted.edited_at.is_some());
-        assert_eq!(deleted.deleted_by.as_deref(), Some("alice"));
-        assert!(deleted.deleted_at.is_some());
+        assert_eq!(activity.status(), StatusCode::OK);
+        let activity: Value = activity.json().await.unwrap();
+        let deleted = activity
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["tx_id"] == alice_comment.as_str())
+            .unwrap();
+        assert_eq!(deleted["kind"], "comment");
+        assert_eq!(deleted["body"], "");
+        assert_eq!(deleted["edited_by"], "alice");
+        assert_eq!(deleted["deleted_by"], "alice");
+        assert!(deleted["edited_at"].as_str().is_some());
+        assert!(deleted["deleted_at"].as_str().is_some());
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// dec_Q78QN — the other half of the namespace guard: when the daemon's
+    /// own actor collides with a member name, every admin comment mutation
+    /// that would stamp it is refused, while the member's own session path
+    /// is unaffected.
+    #[tokio::test]
+    async fn admin_comment_actor_colliding_with_member_name_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root_a = tmp.path().join("proj-a");
+        let root_b = tmp.path().join("proj-b");
+        seed_two_projects(&home, &root_a, &root_b);
+        let alice_token = orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "viewer".to_string())],
+        )
+        .unwrap();
+
+        let mut options = test_options();
+        options.actor = "alice".into();
+        let running = crate::Daemon::run(home.clone(), options)
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let alice_cookie = member_session_cookie(running.addr, &alice_token).await;
+        let client = reqwest::Client::new();
+        let base = format!("http://{}/api", running.addr);
+
+        // The member's own session path is unaffected by the guard.
+        let created = client
+            .post(format!("{base}/tasks/TASK-001/comments?project=proj-a"))
+            .header("cookie", &alice_cookie)
+            .json(&serde_json::json!({ "body": "member attribution is fine" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created: Value = created.json().await.unwrap();
+        let alice_comment = created["tx_id"].as_str().unwrap().to_string();
+
+        // Admin create with an explicit colliding actor: refused.
+        let explicit = client
+            .post(format!("{base}/tasks/TASK-001/comments?project=proj-a"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "actor": "alice",
+                "body": "forged",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(explicit.status(), StatusCode::FORBIDDEN);
+        let explicit: Value = explicit.json().await.unwrap();
+        assert!(explicit["error"].as_str().unwrap().contains("alice"));
+
+        // Admin create with the actor omitted would fall back to the
+        // colliding daemon actor: refused too.
+        let omitted = client
+            .post(format!("{base}/tasks/TASK-001/comments?project=proj-a"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "body": "fallback actor" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(omitted.status(), StatusCode::FORBIDDEN);
+
+        // Admin edit/delete would stamp the colliding daemon actor as
+        // `:EDITED_BY:`/`:DELETED_BY:`: refused.
+        for (path, body) in [
+            (
+                "edit",
+                serde_json::json!({
+                    "expected_body": "member attribution is fine",
+                    "body": "admin rewrite",
+                }),
+            ),
+            (
+                "delete",
+                serde_json::json!({ "expected_body": "member attribution is fine" }),
+            ),
+        ] {
+            let refusal = client
+                .post(format!(
+                    "{base}/tasks/TASK-001/comments/{alice_comment}/{path}?project=proj-a"
+                ))
+                .bearer_auth(&token)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refusal.status(), StatusCode::FORBIDDEN, "{path} as admin");
+            let refusal: Value = refusal.json().await.unwrap();
+            assert!(refusal["error"].as_str().unwrap().contains("alice"));
+        }
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 
     /// An `artifacts`-role member reaches artifact + project-detail reads but is
