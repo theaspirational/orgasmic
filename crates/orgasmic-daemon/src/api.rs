@@ -28,7 +28,7 @@ use chrono::Utc;
 use include_dir::{include_dir, Dir};
 use orgasmic_core::node_kernel::{JOURNAL_FILE, NODE_FILE};
 use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
-use orgasmic_core::tx::TxEntry;
+use orgasmic_core::tx::{parse_org_timestamp, TxEntry};
 use orgasmic_core::{
     collection_node_file_paths, fold_dispatches, goal_file_path, goal_file_rel, handoff_file_path,
     parse_tx_file, project_sessions_dir, read_session_file, resolve_loader, scan_session_lifecycle,
@@ -18418,6 +18418,8 @@ async fn update_task_state(
     // ART-04FYD: a task does not close on a bare claim. `done` requires the
     // task's own Evidence section to carry at least one proof line (a run id,
     // review verdict, test output, commit), including a legacy close repair.
+    // A torn close to `done` is unrepairable until an operator records that
+    // evidence with the command named by this endpoint's 400 response.
     // Atomic dispatch-close uses a separate endpoint and carries its dispatch
     // record as evidence.
     if to_state == LifecycleStage::Done {
@@ -18531,11 +18533,14 @@ fn recorded_close_allows_repair(
     let Some(close_time) = close_time else {
         return Ok(false);
     };
+    let Some(close_time) = parse_org_timestamp(&close_time) else {
+        return Ok(false);
+    };
     let journal_path = task_node_file_path(project_root, task_id)
         .with_file_name(orgasmic_core::node_kernel::JOURNAL_FILE);
     if journal_path.is_file() {
         let source = std::fs::read_to_string(&journal_path).map_err(|error| {
-            ApiError::internal(format!(
+            ApiError::bad_request(format!(
                 "read task journal {}: {error}",
                 journal_path.display()
             ))
@@ -18543,16 +18548,15 @@ fn recorded_close_allows_repair(
         let entries =
             orgasmic_core::node_kernel::parse_journal(&source, &journal_path.display().to_string())
                 .map_err(|error| {
-                    ApiError::internal(format!(
+                    ApiError::bad_request(format!(
                         "parse task journal {}: {error}",
                         journal_path.display()
                     ))
                 })?;
-        if entries
-            .into_iter()
-            .map(|entry| crate::index::journal_tx_entry(entry, project_id, Some(task_id)))
-            .any(|entry| entry.ty == "task.state_transitioned" && entry.time >= close_time)
-        {
+        if entries.into_iter().any(|entry| {
+            entry.ty == "task.state_transitioned"
+                && parse_org_timestamp(&entry.time).is_none_or(|time| time >= close_time)
+        }) {
             return Ok(false);
         }
     }
@@ -22488,22 +22492,61 @@ pub(crate) mod tests {
         )
         .unwrap());
 
-        let journal = orgasmic_core::node_kernel::append_entry(
-            "",
+        let journal = |time: &str| {
+            orgasmic_core::node_kernel::append_entry(
+                "",
+                task_id,
+                &orgasmic_core::node_kernel::JournalEntry {
+                    entry_id: "tx-operator-move".into(),
+                    time: time.into(),
+                    ty: "task.state_transitioned".into(),
+                    actor: "operator".into(),
+                    machine: "test-machine".into(),
+                    extras: Vec::new(),
+                    body: String::new(),
+                },
+            )
+        };
+        let journal_path = project_root.join(".orgasmic/tasks/TASK-TORN/journal.org");
+        write(journal_path.clone(), &journal("[2026-09-01 Tue 09:00:00]"));
+        assert!(recorded_close_allows_repair(
+            project_root,
+            "orgasmic",
             task_id,
-            &orgasmic_core::node_kernel::JournalEntry {
-                entry_id: "tx-operator-move".into(),
-                time: "[2026-09-01 Tue 10:00:00]".into(),
-                ty: "task.state_transitioned".into(),
-                actor: "operator".into(),
-                machine: "test-machine".into(),
-                extras: Vec::new(),
-                body: String::new(),
-            },
-        );
+            closed_tx,
+            LifecycleStage::InProgress,
+            LifecycleStage::InReview,
+        )
+        .unwrap());
+
+        write(journal_path.clone(), &journal("[2026-09-01 Tue 10:00:00]"));
+        assert!(!recorded_close_allows_repair(
+            project_root,
+            "orgasmic",
+            task_id,
+            closed_tx,
+            LifecycleStage::InProgress,
+            LifecycleStage::InReview,
+        )
+        .unwrap());
+
+        write(journal_path.clone(), &journal("[2026-09-01 Tue]"));
+        assert!(!recorded_close_allows_repair(
+            project_root,
+            "orgasmic",
+            task_id,
+            closed_tx,
+            LifecycleStage::InProgress,
+            LifecycleStage::InReview,
+        )
+        .unwrap());
+
+        std::fs::remove_file(&journal_path).unwrap();
+        let tx_path = project_root.join(".orgasmic/machines/test-machine/tx/2026-09.org");
+        let full_close = std::fs::read_to_string(&tx_path).unwrap();
         write(
-            project_root.join(".orgasmic/tasks/TASK-TORN/journal.org"),
-            &journal,
+            tx_path.clone(),
+            &full_close.replace("[2026-09-01 Tue 10:00:00]", "[2026-09-01 Tue]"),
         );
         assert!(!recorded_close_allows_repair(
             project_root,
@@ -22514,6 +22557,20 @@ pub(crate) mod tests {
             LifecycleStage::InReview,
         )
         .unwrap());
+
+        write(tx_path, &full_close);
+        write(journal_path.clone(), "* missing drawer\n");
+        let error = recorded_close_allows_repair(
+            project_root,
+            "orgasmic",
+            task_id,
+            closed_tx,
+            LifecycleStage::InProgress,
+            LifecycleStage::InReview,
+        )
+        .unwrap_err();
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(error.message.contains(&journal_path.display().to_string()));
     }
 
     #[tokio::test]
