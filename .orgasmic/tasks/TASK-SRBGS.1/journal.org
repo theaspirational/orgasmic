@@ -61,3 +61,68 @@
 :TO_STATE: in_review
 :EVENT_ID: 2edac548-8870-469d-a849-7bc4d00a271d
 :END:
+
+* tx-20260901-orgasmic-6924 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6924
+:TIME:    [2026-09-01 Tue 15:41:04]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1
+:REASON: MEDIUM api.rs:24292 — the L4 pin test is a tautology: DISPATCH_PROJECT_TX_TYPES is filtered by !event_routes_to_journal, which api.rs:8783 short-circuits to false for exactly that constant, so the test pins the shipped doc to a new hand-maintained constant, not to the route table.
+:EVENT_ID: b992070d-24d1-48e1-b759-b806dd7836e5
+:END:
+
+* tx-20260901-orgasmic-6925 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6925
+:TIME:    [2026-09-01 Tue 15:41:09]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1
+:REASON: LOW project_migrate.rs:89 — anomalies can still only ever print 0: line 204 increments then line 205 bails, and run_at:62 does plan(root)?, so the print is unreachable with a non-zero count; L5's literal-0 behaviour is unchanged.
+:EVENT_ID: 00177354-6106-42d4-93c5-471c8a19f9be
+:END:
+
+* tx-20260901-orgasmic-6926 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6926
+:TIME:    [2026-09-01 Tue 15:41:09]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1
+:REASON: LOW writer.rs:1421 — mutate_file keys its apply failure by a fresh Uuid nobody can take, so every journal write records an unclaimable entry cleared only by a later successful repair_projection, and each later take_apply_failure logs a spurious foreign-failure warn.
+:EVENT_ID: 5e0cdd95-78d6-46b2-a574-8da72626d4e5
+:END:
+
+* tx-20260901-orgasmic-6927 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6927
+:TIME:    [2026-09-01 Tue 15:41:15]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1
+:REASON: LOW project_migrate.rs:71 — the branch cutover is not wrapped: migrate_to_branch does remove_dir_all(root/.orgasmic) plus git worktree add with no printed recovery, so a half-cutover leaves the operator with refuse_dirty_tree or 'ledger target already exists but is incomplete' and no way out; the L2 wrapper's checkout/clean text would be wrong advice there.
+:EVENT_ID: f771189f-7ae8-4dc9-ba82-4fcef6bb6e33
+:END:
+
+* tx-20260901-orgasmic-6928 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6928
+:TIME:    [2026-09-01 Tue 15:41:15]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1
+:REASON: LOW api.rs:32874 — the new L3 test calls writer.append_tx directly, bypassing refresh_after_tx, so it only proves request B escapes and never that request A still receives its own committed-503; that contract is covered only incidentally by the pre-existing test at api.rs:32735.
+:EVENT_ID: 20545a04-65b1-4191-8e04-deffbaf8730a
+:END:
