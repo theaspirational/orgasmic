@@ -1,0 +1,23 @@
+{
+  "event_count": 485,
+  "tool_call_count": 44,
+  "unparsed_events": 2,
+  "bounded_events": 4,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-KA934.1-reviewer-20260901T145606.jsonl",
+    "size_bytes": 818894
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll review TASK-KA934.1. Let me start by reading the diff and the task record.Let me prove the untested \"second edit replaces, not duplicates\" path with a standalone probe (outside the repo).Findings verified. Filing them now."
+    }
+  ],
+  "narrative_truncated": false
+}
