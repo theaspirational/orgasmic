@@ -644,7 +644,7 @@ DONE SINCE LAST HANDOFF (do not re-propose): whole-chain review dispatched, repo
 tasks done; 9 follow-up tasks filed; H4 live-ledger fix; 9 orphan/verdict-less generations closed; TFXR2 orphan.
 
 ** In flight
-Nothing dispatched. Manager is writing the brief for fix round 1b TASK-JWHXH.1 (H4 code side: views/ ignored+untracked on EXISTING ledgers; M1: build_views at the tail of reload_node_dir, debounced). Session pair: implementer codex gpt-5.6-sol (stdio/codex-chat, no --effort), reviewer claude-opus-5 high (stdio/claude-sdk). Every fix round gets its own review unless the diff is trivially mechanical AND the close --reason says so.
+TASK-JWHXH.1 (fix round 1b: H4 views/ ignored+untracked on existing synced ledgers via sync_once_inner; M1 coalesced build_views at the tail of reload_node_dir) — implementer codex gpt-5.6-sol, driver=stdio harness=codex-chat, no effort flag. started_tx =tx-20260901-orgasmic-fc68afdc-8377-4f35-b829-dbb8e64a9168=, run =run-01M1EMEQ18J8CGXGZJ2XRXCMRM=, worktree =~/.orgasmic/worktrees/orgasmic/task-jwhxh.1=, brief promoted at .orgasmic/tmp/dispatch/brief-TASK-JWHXH.1/. Watcher =dispatch-wait --timeout 240m= armed in the manager session. WHEN IT REPORTS: read =*-last.txt= + diff, merge --no-ff, gates (cargo test -p orgasmic-daemon --lib -- ledger_sync views; clippy -D daemon; fmt), record Evidence, dispatch reviewer claude-opus-5 high over <merge>^1..<merge> (this one is NOT trivial — sync-loop git behaviour + a new coalescer — so it gets its review), close reviewer with --verdict, close implementer with --merge-sha, task done. Then 1c TASK-EPG6H.1.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
