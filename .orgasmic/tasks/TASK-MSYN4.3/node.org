@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-MSYN4.3
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MSYN4.3 M5: tx ids collide across machines (no machine component; per-project seq; stale in-memory max after pull)    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-MSYN4.3
+:PRIORITY: P2
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-stdio, claude-opus-5 high, 2026-09-01), verdict APPROVE WITH FOLLOW-UPS; report promoted under tasks/<chain-task>/dispatches/tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07/report.md.
+=tx-{date}-{slug}-{seq:04}= (writer.rs:2959) has no machine component and the sequence is per-project, so two daemons minting concurrently produce identical TX_IDs for different events. EVENT_ID prevents dedupe, but the dispatch fold identifies generations BY TX_ID (=close_dispatch= matches CLOSED_TX vs started.tx_id, tx.rs:220; =attach_initial_run= matches DISPATCH_TX; =recorded_close_allows_repair= matches CLOSED_TX) — a collision mis-attributes a close. Also =next_project_tx_id= serves from an in-memory =project_max= invalidated only on inode change, so a pull bringing higher remote sequences remints existing ids.
+** Acceptance
+- [ ] Machine id (or a machine-scoped sequence) is part of the minted tx id, or the fold keys on EVENT_ID; existing ids stay valid as references.
+- [ ] =project_max= is refreshed after a pull (or derived from all machines/*/tx on mint).
+- [ ] Two-writer collision test in the fold; clippy -D; fmt.

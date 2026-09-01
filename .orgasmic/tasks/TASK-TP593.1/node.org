@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-TP593.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-TP593.1 M2+M3: eight tests that cannot fail — node_kernel real_data needs ORGASMIC_MIGRATED_DIR (set nowhere); seven live-corpus fixtures skip on every fresh clone    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-TP593.1
+:PRIORITY: P2
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-stdio, claude-opus-5 high, 2026-09-01), verdict APPROVE WITH FOLLOW-UPS; report promoted under tasks/<chain-task>/dispatches/tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07/report.md.
+M2: =every_migrated_node_parses= (crates/orgasmic-core/src/node_kernel.rs:429) returns Ok unless =ORGASMIC_MIGRATED_DIR= is set — set nowhere in *.rs *.sh *.toml *.yml *.md *.org — so =assert!(n > 800)= has never run in any gate; its doc comment points at scripts/ap971-migrate-proto.py which is not in the tree.
+M3 (LBRX7): =live_ledger_present()= (crates/orgasmic-core/tests/fixtures.rs:37) is false whenever .orgasmic/project.org is absent — post-cutover every fresh clone and CI checkout. Reproduced: =cargo test -p orgasmic-core --test fixtures= → 19 passed in 0.00s, 7 print skipping: no live. parses_real_done_tasks, live_state_files_parse_without_retired_property_warnings, parses_real_decisions, parses_real_glossary, parses_real_project + two more assert nothing in the release gate.
+** Acceptance
+- [ ] Either the corpus is wired into the gate (a committed fixture tree, or the gate checks out the =orgasmic= ledger branch beside shipped/), or the eight tests are deleted. A test that cannot fail is worse than none because it is counted.
+- [ ] Default =cargo test -p orgasmic-core= prints zero silent skips for these; clippy -D; fmt.

@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-KA934.1
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6759 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6759
+:TIME:    [2026-09-01 Tue 13:00:54]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:TARGET: .orgasmic/tasks/TASK-KA934.1/node.org
+:REASON: filed from the whole-chain review tx-1c6d2115
+:EVENT_ID: c614603e-4d3e-481d-ae85-ce009486f587
+:END:
+
+* tx-20260901-orgasmic-6760 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6760
+:TIME:    [2026-09-01 Tue 13:00:54]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:TARGET: .orgasmic/tasks/TASK-KA934.1/node.org
+:REASON: fix round from chain review
+:FIX_SUBTASK: t
+:EVENT_ID: 6ed7d32c-ed1e-4c4d-8fe7-6bb2a00e6873
+:END:

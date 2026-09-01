@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-SRBGS.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-SRBGS.1 LOW follow-ups from the chain review: lint swallows IO errors, migrator partial-failure dead end, daemon-wide apply-failure slot, tx.org type list drift, literal anomalies line    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-SRBGS.1
+:PRIORITY: P3
+:END:
+
+** Description
+Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-stdio, claude-opus-5 high, 2026-09-01), verdict APPROVE WITH FOLLOW-UPS; report promoted under tasks/<chain-task>/dispatches/tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07/report.md.
+- L1 (SRBGS) identity_lint.rs:218,225,245 — =unwrap_or_default()= swallows real IO errors (NotFound is already Ok(vec![]) in the helper), so an unreadable collection makes the id-collision and dangling-reference lints report clean.
+- L2 (SRBGS) project_migrate.rs:345 — =apply()= is not atomic, no recovery path; a partial failure leaves node dirs, then plan() bails (target exists) and refuse_dirty_tree() bails; the verb refuses forever unless the operator knows to git checkout/clean. No test for partial failure.
+- L3 (8AV8B) api.rs:8570 — =take_apply_failure()= is a single daemon-wide slot; one request's projection failure surfaces as a committed-503 on the next unrelated request, and that early return skips =repair_projection=.
+- L4 (GCXB7) shipped/schema/tx.org:101 — the complete routed type set omits =fixer.done= and =implementer.commit_pending= (both routed to tx/ by the Rust pin test); nothing tests the shipped list against =event_routes_to_journal=.
+- L5 (SRBGS) project_migrate.rs:86 — =println!("  anomalies 0")= is an unconditional literal.
+** Acceptance
+- [ ] L1 propagates errors; L3 keys the failure by request; L4 list matches the Rust route table with a test; L5 prints the counted value; L2 documents the recovery or makes apply() resumable.
+- [ ] clippy -D; fmt.

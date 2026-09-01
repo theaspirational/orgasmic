@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-SRBGS.1
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6763 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6763
+:TIME:    [2026-09-01 Tue 13:00:54]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS.1
+:TARGET: .orgasmic/tasks/TASK-SRBGS.1/node.org
+:REASON: filed from the whole-chain review tx-1c6d2115
+:EVENT_ID: e2eccb08-c0ef-448f-86f9-f03243b618e3
+:END:

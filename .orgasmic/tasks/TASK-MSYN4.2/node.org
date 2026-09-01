@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-MSYN4.2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MSYN4.2 H2+H5: sync loop races the writer (commits .bak/.tmp sidecars, torn closes) and wedges silently on rebase conflict    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-MSYN4.2
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-stdio, claude-opus-5 high, 2026-09-01), verdict APPROVE WITH FOLLOW-UPS; report promoted under tasks/<chain-task>/dispatches/tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07/report.md.
+H2: =sync_once= (crates/orgasmic-daemon/src/ledger_sync.rs:56) takes no writer lease and =git add --all -- .orgasmic= sweeps the tree. It has already committed =transaction_backup_path= sidecars on the live ledger (=cd544977= node.org.bak.53cd3fda for TASK-JHWNP.1; =8f937138= ART-MKRG1 .bak.fd0f75a5). The same window spans =transaction_multi_locked_inner='s rename loop (writer.rs:3478): a dispatch close can be pushed with node files rewritten and the close tx not yet appended.
+H5: =pull --rebase= failure aborts and =bail!=s (ledger_sync.rs:96); the next tick repeats identically, local commits pile up unpushed, the only surface is tracing::warn!. MSYN4's own acceptance (rejected events land in an inspectable location with a reason) is unmet for the whole-sync failure.
+** Acceptance
+- [ ] =sync_once= runs under the writer lease (=with_detached_session_lease= shape) OR stages with =:(exclude)*.tmp.*= =:(exclude)*.bak.*= and the torn-close window is documented as a known ceiling with a ponytail: comment.
+- [ ] A failed rebase is surfaced: last sync outcome + reason in =/status= and =orgasmic daemon status=; identical failing rebase is not retried silently every tick (backoff or stop-and-flag).
+- [ ] Tests: sidecar never staged; failed pull surfaces in status. clippy -D; fmt.

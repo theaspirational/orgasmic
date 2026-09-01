@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-MSYN4.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MSYN4.1 H1: org-file denylist no longer covers the moved tx ledger, claims.org, or views/    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-MSYN4.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-stdio, claude-opus-5 high, 2026-09-01), verdict APPROVE WITH FOLLOW-UPS; report promoted under tasks/<chain-task>/dispatches/tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07/report.md.
+=reject_ledger_rewrite= (crates/orgasmic-daemon/src/api.rs:14575) matches only =.orgasmic/tx*= and =**/journal.org=. MSYN4 moved the authoritative ledger to =machines/<uuid>/tx/= and =guard_node_write= (writer.rs:1752) allowlists =machines | tx | tmp | views=, so =POST /org/file= can whole-file overwrite =machines/<uuid>/tx/2026-09.org=, forge or erase =machines/<uuid>/claims.org=, and write =views/= (AP971.8: never a write target). =post_org_file= also carries no identity/Action check (pre-existing), so the lowest role reaches it. Reopens the TASK-HQ970 class.
+** Acceptance
+- [ ] One structural predicate refuses any path under =.orgasmic/machines/=, any =.orgasmic/views/=, plus the existing =tx/= and =journal.org= rules; pinned by a test with the four cases from the report (machines tx, claims.org, views/board.org, tx/, journal.org).
+- [ ] =post_org_file= requires an identity and an Action like every sibling write.
+- [ ] cargo test -p orgasmic-daemon --lib <new tests>; clippy -D warnings; fmt.

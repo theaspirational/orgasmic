@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-KA934.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-KA934.1 M4: any viewer can edit or tombstone anyone's comment (incl. reviewer.finding); tombstone/edit record no actor    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-KA934.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-stdio, claude-opus-5 high, 2026-09-01), verdict APPROVE WITH FOLLOW-UPS; report promoted under tasks/<chain-task>/dispatches/tx-20260901-orgasmic-1c6d2115-188e-4db6-9ed1-ebb0a5415b07/report.md.
+Comment edit/delete handlers (crates/orgasmic-daemon/src/api.rs:2386 / :2421) gate only on =Action::TasksComment=, which authz.rs:77 grants to the lowest role (viewer), and neither checks authorship — a viewer can rewrite or tombstone a =reviewer.finding= or =review.verdict=. TaskDialog.tsx hiding Edit/Delete on automated rows is cosmetic. =tombstone_comment= (node_kernel.rs:291) rewrites TYPE and drops the body without recording actor or time; =edit_comment_body= stamps only :EDITED_AT:, never :EDITED_BY:. The daemon is LAN-bound and tunneled.
+** Acceptance
+- [ ] Edit/delete require authorship (or an elevated Action); automated rows (reviewer.finding, review.verdict, *.done) are not editable by comment authors.
+- [ ] Tombstone and edit record :ACTOR:/:EDITED_BY: and time in the journal.
+- [ ] Tests for both refusals and both stamps; UI unchanged or reflects the rule; clippy -D; fmt; ui typecheck.
