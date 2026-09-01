@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         568cb5be
+:LIVENESS:         c56b0bbe
 :LIVENESS_AT:      [2026-09-01 Tue 16:10]
 :UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
@@ -634,6 +634,7 @@ operator + agent sessions, no manager handoff write in between).
 - 2026-09-01 (session, cont.): TASK-MSYN4.3 merged =568cb5be= (UUID tx ids on all project paths, sequence cache deleted); manager gates green (core tx 25, writer 32, durability 9, clippy, fmt); Evidence recorded; reviewer (opus-5 high) dispatched with =scratchpad/brief-TASK-MSYN4.3-review.md=. TASK-SRBGS.1 implementer dispatched (brief L4 patched for the 8DWJP-added ledger.sync_conflict list entry).
 - 2026-09-01 (session, cont.): TASK-8DWJP review (opus-5 high, tx-eb858d4c) REJECT — HIGH: conflict event path lacks tx/ (never indexed); HIGH: autostash-pop conflict exits 0 → reported synced, next tick commits+pushes conflict markers; MEDIUM: conflict_paths prose scrape ('tree.'); MEDIUM: salvage→reset window unfenced (WriterCommand::Barrier ~15 lines); 2 LOW. Design judged sound. Both generations closed; merge 200892f2 KEPT on local main; fix round TASK-8DWJP.1 (P1, FIX_SUBTASK, DEPENDS_ON MSYN4.2.1 — same file) filed with the reviewer's fix directions. TASK-AS0FS still folded (closes with 8DWJP).
 - 2026-09-01 (session, cont.): TASK-MSYN4.3 review (opus-5 high, tx-a9a7ba40) APPROVE WITH FOLLOW-UPS (3 LOW); both generations closed; task done. LOW 1 (same-second activity order) ACCEPTED — do NOT stamp %.6f: parse_org_timestamp is strict and the torn-close guards fail closed on any other format. LOW 3 (dropped .orgasmic-ancestor guard) accepted. LOW 2 → TASK-MSYN4.3.1 (P3, test-only, trivial close). Reviewer independently re-spotted 8DWJP HIGH 1 (event path lacks tx/).
+- 2026-09-01 (session, cont.): TASK-SRBGS.1 (chain-review L1-L5) reported (worker 79caf335, 9 gates PASS) and merged =c56b0bbe=; it ALSO fixed 8DWJP HIGH 1 (ledger.sync_conflict now under machines/<id>/tx/) — 8DWJP.1 brief trimmed accordingly. Manager gates running (=scratchpad/gates-SRBGS.1-*.log=); not trivial (writer apply-failure keying) → reviewer opus-5 high next, brief =scratchpad/brief-TASK-SRBGS.1-review.md=; implementer gen tx-20260901-orgasmic-2c75f6bd-619c-4c51-98c1-e3b77b538819 closes after the verdict with =--merge-sha c56b0bbe --worker-commit 79caf335=. TASK-KA934.1.1 implementer dispatched: tx-20260901-orgasmic-ec1c76ab-d18a-4ed9-ba85-464e97509af9 (watcher armed). Slots: MSYN4.2.1 + KA934.1.1.
 
 ** Next likely actions
 Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 DONE (chain landed, 0.0.23 certified). Step 2 half done:
