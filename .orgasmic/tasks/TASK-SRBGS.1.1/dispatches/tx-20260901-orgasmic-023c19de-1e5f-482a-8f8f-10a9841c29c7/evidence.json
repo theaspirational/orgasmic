@@ -1,0 +1,20 @@
+{
+  "event_count": 152,
+  "tool_call_count": 85,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-SRBGS.1.1-implementer-20260901T154434.jsonl",
+    "size_bytes": 393884
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/01/rollout-2026-09-01T18-44-35-01a05da4-c72d-7593-a9bf-ee65d417117e.jsonl",
+    "session_id": "01a05da4-c72d-7593-a9bf-ee65d417117e",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
