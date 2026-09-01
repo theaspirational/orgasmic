@@ -1,0 +1,25 @@
+#+title: orgasmic task TASK-8DWJP.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-8DWJP.1 Fix round for 8DWJP: route the conflict event into machines/<id>/tx/, detect autostash-pop conflicts, read conflicted paths from git, fence park_conflict behind a writer barrier    :e01mc:chain-review:
+:PROPERTIES:
+:DEPENDS_ON: TASK-MSYN4.2.1
+:ID: TASK-8DWJP.1
+:PRIORITY: P1
+:RELATES_TO: TASK-8DWJP
+:FIX_SUBTASK: t
+:END:
+
+REJECT residuals of the 8DWJP review (claude-opus-5 high, tx-eb858d4c; merged 200892f2 stays on local main, fix on top). Same file as TASK-MSYN4.2.1 → runs after it merges.
+
+HIGH 1 — crates/orgasmic-daemon/src/ledger_sync.rs:~405 record_sync_conflict builds tx_path as .orgasmic/machines/<id>/YYYY-MM.org: the tx/ segment is missing. Every reader requires it (index.rs:~948 parts.get(3)=="tx", index.rs:~3790 project_tx_dirs, api.rs:~3801), so the event is staged and pushed but never indexed (absent from tx list, API feed, views); is_machine_tx_path (writer.rs) is also false. Fix: .join("tx"). The test at ledger_sync.rs:~585 re-derives the same expression — hard-code the relative path machines/<id>/tx/<month>.org in the assertion and, if cheap, assert visibility through the index. (MSYN4.3, merged 568cb5be, already removed the numeric-sequence id branch, so the tx-id half of this finding is moot; routing is not.)
+
+HIGH 2 — ledger_sync.rs:~131 the detector fires only on !pull.status.success(). git pull --rebase --autostash exits 0 with no CONFLICT( line when the rebase fast-forwards and the autostash pop conflicts (measured git 2.52: stderr 'Applying autostash resulted in conflicts. Your changes are safe in the stash.', status UU). The code returns Synced; the next tick's git add --all commits the conflict markers and pushes them to every machine. Fix: after the pull, regardless of exit code, treat a non-empty git diff --name-only --diff-filter=U as a conflict. When no rebase is in progress, park the retained stash commit itself (git rev-parse stash@{0}; its tree is the pre-pull working tree) under refs/orgasmic/conflicts/<machine>/<ts>, git stash drop, then reset --hard origin/orgasmic. Test vector: a locally modified tracked file under machines/<other-machine>/ (stage_ledger never stages foreign machine dirs, so it stays dirty into the pull) that the remote also changed.
+
+MEDIUM 3 — ledger_sync.rs:~239 conflict_paths rsplit_once(" in ") returns 'tree.' for 'CONFLICT (modify/delete): … Version HEAD of <path> left in tree.' and mis-parses rename/delete. Replace the prose scrape with git diff --name-only --diff-filter=U read BEFORE rebase --abort (one helper shared with HIGH 2).
+
+MEDIUM 4 — ledger_sync.rs:~252 park_conflict runs unfenced on spawn_blocking; a tracked-file rewrite landing between the salvage commit and reset --hard is discarded with no record. The writer is a single-threaded actor over mpsc<WriterCommand> (writer.rs:~343; LeaseSessions/ReleaseSessions at ~378 is the same shape). Add WriterCommand::Barrier { run: Box<dyn FnOnce() + Send>, reply } + one match arm + WriterHandle::run_barrier(), and run park_conflict inside it. The event append stays AFTER the barrier returns (the writer cannot append during its own barrier).
+
+LOW 5 (optional, ≤ 5 lines) — daemon status prints the count of refs/orgasmic/conflicts/* for a conflict ledger; otherwise leave as residual. LOW 6 is covered by HIGH 1's test change.
+
+Acceptance: event lands at machines/<id>/tx/<month>.org (test); autostash-pop conflict → outcome conflict with a parked ref holding the local bytes, working tree == origin/orgasmic, NO markers committed on the next tick (test); PATHS correct for a modify/delete conflict (test); park_conflict runs inside a writer barrier (test: an append issued during the barrier is applied after the reset, not lost); existing ledger_sync tests green. Gates: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict writer::tests::barrier; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle; clippy daemon+cli -D warnings; fmt.
