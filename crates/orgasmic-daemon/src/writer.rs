@@ -1658,7 +1658,9 @@ fn require_comment_body(
     let entry = entries
         .iter()
         .find(|entry| entry.entry_id == entry_id)
-        .ok_or_else(|| anyhow!("journal entry {entry_id} not found"))?;
+        .ok_or_else(|| CommentNotFound {
+            entry_id: entry_id.to_string(),
+        })?;
     if entry.ty != "comment" {
         bail!("journal entry {entry_id} is not an editable comment");
     }
@@ -1669,7 +1671,10 @@ fn require_comment_body(
         .into());
     }
     if entry.body != expected_body {
-        bail!("journal comment {entry_id} changed since it was read");
+        return Err(CommentConflict {
+            entry_id: entry_id.to_string(),
+        }
+        .into());
     }
     Ok(())
 }
@@ -1801,6 +1806,36 @@ impl std::fmt::Display for CommentAuthorshipForbidden {
 }
 
 impl std::error::Error for CommentAuthorshipForbidden {}
+
+#[derive(Debug)]
+pub(crate) struct CommentConflict {
+    entry_id: String,
+}
+
+impl std::fmt::Display for CommentConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "journal comment {} changed since it was read",
+            self.entry_id
+        )
+    }
+}
+
+impl std::error::Error for CommentConflict {}
+
+#[derive(Debug)]
+pub(crate) struct CommentNotFound {
+    entry_id: String,
+}
+
+impl std::fmt::Display for CommentNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "journal entry {} not found", self.entry_id)
+    }
+}
+
+impl std::error::Error for CommentNotFound {}
 
 fn guard_node_write(path: &Path, machine_id: &str) -> Result<()> {
     let Some(dotorg) = path

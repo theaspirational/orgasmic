@@ -118,6 +118,32 @@ describe('TaskActivityRail comments', () => {
     expect(screen.getByText('No activity yet.')).toBeInTheDocument();
   });
 
+  it('renders an edited tombstone without comment actions', () => {
+    render(
+      <TaskActivityRail
+        projectId="orgasmic"
+        taskId="TASK-1"
+        entries={[
+          entry({
+            kind: 'comment',
+            body: '',
+            edited_by: 'Nadia',
+            deleted_by: 'Bo',
+          }),
+        ]}
+        loading={false}
+        canComment
+        onChanged={() => {}}
+        embedded
+      />,
+    );
+
+    expect(screen.getByText(/comment deleted by Bo/)).toHaveTextContent('(edited)');
+    for (const action of ['Reply', 'Edit', 'Delete']) {
+      expect(screen.queryByRole('button', { name: action })).not.toBeInTheDocument();
+    }
+  });
+
   it('keeps the draft and reports the server error when posting fails', async () => {
     mocks.postTaskComment.mockRejectedValueOnce(new Error('Comment write failed'));
     render(

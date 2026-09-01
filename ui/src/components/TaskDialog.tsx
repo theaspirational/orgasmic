@@ -884,12 +884,25 @@ function ActivityRow({
   const { identity, me } = useMe();
   const presentation = taskActivityPresentation(entry);
   const automated = presentation.source !== 'human';
-  const canMutate = !automated && (identity === 'admin' || me?.name === entry.actor);
+  const deleted = entry.deleted_by != null;
+  const canMutate = !deleted && !automated && (identity === 'admin' || me?.name === entry.actor);
   const SourceIcon = presentation.source === 'agent' ? Bot : Server;
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.body);
   const [busy, setBusy] = useState(false);
+
+  if (deleted) {
+    return (
+      <article
+        className="min-w-0 rounded-lg border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground"
+        style={{ marginLeft: `${Math.min(depth, 3) * 0.75}rem` }}
+      >
+        comment deleted by {entry.deleted_by}
+        {entry.edited_by ? <span className="ml-1 italic">(edited)</span> : null}
+      </article>
+    );
+  }
 
   async function saveEdit() {
     const body = draft.trim();
@@ -1026,6 +1039,9 @@ function ActivityRow({
             {decorateText(presentation.body, rich)}
           </p>
         )}
+        {entry.edited_by ? (
+          <span className="text-[9px] italic text-muted-foreground">edited</span>
+        ) : null}
         <ActivityArtifacts artifacts={entry.artifacts} />
         {actions}
         {reply}

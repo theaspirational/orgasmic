@@ -386,12 +386,36 @@ mod tests {
             "[2026-08-22 Sat 13:01:00]",
         )
         .unwrap();
+        let j = edit_comment_body(
+            &j,
+            "tx-2",
+            "second, edited again",
+            "second editor",
+            "[2026-08-22 Sat 13:01:30]",
+        )
+        .unwrap();
         let parsed = parse_journal(&j, JOURNAL_FILE).unwrap();
-        assert_eq!(parsed[1].body, "second, edited");
-        assert_eq!(parsed[1].extra("EDITED_BY"), Some("editor"));
+        assert_eq!(parsed[1].body, "second, edited again");
+        assert_eq!(parsed[1].extra("EDITED_BY"), Some("second editor"));
         assert_eq!(
             parsed[1].extra("EDITED_AT"),
-            Some("[2026-08-22 Sat 13:01:00]")
+            Some("[2026-08-22 Sat 13:01:30]")
+        );
+        assert_eq!(
+            parsed[1]
+                .extras
+                .iter()
+                .filter(|(key, _)| key == "EDITED_BY")
+                .count(),
+            1
+        );
+        assert_eq!(
+            parsed[1]
+                .extras
+                .iter()
+                .filter(|(key, _)| key == "EDITED_AT")
+                .count(),
+            1
         );
         assert_eq!(parsed[0].body, "first\n\nmulti-line", "sibling untouched");
 
