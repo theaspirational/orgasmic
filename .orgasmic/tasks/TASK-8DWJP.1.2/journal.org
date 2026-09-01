@@ -76,3 +76,55 @@
 :TO_STATE: in_review
 :EVENT_ID: 1938ff94-0427-4315-a625-cd9ab0da0078
 :END:
+
+* tx-20260901-orgasmic-6972 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6972
+:TIME:    [2026-09-01 Tue 16:49:14]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.2
+:REASON: HIGH crates/orgasmic-daemon/src/ledger_sync.rs:106 — the new entry-path 'git rebase --abort' hard-resets the worktree before any salvage runs, silently discarding every uncommitted tracked ledger write made during the mid-rebase outage window (proven: zero surviving copies), which is the exact dec_EWY0K loss this round was opened to close.
+:EVENT_ID: 0892425a-e1b6-4a58-b3a6-4d324c3dc019
+:END:
+
+* tx-20260901-orgasmic-6973 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6973
+:TIME:    [2026-09-01 Tue 16:49:21]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.2
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:669 — the salvage snapshot stores the conflicted path with raw '<<<<<<<' marker text (verified), but the status only says 'tracked worktree salvage at <ref>'; the brief required the status to name it as a raw worktree snapshot.
+:EVENT_ID: 822cf9e0-7910-4400-b61c-85f32f437985
+:END:
+
+* tx-20260901-orgasmic-6974 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6974
+:TIME:    [2026-09-01 Tue 16:49:21]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.2
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:376 — with the abort moved ahead of the idle gate, the rebase_in_progress branch in conflict_source_on_entry and the ConflictSource::Worktree arm it feeds are now unreachable from the entry path; dead code that hides which abort actually ran.
+:EVENT_ID: 1bea4cc3-26e4-4a6c-85ef-d36d779637d8
+:END:
+
+* tx-20260901-orgasmic-6975 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6975
+:TIME:    [2026-09-01 Tue 16:49:21]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.2
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:1477 — LOW 6's tracked post-conflict write in conflicting_two_writer_tick lands after the conflict tick has already finished, so it does not guard the discard; only the new dedicated salvage test does.
+:EVENT_ID: 0a9398e5-a76f-49a7-8ed9-f1b7fb589cb6
+:END:
