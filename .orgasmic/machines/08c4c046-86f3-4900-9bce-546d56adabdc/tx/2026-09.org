@@ -4286,3 +4286,47 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1/dispatches/tx-20260901-orgasmic-4c89e039-1d4f-4814-989c-9530cd43af0c/report.md
 :EVENT_ID:     51edc879-b52b-48bf-a05e-af627336afa8
 :END:
+
+* TX 2026-09-01 Tue 16:03:37 reviewer.done TASK-8DWJP.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-c463f03b-0d7c-4056-aab7-60f4c5c8acd3
+:TIME:         [2026-09-01 Tue 16:03:37]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1
+:REASON:       Reviewer (claude-opus-5 high) REJECT: the four assigned findings are genuinely fixed and the tests honest, but park_conflict is non-atomic and unmerged_paths is read only after the pull — HIGH: a failure inside the conflict path (fetch on a network blip) leaves a UU index that the next tick's stage_ledger resolves with markers and pushes; HIGH: when the leftover UU path is under a foreign machines/<other>/ dir both stage pathspecs exclude it, commit fails forever (permanent wedge); MEDIUM: stash drop is positional on refs/stash which the worktree SHARES with the source checkout (TOCTOU vs an operator stash); MEDIUM: Barrier runs git push/fetch inline on a tokio worker with no timeout; LOW panic-in-barrier wedges writer; LOW PATHS space-joined. MSYN4.2.1 hunk APPROVED (LOW: sidecar glob has no ownership check). Residuals → TASK-8DWJP.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: a64d5cf8^1..a64d5cf8
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260901-orgasmic-4c89e039-1d4f-4814-989c-9530cd43af0c
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1/dispatches/tx-20260901-orgasmic-4c89e039-1d4f-4814-989c-9530cd43af0c/report.md
+:EVENT_ID:     3396bc02-cf78-4e6e-b7b3-19783d42d510
+:END:
+
+* TX 2026-09-01 Tue 16:03:39 implementer.done TASK-8DWJP.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-f295c4db-ee4b-45f6-8208-c8f3275b5be8
+:TIME:         [2026-09-01 Tue 16:03:39]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1
+:REASON:       Merged a64d5cf8 (worker 6692c2e6, codex gpt-5.6-sol); manager gates green; review REJECTED on new findings (re-entrancy, stash TOCTOU, barrier scope) → fix round TASK-8DWJP.1.1 on top
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: 6692c2e6b982f5b7d9277e4a813849a124c4bcfd
+:MERGE_SHA:    a64d5cf8166d00f860667bd826a51bf03e0c6974
+:BRANCH:       task-8dwjp.1-impl
+:CLOSED_TX:    tx-20260901-orgasmic-6d10e68b-0b17-45ad-91c2-b44eb671217a
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1/dispatches/tx-20260901-orgasmic-6d10e68b-0b17-45ad-91c2-b44eb671217a/report.md
+:EVENT_ID:     05c8214b-1b8a-4533-98f8-734236583fd4
+:END:

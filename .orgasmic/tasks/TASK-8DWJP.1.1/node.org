@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-8DWJP.1.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-8DWJP.1.1 Fix round for 8DWJP.1: re-entrant conflict path (unmerged guard before staging), verified stash drop, network git outside the writer barrier    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-8DWJP.1.1
+:PRIORITY: P1
+:RELATES_TO: TASK-8DWJP.1
+:FIX_SUBTASK: t
+:END:
+
+REJECT residuals of the 8DWJP.1 review (claude-opus-5 high, tx-4c89e039; merged a64d5cf8 stays on local main, fix on top). The four 8DWJP.1 items are confirmed fixed; these are new.
+
+HIGH 1+2 (one guard) — crates/orgasmic-daemon/src/ledger_sync.rs: unmerged_paths() is read once, at ~:177 AFTER the pull; stage_ledger (~:164) and commit_staged (~:211) run before it with no check. park_conflict (~:229-266) is a chain of ?-propagating git calls (update-ref, best-effort push, stash drop, fetch, rev-parse, reset --hard) with the index unmerged throughout. If any step fails (git fetch on a network blip is the reachable one) the tick returns Err, status failed+backoff, and the tree keeps conflict markers + a UU index. Next tick: (a) on a shared path git add --all RESOLVES the conflict by staging the marker text, commit_staged commits it, the loop pushes it — conflict markers on every machine (reviewer reproduced: bare remote shows <<<<<<< Updated upstream); (b) on a path under a foreign machines/<other>/ dir both stage pathspecs exclude it, so commit fails 'Committing is not possible because you have unmerged files' forever — permanent wedge, no self-heal. Worse in the retained-stash branch: stash drop already ran before the failing fetch, so the pre-pull bytes exist only in the local parked ref whose push failed in the same outage. Fix: read unmerged_paths at the TOP of the tick, before stage_ledger; non-empty on entry → enter the conflict path immediately (park what is recoverable — if a parked ref for this conflict already exists reuse it; if a rebase is in progress abort it; if a retained autostash exists park it) then fetch + reset --hard; never stage over a UU index. The conflict path must be re-entrant across a crashed or interrupted attempt. Test: an injectable failure seam (mirror the existing before_push seam) that fails the tick between stash drop and reset --hard; assert the NEXT tick recovers (worktree == remote, status conflict/synced, local bytes still in the parked ref) and pushes no <<<<<<< to the bare remote; a second test with the leftover UU path under machines/<other>/ asserting no permanent wedge.
+
+MEDIUM 3 — ledger_sync.rs ~:184/~:256: refs/stash is NOT per-worktree (verified git 2.52: the ledger worktree and the operator's source checkout share one stack). The sha is captured at :184 but git stash drop runs after update-ref, a network push, and the barrier queue wait — an operator git stash push in that window makes the daemon drop the operator's stash. Fix: parse 'Created autostash: <sha>' from the pull stdout, require rev-parse stash@{0} == that sha immediately before the drop; on mismatch → failed + backoff, no drop.
+
+MEDIUM 4 — crates/orgasmic-daemon/src/writer.rs ~:2421 + ledger_sync.rs ~:549-560: writer_loop is a plain tokio::spawn task (~:1765); the Barrier arm calls run() inline, and park_conflict does git push origin (~:247) and git fetch origin (~:258) with no timeout, so a blackholed remote blocks every write in the daemon indefinitely and pins a runtime worker. Fix: git fetch origin orgasmic BEFORE run_barrier; the best-effort parked-ref push AFTER it; only local git (update-ref, stash drop, reset --hard, salvage commit) inside the fence. Optionally block_in_place for the local git.
+
+LOW 5 — writer.rs ~:2421: wrap run() in std::panic::catch_unwind(AssertUnwindSafe(..)) and always send reply (~4 lines) so a panicking barrier body cannot wedge the writer.
+LOW 6 — ledger_sync.rs ~:495: PATHS is paths.join(" "); join with a tab or repeat the extra instead if it stays a one-liner, else leave and note.
+Optional (one line each, else skip and say so): surface a failed parked-ref push in the conflict status error string; doctor names the manual recovery for a UU ledger index (git -C <ledger> checkout --merge / reset).
+
+Acceptance: both re-entrancy tests green; stash drop verified by identity with a test that plants a foreign stash on top and asserts NO drop + failed status; fetch/push outside the barrier (test or clear code structure + report); catch_unwind in place; existing ledger_sync/barrier tests green. Gates: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict barrier; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle; clippy daemon+cli -D warnings; fmt.
