@@ -89,3 +89,29 @@
 :REASON: LOW crates/orgasmic-daemon/src/index.rs:4315 — same-second activity ordering became random: the numeric tail used to reproduce insertion order, uuids do not; display-only (activity_index is served solely by GET /tasks/:id/activity)
 :EVENT_ID: 3b6b2b07-3356-4bdd-8697-ff5cc30c9bc7
 :END:
+
+* tx-20260901-orgasmic-6909 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6909
+:TIME:    [2026-09-01 Tue 15:21:32]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.3
+:REASON: LOW crates/orgasmic-core/src/tx.rs:1170 — the two-machine fold test uses two distinct uuids and tx.rs fold source is unchanged in this diff, so it passes verbatim on 568cb5be^1; it never constructs the finding's collision (one id, two generations) and pins no new fold property
+:EVENT_ID: 440eac7a-bcfd-428c-a75d-6e00e45ffe34
+:END:
+
+* tx-20260901-orgasmic-6910 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6910
+:TIME:    [2026-09-01 Tue 15:21:32]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.3
+:REASON: LOW crates/orgasmic-daemon/src/writer.rs:2819 — deleting project_tx_dir also dropped its 'project journal is not under .orgasmic' guard, so a ProjectSequence append to a path outside .orgasmic now silently succeeds instead of erroring
+:EVENT_ID: 7b2ce926-da77-4a43-a089-da67fcda780b
+:END:
