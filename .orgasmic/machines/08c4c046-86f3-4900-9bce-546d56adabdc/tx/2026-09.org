@@ -3249,3 +3249,47 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP/dispatches/tx-20260901-orgasmic-eb858d4c-e3a0-4073-a71d-f93f659d95a6/report.md
 :EVENT_ID:     51681127-fc9d-426d-a553-bf94470094da
 :END:
+
+* TX 2026-09-01 Tue 15:22:38 reviewer.done TASK-8DWJP
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-9cd46446-1bea-41e7-9f1c-6c04e8335b88
+:TIME:         [2026-09-01 Tue 15:22:38]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP
+:REASON:       Reviewer (claude-opus-5 high) REJECT: HIGH record_sync_conflict writes machines/<id>/YYYY-MM.org without the tx/ segment (never indexed; wrong tx-id branch); HIGH autostash-pop conflict exits 0 → reported synced, next tick commits+pushes conflict markers (measured, git 2.52); MEDIUM conflict_paths prose scrape yields 'tree.' for modify/delete; MEDIUM salvage→reset window unfenced though a WriterCommand::Barrier is ~15 lines; LOW parked refs never listed/pruned; LOW test re-derives the same tx path. Design (salvage→park→follow-remote, abort re-applies autostash, reset target, ref naming) judged sound. Fix round TASK-8DWJP.1 on top of the merge.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: 200892f2^1..200892f2
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260901-orgasmic-eb858d4c-e3a0-4073-a71d-f93f659d95a6
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP/dispatches/tx-20260901-orgasmic-eb858d4c-e3a0-4073-a71d-f93f659d95a6/report.md
+:EVENT_ID:     8b523cb1-7144-4704-ad3c-45148c5964e9
+:END:
+
+* TX 2026-09-01 Tue 15:22:40 implementer.done TASK-8DWJP
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-524901cd-f886-4422-923b-1a538789a702
+:TIME:         [2026-09-01 Tue 15:22:40]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP
+:REASON:       Implementer reported; merged 200892f2 (local main, unpushed); manager gates green; review REJECTED with concrete fix directions → TASK-8DWJP.1 fix round on top
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: fa8ef1f9ef107ba8da4f80a779397a91c4d1d1fe
+:MERGE_SHA:    200892f270d1d87b1d713fe8f98a10c5dc35096d
+:BRANCH:       task-8dwjp-impl
+:CLOSED_TX:    tx-20260901-orgasmic-304bbc4b-4ae4-4e04-bafb-499145577f57
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP/dispatches/tx-20260901-orgasmic-304bbc4b-4ae4-4e04-bafb-499145577f57/report.md
+:EVENT_ID:     b20328a2-2b23-4773-8ed4-8f8e9b0a88b1
+:END:
