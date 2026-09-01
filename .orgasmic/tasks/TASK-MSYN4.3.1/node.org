@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-MSYN4.3.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MSYN4.3.1 Test-only: pin the fold contract for one tx id shared by two machine generations    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-MSYN4.3.1
+:PRIORITY: P3
+:RELATES_TO: TASK-MSYN4.3
+:FIX_SUBTASK: t
+:END:
+
+LOW residual of the MSYN4.3 review (claude-opus-5 high, tx-a9a7ba40). crates/orgasmic-core/src/tx.rs:~1170 dispatch_fold_keeps_two_machine_generations_distinct_by_uuid_tx_id builds two starts with two already-distinct uuids; the diff changed no fold source, so the test passes verbatim on 568cb5be^1 and pins nothing new. Add the negative case the finding actually described: two manager.dispatch_started entries on two machines sharing ONE TX_ID (the pre-fix numeric shape), then one CLOSED_TX. Assert the documented fold behaviour for that shape (both close, or the ambiguity is detected — read the fold and state which). That test must fail on old-runtime data shapes if the fold ever starts trusting the id alone. Test-only, no production code; close with --fix-round-final --no-review-required. Gate: cargo test -p orgasmic-core --lib tx; clippy core; fmt. Optional cosmetic, skip unless trivial: TxIdPolicy::ProjectSequence and the 'pending-project-sequence' placeholder (api.rs:~3007, ~8554) are misnomers now — 13 call sites, rename only if a mechanical rename stays under a few minutes.

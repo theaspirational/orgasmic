@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-MSYN4.3.1
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6916 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6916
+:TIME:    [2026-09-01 Tue 15:24:11]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.3.1
+:TARGET: .orgasmic/tasks/TASK-MSYN4.3.1/node.org
+:REASON: created task TASK-MSYN4.3.1
+:EVENT_ID: e99d718a-72b4-49c9-8c8c-6d47e18ee70d
+:END:
+
+* tx-20260901-orgasmic-6917 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6917
+:TIME:    [2026-09-01 Tue 15:24:11]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.3.1
+:TARGET: .orgasmic/tasks/TASK-MSYN4.3.1/node.org
+:REASON: Test-only fix round of MSYN4.3
+:FIX_SUBTASK: t
+:EVENT_ID: 0b7e0f5e-bdb1-4bd6-9409-8d2dd9c9cc9e
+:END:

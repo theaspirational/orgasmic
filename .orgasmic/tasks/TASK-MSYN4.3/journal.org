@@ -115,3 +115,19 @@
 :REASON: LOW crates/orgasmic-daemon/src/writer.rs:2819 — deleting project_tx_dir also dropped its 'project journal is not under .orgasmic' guard, so a ProjectSequence append to a path outside .orgasmic now silently succeeds instead of erroring
 :EVENT_ID: 7b2ce926-da77-4a43-a089-da67fcda780b
 :END:
+
+* tx-20260901-orgasmic-6915 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6915
+:TIME:    [2026-09-01 Tue 15:24:07]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.3
+:TARGET: .orgasmic/tasks/TASK-MSYN4.3/node.org
+:REASON: UUID tx ids on all project paths merged 568cb5be and reviewed approve-with-follow-ups; LOW residuals accepted with reasons in the reviewer close, test residual tracked in TASK-MSYN4.3.1
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: d87c7e7f-5a2e-41d4-a66b-2fb399b74e38
+:END:
