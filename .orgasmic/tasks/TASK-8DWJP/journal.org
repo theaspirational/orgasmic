@@ -233,3 +233,35 @@
 :TO_STATE: in_progress
 :EVENT_ID: 1a3316ed-1acc-4df6-a72e-00bce04eeac5
 :END:
+
+* tx-20260901-orgasmic-7004 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7004
+:TIME:    [2026-09-01 Tue 18:29:56]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:TARGET: .orgasmic/tasks/TASK-8DWJP/node.org
+:REASON: all fix rounds (8DWJP.1 .. 8DWJP.1.4) merged and reviewed
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: f50166c4-11d4-4639-95fd-f6c9ea04c542
+:END:
+
+* tx-20260901-orgasmic-7005 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7005
+:TIME:    [2026-09-01 Tue 18:29:56]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:TARGET: .orgasmic/tasks/TASK-8DWJP/node.org
+:REASON: dec_EWY0K conflict path shipped on local main (merges 200892f2 a64d5cf8 59c351dc a4372f03 1ff48c3a 62f986e0); final review approve-with-follow-ups, LOW residuals on TASK-8DWJP.1.4
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: e65bae7e-bf47-42bb-b5d4-d0a4b4b20aec
+:END:

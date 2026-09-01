@@ -160,3 +160,19 @@
 :TO_STATE: in_review
 :EVENT_ID: 04d19ba0-f81a-4b44-8388-24a0becf6adc
 :END:
+
+* tx-20260901-orgasmic-7001 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7001
+:TIME:    [2026-09-01 Tue 18:29:56]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.2
+:TARGET: .orgasmic/tasks/TASK-8DWJP.1.2/node.org
+:REASON: conflict path closed: round 6 merged 62f986e0, opus-5 review approve-with-follow-ups (LOW residuals recorded on TASK-8DWJP.1.4)
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 0f8fb5d3-64a0-4851-acbd-f0c3c8205c75
+:END:
