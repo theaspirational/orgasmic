@@ -1,0 +1,23 @@
+{
+  "event_count": 459,
+  "tool_call_count": 27,
+  "unparsed_events": 4,
+  "bounded_events": 7,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-8DWJP.1.1-reviewer-20260901T162111.jsonl",
+    "size_bytes": 623327
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task record, the decision, and the diff.Now let me verify git's actual behavior with a throwaway repo (nothing touches the real ledger)."
+    }
+  ],
+  "narrative_truncated": false
+}
