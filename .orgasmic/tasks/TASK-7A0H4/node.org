@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-7A0H4
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
+* DONE TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint :e01mc:node_kernel:
 :PROPERTIES:
 :ID: TASK-7A0H4
 :IMPLEMENTS: dec_E01MC

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JWHXH
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-JWHXH Derived read views: views/{board,glossary,decisions}.org :e01mc:node_kernel:
+* DONE TASK-JWHXH Derived read views: views/{board,glossary,decisions}.org :e01mc:node_kernel:
 :PROPERTIES:
 :DEPENDS_ON: TASK-SRBGS
 :ID: TASK-JWHXH
