@@ -2185,3 +2185,29 @@
 :TARGET:       .orgasmic/tasks/TASK-KA934.1
 :EVENT_ID:     d771c94f-76d6-478a-8b2f-59ec07380796
 :END:
+
+* TX 2026-09-01 Tue 14:39:58.622472 task.claim_released TASK-EPG6H.1
+:PROPERTIES:
+:TX_ID:        tx-20260901143958-d10ea8d2
+:TIME:         [2026-09-01 Tue 14:39:58.622472]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EPG6H.1
+:TARGET:       .orgasmic/tasks/TASK-EPG6H.1
+:EVENT_ID:     a5ffca41-a75f-478c-8e26-c7a7e250e9ed
+:END:
+
+* TX 2026-09-01 Tue 14:40:01.685498 task.claim_released TASK-EPG6H.1
+:PROPERTIES:
+:TX_ID:        tx-20260901144001-854f7e76
+:TIME:         [2026-09-01 Tue 14:40:01.685498]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EPG6H.1
+:TARGET:       .orgasmic/tasks/TASK-EPG6H.1
+:EVENT_ID:     7664302f-0e40-417a-a565-e9958757ed07
+:END:

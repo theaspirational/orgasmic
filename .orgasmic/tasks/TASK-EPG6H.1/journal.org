@@ -128,3 +128,35 @@
 :REASON: LOW crates/orgasmic-daemon/src/api.rs:18420 — with the repair exception gone, a torn close carrying LIFECYCLE_TO done on a task with an empty Evidence section is permanently unrepairable and reconcile_torn_closes_best_effort reprints its warning on every manager command (manager.rs:955, 1120, 2975); the live ledger holds 40 LIFECYCLE_TO done closes and most closed tasks have an empty Evidence section, though zero currently sit at their LIFECYCLE_FROM so nothing is stuck today.
 :EVENT_ID: 6667f1c5-008f-4124-89b9-6034455aecd3
 :END:
+
+* tx-20260901-orgasmic-6862 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6862
+:TIME:    [2026-09-01 Tue 14:40:01]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1
+:TARGET: .orgasmic/tasks/TASK-EPG6H.1/node.org
+:REASON: Review tx-723be31b ran on beee263b (approve-with-follow-ups); implementer close re-staged in_review after it. Residual MEDIUM/LOW in fix round TASK-EPG6H.1.1; back to in_progress until it lands.
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: 3ae97396-6d68-499f-b80c-066fb9364e3c
+:END:
+
+* tx-20260901-orgasmic-6863 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6863
+:TIME:    [2026-09-01 Tue 14:40:02]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1
+:TARGET: .orgasmic/tasks/TASK-EPG6H.1/node.org
+:REASON: transition TASK-EPG6H.1 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: c760a623-3554-490a-8ffe-d23c15c833a1
+:END:

@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-EPG6H.1.1
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6864 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6864
+:TIME:    [2026-09-01 Tue 14:40:11]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1.1
+:TARGET: .orgasmic/tasks/TASK-EPG6H.1.1/node.org
+:REASON: created task TASK-EPG6H.1.1
+:EVENT_ID: 865bdf4f-2255-4135-8a80-52eeda9352e1
+:END:
+
+* tx-20260901-orgasmic-6865 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6865
+:TIME:    [2026-09-01 Tue 14:40:11]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1.1
+:TARGET: .orgasmic/tasks/TASK-EPG6H.1.1/node.org
+:REASON: fix round 2 of TASK-EPG6H.1 (review tx-723be31b residuals)
+:FIX_SUBTASK: t
+:EVENT_ID: 603d7aed-1ad3-44cc-9143-36f7c09a05b9
+:END:

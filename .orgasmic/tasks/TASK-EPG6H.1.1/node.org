@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-EPG6H.1.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-EPG6H.1.1 Fix round 2 for EPG6H.1: earlier-journal CLI case, parsed TIME compare (fail closed), per-candidate journal errors, drop journal_tx_entry round-trip    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-EPG6H.1.1
+:PRIORITY: P1
+:RELATES_TO: TASK-EPG6H.1
+:FIX_SUBTASK: t
+:END:
+
+Source: review of TASK-EPG6H.1 (=beee263b=, reviewer gen tx-20260901-orgasmic-723be31b, claude-opus-5 high): APPROVE WITH FOLLOW-UPS. H3 itself is closed (reviewer simulated the fold on the live ledger: 48 of 68 stale candidates dropped).
+- MEDIUM crates/orgasmic-cli/src/manager.rs:12331 — =torn_close_candidates_yield_to_any_later_lifecycle_event= never exercises =entry.time >= close_time=: TASK-JOURNAL journal entry is 11:00 vs close 10:00 and no fixture has a journal transition that PREDATES its close, so dropping the time predicate leaves the assertion unchanged.
+- MEDIUM crates/orgasmic-cli/src/manager.rs:9814 + crates/orgasmic-daemon/src/api.rs:18541 — both guards compare raw org TIME strings; nothing validates TIME shape (TxEntry::validate checks key syntax only). The live ledger holds 20 date-only =[YYYY-MM-DD Fri]= TIMEs on implementer.done/reviewer.done in tx/2026-06.org; since space < ']' a date-only close_time outranks every same-day full-width journal stamp → guard fails OPEN. Not exploitable today (none carries LIFECYCLE_FROM; all current producers are tx_time_string_utc) but the invariant is unchecked on a surface that already violated it.
+- LOW crates/orgasmic-cli/src/manager.rs:9800 — one unreadable/unparseable journal aborts the whole reconciliation via =?= (all callers are the best-effort wrapper, so the command still succeeds); daemon twin api.rs:18523 returns 500 instead of refusing.
+- LOW api.rs:18420 — with the repair exception gone, a torn close carrying LIFECYCLE_TO done on an evidence-free task is permanently unrepairable; operator sees the 400 verbatim naming the fix. Accepted; document it in the ART-04FYD comment.
+- Optional: =journal_tx_entry= was widened to pub(crate) only to re-derive .ty/.time that JournalEntry already carries; read them directly and revert the widening.
+
+** Acceptance
+- [ ] CLI fixture gains a task whose journal task.state_transitioned is EARLIER than its close and asserts it is still a candidate; daemon test gains the same earlier-than case.
+- [ ] Both guards parse TIME (chrono NaiveDateTime from the org stamp; shared helper in orgasmic-core next to tx_time_string_utc or its parse twin) and FAIL CLOSED on an unparseable stamp on either side (candidate cleared / repair refused). Test with a date-only close stamp.
+- [ ] Unreadable/unparseable journal skips that ONE candidate (CLI) and refuses that ONE repair (daemon, 400 not 500); test each.
+- [ ] Comment at api.rs:18420 states the unrepairable-done consequence and the operator remedy.
+- [ ] Gates: cargo test -p orgasmic-cli --bin orgasmic -- torn_close; cargo test -p orgasmic-daemon --lib -- repair evidence; clippy -D cli+daemon(+core if touched); fmt.
