@@ -107,3 +107,68 @@
 :TO_STATE: in_review
 :EVENT_ID: 4707713f-0c61-478f-9a89-385405d62fd1
 :END:
+
+* tx-20260901-orgasmic-6902 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6902
+:TIME:    [2026-09-01 Tue 15:19:28]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:REASON: HIGH crates/orgasmic-daemon/src/ledger_sync.rs:405 — record_sync_conflict writes the ledger.sync_conflict event to .orgasmic/machines/<id>/YYYY-MM.org, missing the tx/ segment every reader requires (index.rs:948, index.rs:3790 project_tx_dirs, api.rs:3801), so the event is never indexed and never appears in tx list; is_machine_tx_path (writer.rs:2884) is also false, so prepare_tx_entry (writer.rs:2839) mints a project-sequence tx id instead of the machine UUID id, letting two conflicting machines collide on the same id.
+:EVENT_ID: 57407a5b-1045-48f3-9555-07ab4eae314e
+:END:
+
+* tx-20260901-orgasmic-6903 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6903
+:TIME:    [2026-09-01 Tue 15:19:33]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:REASON: HIGH crates/orgasmic-daemon/src/ledger_sync.rs:131 — an autostash-pop conflict is invisible to the new detector and corrupts the shared ledger: git 2.52.0 exits 0 with no CONFLICT( line when the rebase fast-forwards but the autostash pop conflicts, so the code reports Synced while the worktree holds UU files with conflict markers, and the next tick's stage_ledger git add --all commits and pushes those markers (proved end to end in /tmp/pk8).
+:EVENT_ID: 6ece9a53-6f10-42ba-bdd4-47e04e30aafe
+:END:
+
+* tx-20260901-orgasmic-6904 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6904
+:TIME:    [2026-09-01 Tue 15:19:38]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:REASON: MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:239 — conflict_paths uses rsplit_once(" in ") which only fits 'Merge conflict in <path>'; a real modify/delete line 'CONFLICT (modify/delete): n/f.org deleted in <sha> (msg) and modified in HEAD.  Version HEAD of n/f.org left in tree.' parses to the path 'tree.', so PATHS, the status line and the operator's only pointer at what conflicted are garbage (recovery itself still runs).
+:EVENT_ID: 811e808d-2a4a-4eb0-b158-3515bc3be0e9
+:END:
+
+* tx-20260901-orgasmic-6905 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6905
+:TIME:    [2026-09-01 Tue 15:19:41]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:REASON: MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:252 — park_conflict runs unfenced on a blocking thread, so any writer append or rewrite to a tracked file landing between commit_staged (salvage) and reset --hard is discarded with no record; the WriterHandle is now threaded in but used only for the event, and the writer is a single-threaded actor over mpsc<WriterCommand> (writer.rs:343,535) so a Barrier command running park_conflict inside the actor loop closes the window in roughly fifteen lines.
+:EVENT_ID: 8890b120-c7e6-4187-8d1d-968312478fad
+:END:
+
+* tx-20260901-orgasmic-6906 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6906
+:TIME:    [2026-09-01 Tue 15:19:46]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:272 — the only durable pointer at a parked conflict is the ref itself: LedgerSyncStatus is in-memory, the event append happens after the reset so a crash in between leaves the salvage commit reachable by nothing but a tracing warn, and refs/orgasmic/conflicts/ is never pruned or listed, so on a shared-refstore worktree those commits are permanently un-GC-able.
+:EVENT_ID: a392f8b0-5588-4da7-9f3d-c4ead2946c8b
+:END:
