@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KA934.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-KA934.1 M4: any viewer can edit or tombstone anyone's comment (incl. reviewer.finding); tombstone/edit record no actor :e01mc:chain-review:
+* DONE TASK-KA934.1 M4: any viewer can edit or tombstone anyone's comment (incl. reviewer.finding); tombstone/edit record no actor :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-KA934.1
 :PRIORITY: P1

@@ -154,3 +154,19 @@
 :REASON: LOW crates/orgasmic-daemon/src/api.rs:38268 — the bob-403 assertions check only error.status, not the message, so the test stays green if the authorship check is removed and the 403 comes from authz instead (it does not today: viewer holds TasksComment, authz.rs:80). No test performs two sequential edits, the upsert_comment_property replace-not-duplicate path; I proved it correct out-of-tree but it is unpinned.
 :EVENT_ID: c6202ffe-c13b-4d9c-88ea-6bed6b6b464e
 :END:
+
+* tx-20260901-orgasmic-6892 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6892
+:TIME:    [2026-09-01 Tue 15:08:50]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:TARGET: .orgasmic/tasks/TASK-KA934.1/node.org
+:REASON: Fix round for M4 merged cffb986b and reviewed approve-with-follow-ups (tx-5cfb04f1); LOW residuals tracked in TASK-KA934.1.1, the member-route decision in TASK-KA934.2
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 5d63e040-dede-46ae-b51a-53d708b5943e
+:END:
