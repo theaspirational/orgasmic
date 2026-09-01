@@ -1101,9 +1101,11 @@ impl Daemon {
         // Graceful-shutdown fanout: ws/PTY connection tasks watch this so the
         // axum drain phase can't deadlock behind a still-connected client.
         let (shutdown_signal_tx, shutdown_signal_rx) = tokio::sync::watch::channel(false);
+        let ledger_sync = Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
         ledger_sync::spawn(
             index.clone(),
             machine_id.clone(),
+            ledger_sync.clone(),
             shutdown_signal_rx.clone(),
         );
         let api_state = ApiState {
@@ -1143,6 +1145,7 @@ impl Daemon {
             trusted_exec_wrapper: opts.trusted_exec_wrapper_override.clone(),
             release_tasks: api::ReleaseTaskTracker::new(),
             recovery_generation_transitions: api::RecoveryGenerationTransitionTracker::default(),
+            ledger_sync,
         };
 
         // Boot auto-reattach runs *after* the listener is bound (see below). It

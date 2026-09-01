@@ -1,15 +1,45 @@
 //! Git transport for the hidden ledger worktree.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use chrono::{DateTime, Utc};
+use serde::Serialize;
 
 use crate::index::Index;
 
 const SYNC_INTERVAL: Duration = Duration::from_secs(2);
+const MAX_BACKOFF: Duration = Duration::from_secs(5 * 60);
 const PUSH_ATTEMPTS: usize = 5;
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct LedgerSyncStatus {
+    pub outcome: &'static str,
+    pub error: Option<String>,
+    pub consecutive_failures: u32,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub last_success_at: Option<DateTime<Utc>>,
+    pub next_attempt_at: Option<DateTime<Utc>>,
+}
+
+impl Default for LedgerSyncStatus {
+    fn default() -> Self {
+        Self {
+            outcome: "idle",
+            error: None,
+            consecutive_failures: 0,
+            last_attempt_at: None,
+            last_success_at: None,
+            next_attempt_at: None,
+        }
+    }
+}
+
+pub(crate) type LedgerSyncStatuses = Arc<Mutex<BTreeMap<PathBuf, LedgerSyncStatus>>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SyncOutcome {
@@ -83,6 +113,11 @@ fn sync_once_inner(
         // A foreign node dir can only appear modified here if something wrote
         // outside its pen, which the claim gate refuses. Staging it makes the next
         // rebase conflict loudly instead of losing the edit silently.
+        //
+        // ponytail: excluding writer sidecars still lets a tick commit node rewrites
+        // before their close tx lands; a peer can see that torn state for one sync
+        // interval. Add a writer-published quiescence barrier or ledger-wide lease if
+        // that bounded window becomes unacceptable.
         git(
             ledger,
             &[
@@ -91,12 +126,30 @@ fn sync_once_inner(
                 "--",
                 ".orgasmic",
                 ":(exclude).orgasmic/machines",
+                ":(exclude,glob).orgasmic/**/*.tmp",
+                ":(exclude,glob).orgasmic/**/*.tmp.*",
+                ":(exclude,glob).orgasmic/**/*.bak.*",
             ],
         )?;
     }
     let machine_rel = PathBuf::from(".orgasmic/machines").join(machine_id);
     if ledger.join(&machine_rel).exists() {
-        git(ledger, &["add", "--all", "--", path_arg(&machine_rel)?])?;
+        let machine_rel = path_arg(&machine_rel)?;
+        let tmp = format!(":(exclude,glob){machine_rel}/**/*.tmp");
+        let tmp_request = format!(":(exclude,glob){machine_rel}/**/*.tmp.*");
+        let backup = format!(":(exclude,glob){machine_rel}/**/*.bak.*");
+        git(
+            ledger,
+            &[
+                "add",
+                "--all",
+                "--",
+                machine_rel,
+                &tmp,
+                &tmp_request,
+                &backup,
+            ],
+        )?;
     }
     if !git_success(ledger, &["diff", "--cached", "--quiet"])? {
         git(
@@ -145,10 +198,79 @@ fn sync_once_inner(
     unreachable!()
 }
 
+fn sync_ledger_at(
+    ledger: &Path,
+    machine_id: &str,
+    statuses: &LedgerSyncStatuses,
+    now: DateTime<Utc>,
+) {
+    let previous = {
+        let mut statuses = statuses.lock().expect("ledger sync status lock");
+        let status = statuses.entry(ledger.to_path_buf()).or_default();
+        if status
+            .next_attempt_at
+            .as_ref()
+            .is_some_and(|next| now < *next)
+        {
+            status.outcome = "backed_off";
+            return;
+        }
+        status.clone()
+    };
+
+    match sync_once(ledger, machine_id) {
+        Ok(outcome) => {
+            let recovered = previous.consecutive_failures > 0;
+            let mut statuses = statuses.lock().expect("ledger sync status lock");
+            statuses.insert(
+                ledger.to_path_buf(),
+                LedgerSyncStatus {
+                    outcome: match outcome {
+                        SyncOutcome::Idle => "idle",
+                        SyncOutcome::Synced { .. } => "synced",
+                    },
+                    error: None,
+                    consecutive_failures: 0,
+                    last_attempt_at: Some(now),
+                    last_success_at: Some(now),
+                    next_attempt_at: None,
+                },
+            );
+            drop(statuses);
+            if recovered {
+                tracing::info!(ledger = %ledger.display(), "ledger sync recovered");
+            }
+        }
+        Err(error) => {
+            let error = format!("{error:#}");
+            let consecutive_failures = previous.consecutive_failures.saturating_add(1);
+            let multiplier = 1_u32 << consecutive_failures.min(8);
+            let backoff = SYNC_INTERVAL.saturating_mul(multiplier).min(MAX_BACKOFF);
+            let changed = previous.consecutive_failures == 0
+                || previous.error.as_deref() != Some(error.as_str());
+            statuses.lock().expect("ledger sync status lock").insert(
+                ledger.to_path_buf(),
+                LedgerSyncStatus {
+                    outcome: "failed",
+                    error: Some(error.clone()),
+                    consecutive_failures,
+                    last_attempt_at: Some(now),
+                    last_success_at: previous.last_success_at,
+                    next_attempt_at: Some(now + backoff),
+                },
+            );
+            if changed {
+                tracing::warn!(ledger = %ledger.display(), %error, "ledger sync failed; backing off");
+            }
+        }
+    }
+}
+
 /// The daemon's coalescing loop. A missing remote is deliberately silent.
 pub(crate) fn spawn(
     index: Index,
     machine_id: String,
+    statuses: LedgerSyncStatuses,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
@@ -173,12 +295,13 @@ pub(crate) fn spawn(
                 .collect();
             for ledger in ledgers {
                 let machine_id = machine_id.clone();
-                let result =
-                    tokio::task::spawn_blocking(move || sync_once(&ledger, &machine_id)).await;
-                match result {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(error)) => tracing::warn!(%error, "ledger sync failed; will retry"),
-                    Err(error) => tracing::warn!(%error, "ledger sync task failed; will retry"),
+                let statuses = statuses.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    sync_ledger_at(&ledger, &machine_id, &statuses, Utc::now())
+                })
+                .await;
+                if let Err(error) = result {
+                    tracing::warn!(%error, "ledger sync task failed; will retry");
                 }
             }
         }
@@ -362,6 +485,94 @@ mod tests {
         assert_eq!(
             sync_once(tmp.path(), &uuid::Uuid::new_v4().to_string()).unwrap(),
             SyncOutcome::Idle
+        );
+    }
+
+    #[test]
+    fn writer_sidecars_are_never_staged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_remote, a, _b) = seed_remote(&tmp);
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        let node = a.join(".orgasmic/tasks/T1/node.org");
+        std::fs::create_dir_all(node.parent().unwrap()).unwrap();
+        std::fs::write(&node, "task\n").unwrap();
+        for suffix in [".tmp", ".tmp.req-rollback-x", ".bak.abc"] {
+            std::fs::write(format!("{}{suffix}", node.display()), "sidecar\n").unwrap();
+        }
+        let tx = a
+            .join(".orgasmic/machines")
+            .join(&machine_id)
+            .join("tx/2026-09.org");
+        std::fs::create_dir_all(tx.parent().unwrap()).unwrap();
+        std::fs::write(&tx, "tx\n").unwrap();
+        std::fs::write(format!("{}.bak.zzz", tx.display()), "sidecar\n").unwrap();
+
+        sync_once(&a, &machine_id).unwrap();
+
+        let tracked = git_optional(&a, &["ls-files"]).unwrap().unwrap();
+        assert!(tracked
+            .lines()
+            .any(|path| path == ".orgasmic/tasks/T1/node.org"));
+        assert!(
+            tracked
+                .lines()
+                .any(|path| { path == format!(".orgasmic/machines/{machine_id}/tx/2026-09.org") }),
+            "tracked files: {tracked}"
+        );
+        assert!(!tracked.lines().any(|path| {
+            path.ends_with(".tmp") || path.contains(".tmp.") || path.contains(".bak.")
+        }));
+    }
+
+    #[test]
+    fn failed_pull_is_reported_and_backed_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_remote, a, b) = seed_remote(&tmp);
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        let relative = ".orgasmic/tasks/T1/node.org";
+        for (repo, contents) in [(&a, "local\n"), (&b, "remote\n")] {
+            let path = repo.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
+        }
+        run(&b, &["add", relative]);
+        run(
+            &b,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "remote conflict",
+            ],
+        );
+        run(&b, &["push", "origin", "orgasmic"]);
+        let statuses = LedgerSyncStatuses::default();
+        let now = Utc::now();
+
+        sync_ledger_at(&a, &machine_id, &statuses, now);
+
+        let failed = statuses.lock().unwrap()[&a].clone();
+        assert_eq!(failed.outcome, "failed");
+        assert_eq!(failed.consecutive_failures, 1);
+        assert!(failed
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("git pull --rebase failed"));
+        let reflog = git_optional(&a, &["reflog", "--format=%H"]).unwrap();
+
+        sync_ledger_at(&a, &machine_id, &statuses, now + Duration::from_secs(1));
+
+        let backed_off = statuses.lock().unwrap()[&a].clone();
+        assert_eq!(backed_off.outcome, "backed_off");
+        assert_eq!(backed_off.consecutive_failures, 1);
+        assert_eq!(
+            git_optional(&a, &["reflog", "--format=%H"]).unwrap(),
+            reflog,
+            "a backed-off tick must not invoke git"
         );
     }
 
