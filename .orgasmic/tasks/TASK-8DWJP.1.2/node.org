@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DWJP.1.2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8DWJP.1.2 Fix round for 8DWJP.1.1: rebase check before the idle gate, salvage tracked writes before reset, strict stage-3 match :e01mc:chain-review:
+* IN_REVIEW TASK-8DWJP.1.2 Fix round for 8DWJP.1.1: rebase check before the idle gate, salvage tracked writes before reset, strict stage-3 match :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-8DWJP.1.2
 :PRIORITY: P1
@@ -22,3 +22,5 @@ LOW 5 — ledger_sync.rs:~389-400: a failed parked-ref push is only tracing::war
 LOW 6 — tests: assert parked_ref non-empty in leftover_foreign_machine_conflict_does_not_wedge_the_next_tick; make the post-conflict write in conflicting_two_writer_tick a TRACKED modified file so a regression to the discard is caught.
 
 Acceptance: mid-rebase repo is recovered, never idle (test); tracked writes after the conflicting pull survive in a salvage ref named by the status (test); delete/modify + stale parked ref parks the autostash (test); orphan autostash dropped on re-entry (test); LOW 5/6 done; existing ledger_sync/barrier tests green. Gates: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict barrier; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle; clippy daemon+cli -D warnings; fmt.
+** Evidence
+Merged a4372f03 (worker b273c465, codex gpt-5.6-sol): origin check, then abort an in-progress rebase only when its head-name is refs/heads/orgasmic, then the branch gate (mid-rebase ledger can no longer report idle); parked-ref matching requires a present stage 3 on at least one path with the identity-verified autostash keeping the delete/modify fallback; before reset --hard a scratch-index snapshot of the allowed ledger paths is committed to refs/orgasmic/conflicts/<machine>/<ts>-salvage (skipped when identical to origin), named in the status text and as SALVAGE_REF in the event; identity-matched orphan autostash dropped on re-entry; unpushed parked ref named in status. Tests: mid-rebase recovery without abort, tracked post-pull task/tx salvage, strict delete/modify matching, orphan stash cleanup on the next tick, push-status text, parked_ref non-empty, tracked post-conflict write. Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict barrier → 30 passed; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle → 22 passed; clippy daemon+cli -D warnings clean; fmt clean. Logs: scratchpad/gates-8DWJP.1.2-*.log. Manager pre-check: the rebase abort is head-name guarded (ledger_sync.rs:100-110, 321-338). Review round (claude-opus-5 high) dispatched.
