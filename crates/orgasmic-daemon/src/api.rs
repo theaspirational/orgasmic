@@ -1774,6 +1774,13 @@ fn writer_append_error(error: anyhow::Error) -> ApiError {
     ApiError::internal("failed to record transaction")
 }
 
+fn writer_comment_error(error: anyhow::Error) -> ApiError {
+    if let Some(forbidden) = error.downcast_ref::<crate::writer::CommentAuthorshipForbidden>() {
+        return ApiError::forbidden(forbidden.to_string());
+    }
+    writer_append_error(error)
+}
+
 fn writer_rewrite_error(path: &FsPath, error: anyhow::Error) -> ApiError {
     if let Some(conflict) = claim_conflict(&error) {
         return conflict;
@@ -2393,6 +2400,10 @@ async fn post_task_comment_edit(
 ) -> Result<Json<TaskCommentMutationResponse>, ApiError> {
     let (project_id, journal) =
         task_comment_journal(&state, &identity, &task_id, q.project.as_deref()).await?;
+    let actor = match identity.member_name() {
+        Some(name) => crate::writer::CommentMutationActor::Member(name.to_string()),
+        None => crate::writer::CommentMutationActor::Admin(state.actor.clone()),
+    };
     state
         .writer
         .edit_journal_comment(
@@ -2400,10 +2411,11 @@ async fn post_task_comment_edit(
             entry_id.clone(),
             req.expected_body,
             req.body,
+            actor,
             tx_time_string_utc(&Utc::now()),
         )
         .await
-        .map_err(writer_append_error)?;
+        .map_err(writer_comment_error)?;
     state
         .index
         .refresh_project(&project_id)
@@ -2428,11 +2440,21 @@ async fn post_task_comment_delete(
 ) -> Result<Json<TaskCommentMutationResponse>, ApiError> {
     let (project_id, journal) =
         task_comment_journal(&state, &identity, &task_id, q.project.as_deref()).await?;
+    let actor = match identity.member_name() {
+        Some(name) => crate::writer::CommentMutationActor::Member(name.to_string()),
+        None => crate::writer::CommentMutationActor::Admin(state.actor.clone()),
+    };
     state
         .writer
-        .tombstone_journal_comment(journal, entry_id.clone(), req.expected_body)
+        .tombstone_journal_comment(
+            journal,
+            entry_id.clone(),
+            req.expected_body,
+            actor,
+            tx_time_string_utc(&Utc::now()),
+        )
         .await
-        .map_err(writer_append_error)?;
+        .map_err(writer_comment_error)?;
     state
         .index
         .refresh_project(&project_id)
@@ -38203,6 +38225,104 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
+        state
+            .writer
+            .append_journal_entry(
+                journal.clone(),
+                "TASK-001".into(),
+                orgasmic_core::node_kernel::JournalEntry {
+                    entry_id: "tx-admin-1".into(),
+                    time: "[2026-08-26 Wed 12:01:00]".into(),
+                    ty: "comment".into(),
+                    actor: "alice".into(),
+                    machine: "test".into(),
+                    extras: Vec::new(),
+                    body: "admin target".into(),
+                },
+            )
+            .await
+            .unwrap();
+        state
+            .writer
+            .append_journal_entry(
+                journal.clone(),
+                "TASK-001".into(),
+                orgasmic_core::node_kernel::JournalEntry {
+                    entry_id: "tx-finding-1".into(),
+                    time: "[2026-08-26 Wed 12:02:00]".into(),
+                    ty: "reviewer.finding".into(),
+                    actor: "alice".into(),
+                    machine: "test".into(),
+                    extras: Vec::new(),
+                    body: "automated finding".into(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let bob = Identity::Member {
+            name: "bob".into(),
+            grants: vec![("proj-a".into(), "viewer".into())],
+        };
+        let before_refusals = std::fs::read(&journal).unwrap();
+        let edit_error = post_task_comment_edit(
+            State(state.clone()),
+            Extension(bob.clone()),
+            Path(("TASK-001".into(), "tx-comment-1".into())),
+            Query(graph_query("proj-a")),
+            Json(TaskCommentEditRequest {
+                expected_body: "original".into(),
+                body: "hijacked".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(edit_error.status, StatusCode::FORBIDDEN);
+        let delete_error = post_task_comment_delete(
+            State(state.clone()),
+            Extension(bob),
+            Path(("TASK-001".into(), "tx-comment-1".into())),
+            Query(graph_query("proj-a")),
+            Json(TaskCommentDeleteRequest {
+                expected_body: "original".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(delete_error.status, StatusCode::FORBIDDEN);
+        assert_eq!(std::fs::read(&journal).unwrap(), before_refusals);
+
+        for status in [
+            post_task_comment_edit(
+                State(state.clone()),
+                Extension(id.clone()),
+                Path(("TASK-001".into(), "tx-finding-1".into())),
+                Query(graph_query("proj-a")),
+                Json(TaskCommentEditRequest {
+                    expected_body: "automated finding".into(),
+                    body: "rewritten".into(),
+                }),
+            )
+            .await
+            .unwrap_err()
+            .status,
+            post_task_comment_delete(
+                State(state.clone()),
+                Extension(id.clone()),
+                Path(("TASK-001".into(), "tx-finding-1".into())),
+                Query(graph_query("proj-a")),
+                Json(TaskCommentDeleteRequest {
+                    expected_body: "automated finding".into(),
+                }),
+            )
+            .await
+            .unwrap_err()
+            .status,
+        ] {
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        assert_eq!(std::fs::read(&journal).unwrap(), before_refusals);
+
         let _ = post_task_comment_edit(
             State(state.clone()),
             Extension(id.clone()),
@@ -38215,8 +38335,31 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+        let _ = post_task_comment_edit(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(("TASK-001".into(), "tx-admin-1".into())),
+            Query(graph_query("proj-a")),
+            Json(TaskCommentEditRequest {
+                expected_body: "admin target".into(),
+                body: "admin edited".into(),
+            }),
+        )
+        .await
+        .unwrap();
         let _ = post_task_comment_delete(
-            State(state),
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(("TASK-001".into(), "tx-admin-1".into())),
+            Query(graph_query("proj-a")),
+            Json(TaskCommentDeleteRequest {
+                expected_body: "admin edited".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        let _ = post_task_comment_delete(
+            State(state.clone()),
             Extension(id),
             Path(("TASK-001".into(), "tx-comment-1".into())),
             Query(graph_query("proj-a")),
@@ -38227,12 +38370,33 @@ pub(crate) mod tests {
         .await
         .unwrap();
         let entries = orgasmic_core::node_kernel::parse_journal(
-            &std::fs::read_to_string(journal).unwrap(),
+            &std::fs::read_to_string(&journal).unwrap(),
             "journal.org",
         )
         .unwrap();
-        assert_eq!(entries[0].ty, "comment.deleted");
-        assert!(entries[0].body.is_empty());
+        let own = entries
+            .iter()
+            .find(|entry| entry.entry_id == "tx-comment-1")
+            .unwrap();
+        assert_eq!(own.ty, "comment.deleted");
+        assert!(own.body.is_empty());
+        assert_eq!(own.extra("EDITED_BY"), Some("alice"));
+        assert_eq!(own.extra("DELETED_BY"), Some("alice"));
+        assert!(own.extra("EDITED_AT").is_some());
+        assert!(own.extra("DELETED_AT").is_some());
+        let admin = entries
+            .iter()
+            .find(|entry| entry.entry_id == "tx-admin-1")
+            .unwrap();
+        assert_eq!(admin.ty, "comment.deleted");
+        assert_eq!(admin.extra("EDITED_BY"), Some(state.actor.as_str()));
+        assert_eq!(admin.extra("DELETED_BY"), Some(state.actor.as_str()));
+        let finding = entries
+            .iter()
+            .find(|entry| entry.entry_id == "tx-finding-1")
+            .unwrap();
+        assert_eq!(finding.ty, "reviewer.finding");
+        assert_eq!(finding.body, "automated finding");
     }
 
     /// An `artifacts`-role member reaches artifact + project-detail reads but is

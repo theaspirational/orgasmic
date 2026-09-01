@@ -881,8 +881,10 @@ function ActivityRow({
   onChanged: () => void;
 }) {
   const rich = useRichText();
+  const { identity, me } = useMe();
   const presentation = taskActivityPresentation(entry);
   const automated = presentation.source !== 'human';
+  const canMutate = !automated && (identity === 'admin' || me?.name === entry.actor);
   const SourceIcon = presentation.source === 'agent' ? Bot : Server;
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -921,7 +923,7 @@ function ActivityRow({
       <Button type="button" variant="ghost" size="xs" onClick={() => setReplying((value) => !value)}>
         <Reply /> Reply
       </Button>
-      {!automated ? (
+      {canMutate ? (
         <>
           <Button type="button" variant="ghost" size="xs" onClick={() => setEditing(true)}>
             <Pencil /> Edit

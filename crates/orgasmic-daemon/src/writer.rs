@@ -37,6 +37,20 @@ use crate::events::{EventBus, EventPayload, Topic};
 
 pub(crate) const DAEMON_OWNED_SURFACES: [&str; 4] = ["machines", "tx", "tmp", "views"];
 
+#[derive(Debug)]
+pub enum CommentMutationActor {
+    Member(String),
+    Admin(String),
+}
+
+impl CommentMutationActor {
+    fn name(&self) -> &str {
+        match self {
+            Self::Member(name) | Self::Admin(name) => name,
+        }
+    }
+}
+
 /// The multi-tx append reached the ledger, but the writer could not confirm
 /// that the retained descriptor was synced. Callers must distinguish this
 /// committed outcome from an ordinary failed transaction without parsing its
@@ -1441,6 +1455,7 @@ impl WriterHandle {
         entry_id: String,
         expected_body: String,
         new_body: String,
+        actor: CommentMutationActor,
         edited_at: String,
     ) -> Result<()> {
         reject_journal_prose(&new_body)?;
@@ -1448,9 +1463,13 @@ impl WriterHandle {
         self.mutate_file(FileMutate {
             path,
             transform: Box::new(move |current| {
-                require_comment_body(current, &entry_id, &expected_body)?;
+                require_comment_body(current, &entry_id, &expected_body, &actor)?;
                 let next = orgasmic_core::node_kernel::edit_comment_body(
-                    current, &entry_id, &new_body, &edited_at,
+                    current,
+                    &entry_id,
+                    &new_body,
+                    actor.name(),
+                    &edited_at,
                 )?;
                 checked_journal_bytes(&display_path, next)
             }),
@@ -1464,13 +1483,20 @@ impl WriterHandle {
         path: PathBuf,
         entry_id: String,
         expected_body: String,
+        actor: CommentMutationActor,
+        deleted_at: String,
     ) -> Result<()> {
         let display_path = path.clone();
         self.mutate_file(FileMutate {
             path,
             transform: Box::new(move |current| {
-                require_comment_body(current, &entry_id, &expected_body)?;
-                let next = orgasmic_core::node_kernel::tombstone_comment(current, &entry_id)?;
+                require_comment_body(current, &entry_id, &expected_body, &actor)?;
+                let next = orgasmic_core::node_kernel::tombstone_comment(
+                    current,
+                    &entry_id,
+                    actor.name(),
+                    &deleted_at,
+                )?;
                 checked_journal_bytes(&display_path, next)
             }),
         })
@@ -1614,7 +1640,12 @@ fn reject_journal_prose(body: &str) -> Result<()> {
     Ok(())
 }
 
-fn require_comment_body(current: &str, entry_id: &str, expected_body: &str) -> Result<()> {
+fn require_comment_body(
+    current: &str,
+    entry_id: &str,
+    expected_body: &str,
+    actor: &CommentMutationActor,
+) -> Result<()> {
     let entries = orgasmic_core::node_kernel::parse_journal(current, "journal.org")?;
     let entry = entries
         .iter()
@@ -1622,6 +1653,12 @@ fn require_comment_body(current: &str, entry_id: &str, expected_body: &str) -> R
         .ok_or_else(|| anyhow!("journal entry {entry_id} not found"))?;
     if entry.ty != "comment" {
         bail!("journal entry {entry_id} is not an editable comment");
+    }
+    if matches!(actor, CommentMutationActor::Member(name) if entry.actor != *name) {
+        return Err(CommentAuthorshipForbidden {
+            entry_id: entry_id.to_string(),
+        }
+        .into());
     }
     if entry.body != expected_body {
         bail!("journal comment {entry_id} changed since it was read");
@@ -1735,6 +1772,25 @@ impl std::fmt::Display for ClaimConflict {
 }
 
 impl std::error::Error for ClaimConflict {}
+
+/// A comment mutation refused because the member is not its author. Kept
+/// typed so the API can return 403 without exposing other writer failures.
+#[derive(Debug)]
+pub(crate) struct CommentAuthorshipForbidden {
+    entry_id: String,
+}
+
+impl std::fmt::Display for CommentAuthorshipForbidden {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "only the author may edit journal comment {}",
+            self.entry_id
+        )
+    }
+}
+
+impl std::error::Error for CommentAuthorshipForbidden {}
 
 fn guard_node_write(path: &Path, machine_id: &str) -> Result<()> {
     let Some(dotorg) = path
@@ -4396,6 +4452,7 @@ mod tests {
                 "tx-1".into(),
                 parsed[0].body.clone(),
                 "replacement\n* forged entry".into(),
+                CommentMutationActor::Member("owner".into()),
                 "[2026-08-26 Wed 10:01:00]".into(),
             )
             .await
@@ -4409,21 +4466,35 @@ mod tests {
                 "tx-1".into(),
                 parsed[0].body.clone(),
                 "edited".into(),
+                CommentMutationActor::Member("owner".into()),
                 "[2026-08-26 Wed 10:01:00]".into(),
             )
             .await
             .unwrap();
         let edited = std::fs::read_to_string(&path).unwrap();
+        assert!(edited.contains(":EDITED_BY: owner"));
         assert!(edited.contains(":EDITED_AT: [2026-08-26 Wed 10:01:00]"));
 
         let stale = handle
-            .tombstone_journal_comment(path.clone(), "tx-1".into(), parsed[0].body.clone())
+            .tombstone_journal_comment(
+                path.clone(),
+                "tx-1".into(),
+                parsed[0].body.clone(),
+                CommentMutationActor::Member("owner".into()),
+                "[2026-08-26 Wed 10:02:00]".into(),
+            )
             .await
             .unwrap_err();
         assert!(stale.to_string().contains("changed since it was read"));
 
         handle
-            .tombstone_journal_comment(path.clone(), "tx-1".into(), "edited".into())
+            .tombstone_journal_comment(
+                path.clone(),
+                "tx-1".into(),
+                "edited".into(),
+                CommentMutationActor::Member("owner".into()),
+                "[2026-08-26 Wed 10:02:00]".into(),
+            )
             .await
             .unwrap();
         let parsed = orgasmic_core::node_kernel::parse_journal(
@@ -4434,6 +4505,11 @@ mod tests {
         assert_eq!(
             (parsed[0].ty.as_str(), parsed[0].body.as_str()),
             ("comment.deleted", "")
+        );
+        assert_eq!(parsed[0].extra("DELETED_BY"), Some("owner"));
+        assert_eq!(
+            parsed[0].extra("DELETED_AT"),
+            Some("[2026-08-26 Wed 10:02:00]")
         );
     }
 
