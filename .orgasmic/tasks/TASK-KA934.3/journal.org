@@ -123,3 +123,42 @@
 :TO_STATE: in_review
 :EVENT_ID: 3df4813a-a90e-415d-9007-bde5dee5fa9b
 :END:
+
+* tx-20260901-orgasmic-7031 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7031
+:TIME:    [2026-09-01 Tue 22:24:33]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:REASON: MEDIUM api.rs:2991 post_tx — the :ACTOR: namespace guard only covers the three comment handlers; POST /tx with type=comment + --task + --actor <member> (CLI: orgasmic tx record) routes through event_routes_to_journal->LedgerWriter::Journal and writes a byte-identical editable journal comment with a forged member :ACTOR:, unguarded.
+:EVENT_ID: 027e4603-6cfc-464f-b995-86913c9063f2
+:END:
+
+* tx-20260901-orgasmic-7032 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7032
+:TIME:    [2026-09-01 Tue 22:24:38]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:REASON: LOW writer.rs:1683 — the rename doc states only the losing direction; the inverse is undocumented and unguarded: a member re-added or renamed into a retired member's name inherits edit/delete rights on every comment that old holder left, because authorship is raw :ACTOR: string equality.
+:EVENT_ID: a59b369c-2a46-408e-8125-b28d3506cb70
+:END:
+
+* tx-20260901-orgasmic-7033 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7033
+:TIME:    [2026-09-01 Tue 22:24:42]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:REASON: LOW api.rs:2349 ensure_actor_namespace_free — read_members(..).unwrap_or(false) fails open: an unparseable or unreadable members.org silently disables the guard instead of refusing the mutation; members.org is admin-owned so blast radius is small, but the failure is invisible (no warn! log).
+:EVENT_ID: 78501c3f-261e-49b2-b5af-85b526714cee
+:END:
