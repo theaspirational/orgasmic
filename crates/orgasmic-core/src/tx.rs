@@ -1227,4 +1227,40 @@ mod tests {
         ));
         assert!(fold_dispatches(&entries).iter().all(|d| d.closed));
     }
+
+    #[test]
+    fn dispatch_fold_surfaces_a_shared_legacy_tx_id_as_an_open_generation() {
+        let shared_tx_id = "tx-20260901-orgasmic-0007";
+        let start = |machine: &str| {
+            let mut entry = TxEntry::new(
+                shared_tx_id,
+                "manager.dispatch_started",
+                "[2026-09-01 Tue 10:00:00]",
+                "test",
+                machine,
+            );
+            entry.project = Some("orgasmic".into());
+            entry.task = Some("TASK-SAME".into());
+            entry.extra.push(("KIND".into(), "implementer".into()));
+            entry
+        };
+        let mut close = TxEntry::new(
+            "tx-20260901-orgasmic-0008",
+            "implementer.done",
+            "[2026-09-01 Tue 10:01:00]",
+            "test",
+            "machine-b",
+        );
+        close.project = Some("orgasmic".into());
+        close.task = Some("TASK-SAME".into());
+        close.extra.push(("CLOSED_TX".into(), shared_tx_id.into()));
+
+        let folded = fold_dispatches(&[start("machine-a"), start("machine-b"), close]);
+
+        // A legacy duplicate id is ambiguous: CLOSED_TX selects the latest matching
+        // start, leaving the earlier generation visibly open instead of closing both.
+        assert_eq!(folded.len(), 2);
+        assert!(!folded[0].closed);
+        assert!(folded[1].closed);
+    }
 }
