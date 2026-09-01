@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DWJP.1.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8DWJP.1.1 Fix round for 8DWJP.1: re-entrant conflict path (unmerged guard before staging), verified stash drop, network git outside the writer barrier :e01mc:chain-review:
+* IN_REVIEW TASK-8DWJP.1.1 Fix round for 8DWJP.1: re-entrant conflict path (unmerged guard before staging), verified stash drop, network git outside the writer barrier :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-8DWJP.1.1
 :PRIORITY: P1
@@ -22,3 +22,5 @@ LOW 6 — ledger_sync.rs ~:495: PATHS is paths.join(" "); join with a tab or rep
 Optional (one line each, else skip and say so): surface a failed parked-ref push in the conflict status error string; doctor names the manual recovery for a UU ledger index (git -C <ledger> checkout --merge / reset).
 
 Acceptance: both re-entrancy tests green; stash drop verified by identity with a test that plants a foreign stash on top and asserts NO drop + failed status; fetch/push outside the barrier (test or clear code structure + report); catch_unwind in place; existing ledger_sync/barrier tests green. Gates: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict barrier; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle; clippy daemon+cli -D warnings; fmt.
+** Evidence
+Merged 59c351dc (worker bcb516c9, codex gpt-5.6-sol): UU index checked before any staging; on entry the recovery source is chosen content-wise (conflict_source_on_entry: parked ref or autostash reused only when every conflicted path's blob equals the index stage-3 entry, else Unrecoverable → reset to fetched origin/orgasmic with an explicit status message); stash@{0} identity verified against the 'Created autostash:' sha immediately before the drop (mismatch → failed, no drop); git fetch before run_barrier, best-effort parked-ref push after it, only local git inside; Barrier arm wraps run() in catch_unwind and always replies; PATHS tab-joined. Tests: interruption after stash drop, leftover UU under another machine, foreign-stash mismatch/no-drop, no markers on the bare remote, parked bytes retained, writer accepts the next barrier after a panic. Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict barrier → 26 passed; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle → 22 passed; clippy daemon+cli -D warnings clean; fmt clean. Logs: scratchpad/gates-8DWJP.1.1-*.log. Review round (claude-opus-5 high) dispatched.

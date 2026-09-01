@@ -4468,3 +4468,73 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     af956b4b-a081-4aca-8601-a2f23b76ffdf
 :END:
+
+* TX 2026-09-01 Tue 16:21:11 manager.dispatch_started TASK-8DWJP.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-6a92d428-ee35-4716-89d2-c69fbac1879b
+:TIME:         [2026-09-01 Tue 16:21:11]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1.1-review
+:BRANCH:       task-8dwjp.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.1-review/brief-TASK-8DWJP.1.1-review.md
+:STARTED_AT:   [2026-09-01 Tue 16:21:11]
+:LIVENESS:     59c351dcd5c0369f51691db512d44fe5d29afcfb
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260901-orgasmic-63b71bf3-20f1-454a-a17f-dcdf2a1627c7
+:REASON_INITIAL: Review round for the re-entrant conflict recovery merged 59c351dc (third round of the dec_EWY0K conflict path); verifies the content-based parked-ref reuse, stash identity check, barrier scope and every failure seam before 8DWJP closes
+:EVENT_ID:     b119c894-8f1c-46b8-ad9e-b5d391bc0afb
+:END:
+
+* TX 2026-09-01 Tue 16:21:11 run.created TASK-8DWJP.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-ad9fd192-4eea-4b94-b77b-8333f27e0326
+:TIME:         [2026-09-01 Tue 16:21:11]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-8DWJP.1.1-reviewer-20260901T162111.jsonl
+:REASON:       Review round for the re-entrant conflict recovery merged 59c351dc (third round of the dec_EWY0K conflict path); verifies the content-based parked-ref reuse, stash identity check, barrier scope and every failure seam before 8DWJP closes
+:RUN_ID:       run-01M1EWCJN6MFF6ABHZ49JDZH0D
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.1-review/brief-TASK-8DWJP.1.1-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.1-review/brief-TASK-8DWJP.1.1-review-3d1eb6de1d6c41258f16c53c188bcc13-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.1-review/brief-TASK-8DWJP.1.1-review-3d1eb6de1d6c41258f16c53c188bcc13-stdout.log
+:DISPATCH_ATTEMPT: 3d1eb6de1d6c41258f16c53c188bcc13
+:PID:          46697
+:DISPATCH_TX:  tx-20260901-orgasmic-6a92d428-ee35-4716-89d2-c69fbac1879b
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     e1ddd381-a954-4698-87e8-cf58162e8a9e
+:END:
+
+* TX 2026-09-01 Tue 16:21:12 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-6c1e6222-0d86-4ec7-bc8f-01be8bbac299
+:TIME:         [2026-09-01 Tue 16:21:12]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     d89f0e54-217b-4ca5-a4b0-0eb48d807d52
+:END:

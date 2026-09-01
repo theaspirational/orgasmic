@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DWJP.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8DWJP.1 Fix round for 8DWJP: route the conflict event into machines/<id>/tx/, detect autostash-pop conflicts, read conflicted paths from git, fence park_conflict behind a writer barrier :e01mc:chain-review:
+* IN_REVIEW TASK-8DWJP.1 Fix round for 8DWJP: route the conflict event into machines/<id>/tx/, detect autostash-pop conflicts, read conflicted paths from git, fence park_conflict behind a writer barrier :e01mc:chain-review:
 :PROPERTIES:
 :DEPENDS_ON: TASK-MSYN4.2.1
 :ID: TASK-8DWJP.1
