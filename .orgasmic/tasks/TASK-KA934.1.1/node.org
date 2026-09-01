@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KA934.1.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-KA934.1.1 Fix round 2 for KA934.1: OCC conflict → 409, surface edit/delete stamps and tombstones in activity, pin the two test gaps :e01mc:chain-review:
+* DONE TASK-KA934.1.1 Fix round 2 for KA934.1: OCC conflict → 409, surface edit/delete stamps and tombstones in activity, pin the two test gaps :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-KA934.1.1
 :PRIORITY: P2
@@ -18,3 +18,5 @@ LOW residuals of the KA934.1 review (claude-opus-5 high, tx-5cfb04f1, APPROVE WI
 3. Tests: api.rs:~38268 the bob refusals assert only status == 403 — also assert the authorship message so the test goes red if the check is removed (a role change also yields 403). node_kernel: add two sequential edits on one comment and assert EDITED_BY appears once and holds the SECOND editor (the upsert replace branch is unpinned).
 
 Acceptance: OCC edit/delete returns 409 with a test; activity lists tombstones with stamps and a test; both test pins present; gates: cargo test -p orgasmic-daemon --lib -- comment activity, cargo test -p orgasmic-core --lib node_kernel, clippy core+daemon -D warnings, fmt, cd ui && npm run typecheck.
+** Evidence
+Merged 8cff0347 (worker 8967bd4e, codex gpt-5.6-sol): typed path-free comment OCC/not-found errors mapped to 409/404 (403 authorship kept); activity projects EDITED_BY/EDITED_AT/DELETED_BY/DELETED_AT and keeps comment.deleted rows as empty-body tombstones so reply anchors never dangle; UI renders one-line tombstones without Reply/Edit/Delete and marks edited comments; tests pin stale-edit 409 with unchanged journal bytes, exact authorship refusal text, activity tombstone stamps, sequential-edit stamp replacement (EDITED_BY once, second editor), tombstone UI actions. Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- comment activity → 22 passed; cargo test -p orgasmic-core --lib node_kernel → 3 passed; clippy core+daemon -D warnings clean; fmt clean; cd ui && npm run typecheck clean. Logs: scratchpad/gates-KA934.1.1-*.log. Review round waived: LOW-origin second round, additive, fully pinned by tests.
