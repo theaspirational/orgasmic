@@ -115,3 +115,42 @@
 :REASON: LOW crates/orgasmic-daemon/src/index.rs:4321 — activity_entry_from_tx returns None for TYPE comment.deleted and ActivityEntry carries no EDITED_BY/EDITED_AT/DELETED_BY/DELETED_AT fields, so the new audit stamps have no reader outside journal.org and the tombstone row vanishes from GET /tasks/:id/activity, leaving IN_REPLY_TO chains dangling despite node_kernel.rs:311's stated intent.
 :EVENT_ID: 54715cc3-0b44-4806-a92a-385c46695805
 :END:
+
+* tx-20260901-orgasmic-6887 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6887
+:TIME:    [2026-09-01 Tue 15:02:19]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:REASON: LOW crates/orgasmic-daemon/src/api.rs:1777 — writer_comment_error maps only CommentAuthorshipForbidden to 403; the OCC lost-update ('journal comment X changed since it was read', writer.rs:1663) falls through to a generic 500 'failed to record transaction', as do unknown entry_id (should be 404) and non-comment TYPE (should be 400/409, pinned as 500 by the new test at api.rs:38293). The OCC text carries no filesystem path, so the 500-hides-paths rationale at api.rs:1761 does not apply and the UI cannot distinguish a concurrent edit from a server fault.
+:EVENT_ID: 07c27537-2127-4e51-b2e8-d29e57777cb1
+:END:
+
+* tx-20260901-orgasmic-6888 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6888
+:TIME:    [2026-09-01 Tue 15:02:19]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:REASON: LOW crates/orgasmic-daemon/src/api.rs:2403 — audit namespaces disagree: post_task_comment stamps :ACTOR: from caller-supplied req.actor free text for Identity::Admin (api.rs:2348), while edit/delete stamp EDITED_BY/DELETED_BY from state.actor, so an admin script posting as 'ci-bot' records a different name when it edits. Consequently :ACTOR: is not a member-identity namespace, and the require_comment_body equality check (writer.rs:1657) would grant edit rights to any member whose members.org name collides with a free-text actor string; unreachable today only because of the route allow-list.
+:EVENT_ID: c18744c2-9e8e-4398-8fe8-42a596d3c777
+:END:
+
+* tx-20260901-orgasmic-6889 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6889
+:TIME:    [2026-09-01 Tue 15:02:19]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:REASON: LOW crates/orgasmic-daemon/src/api.rs:38268 — the bob-403 assertions check only error.status, not the message, so the test stays green if the authorship check is removed and the 403 comes from authz instead (it does not today: viewer holds TasksComment, authz.rs:80). No test performs two sequential edits, the upsert_comment_property replace-not-duplicate path; I proved it correct out-of-tree but it is unpinned.
+:EVENT_ID: c6202ffe-c13b-4d9c-88ea-6bed6b6b464e
+:END:
