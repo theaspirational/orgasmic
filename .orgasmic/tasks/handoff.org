@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         19212129
+:LIVENESS:         ad8c104d
 :LIVENESS_AT:      [2026-09-01 Tue 16:10]
 :UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
@@ -645,6 +645,7 @@ operator + agent sessions, no manager handoff write in between).
 - 2026-09-01 (session, cont.): TASK-SRBGS.1.1 reported (worker 6d826636: drift test derived from the pin table with a named exclusion set + red-then-green proof, dead short-circuit deleted, anomalies line deleted, ownerless apply failures queue-only with no foreign warn, per-run cutover undo text, owner-side 503 pinned; 5 gates PASS) and merged =19212129= (clean 3-way with 8DWJP.1's writer.rs changes); manager gates running (=scratchpad/gates-SRBGS.1.1-*.log=); on green close trivial (gen tx-20260901-orgasmic-023c19de-1e5f-482a-8f8f-10a9841c29c7, =--merge-sha 19212129 --worker-commit 6d826636 --no-review-required --fix-round-final=). Slots: MSYN4.3.1 only. Queue: empty. 16 unpushed merges.
 - 2026-09-01 (session, cont.): TASK-MSYN4.3.1 reported (worker 753136c0, test-only +36 in tx.rs: CLOSED_TX on a duplicated legacy id closes the latest start, earlier stays open; 3 gates PASS); merging + gating in background (=scratchpad/gates-MSYN4.3.1-*.log=); on green close trivial (gen tx-20260901-orgasmic-325c23cc-8850-4af2-8c12-3853bdafb239, =--worker-commit 753136c0 --no-review-required --fix-round-final=). Implementer slots: none running. Queue: empty. Remaining open: 8DWJP.1 review (→ 8DWJP + AS0FS), SRBGS.1.1 close, MSYN4.3.1 close, decisions KA934.2 / JWHXH.2.
 - 2026-09-01 (session, cont.): TASK-AS0FS closed done (IMPLEMENTS dec_EWY0K; Evidence = the decision). Descriptor note: a manual close must walk in_progress → in_review → done; backlog→done and in_progress→done are refused, and --property cannot share a call with --state.
+- 2026-09-01 (session, cont.): SRBGS.1.1 gates green on =19212129= → closed trivial, done. MSYN4.3.1 merged =ad8c104d=, gates green → closed trivial, done. main = =ad8c104d=, 17 unpushed merges. Only 8DWJP.1's review (tx-…4c89e039) remains before chain step 2 is complete; then ask the operator to push main and write the release note (mixed-version fleet modify/delete hazard from the JWHXH.1 review; old-runtime machines still mint numeric tx ids until upgraded).
 
 ** Next likely actions
 Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 DONE (chain landed, 0.0.23 certified). Step 2 half done:

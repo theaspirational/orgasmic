@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.3.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-MSYN4.3.1 Test-only: pin the fold contract for one tx id shared by two machine generations :e01mc:chain-review:
+* DONE TASK-MSYN4.3.1 Test-only: pin the fold contract for one tx id shared by two machine generations :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.3.1
 :PRIORITY: P3
@@ -10,3 +10,5 @@
 :END:
 
 LOW residual of the MSYN4.3 review (claude-opus-5 high, tx-a9a7ba40). crates/orgasmic-core/src/tx.rs:~1170 dispatch_fold_keeps_two_machine_generations_distinct_by_uuid_tx_id builds two starts with two already-distinct uuids; the diff changed no fold source, so the test passes verbatim on 568cb5be^1 and pins nothing new. Add the negative case the finding actually described: two manager.dispatch_started entries on two machines sharing ONE TX_ID (the pre-fix numeric shape), then one CLOSED_TX. Assert the documented fold behaviour for that shape (both close, or the ambiguity is detected — read the fold and state which). That test must fail on old-runtime data shapes if the fold ever starts trusting the id alone. Test-only, no production code; close with --fix-round-final --no-review-required. Gate: cargo test -p orgasmic-core --lib tx; clippy core; fmt. Optional cosmetic, skip unless trivial: TxIdPolicy::ProjectSequence and the 'pending-project-sequence' placeholder (api.rs:~3007, ~8554) are misnomers now — 13 call sites, rename only if a mechanical rename stays under a few minutes.
+** Evidence
+Merged ad8c104d (worker 753136c0, codex gpt-5.6-sol): test-only +36 in crates/orgasmic-core/src/tx.rs — two machines start generations sharing legacy id tx-20260901-orgasmic-0007, one CLOSED_TX; pins the existing fold contract (the close selects the latest matching start; the earlier duplicate stays visibly open). Optional ProjectSequence rename skipped. Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-core --lib tx → 26 passed; clippy core -D warnings clean; fmt clean. Logs: scratchpad/gates-MSYN4.3.1-*.log.

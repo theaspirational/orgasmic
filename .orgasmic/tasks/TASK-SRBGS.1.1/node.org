@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-SRBGS.1.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-SRBGS.1.1 Fix round 2 for SRBGS.1: honest route-list drift test, anomalies line, phantom apply-failure owner, branch-cutover recovery text, owner-side 503 pin :e01mc:chain-review:
+* DONE TASK-SRBGS.1.1 Fix round 2 for SRBGS.1: honest route-list drift test, anomalies line, phantom apply-failure owner, branch-cutover recovery text, owner-side 503 pin :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-SRBGS.1.1
 :PRIORITY: P2
@@ -22,3 +22,5 @@ F4 LOW — project_migrate.rs:~71 migrate_to_branch (create_orphan_branch, git w
 F5 LOW — api.rs:~32874 apply_failure_is_not_reported_by_the_next_request drives request A via writer.append_tx directly, bypassing refresh_after_tx, so it proves only that B escapes. Extend it: A goes through refresh_after_tx and asserts A's own committed-503 with A's tx id, then B gets 200.
 
 Acceptance: F1 test goes red when a new tx/-routed type is added to the pin table without a doc entry (prove it by a temporary local edit, describe in report); anomalies line gone; no Uuid owner in mutate_file and no foreign-failure warn on a plain journal write (test or log assertion); branch cutover failure prints a recovery block (test with a forced failure after create_orphan_branch); F5 extended. Gates: cargo test -p orgasmic-daemon --lib -- shipped_tx_types apply_failure ledger_route comment; cargo test -p orgasmic-cli --bin orgasmic -- project_migrate; clippy daemon+cli -D warnings; fmt.
+** Evidence
+Merged 19212129 (worker 6d826636, codex gpt-5.6-sol): route-list drift test now derives the Rust side from the exhaustive PINNED_LEDGER_ROUTES table minus a named non-dispatch exclusion set (red-then-green proven with a fake type; dead DISPATCH_PROJECT_TX_TYPES short-circuit deleted); unreachable anomalies counter/line deleted; apply-failure ownership optional — ownerless journal writes are queue-only with no foreign-owner warn; migrate_to_branch attaches per-run undo commands derived from completed steps (test forces failure after orphan-branch creation); L3 test drives request A through refresh_after_tx and pins its committed 503 + tx id, then B succeeds. Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- shipped_tx_types apply_failure ledger_route comment barrier → 25 passed; cargo test -p orgasmic-cli --bin orgasmic -- project_migrate → 3 passed; clippy daemon+cli -D warnings clean; fmt clean. Logs: scratchpad/gates-SRBGS.1.1-*.log. Review waived: second round, test-pinned, net simplification.
