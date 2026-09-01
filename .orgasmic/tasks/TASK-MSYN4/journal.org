@@ -39,3 +39,16 @@
 :REASON: HIGH crates/orgasmic-daemon/src/ledger_sync.rs:56 — the sync loop races the writer with no lease or lock and has already committed mid-transaction state on the live ledger: git add --all -- .orgasmic caught the writer's node.org.bak.<request-id> sidecars in commits cd544977 (TASK-JHWNP.1) and 8f937138 (ART-MKRG1), each deleted again one commit later. The same window also spans transaction_multi_locked_inner's rename loop, so a dispatch close can be committed and pushed with some node.org files rewritten and the close tx not yet appended, giving another machine a half-applied close; sync_once needs a writer lease or at minimum a pathspec excluding *.tmp.* / *.bak.*
 :EVENT_ID: 24ba69e9-a986-4376-99fe-7268cc812a73
 :END:
+
+* tx-20260901-orgasmic-6745 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6745
+:TIME:    [2026-09-01 Tue 12:54:13]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4
+:REASON: HIGH crates/orgasmic-daemon/src/api.rs:14575 — moving tx under machines/ reopened the append-only ledger hole reject_ledger_rewrite exists to close: the predicate only blocks .orgasmic/tx* and **/journal.org, so POST /org/file accepts .orgasmic/machines/<uuid>/tx/2026-09.org, .orgasmic/machines/<uuid>/claims.org and .orgasmic/views/board.org and whole-file overwrites them (verified against Rust Path::starts_with component semantics: blocked=false for all three, true for the two covered cases). validate_org_edit_path allows any .org under .orgasmic/, and guard_node_write explicitly allowlists machines/tx/tmp/views, so nothing downstream stops it — a single write erases committed dispatch history or forges the cross-machine claim log, and AP971.8's 'views are never a write target' is unenforced
+:EVENT_ID: 44cf4feb-9f51-43c6-8830-105c3219d944
+:END:
