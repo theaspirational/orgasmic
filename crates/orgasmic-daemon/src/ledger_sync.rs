@@ -106,6 +106,20 @@ fn sync_once_inner(
                 ".orgasmic/views",
             ],
         )?;
+        git(
+            ledger,
+            &[
+                "rm",
+                "-r",
+                "-q",
+                "--cached",
+                "--ignore-unmatch",
+                "--",
+                ":(glob).orgasmic/**/*.tmp",
+                ":(glob).orgasmic/**/*.tmp.*",
+                ":(glob).orgasmic/**/*.bak.*",
+            ],
+        )?;
 
         // Stage everything this machine changed inside the ledger.
         //
@@ -121,10 +135,13 @@ fn sync_once_inner(
         // Writes are free between dispatch claims. If two machines edit the same
         // path, the pull conflict parks this machine's side before following remote.
         //
-        // ponytail: excluding writer sidecars still lets a tick commit node rewrites
-        // before their close tx lands; a peer can see that torn state for one sync
-        // interval. Add a writer-published quiescence barrier or ledger-wide lease if
-        // that bounded window becomes unacceptable.
+        // ponytail: excluding writer sidecars still permits both torn orders: add #1
+        // after rename plus add #2 before append can publish a node rewrite without
+        // its close tx; add #1 before rename plus add #2 after append can publish the
+        // close tx without its node rewrite. The tear lasts until the next successful
+        // sync; backoff can stretch that to MAX_BACKOFF, or indefinitely when wedged.
+        // Add a writer-published quiescence barrier or ledger-wide lease if that
+        // torn window becomes unacceptable.
     }
     stage_ledger(ledger, machine_id)?;
     commit_staged(ledger, &format!("ledger: sync {machine_id}"))?;
@@ -319,6 +336,10 @@ fn sync_ledger_at(
                     )),
                 ),
             };
+            let last_success_at = match &outcome {
+                SyncOutcome::Idle => previous.last_success_at,
+                SyncOutcome::Synced { .. } | SyncOutcome::Conflict { .. } => Some(now),
+            };
             let mut statuses = statuses.lock().expect("ledger sync status lock");
             statuses.insert(
                 ledger.to_path_buf(),
@@ -327,7 +348,7 @@ fn sync_ledger_at(
                     error: error.clone(),
                     consecutive_failures: 0,
                     last_attempt_at: Some(now),
-                    last_success_at: Some(now),
+                    last_success_at,
                     next_attempt_at: None,
                 },
             );
@@ -420,6 +441,18 @@ async fn record_sync_conflict(
     Ok(())
 }
 
+fn retain_live_statuses(
+    statuses: &LedgerSyncStatuses,
+    ledgers: &std::collections::BTreeSet<(PathBuf, String)>,
+) {
+    // ponytail: linear membership avoids another per-tick set; index paths are
+    // small, so add a path-only set only if large boards make this measurable.
+    statuses
+        .lock()
+        .expect("ledger sync status lock")
+        .retain(|path, _| ledgers.iter().any(|(live, _)| live == path));
+}
+
 /// The daemon's coalescing loop. A missing remote is deliberately silent.
 pub(crate) fn spawn(
     index: Index,
@@ -448,6 +481,7 @@ pub(crate) fn spawn(
                 .into_iter()
                 .map(|entry| (entry.path, entry.id))
                 .collect();
+            retain_live_statuses(&statuses, &ledgers);
             for (ledger, project_id) in ledgers {
                 let sync_machine_id = machine_id.clone();
                 let statuses = statuses.clone();
@@ -700,6 +734,98 @@ mod tests {
         assert!(!tracked.lines().any(|path| {
             path.ends_with(".tmp") || path.contains(".tmp.") || path.contains(".bak.")
         }));
+    }
+
+    #[test]
+    fn tracked_writer_sidecar_deletion_leaves_a_clean_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_remote, a, _b) = seed_remote(&tmp);
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        let relative = ".orgasmic/tasks/T1/node.org.tmp";
+        std::fs::create_dir_all(a.join(relative).parent().unwrap()).unwrap();
+        std::fs::write(a.join(relative), "sidecar\n").unwrap();
+        run(&a, &["add", "-f", relative]);
+        run(
+            &a,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "track writer sidecar",
+            ],
+        );
+        std::fs::remove_file(a.join(relative)).unwrap();
+
+        sync_once(&a, &machine_id).unwrap();
+
+        assert_eq!(
+            git_optional(&a, &["ls-files", relative])
+                .unwrap()
+                .as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            git_optional(&a, &["status", "--porcelain"])
+                .unwrap()
+                .as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn idle_sync_does_not_record_a_success() {
+        let tmp = tempfile::tempdir().unwrap();
+        run(tmp.path(), &["init", "-b", "orgasmic"]);
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        let statuses = LedgerSyncStatuses::default();
+        let now = Utc::now();
+
+        assert!(sync_ledger_at(tmp.path(), &machine_id, &statuses, now).is_none());
+        assert_eq!(statuses.lock().unwrap()[tmp.path()].last_success_at, None);
+
+        let previous = now - Duration::from_secs(1);
+        statuses
+            .lock()
+            .unwrap()
+            .get_mut(tmp.path())
+            .unwrap()
+            .last_success_at = Some(previous);
+        assert!(sync_ledger_at(
+            tmp.path(),
+            &machine_id,
+            &statuses,
+            now + Duration::from_secs(1)
+        )
+        .is_none());
+        assert_eq!(
+            statuses.lock().unwrap()[tmp.path()].last_success_at,
+            Some(previous)
+        );
+    }
+
+    #[test]
+    fn removed_ledger_status_is_pruned() {
+        let statuses = LedgerSyncStatuses::default();
+        statuses
+            .lock()
+            .unwrap()
+            .insert(PathBuf::from("/removed"), LedgerSyncStatus::default());
+        statuses
+            .lock()
+            .unwrap()
+            .insert(PathBuf::from("/live"), LedgerSyncStatus::default());
+        let ledgers = [(PathBuf::from("/live"), "project".to_string())]
+            .into_iter()
+            .collect();
+
+        retain_live_statuses(&statuses, &ledgers);
+
+        let statuses = statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert!(statuses.contains_key(Path::new("/live")));
     }
 
     #[tokio::test]

@@ -99,7 +99,7 @@ pub struct DaemonStatus {
     pub ledger_sync: BTreeMap<String, LedgerSyncStatus>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct LedgerSyncStatus {
     pub outcome: String,
     #[serde(default)]
