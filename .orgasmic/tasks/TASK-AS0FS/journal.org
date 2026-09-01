@@ -31,3 +31,33 @@
 :NODE_ID: TASK-AS0FS
 :EVENT_ID: e7b1fa57-04c8-45c0-8c49-7ead10f8337c
 :END:
+
+* tx-20260901-orgasmic-6937 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6937
+:TIME:    [2026-09-01 Tue 15:57:14]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-AS0FS
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-AS0FS/node.org
+:REASON: edited task node TASK-AS0FS
+:NODE_ID: TASK-AS0FS
+:EVENT_ID: 34e00fdc-4114-4845-bd30-49a4c50f87d9
+:END:
+
+* tx-20260901-orgasmic-6938 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6938
+:TIME:    [2026-09-01 Tue 15:57:22]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-AS0FS
+:TARGET: .orgasmic/tasks/TASK-AS0FS/node.org
+:REASON: Decision that answers this task
+:IMPLEMENTS: dec_EWY0K
+:EVENT_ID: 2f8be02a-2994-485a-b82b-7363f501e742
+:END:

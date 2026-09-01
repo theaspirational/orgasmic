@@ -31,3 +31,5 @@ rebase does conflict, rather than looping on the failure.
 - [ ] a rebase conflict in the ledger worktree has a defined, tested outcome instead of a 2-second retry loop
 ** Notes
 DECIDED 2026-09-01: dec_EWY0K. No ownership rule for project.org / goal.org / handoff.org / gotchas.org; a conflicting rebase parks the local side on a side ref and is surfaced in status. Implemented by TASK-8DWJP; this task closes when that lands.
+** Evidence
+Decided 2026-09-01 by dec_EWY0K (operator chose 'conflict path' over pen-on-write): cross-machine ledger writes are free; singleton files have no owner and ride the same conflict path as everything else — on a pull --rebase conflict the losing side is parked on refs/orgasmic/conflicts/<machine-id>/<ts>, the machine follows the remote, and a ledger.sync_conflict event + sync status record it; the claim gate is dispatch-time exclusivity only. Implementation: TASK-8DWJP (merged 200892f2) + fix round TASK-8DWJP.1 (merged a64d5cf8, review in flight).
