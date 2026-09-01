@@ -567,6 +567,47 @@ unhealthy and spawned detached daemons (fds N/1048576 = CLI-spawned, N/65536 = l
 Operator clicked Allow at 12:07; TCC csreq is now identity-based, so future identity-signed builds
 keep the grant. Verified: tasks list 723 rows, fds 18/65536, launchctl print shows the pid.
 
+SESSION 2026-08-24 → 2026-09-01 — FOLDED 2026-09-01 by liveness reconciliation (155 commits, =5033cce..1f7e642a=;
+operator + agent sessions, no manager handoff write in between).
+
+- *THE E01MC/TWCP9 CHAIN LANDED* 2026-08-26, merge =543782d7=. Integration order: TP593 =f56668a6= → 7A0H4 =442f3ae1=
+  → GCXB7 =7c5f2d27= → SRBGS =c9c63d00= → JWHXH =894ad037= → EPG6H =e69ca882= → ARRV8 =3ff87fc5= → AN992 =67830220=
+  → IXPD4 =857c2f42= → TFXR2 =62dc3e8a= → RGRD5 =40c8a71b= → LBRX7 =1d816983= (.orgasmic leaves the tracked tree)
+  → 8AV8B =b630d323= → MSYN4 =3c3ff1b9= → 8DMQS =0304dcb7= → CLM6W =9d124bfb= → KA934 =6cb3de44= (WIP salvaged from
+  stalled tx-6456, =469a2bd1=). Cross-merge repairs =6c97e599= =dd74ea50= =3891ca4c=; =a438bc6f= finalised (CLM6W + KA934
+  closed). CHAIN REVIEW 2026-08-27 was manager-inline (session 01Km9mF, opus-5): fixes =31206393= (claim refusal is a
+  409 naming the holding machine), =c31639c9= (one project's write no longer clears another's projection), =c18b3a11=
+  (stage what this machine wrote), =8b092d27= (fmt + clippy -D clean), =366c4b5b= (cutover tells the operator about the
+  uncommitted deletion); filed TASK-AS0FS (P2, singleton ledger file ownership across machines). *All 19 chain tasks
+  are still in in_review — nothing moved them to done after that review.*
+- *LEDGER CUTOVER* 2026-08-27: =e6e8bc7f= ledger on its own orphan branch =orgasmic=; =31344134= namespaced under
+  =~/.orgasmic/ledgers/<id>=. Live state is =~/.orgasmic/ledgers/orgasmic/.orgasmic= — a git WORKTREE of this checkout
+  on branch =orgasmic=, auto-committed/pushed by the MSYN4 sync loop ("ledger: sync <machine>"). The source tree has NO
+  =.orgasmic/=. Node events go to =tasks/<ID>/journal.org=; dispatch lifecycle to =machines/<machine-id>/tx/YYYY-MM.org=
+  (the shared =tx/2026-08.org= stops 2026-08-26).
+- DISPATCH RECORDS: TASK-W97C8 typed =evidence.json= replaces stdout.log (=124ed1d5=, review approve-with-follow-ups
+  08-28) + W97C8.1 brief/compiled-prompt promoted at close (=23d4e142=; reject → approve-w-f-u). TASK-JHWNP
+  worktree-per-task-chain =bb0645fb= + JHWNP.1 chain-hold release fix =3503b86b=. EHE15 =artifact comments= verb
+  =460ccec5=; 3E5JT =b76bd524=; =9de4aa0f= cross-project refs + submodule worktrees + gitlink merge guard.
+- FORUM (2026-08-29/30, operator-driven, fable-5 reviews, every dispatch closed): 56NRX multi-model extraction mode
+  (=a13b6896=, r4 =fca620d4=), FBSZ2 native extract verb + report-only close (=b8723a5c= =2c8c81f3=), FAS8R
+  extract→forum rename =179a237a=, 295X1 critique =c74eb263=, 9TGQS self-curation + multi-round =9b76db01=, 82KKQ
+  --fast rounds =3aaca8d7=, E1D35 review rounds =f044ba19=, DN1WK skill becomes an OKF bundle =d483ed96=. Vendored
+  diagram-design replaces Mermaid =430bd799=; artifact peek/reader polish =f7b35c9d= =ad570b36=; stage+health badge and
+  evidence-required close (ART-04FYD) =3a35d2d0=.
+- RELEASE: =95e954de= runtime 0.0.23 / apps 0.0.11 STABLE PUBLISHED (certified; =9acfba79= closed three pre-existing
+  workspace reds — recovery_fault_restart seed, dispatch-suite evidence sections, two flakes registered under X0PV1);
+  =d9762399= bumps in-dev to runtime 0.0.24 / apps 0.0.12. Installed here: =0.0.23-dev.20260830i= stable bundle under
+  launchd (status prints Cargo 0.0.18; the label lives in the manifest). PR #21 merged: =32fdbf2d= TASK-R7AGF
+  (certification off-laptop after the THIRD syspolicyd watchdog reboot), =7865f818= claude spinner recipe for Claude
+  Code 2.1.241. =c8c5cf7e= UI-embed build script no longer self-invalidates.
+- SKILL: =54cadc0f= =2ff2a0d8= =1f7e642a= SKILL.md is the orient door; references audited against the live CLI; no-git
+  init path named.
+- 2026-09-01 (this session, manager): closed EIGHT dead orphan dispatch records as aborted (25HSE, RRVX0, 6FNAY, STWVB,
+  RRT4T, 6AYEJ, D6N77.1, BX5SR — codex acp/tmux era, never reported, worktrees gone). Closed the two reviewer
+  generations that self-closed without a typed verdict (56NRX tx-6c3d6953, FBSZ2 tx-45c4c0ed) with =--verdict approve=.
+  TFXR2 in_progress→in_review (landed =62dc3e8a=, no dispatch).
+
 ** Next likely actions
 *DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
 
@@ -786,3 +827,26 @@ chain tasks; the edges were repaired with =task update --property= (=bf8efe3=). 
 was the caller's zsh word-splitting, not orgasmic — but if you see empty =:DEPENDS_ON:= lines
 anywhere, check the create path before trusting the graph. Also: =origin/main= is protected
 and =gh= is unauthenticated, so NOTHING from 08-18 onward is on the remote main.
+
+=== CORRECTIONS 2026-09-01 (liveness reconciliation 5033cce..1f7e642a) — read these before the blocks above
+- *main == origin/main* (0/0 on 2026-09-01) and *gh IS authenticated.* "40+ commits unpushed", "origin protected /
+  gh token invalid", "CI has never run" are all SPENT. PR #21 landed through GitHub.
+- *Runtime is 0.0.23-dev.20260830i* (stable-channel bundle), not 0.0.22-dev.20260823.
+- *=.orgasmic/= no longer exists in the source tree.* Every "read =.orgasmic/= in the repo" above means
+  =~/.orgasmic/ledgers/orgasmic/.orgasmic=. =orgasmic entry= prints the PROJECT path. The ledger MUST be a git
+  worktree of this checkout: the CLI resolves cwd → =git rev-parse --git-common-dir= → the registered project sharing
+  that common dir. A plain clone breaks cwd resolution (measured 2026-08-30 on gigabyte).
+- *Two tx surfaces now.* Shared =tx/2026-08.org= stops 2026-08-26; dispatch lifecycle since then is in
+  =machines/<machine-id>/tx/=; node events are in =tasks/<ID>/journal.org=. Grep BOTH or you conclude "no reviews ran".
+- *claude-sdk stdio reviewers SELF-CLOSE without a typed verdict.* 56NRX (tx-6c3d6953) and FBSZ2 (tx-45c4c0ed) both
+  reported APPROVE and both sat =[reported]= in dispatch-status for three days. After every review, run dispatch-status
+  and close the generation with =--verdict= yourself.
+- *The handoff has NO size cap.* No code limit anywhere; the convention only says "concise / compact". This file is
+  ~60 KB / ~800 lines of mostly historical narrative. Compaction is a manager decision, not automatic — propose it.
+- *The 2026-08-09 dispatch suspension was lifted in practice* (08-19 directed pairs, 08-26 chain dispatches, 08-29/30
+  forum dispatches) but never recorded as lifted. Still ask model/effort at session start; never assume a default.
+- *Board debris:* four forum-extraction parents (02JJW, 2XT9J, NMV4P, V6JW4 — the same question four times, no runs,
+  no artifacts) plus seven todo children look like abandoned smoke runs from the 08-29 forum work. Cancelling them is
+  an operator call.
+- A stale probe worktree from session 94dc2a46 (=scratchpad/probe-3a4c219f=, detached at =3a4c219f=, clean) is still
+  registered; =git worktree prune= after its scratchpad is gone.

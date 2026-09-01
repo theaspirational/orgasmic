@@ -196,3 +196,31 @@
 :CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-56nrx-review
 :EVENT_ID:     afb0a110-75b9-4624-a490-82cccb65053a
 :END:
+
+* TX 2026-09-01 Tue 12:17:29 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-ca830c48-4e72-42f9-bbd0-64e65c5b89ce
+:TIME:         [2026-09-01 Tue 12:17:29]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     13eb6029-0ce9-4ff7-9df2-ec895adb9f09
+:END:
+
+* TX 2026-09-01 Tue 12:17:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-18f92ca1-b02b-4a7a-b9db-7ad2fed4cd1d
+:TIME:         [2026-09-01 Tue 12:17:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     a7078a72-2a1a-4a6b-81d7-2f3912cac936
+:END:
