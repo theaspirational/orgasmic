@@ -13,3 +13,18 @@
 :REASON: MEDIUM crates/orgasmic-core/tests/fixtures.rs:37 — the ledger cutover turned 7 live-corpus tests into permanent silent passes: live_ledger_present() returns false whenever .orgasmic/project.org is absent, which post-LBRX7 is every fresh clone and every CI checkout (/.orgasmic/ is now gitignored on main). Reproduced here: cargo test -p orgasmic-core --test fixtures reports 19 passed in 0.00s and --nocapture prints the skip notice exactly 7 times, so parses_real_done_tasks, live_state_files_parse_without_retired_property_warnings, parses_real_decisions, parses_real_glossary, parses_real_project and friends assert nothing in the gate that certifies releases
 :EVENT_ID: 7fa044e2-d894-4c9c-8981-1c2238a59807
 :END:
+
+* tx-20260901-orgasmic-6777 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6777
+:TIME:    [2026-09-01 Tue 13:02:32]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-LBRX7
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-LBRX7/node.org
+:REASON: edited task node TASK-LBRX7
+:NODE_ID: TASK-LBRX7
+:EVENT_ID: c1ac2b37-c5ce-4400-8703-410865d3ff6d
+:END:

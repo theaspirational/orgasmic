@@ -15,4 +15,6 @@ AP971.5: writer routing — journal iff the event is about exactly one dir-backe
 - [ ] routing table pinned by a test over every known type
 - [ ] dispatch close still atomic via transaction_multi with no multi-ledger append
 - [ ] id sequence cold-start scan covers journals (test)
+** Evidence
+- Integrated on main =e69ca882= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 

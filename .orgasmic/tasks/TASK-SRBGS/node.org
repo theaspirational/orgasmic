@@ -15,4 +15,6 @@ AP971.9: port scripts/ap971-migrate-proto.py (branch ap971-prototype) to orgasmi
 - [ ] migrate runs on this repo: 873 nodes, 0 anomalies, byte-for-byte heading round trip
 - [ ] parse_errors 0 and dangling-edge lint green after migration (old ids resolve)
 - [ ] no reader of tasks/<state>.org, decisions.org, glossary.org remains in crates/ scripts/ verify/
+** Evidence
+- Integrated on main =c9c63d00= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 

@@ -15,4 +15,6 @@ AP971.2/.3: shipped/schema/node-types/{task,decision,glossary,artifact}.org — 
 - [ ] four descriptors ship and load; unknown collection path tested
 - [ ] mint is descriptor-driven and create_node_dir retries on AlreadyExists
 - [ ] task states/transitions come from the descriptor (state-machine.org folded in or pointed at)
+** Evidence
+- Integrated on main =442f3ae1= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 

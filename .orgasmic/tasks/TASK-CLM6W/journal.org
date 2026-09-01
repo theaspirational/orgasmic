@@ -13,3 +13,18 @@
 :REASON: HIGH crates/orgasmic-daemon/src/writer.rs:1766 — the claim gate only refuses when a claim row exists, so two machines CAN write the same node: guard_node_write returns Ok for any unclaimed node, and the live ledger shows claims taken and released per dispatch (62 claimed / 70 released), leaving every node unclaimed between dispatches. Two daemons commenting on or updating the same task both stage that node dir, which contradicts ledger_sync.rs:52's premise that a foreign node dir can only differ if the claim gate was bypassed, and lands as an unresolvable rebase conflict
 :EVENT_ID: 13fa7175-2a61-4bda-aa62-46b79972fdb4
 :END:
+
+* tx-20260901-orgasmic-6781 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6781
+:TIME:    [2026-09-01 Tue 13:02:33]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CLM6W
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-CLM6W/node.org
+:REASON: edited task node TASK-CLM6W
+:NODE_ID: TASK-CLM6W
+:EVENT_ID: edaa48e8-5f94-4f64-bf58-4852bb3c1de6
+:END:

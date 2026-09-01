@@ -15,4 +15,6 @@ AP971.7: watcher path → (project, collection, node id) → reload only that no
 - [ ] a comment POST returns without a project-wide reparse (measured)
 - [ ] activity feed shows journal comments and tx run events interleaved
 - [ ] dispatch-wait no longer calls project_tx_entries on the poll path
+** Evidence
+- Integrated on main =b630d323= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 

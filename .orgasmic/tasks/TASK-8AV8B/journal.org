@@ -26,3 +26,18 @@
 :REASON: LOW crates/orgasmic-daemon/src/api.rs:8570 — writer.take_apply_failure() is a single daemon-wide slot, so a projection failure from one request surfaces as a committed-503 on the next unrelated request that reaches refresh_after_tx, and that early return skips repair_projection; the queued paths are only repaired on a later request
 :EVENT_ID: 9487bc70-962f-4bdf-b756-49c672c5e25e
 :END:
+
+* tx-20260901-orgasmic-6778 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6778
+:TIME:    [2026-09-01 Tue 13:02:32]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8AV8B
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-8AV8B/node.org
+:REASON: edited task node TASK-8AV8B
+:NODE_ID: TASK-8AV8B
+:EVENT_ID: 19716bdb-d3f9-48c1-a6d7-0ecabcc6af39
+:END:

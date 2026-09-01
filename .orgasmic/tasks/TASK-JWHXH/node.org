@@ -14,4 +14,6 @@ AP971.8: daemon writes .orgasmic/views/board.org (tasks by state), glossary.org,
 ** Acceptance
 - [ ] views regenerate on node change; byte-stable when nothing changed
 - [ ] no shipped or UI path still names glossary.org/decisions.org/tasks/<state>.org at the old location
+** Evidence
+- Integrated on main =894ad037= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 

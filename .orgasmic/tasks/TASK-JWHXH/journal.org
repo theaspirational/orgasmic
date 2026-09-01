@@ -13,3 +13,18 @@
 :REASON: HIGH crates/orgasmic-daemon/src/ledger_sync.rs:56 — AP971.8 decision 3 (views/ gitignored) is unmet on the live ledger: only shipped/project-scaffold/.gitignore gained views/, the existing .orgasmic/.gitignore still holds just tmp/, so sync_once's git add --all commits and pushes views/{board,glossary,decisions}.org on every tick; git ls-files confirms all three are tracked, every node write is a two-file diff, and two machines regenerating them will rebase-conflict on a file the design says is throwaway
 :EVENT_ID: dee5b107-c8e4-4649-8fb3-26286653dc41
 :END:
+
+* tx-20260901-orgasmic-6770 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6770
+:TIME:    [2026-09-01 Tue 13:02:30]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-JWHXH/node.org
+:REASON: edited task node TASK-JWHXH
+:NODE_ID: TASK-JWHXH
+:EVENT_ID: fa17f3d8-298e-4b5b-b44f-28fbc30d6beb
+:END:

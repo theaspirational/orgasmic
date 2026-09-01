@@ -52,3 +52,18 @@
 :REASON: HIGH crates/orgasmic-daemon/src/api.rs:14575 — moving tx under machines/ reopened the append-only ledger hole reject_ledger_rewrite exists to close: the predicate only blocks .orgasmic/tx* and **/journal.org, so POST /org/file accepts .orgasmic/machines/<uuid>/tx/2026-09.org, .orgasmic/machines/<uuid>/claims.org and .orgasmic/views/board.org and whole-file overwrites them (verified against Rust Path::starts_with component semantics: blocked=false for all three, true for the two covered cases). validate_org_edit_path allows any .org under .orgasmic/, and guard_node_write explicitly allowlists machines/tx/tmp/views, so nothing downstream stops it — a single write erases committed dispatch history or forges the cross-machine claim log, and AP971.8's 'views are never a write target' is unenforced
 :EVENT_ID: 44cf4feb-9f51-43c6-8830-105c3219d944
 :END:
+
+* tx-20260901-orgasmic-6779 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6779
+:TIME:    [2026-09-01 Tue 13:02:32]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-MSYN4/node.org
+:REASON: edited task node TASK-MSYN4
+:NODE_ID: TASK-MSYN4
+:EVENT_ID: 83848f51-0a26-45b1-a39f-adc83cc687fa
+:END:

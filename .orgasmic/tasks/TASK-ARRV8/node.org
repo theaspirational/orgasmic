@@ -14,4 +14,6 @@ AP971.6 mapping table: artifacts.rs and its six routes move onto node_kernel —
 ** Acceptance
 - [ ] all artifact API tests pass on the kernel
 - [ ] existing artifacts under .orgasmic/artifacts/ migrated and readable
+** Evidence
+- Integrated on main =3ff87fc5= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 

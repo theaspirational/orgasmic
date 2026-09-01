@@ -13,3 +13,18 @@
 :REASON: HIGH crates/orgasmic-cli/src/manager.rs:9793 + crates/orgasmic-daemon/src/api.rs:18497 — the tx split disarmed the torn-close repair's 'an operator moved this on purpose' guard: both torn_close_candidates and recorded_close_allows_repair clear/deny on a later task.state_transitioned, but read_tx_entries and project_tx_entries read only tx/ and machines/*/tx/, never journals, and post-cutover every task.state_transitioned routes to the node journal (live ledger: 50 journals carry it, 0 in machines/*/tx). A task a dispatch closed and an operator then moved back to LIFECYCLE_FROM is silently dragged forward again by the next manager command, and the daemon replay also skips the Done evidence gate
 :EVENT_ID: 36b7312f-7a36-4ed6-9979-e6b02af00cc4
 :END:
+
+* tx-20260901-orgasmic-6771 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6771
+:TIME:    [2026-09-01 Tue 13:02:31]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-EPG6H/node.org
+:REASON: edited task node TASK-EPG6H
+:NODE_ID: TASK-EPG6H
+:EVENT_ID: 47fd1927-85ae-4eec-8ef1-b3078bd9e8e8
+:END:

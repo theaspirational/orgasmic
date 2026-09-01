@@ -13,3 +13,18 @@
 :REASON: MEDIUM crates/orgasmic-core/src/node_kernel.rs:429 — TP593's stated acceptance 'the real_data parse test passes' is vacuous: every_migrated_node_parses returns Ok immediately unless ORGASMIC_MIGRATED_DIR is set, and grep over the whole repo (rs/sh/toml/yml/md/org) finds that variable set nowhere, so assert!(n > 800) has never executed in any gate; the doc comment also points at scripts/ap971-migrate-proto.py, which does not exist in the tree
 :EVENT_ID: 203fae0d-b481-4c11-bd38-d33c35217aae
 :END:
+
+* tx-20260901-orgasmic-6766 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6766
+:TIME:    [2026-09-01 Tue 13:02:30]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TP593
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-TP593/node.org
+:REASON: edited task node TASK-TP593
+:NODE_ID: TASK-TP593
+:EVENT_ID: c2a58fa2-5841-4a6d-be09-317093dbc43f
+:END:

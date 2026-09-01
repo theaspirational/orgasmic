@@ -15,4 +15,6 @@ AP971.11: one dispatch fold in orgasmic-core, called by both manager.rs scan_dis
 - [ ] CLI and daemon call the same core fold; the daemon's open/closed answer matches the CLI's on this repo's tx/
 - [ ] the type-set guard test exists and fails if any listed type routes anywhere but project tx/
 - [ ] no behaviour change for dispatch-status / dispatch-wait / worktree-prune
+** Evidence
+- Integrated on main =7c5f2d27= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 

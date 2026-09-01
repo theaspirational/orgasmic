@@ -16,4 +16,6 @@ Two port patterns: (a) old aggregate fixture paths (`.orgasmic/tasks/backlog.org
 - [ ] `cargo test -p orgasmic-daemon --lib` fully green
 - [ ] `cargo test -p orgasmic-cli` fully green
 - [ ] no test deleted; routing-table semantics (journal vs tx) preserved per AP971.5
+** Evidence
+- Integrated on main =62dc3e8a= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 

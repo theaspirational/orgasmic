@@ -26,3 +26,18 @@
 :REASON: LOW crates/orgasmic-cli/src/project_migrate.rs:345 — apply() is not atomic (per-node create_dir + write, then rewrites, then remove_file of the old sources) and there is no recovery path: a failure partway leaves node dirs behind, after which plan() bails 'migration target already exists' and refuse_dirty_tree() bails on the now-dirty tree, so the verb refuses forever and the operator must know to git checkout/git clean by hand; no test covers partial failure
 :EVENT_ID: d59bf2da-301c-4e1c-a08f-608317e52392
 :END:
+
+* tx-20260901-orgasmic-6769 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6769
+:TIME:    [2026-09-01 Tue 13:02:30]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-SRBGS/node.org
+:REASON: edited task node TASK-SRBGS
+:NODE_ID: TASK-SRBGS
+:EVENT_ID: 9c5de8cb-ba9f-447c-b873-1c8d54142d8b
+:END:

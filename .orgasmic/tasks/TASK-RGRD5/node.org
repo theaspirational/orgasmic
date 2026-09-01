@@ -16,4 +16,6 @@ If a test's LIVE transition starts from an illegal state, fix the fixture to a l
 - [ ] `cargo test -p orgasmic-cli --test dispatch` fully green
 - [ ] focused test: repair path bypasses the descriptor guard; a live illegal transition is still refused
 - [ ] no test deleted, no assertion weakened
+** Evidence
+- Integrated on main =40c8a71b= inside the chain merge =543782d7= (2026-08-26); shipped in runtime 0.0.23 stable. whole-chain review tx-20260901-orgasmic-1c6d2115 (claude-opus-5 high, 2026-09-01): APPROVE WITH FOLLOW-UPS; follow-ups filed as fix tasks tagged chain-review.
 
