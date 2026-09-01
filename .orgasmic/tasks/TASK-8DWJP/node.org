@@ -7,6 +7,8 @@
 :PRIORITY: P1
 :RELATES_TO: TASK-CLM6W TASK-AS0FS
 :FIX_SUBTASK: t
+:DEPENDS_ON:  TASK-MSYN4.2
+:IMPLEMENTS:  dec_EWY0K
 :END:
 
 ** Description
@@ -16,3 +18,5 @@ Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-st
 - [ ] A recorded decision (dec_) choosing pen-on-write vs conflict-path, folded with TASK-AS0FS.
 - [ ] Implementation + a two-writer test proving the chosen property; ledger_sync.rs:52 comment matches reality.
 - [ ] clippy -D; fmt.
+** Notes
+DECIDED 2026-09-01: dec_EWY0K — conflict path, not pen-on-write. Scope of this task is now implementation only: on a conflicting pull --rebase the sync loop aborts, parks the local side on refs/orgasmic/conflicts/<machine-id>/<ts>, follows the remote, records a ledger event (machine, parked ref, conflicting paths), and surfaces it via the MSYN4.2 status; ledger_sync.rs staging comment and references/ledger.md restate the premise; two-writer test proves both writes survive (one live, one parked), loop recovers, status shows it. Folds TASK-AS0FS (closes together).

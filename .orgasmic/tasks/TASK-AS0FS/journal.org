@@ -1,2 +1,33 @@
 #+title: orgasmic journal TASK-AS0FS
 #+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6850 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6850
+:TIME:    [2026-09-01 Tue 14:24:29]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-AS0FS
+:TARGET: .orgasmic/tasks/TASK-AS0FS/node.org
+:REASON: Folded into dec_EWY0K (conflict path): singletons get no ownership rule; they ride the same conflict path TASK-8DWJP implements. Closes together with TASK-8DWJP.
+:IMPLEMENTS: dec_EWY0K
+:RELATES_TO: TASK-8DWJP
+:EVENT_ID: 53106fb9-98f5-411d-8aa6-0dc5c3056d41
+:END:
+
+* tx-20260901-orgasmic-6851 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6851
+:TIME:    [2026-09-01 Tue 14:24:29]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-AS0FS
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-AS0FS/node.org
+:REASON: edited task node TASK-AS0FS
+:NODE_ID: TASK-AS0FS
+:EVENT_ID: e7b1fa57-04c8-45c0-8c49-7ead10f8337c
+:END:

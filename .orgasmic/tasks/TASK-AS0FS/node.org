@@ -5,6 +5,8 @@
 :PROPERTIES:
 :ID: TASK-AS0FS
 :PRIORITY: P2
+:IMPLEMENTS: dec_EWY0K
+:RELATES_TO: TASK-8DWJP
 :END:
 ** Description
 TASK-CLM6W claim-gates node directories, so two machines never write the same
@@ -27,3 +29,5 @@ rebase does conflict, rather than looping on the failure.
 ** Acceptance Criteria
 - [ ] two machines editing a singleton project file converge without operator intervention, or the loser is refused with a clear error (test)
 - [ ] a rebase conflict in the ledger worktree has a defined, tested outcome instead of a 2-second retry loop
+** Notes
+DECIDED 2026-09-01: dec_EWY0K. No ownership rule for project.org / goal.org / handoff.org / gotchas.org; a conflicting rebase parks the local side on a side ref and is surfaced in status. Implemented by TASK-8DWJP; this task closes when that lands.

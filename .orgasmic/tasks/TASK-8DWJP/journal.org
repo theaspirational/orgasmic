@@ -29,3 +29,34 @@
 :FIX_SUBTASK: t
 :EVENT_ID: db1d9f4b-a4c2-4746-9b1e-25c89eacbd6e
 :END:
+
+* tx-20260901-orgasmic-6848 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6848
+:TIME:    [2026-09-01 Tue 14:24:26]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:TARGET: .orgasmic/tasks/TASK-8DWJP/node.org
+:REASON: Operator chose the conflict path (dec_EWY0K, 2026-09-01); the H6 decide-first step is done. Implementation builds on the MSYN4.2 status/backoff surface, hence the dependency.
+:DEPENDS_ON: TASK-MSYN4.2
+:IMPLEMENTS: dec_EWY0K
+:EVENT_ID: 76be8c42-fac2-4ef2-908a-3ddaa4420650
+:END:
+
+* tx-20260901-orgasmic-6849 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6849
+:TIME:    [2026-09-01 Tue 14:24:27]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-8DWJP/node.org
+:REASON: edited task node TASK-8DWJP
+:NODE_ID: TASK-8DWJP
+:EVENT_ID: d4d3e540-c2bd-430e-9563-a8bcb9933a2b
+:END:
