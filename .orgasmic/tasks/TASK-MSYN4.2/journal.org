@@ -89,3 +89,55 @@
 :REASON: MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:131 — a sidecar already tracked in HEAD can never be untracked: the :(exclude,glob) pathspecs stop 'git add --all' from staging its deletion, so the worktree stays permanently dirty and every 2s tick's 'pull --rebase --autostash' stashes/pops it forever (reproduced in /tmp/pstest: ' D .orgasmic/a/stale.bak.old' survives the add).
 :EVENT_ID: 21572dcb-e7f4-47c3-92d2-a92e25f21577
 :END:
+
+* tx-20260901-orgasmic-6871 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6871
+:TIME:    [2026-09-01 Tue 14:55:41]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2
+:REASON: MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:117 — the ponytail ceiling comment claims the torn window lasts one sync interval, but the backoff added in the same commit holds the completing commit for up to MAX_BACKOFF (5 min) after an already-pushed torn commit; it also names only the node-without-tx order, while add#1-before-rename plus add#2-after-append publishes the close tx with the node rewrite missing.
+:EVENT_ID: 436ae16c-5ba7-4b7d-8507-74713d4f9a6a
+:END:
+
+* tx-20260901-orgasmic-6872 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6872
+:TIME:    [2026-09-01 Tue 14:55:45]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:235 — a plain project checkout (not an orgasmic-branch ledger) gets outcome=idle with last_success_at refreshed to now every 2s, so /status reports a successful ledger sync for a path that has never synced anything.
+:EVENT_ID: 60dd9f2a-5381-4d4e-a6ad-09d8ee249b4b
+:END:
+
+* tx-20260901-orgasmic-6873 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6873
+:TIME:    [2026-09-01 Tue 14:55:46]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:289 — the ledger sync status map is keyed by board path and never pruned, so a project removed from the board leaves its last status visible in /status for the daemon's lifetime.
+:EVENT_ID: e700184c-a181-48f3-93bf-ff9199845472
+:END:
+
+* tx-20260901-orgasmic-6874 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6874
+:TIME:    [2026-09-01 Tue 14:55:49]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2
+:REASON: LOW crates/orgasmic-cli/src/doctor.rs:334 — doctor reads /daemon/status but ignores ledger_sync, so 'orgasmic doctor' still reports a healthy daemon while a ledger is wedged and backed off.
+:EVENT_ID: d64caac3-203a-4fd2-851d-f22d19f0f7a2
+:END:

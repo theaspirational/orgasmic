@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KA934.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-KA934.1 M4: any viewer can edit or tombstone anyone's comment (incl. reviewer.finding); tombstone/edit record no actor :e01mc:chain-review:
+* IN_REVIEW TASK-KA934.1 M4: any viewer can edit or tombstone anyone's comment (incl. reviewer.finding); tombstone/edit record no actor :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-KA934.1
 :PRIORITY: P1
@@ -15,3 +15,5 @@ Comment edit/delete handlers (crates/orgasmic-daemon/src/api.rs:2386 / :2421) ga
 - [ ] Edit/delete require authorship (or an elevated Action); automated rows (reviewer.finding, review.verdict, *.done) are not editable by comment authors.
 - [ ] Tombstone and edit record :ACTOR:/:EDITED_BY: and time in the journal.
 - [ ] Tests for both refusals and both stamps; UI unchanged or reflects the rule; clippy -D; fmt; ui typecheck.
+** Evidence
+Merged cffb986b (worker 71ecc0dc, codex gpt-5.6-sol; branch forked at 22b9e615, clean 3-way merge on api.rs). Manager re-ran gates on merged main 2026-09-01: cargo test -p orgasmic-core --lib node_kernel → 4 passed; cargo test -p orgasmic-daemon --lib -- comment → 18 passed (incl. the extended task_comments_use_member_session_attribution_and_refresh_activity: non-author 403 with byte-identical journal, admin override, reviewer.finding refused, both stamp pairs); cargo clippy -p orgasmic-core -p orgasmic-daemon --all-targets -D warnings clean; cargo fmt --all --check clean; ui npm run typecheck clean. Review round: claude-opus-5 high over cffb986b^1..cffb986b (verdict on the reviewer close).
