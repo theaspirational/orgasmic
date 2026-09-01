@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         7ad3a0e6
+:LIVENESS:         200892f2
 :LIVENESS_AT:      [2026-09-01 Tue 16:10]
 :UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
@@ -630,6 +630,7 @@ operator + agent sessions, no manager handoff write in between).
 - 2026-09-01 (session, cont.): TASK-TP593.1 (1g, M2+M3) reported by codex gpt-5.6-sol (09d87cf8): fixture ledger committed at crates/orgasmic-core/tests/fixtures/ledger/.orgasmic (15 files, 46 KB: project.org, .gitignore, dec_R75SW, term_YC32J, TASK-VWBDJ/8H8A2/2DFTX.4 done + TASK-QK8PT cancelled, first 40 entries of tx/2026-08.org); fixture_ledger_root() replaces live_ledger_present(); 7 skip branches deleted; real_data::every_migrated_node_parses deleted. Manager merging + gating; final close planned if the copies are byte-identical to the live ledger. TASK-MSYN4.3 (1h, M5 tx-id collisions) dispatched to codex gpt-5.6-sol (tx-20260901-orgasmic-e5f0edf8).
 - 2026-09-01 (session, cont.): TASK-TP593.1 merged =7ad3a0e6= (fixture files cmp-verified byte-identical to the live ledger; tx file an exact prefix); gates green (fixtures 19 / 0 skips, node_kernel 3, clippy -D core, fmt); closed --fix-round-final --no-review-required. Round 1g complete.
 - 2026-09-01 (session, cont.): TASK-KA934.1 review (opus-5 high, tx-5cfb04f1) APPROVE WITH FOLLOW-UPS; both generations closed; task done. Residuals: TASK-KA934.1.1 (P2 fix round: OCC→409, tombstones + stamps in activity, two test pins) and TASK-KA934.2 (P2 DECISION: member-reachable comment routes — MEMBER_ALLOWED_ROUTES omits them, so the UI composer is dead for members; manager leans open-the-routes together with an :ACTOR: namespace guard; operator decides). TASK-8DWJP implementer reported (commit fa8ef1f9, 4 gates PASS, residual: write-loss window between salvage commit and reset --hard) — merging + gating + reviewer next.
+- 2026-09-01 (session, cont.): TASK-8DWJP merged =200892f2=; manager gates green (daemon 16, cli 22, clippy, fmt); implementer generation closed; reviewer (opus-5 high) dispatched with =scratchpad/brief-TASK-8DWJP-review.md=. TASK-MSYN4.2.1 implementer dispatched after the merge (same file). KA934.1.1 brief written (=scratchpad/brief-TASK-KA934.1.1.md=).
 
 ** Next likely actions
 Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 DONE (chain landed, 0.0.23 certified). Step 2 half done:

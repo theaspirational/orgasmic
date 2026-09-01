@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DWJP
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8DWJP CLM6W H6: claim gate only refuses CLAIMED nodes; every node is unclaimed between dispatches, so two daemons both land — the sync premise is false (fix round for TASK-CLM6W; id grammar refuses TASK-CLM6W.1) :e01mc:chain-review:
+* IN_REVIEW TASK-8DWJP CLM6W H6: claim gate only refuses CLAIMED nodes; every node is unclaimed between dispatches, so two daemons both land — the sync premise is false (fix round for TASK-CLM6W; id grammar refuses TASK-CLM6W.1) :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-8DWJP
 :PRIORITY: P1
@@ -20,3 +20,5 @@ Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-st
 - [ ] clippy -D; fmt.
 ** Notes
 DECIDED 2026-09-01: dec_EWY0K — conflict path, not pen-on-write. Scope of this task is now implementation only: on a conflicting pull --rebase the sync loop aborts, parks the local side on refs/orgasmic/conflicts/<machine-id>/<ts>, follows the remote, records a ledger event (machine, parked ref, conflicting paths), and surfaces it via the MSYN4.2 status; ledger_sync.rs staging comment and references/ledger.md restate the premise; two-writer test proves both writes survive (one live, one parked), loop recovers, status shows it. Folds TASK-AS0FS (closes together).
+** Evidence
+Merged 200892f2 (worker fa8ef1f9, codex gpt-5.6-sol). Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict → 16 passed, 0 failed; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle → 22 passed, 0 failed; cargo clippy -p orgasmic-daemon -p orgasmic-cli --all-targets -D warnings clean; cargo fmt --all --check clean. Logs: scratchpad/gates-8DWJP-{daemon,cli,clippy,fmt}.log. Implementer-named residual: write-loss window between the salvage commit and reset --hard origin/orgasmic; parked-ref push is best-effort. Review round (claude-opus-5 high) dispatched on the merged diff.
