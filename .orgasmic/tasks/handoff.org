@@ -671,6 +671,7 @@ Session pair: reviewer = stdio/claude-sdk claude-opus-5 --effort high; implement
 - Waiting on operator: TASK-KA934.2 (decision: open member comment routes + :ACTOR: guard, or hide the composer; manager leans open). TASK-JWHXH.2 (views/ migration verb for non-synced checkouts) likewise.
 
 Close recipe for a review: read =tmp/dispatch/<brief-dir>/*-last.txt=, verify any HIGH, close reviewer (=--verdict … --reviewed-diff <merge>^1..<merge>=), close implementer (=--merge-sha <merge> --worker-commit <sha> --worktree-remove --branch-delete=), then =task update <ID> --state done= on approve (an implementer close after the reviewer re-stages a FIX_SUBTASK to in_review) or file =<ID>.1= for MEDIUM/HIGH residuals. Full generation ids come from =orgasmic manager dispatch-status --task <ID>= (TX_ID=); shortened ids are refused.
+- UPDATE 8DWJP: reviewer running tx-20260901-orgasmic-eb858d4c-e3a0-4073-a71d-f93f659d95a6 (watcher armed). The implementer close was REFUSED by the merge gate until a verdict exists (expected): close the reviewer first with =--verdict … --reviewed-diff 200892f2^1..200892f2=, then the implementer tx-…304bbc4b with =--merge-sha 200892f2 --worker-commit fa8ef1f9 --worktree-remove --branch-delete=. Evidence already recorded on TASK-8DWJP.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
