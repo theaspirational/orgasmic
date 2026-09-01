@@ -1,0 +1,20 @@
+{
+  "event_count": 221,
+  "tool_call_count": 126,
+  "unparsed_events": 1,
+  "bounded_events": 1,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-EPG6H.1-implementer-20260901T141313.jsonl",
+    "size_bytes": 568219
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/01/rollout-2026-09-01T17-13-14-01a05d51-26c4-7ff2-a23b-d8d967162628.jsonl",
+    "session_id": "01a05d51-26c4-7ff2-a23b-d8d967162628",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
