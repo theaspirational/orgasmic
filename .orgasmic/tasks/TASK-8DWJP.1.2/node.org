@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DWJP.1.2
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-8DWJP.1.2 Fix round for 8DWJP.1.1: rebase check before the idle gate, salvage tracked writes before reset, strict stage-3 match :e01mc:chain-review:
+* IN_PROGRESS TASK-8DWJP.1.2 Fix round for 8DWJP.1.1: rebase check before the idle gate, salvage tracked writes before reset, strict stage-3 match :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-8DWJP.1.2
 :PRIORITY: P1

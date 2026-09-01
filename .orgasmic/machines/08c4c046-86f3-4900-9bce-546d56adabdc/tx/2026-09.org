@@ -4864,3 +4864,47 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1.2/dispatches/tx-20260901-orgasmic-878e798d-82c9-42e7-b04b-e6c36a09b4b0/report.md
 :EVENT_ID:     0e7aa65c-37fc-4cdf-9419-8ec3841c11f0
 :END:
+
+* TX 2026-09-01 Tue 16:51:22 reviewer.done TASK-8DWJP.1.2
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-c49c25dc-59e1-481d-b34e-1d7d3b0dca34
+:TIME:         [2026-09-01 Tue 16:51:22]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.2
+:REASON:       Reviewer (claude-opus-5 high) REJECT, narrow: five of six items correct and well tested (rebase-first idle gate head-name guarded, strict stage 3, scratch-index salvage with clean GIT_INDEX_FILE hygiene, orphan autostash drop, status/event, honest tests). HIGH (new, data loss): the entry-path git rebase --abort at :106 hard-resets the worktree before any salvage runs, discarding every uncommitted tracked ledger write made during the mid-rebase outage window (proved end to end: zero surviving copies); same shape pre-existing and bounded at :201 (in-tick abort). Fix is one move: hoist salvage_worktree above both aborts with an explicit base commit + a test. LOW salvage status should say 'raw worktree snapshot (conflicted paths carry markers)'; LOW conflict_source_on_entry's rebase branch is now unreachable dead code; LOW the tracked post-conflict write in conflicting_two_writer_tick lands after the tick (covered in substance by conflict_recovery_salvages_tracked_writes_made_after_pull). Residuals → TASK-8DWJP.1.3 (narrow).
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: a4372f03^1..a4372f03
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260901-orgasmic-878e798d-82c9-42e7-b04b-e6c36a09b4b0
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1.2/dispatches/tx-20260901-orgasmic-878e798d-82c9-42e7-b04b-e6c36a09b4b0/report.md
+:EVENT_ID:     f0a1a267-eeb1-4204-ab7d-aebec7249d31
+:END:
+
+* TX 2026-09-01 Tue 16:51:25 implementer.done TASK-8DWJP.1.2
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-c2abb6af-00af-40b7-96d4-80c4a32d5e4b
+:TIME:         [2026-09-01 Tue 16:51:25]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.2
+:REASON:       Merged a4372f03 (worker b273c465, codex gpt-5.6-sol); manager gates green; review REJECTED narrowly (salvage must precede the new rebase abort) → TASK-8DWJP.1.3 on top
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: b273c46514ac4fd4a43d1e80b636073aa2e8008e
+:MERGE_SHA:    a4372f03c712d736c44c5d72156be94ce10ac835
+:BRANCH:       task-8dwjp.1.2-impl
+:CLOSED_TX:    tx-20260901-orgasmic-f0f1bb5d-1282-4298-8d5b-695b018a1f16
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1.2/dispatches/tx-20260901-orgasmic-f0f1bb5d-1282-4298-8d5b-695b018a1f16/report.md
+:EVENT_ID:     b38bbe8d-0001-42b1-b437-73d4b261777f
+:END:
