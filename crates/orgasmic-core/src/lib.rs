@@ -93,4 +93,4 @@ pub use slots::{
     scan as scan_slots, DryRunReport, SlotError, SlotRef, SlotValues,
 };
 pub use tx::{fold_dispatches, parse_tx_file, DispatchFold, TxEntry, TxError, TxWriter};
-pub use views::build_views;
+pub use views::render_view;

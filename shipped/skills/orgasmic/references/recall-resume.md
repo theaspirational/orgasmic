@@ -41,7 +41,7 @@ else — trust it. Read any other file only when a trigger below names it.
 5. Produce the briefing.
 
 The bootstrap is read-only and writes nothing. No tx-log reading, no
-decision-node or `views/decisions.org` reread, no full task-node or task-board
+decision-node reread, no full task-node or task-board
 scan — those are trigger-gated below.
 
 ## Triggers for deeper reads
@@ -68,7 +68,7 @@ Open these only when the condition actually holds:
   `dispatch-close`, not orphaned. No report plus a populated
   `tmp/dispatch/<task-stem>/` means the run may still be live.
 - **Next action targets a specific task**: read that task's heading in
-  `tasks/<ID>/node.org` (`views/board.org` only for a cross-task glance).
+  `tasks/<ID>/node.org` (cross-task glance: `orgasmic task list`).
   Never scan every task node or the whole board wholesale.
 - **Next action dispatches a worker**: read the `manager-dispatch` convention
   and `.orgasmic/gotchas.org` first.

@@ -20,7 +20,6 @@ Paths relative to the project root printed by `orgasmic entry` (usually
 - `tasks/goal.org` — manager focus. `tasks/handoff.org` — manager continuity.
 - `decisions/<ID>/node.org` — durable rationale.
 - `glossary/<ID>/node.org` — domain language.
-- `views/*.org` — derived, gitignored read views; never edit.
 - `gotchas.org` — repeated traps; read before source edits.
 - `conventions/` — repo-local working agreements, one file each.
 - `tx/` — frozen pre-cutover activity log; node events land in `journal.org`.

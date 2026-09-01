@@ -42,8 +42,8 @@ You are dispatch-only and killable at any time.
   heading carries done-so-far, next likely actions, in-flight state,
   divergence/risks, and `:LIVENESS:` for clean-context pickup.
 - *Coordination/design graph:* `.orgasmic/project.org`, `.orgasmic/config.org`,
-  `.orgasmic/views/board.org`, `.orgasmic/views/decisions.org`, and
-  `.orgasmic/views/glossary.org`.
+  plus `orgasmic task get`, `orgasmic decision list --project <id>`, and
+  `orgasmic glossary list --project <id>` for the joined views.
 - *Product baseline:* `.orgasmic/project.org` is the project baseline for this
   product, read directly from the repo.
 - *Durable rationale:* decisions ARE the ADRs, recorded through `orgasmic

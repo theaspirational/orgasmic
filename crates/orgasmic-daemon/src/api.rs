@@ -14520,15 +14520,41 @@ async fn get_org_file(
     let rel_str = rel.to_string_lossy().to_string();
     let (project_id, snap) = ensure_loaded_snapshot(&state, q.project.as_deref()).await?;
     let project = select_loaded_project(&snap, &project_id)?;
-    let path = project.root.join(&rel);
-    let label = org_file_artifact_label(&rel);
-    let contents = read_artifact(&path, label)?;
+    let contents = match rendered_org_view(&rel) {
+        // dec_XH2XY: views live on demand, never on disk.
+        Some(file) => orgasmic_core::views::render_view(&project.root, file)
+            .map_err(|error| ApiError::internal(format!("render {rel_str}: {error:#}")))?,
+        None => {
+            let path = project.root.join(&rel);
+            let label = org_file_artifact_label(&rel);
+            read_artifact(&path, label)?
+        }
+    };
     Ok(Json(OrgFileResponse {
         project: project.project_id.clone(),
         path: rel_str,
         contents,
         tx_id: None,
     }))
+}
+
+/// `.orgasmic/views/<file>.org` for one of the three aggregate views renders
+/// on demand instead of reading disk; any other path reads the tree.
+fn rendered_org_view(rel: &FsPath) -> Option<&'static str> {
+    let mut components = rel.components();
+    if components.next() != Some(Component::Normal(".orgasmic".as_ref())) {
+        return None;
+    }
+    if components.next() != Some(Component::Normal("views".as_ref())) {
+        return None;
+    }
+    let file = components.next()?.as_os_str().to_str()?;
+    if components.next().is_some() {
+        return None;
+    }
+    orgasmic_core::views::VIEWS
+        .iter()
+        .find_map(|(_, view_file, _)| (*view_file == file).then_some(*view_file))
 }
 
 async fn post_org_file(
@@ -21382,6 +21408,74 @@ pub(crate) mod tests {
             ProjectLoadState::Unloaded,
             "authorization must run before path validation or project loading"
         );
+    }
+
+    #[tokio::test]
+    async fn org_file_get_renders_views_on_demand_without_disk_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        write(
+            project_root.join(".orgasmic/decisions/dec_V/node.org"),
+            "#+title: orgasmic decision dec_V\n#+orgasmic_version: 2\n\n* dec_V Pick on demand\n:PROPERTIES:\n:ID: dec_V\n:END:\n",
+        );
+        assert!(!project_root.join(".orgasmic/views").exists());
+        let state = direct_catalog_test_state(home).await;
+
+        for (path, needle) in [
+            (
+                ".orgasmic/views/board.org",
+                "* BACKLOG TASK-PRE Pre-boot task",
+            ),
+            (".orgasmic/views/decisions.org", "* dec_V Pick on demand"),
+            (
+                ".orgasmic/views/glossary.org",
+                "#+title: orgasmic project glossary",
+            ),
+        ] {
+            let response = get_org_file(
+                State(state.clone()),
+                Query(OrgFileQuery {
+                    project: Some("proj-a".into()),
+                    path: path.into(),
+                }),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("render {path}: {error:?}"));
+            assert_eq!(response.0.path, path);
+            assert!(
+                response.0.contents.contains(needle),
+                "{path} must contain {needle:?}, got:\n{}",
+                response.0.contents
+            );
+        }
+        assert!(
+            !project_root.join(".orgasmic/views").exists(),
+            "rendering on demand must not materialize views on disk"
+        );
+    }
+
+    #[tokio::test]
+    async fn org_file_get_unknown_view_name_falls_back_to_disk_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        let state = direct_catalog_test_state(home).await;
+
+        let error = get_org_file(
+            State(state),
+            Query(OrgFileQuery {
+                project: Some("proj-a".into()),
+                path: ".orgasmic/views/other.org".into(),
+            }),
+        )
+        .await
+        .expect_err("a non-view file under views/ has no renderer");
+        assert_eq!(error.status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

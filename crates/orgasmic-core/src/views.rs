@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{bail, Context, Result};
 
 use crate::{collection_node_file_paths, read_claims, LifecycleStage, OrgFile, OrgRewriter};
 
+/// The on-demand aggregate views (dec_XH2XY): `(collection, file name, header)`.
+/// Nothing writes these to disk anymore; `render_view` renders them on demand.
 pub const VIEWS: [(&str, &str, &str); 3] = [
     (
         "tasks",
@@ -24,27 +25,16 @@ pub const VIEWS: [(&str, &str, &str); 3] = [
     ),
 ];
 
-static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Rebuild the throwaway aggregate views from node directories.
-/// Returns the number of files whose bytes changed.
-pub fn build_views(project_root: &Path) -> Result<usize> {
-    let claims = read_claims(project_root)?;
-    let rendered = VIEWS
+/// Render one aggregate view (`board.org`, `decisions.org`, `glossary.org`)
+/// from the node directories. Pure: no `.orgasmic/views/` directory is
+/// created and no file is written.
+pub fn render_view(project_root: &Path, file: &str) -> Result<String> {
+    let &(collection, _, header) = VIEWS
         .iter()
-        .map(|(collection, file, header)| {
-            Ok((
-                project_root.join(".orgasmic/views").join(file),
-                render_collection(project_root, collection, header, &claims)?,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    std::fs::create_dir_all(project_root.join(".orgasmic/views"))
-        .context("create .orgasmic/views")?;
-    rendered.into_iter().try_fold(0, |changed, (path, source)| {
-        Ok(changed + usize::from(write_if_changed(&path, source.as_bytes())?))
-    })
+        .find(|(_, view_file, _)| *view_file == file)
+        .with_context(|| format!("unknown view {file}"))?;
+    let claims = read_claims(project_root)?;
+    render_collection(project_root, collection, header, &claims)
 }
 
 fn render_collection(
@@ -114,34 +104,10 @@ fn render_collection(
     Ok(out)
 }
 
-fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
-    if std::fs::read(path).is_ok_and(|current| current == bytes) {
-        return Ok(false);
-    }
-    let mut tmp_name = path
-        .file_name()
-        .context("view path has no file name")?
-        .to_os_string();
-    tmp_name.push(format!(
-        ".{}.{}.tmp",
-        std::process::id(),
-        TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    let tmp = path.with_file_name(tmp_name);
-    std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
-    if let Err(error) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(error).with_context(|| format!("replace {}", path.display()));
-    }
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{claims::CLAIMED, TxEntry, TxWriter};
-    use std::io::Write;
-    use std::sync::{Arc, Barrier};
 
     fn seed(root: &Path, machine_order: &[&str]) {
         let node = root.join(".orgasmic/tasks/TASK-CLAIM/node.org");
@@ -181,76 +147,28 @@ mod tests {
         seed(first.path(), &["machine-a", "machine-b"]);
         seed(second.path(), &["machine-b", "machine-a"]);
 
-        build_views(first.path()).unwrap();
-        build_views(second.path()).unwrap();
-        let first_board = std::fs::read(first.path().join(".orgasmic/views/board.org")).unwrap();
-        let second_board = std::fs::read(second.path().join(".orgasmic/views/board.org")).unwrap();
+        let first_board = render_view(first.path(), "board.org").unwrap();
+        let second_board = render_view(second.path(), "board.org").unwrap();
         assert_eq!(first_board, second_board);
-        let rendered = String::from_utf8(first_board).unwrap();
-        assert!(rendered.contains(":CLAIM_HOLDER: machine-a"));
-        let parsed = OrgFile::parse(rendered, "board.org").unwrap();
+        assert!(first_board.contains(":CLAIM_HOLDER: machine-a"));
+        let parsed = OrgFile::parse(first_board, "board.org").unwrap();
         assert_eq!(
             parsed.headings[0].property("DOUBLE_CLAIM"),
             Some("machine-a machine-b")
         );
+        // Pure renderer: nothing lands on disk.
+        assert!(!first.path().join(".orgasmic/views").exists());
     }
 
     #[test]
-    fn concurrent_builds_publish_well_formed_views() {
+    fn render_view_covers_every_view_and_refuses_unknown_names() {
         let root = tempfile::tempdir().unwrap();
         seed(root.path(), &["machine-a"]);
-        let task = root.path().join(".orgasmic/tasks/TASK-CLAIM/node.org");
-        let padding = vec![b'x'; 1024 * 1024];
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(task)
-            .unwrap()
-            .write_all(&padding)
-            .unwrap();
-
-        let root = Arc::new(root.path().to_path_buf());
-        let start = Arc::new(Barrier::new(3));
-        let done = Arc::new(Barrier::new(3));
-        let workers: Vec<_> = (0..2)
-            .map(|_| {
-                let root = root.clone();
-                let start = start.clone();
-                let done = done.clone();
-                std::thread::spawn(move || {
-                    let mut results = Vec::new();
-                    for _ in 0..32 {
-                        start.wait();
-                        results.push(build_views(&root));
-                        done.wait();
-                    }
-                    results
-                })
-            })
-            .collect();
-        for _ in 0..32 {
-            let _ = std::fs::remove_dir_all(root.join(".orgasmic/views"));
-            start.wait();
-            done.wait();
+        for (_, file, header) in VIEWS {
+            let rendered = render_view(root.path(), file).unwrap();
+            assert!(rendered.starts_with(header), "{file} must carry its header");
         }
-        for worker in workers {
-            for result in worker.join().unwrap() {
-                result.unwrap();
-            }
-        }
-
-        let entries = std::fs::read_dir(root.join(".orgasmic/views"))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(entries.len(), VIEWS.len());
-        for entry in entries {
-            let path = entry.path();
-            assert!(!path.to_string_lossy().ends_with(".tmp"));
-            OrgFile::parse(
-                std::fs::read_to_string(&path).unwrap(),
-                path.to_string_lossy(),
-            )
-            .unwrap();
-        }
+        let error = render_view(root.path(), "other.org").unwrap_err();
+        assert!(format!("{error:#}").contains("unknown view other.org"));
     }
 }

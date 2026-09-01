@@ -135,22 +135,9 @@ fn sync_once_with_park(
 
     let dotorg = ledger.join(".orgasmic");
     if dotorg.exists() {
-        let ignore = dotorg.join(".gitignore");
-        let mut ignored = match std::fs::read(&ignore) {
-            Ok(ignored) => ignored,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error).context("read .orgasmic/.gitignore"),
-        };
-        if !ignored
-            .split(|byte| *byte == b'\n')
-            .any(|line| line.strip_suffix(b"\r").unwrap_or(line) == b"views/")
-        {
-            if !ignored.is_empty() && !ignored.ends_with(b"\n") {
-                ignored.push(b'\n');
-            }
-            ignored.extend_from_slice(b"views/\n");
-            std::fs::write(&ignore, ignored).context("write .orgasmic/.gitignore")?;
-        }
+        // dec_AF61D/dec_XH2XY: the daemon owns this synced ledger, so it keeps
+        // `.orgasmic/views/` untracked *and* off disk here. Foreign repos are
+        // never touched this way — `orgasmic project migrate` is their path.
         git(
             ledger,
             &[
@@ -163,6 +150,11 @@ fn sync_once_with_park(
                 ".orgasmic/views",
             ],
         )?;
+        match std::fs::remove_dir_all(ledger.join(".orgasmic/views")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("remove .orgasmic/views"),
+        }
         git(
             ledger,
             &[
@@ -2409,7 +2401,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_ledger_views_are_ignored_untracked_and_idempotent() {
+    fn existing_ledger_views_are_untracked_deleted_and_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let (_remote, a, _b) = seed_remote(&tmp);
         let machine_id = uuid::Uuid::new_v4().to_string();
@@ -2438,11 +2430,13 @@ mod tests {
                 .as_deref(),
             Some("")
         );
+        // The daemon owns this ledger: the dead directory is removed, not
+        // just ignored, and .gitignore is left as the scaffold wrote it.
+        assert!(!a.join(".orgasmic/views").exists());
         assert_eq!(
             std::fs::read(a.join(".orgasmic/.gitignore")).unwrap(),
-            b"tmp/\nviews/\n"
+            b"tmp/\n"
         );
-        assert!(a.join(".orgasmic/views/board.org").is_file());
 
         let first_commit = git_optional(&a, &["rev-parse", "HEAD"]).unwrap();
         sync_once(&a, &machine_id).unwrap();
