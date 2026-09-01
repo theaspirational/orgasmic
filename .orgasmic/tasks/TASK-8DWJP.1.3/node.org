@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DWJP.1.3
 #+orgasmic_version: 2
 
-* BACKLOG TASK-8DWJP.1.3 Narrow fix round for 8DWJP.1.2: salvage the worktree before every rebase --abort    :e01mc:chain-review:
+* IN_PROGRESS TASK-8DWJP.1.3 Narrow fix round for 8DWJP.1.2: salvage the worktree before every rebase --abort :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-8DWJP.1.3
 :PRIORITY: P1

@@ -4922,3 +4922,56 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     6ea60e06-df61-4de5-ac80-f4f91ab7cc38
 :END:
+
+* TX 2026-09-01 Tue 16:52:06 manager.dispatch_started TASK-8DWJP.1.3
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-7c5c0058-9a5e-4bc2-8bd8-0404ce5da303
+:TIME:         [2026-09-01 Tue 16:52:06]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.3
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1.3
+:BRANCH:       task-8dwjp.1.3-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.3/brief-TASK-8DWJP.1.3.md
+:STARTED_AT:   [2026-09-01 Tue 16:52:06]
+:LIVENESS:     a4372f03c712d736c44c5d72156be94ce10ac835
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:REASON_INITIAL: Narrow fix round after the 8DWJP.1.2 review REJECT: salvage the worktree (base = rebase orig-head) before both rebase --abort sites, status wording, dead branch removal
+:EVENT_ID:     b2d82710-80ef-4273-af74-a174ece2926a
+:END:
+
+* TX 2026-09-01 Tue 16:52:07 run.created TASK-8DWJP.1.3
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-b52e93e5-4cad-4b11-bb27-7360b6c0eb56
+:TIME:         [2026-09-01 Tue 16:52:07]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-8DWJP.1.3-implementer-20260901T165205.jsonl
+:REASON:       Narrow fix round after the 8DWJP.1.2 review REJECT: salvage the worktree (base = rebase orig-head) before both rebase --abort sites, status wording, dead branch removal
+:RUN_ID:       run-01M1EY555CNF751E5B7BWJPR2N
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1.3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.3/brief-TASK-8DWJP.1.3.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.3/brief-TASK-8DWJP.1.3-a6cc0d3b209f4cf7872e8a395a80bc48-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1.3/brief-TASK-8DWJP.1.3-a6cc0d3b209f4cf7872e8a395a80bc48-stdout.log
+:DISPATCH_ATTEMPT: a6cc0d3b209f4cf7872e8a395a80bc48
+:PID:          67512
+:DISPATCH_TX:  tx-20260901-orgasmic-7c5c0058-9a5e-4bc2-8bd8-0404ce5da303
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EVENT_ID:     02897096-ee80-4b0c-8a36-3bfb28bd211e
+:END:
