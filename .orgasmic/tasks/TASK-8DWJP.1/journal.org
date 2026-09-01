@@ -76,3 +76,55 @@
 :TO_STATE: in_review
 :EVENT_ID: bcf20cd8-c8dc-4c79-ac7d-6be4b7efd1e0
 :END:
+
+* tx-20260901-orgasmic-6944 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6944
+:TIME:    [2026-09-01 Tue 16:00:50]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1
+:REASON: HIGH ledger_sync.rs:164 stage_ledger has no unmerged-index guard: if park_conflict fails at any ? before reset --hard (most reachably git fetch at :250 on a network blip) the index stays UU, and the next tick's git add --all resolves the conflict by staging the marker text, commits it and pushes it to the bare remote - the original HIGH 2 through a side door (reproduced: remote orgasmic:.orgasmic/project.org contains '<<<<<<< Updated upstream')
+:EVENT_ID: 12a54f63-c9e5-49d4-9e0b-b10ac94bc3e0
+:END:
+
+* tx-20260901-orgasmic-6945 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6945
+:TIME:    [2026-09-01 Tue 16:01:00]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1
+:REASON: HIGH ledger_sync.rs:207-232 same root cause, other outcome: when the leftover unmerged path is under .orgasmic/machines/<other>/ (the exact vector of the new test) both stage_ledger pathspecs exclude it, so commit_staged fails 'Committing is not possible because you have unmerged files' on EVERY later tick - ledger sync is permanently wedged at MAX_BACKOFF with no self-heal, and the local bytes were already stash-dropped at :246 before the failing fetch
+:EVENT_ID: ba1a2d26-0b1d-4dfe-8f62-3c7114fa328e
+:END:
+
+* tx-20260901-orgasmic-6946 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6946
+:TIME:    [2026-09-01 Tue 16:01:00]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1
+:REASON: MEDIUM ledger_sync.rs:246 git stash drop is positional on a stack that is NOT per-worktree (verified git 2.52: a worktree and its source checkout share refs/stash); the sha is captured at :184 but the drop runs after update-ref and a network push origin, so an operator git stash push in the source checkout inside that window makes the daemon drop the OPERATOR's stash and leave the autostash on top - fix: re-check rev-parse stash@{0} == local_head (or parse 'Created autostash: <sha>' from the pull stdout) and refuse to drop otherwise
+:EVENT_ID: 24934069-9bba-4b9a-8108-41653f0ed429
+:END:
+
+* tx-20260901-orgasmic-6947 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6947
+:TIME:    [2026-09-01 Tue 16:01:00]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1
+:REASON: MEDIUM writer.rs:2421 WriterCommand::Barrier runs run() inline in writer_loop, which is a plain tokio::spawn task (writer.rs:1765) with no spawn_blocking/block_in_place, and the barrier body park_conflict does git push origin (:236) and git fetch origin orgasmic (:250) with no timeout - a blackholed remote blocks the whole writer actor and one runtime worker indefinitely, hanging every daemon write; only salvage->park->reset needs the fence, hoist the fetch before the barrier and the best-effort push after it
+:EVENT_ID: 20817919-6cc5-4965-8654-74825714bb14
+:END:
