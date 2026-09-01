@@ -1,0 +1,28 @@
+#+title: orgasmic decision dec_EWY0K
+#+orgasmic_version: 2
+
+* dec_EWY0K Cross-machine ledger writes take a conflict path, not pen-on-write
+:PROPERTIES:
+:ID: dec_EWY0K
+:RELATES_TO: TASK-8DWJP TASK-AS0FS TASK-CLM6W TASK-MSYN4 TASK-MSYN4.2
+:END:
+
+** Context
+The whole-chain review (tx-1c6d2115, 2026-09-01) finding H6: =guard_node_write= (writer.rs) refuses writes only to nodes that currently carry a claim row. Claims are per dispatch, so between dispatches any machine may write any node, and the singleton files (=project.org=, =tasks/goal.org=, =tasks/handoff.org=, =gotchas.org=) are never claimed at all (TASK-AS0FS). The sync loop was written on the opposite premise (ledger_sync.rs comment: a foreign node dir can only appear modified if something wrote outside its pen) and has no conflict path: a failed =pull --rebase= aborts, bails, and is retried identically every tick (H5). Half of two designs was shipped.
+
+** Decision
+Keep writes free on every machine. The claim gate stays as what it actually is — dispatch-time exclusivity for the worker that holds the claim — and is no longer described as a cross-machine write barrier. Cross-machine safety comes from a DEFINED conflict path in the ledger sync loop:
+1. A tick never blocks a local write and a local write never waits for another machine.
+2. When =pull --rebase= conflicts, the loop aborts the rebase, preserves the local side on a side ref (=refs/orgasmic/conflicts/<machine-id>/<timestamp>= or equivalent — nothing this machine wrote is ever lost), makes the working tree follow the remote, and does not retry the same conflict blindly.
+3. The conflict is visible: last outcome + reason in =/status= and =orgasmic daemon status= (the TASK-MSYN4.2 surface), plus a recorded ledger event naming the machine, the parked ref and the conflicting paths, so an operator or manager can reconcile by hand.
+4. Singletons (AS0FS) get no ownership rule; they ride the same path. Append-mostly files (handoff, journals) rarely conflict; when they do, the parked ref is the reconciliation input.
+5. Code comments and docs (ledger_sync.rs staging comment, references/ledger.md) state this premise, not the old one.
+
+** Alternatives rejected
+- Pen-on-write (claim on first write, hold until sync): every cross-machine write can block for a tick, needs claim rows for every comment and property update, and still leaves the singletons without a rule.
+- Single owning machine per project: refuses legitimate edits from a second machine; the manager works from more than one Mac.
+
+** Consequences
+- TASK-8DWJP implements the conflict path (after TASK-MSYN4.2 lands the status/backoff surface it builds on) with a two-writer test proving: both writes survive (one live, one parked), the loop recovers, status shows the conflict.
+- TASK-AS0FS is folded into this decision and closes with TASK-8DWJP.
+- Chosen by the operator on 2026-09-01 (manager recommendation, option 1 of 2).
