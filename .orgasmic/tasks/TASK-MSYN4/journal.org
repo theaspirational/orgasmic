@@ -26,3 +26,16 @@
 :REASON: MEDIUM crates/orgasmic-daemon/src/writer.rs:2959 — the tx id sequence is per-project, not per-machine (tx-{date}-{slug}-{seq:04}, no machine component), so two daemons minting concurrently produce identical TX_IDs for different events; EVENT_ID keeps them from being deduped away, but the dispatch fold identifies generations by TX_ID (close_dispatch matches CLOSED_TX against started.tx_id, attach_initial_run matches DISPATCH_TX, recorded_close_allows_repair matches CLOSED_TX), so a collision mis-attributes a close to the wrong dispatch. next_project_tx_id also serves from an in-memory project_max that is only invalidated when a tx file's inode changes, so a pull that brings in higher remote sequences without touching this machine's own month file remints ids that already exist
 :EVENT_ID: 72d62173-8354-430e-96c0-4f28b5531a6d
 :END:
+
+* tx-20260901-orgasmic-6740 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6740
+:TIME:    [2026-09-01 Tue 12:49:42]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4
+:REASON: HIGH crates/orgasmic-daemon/src/ledger_sync.rs:56 — the sync loop races the writer with no lease or lock and has already committed mid-transaction state on the live ledger: git add --all -- .orgasmic caught the writer's node.org.bak.<request-id> sidecars in commits cd544977 (TASK-JHWNP.1) and 8f937138 (ART-MKRG1), each deleted again one commit later. The same window also spans transaction_multi_locked_inner's rename loop, so a dispatch close can be committed and pushed with some node.org files rewritten and the close tx not yet appended, giving another machine a half-applied close; sync_once needs a writer lease or at minimum a pathspec excluding *.tmp.* / *.bak.*
+:EVENT_ID: 24ba69e9-a986-4376-99fe-7268cc812a73
+:END:
