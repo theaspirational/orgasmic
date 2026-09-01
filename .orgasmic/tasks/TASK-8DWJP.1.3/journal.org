@@ -141,3 +141,19 @@
 :REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:606-608 — with base=orig-head the unchanged-tree skip almost never fires on a rebase-sourced conflict (the mid-rebase worktree always differs from the pre-pull tip), so every such conflict now names a salvage ref even when the machine wrote nothing during the outage, and these refs are never pruned anywhere in the repo
 :EVENT_ID: 040395f7-6395-468a-8732-48cad7ca3cdf
 :END:
+
+* tx-20260901-orgasmic-6988 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6988
+:TIME:    [2026-09-01 Tue 17:16:51]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.3
+:TARGET: .orgasmic/tasks/TASK-8DWJP.1.3/node.org
+:REASON: round 5 merged 1ff48c3a; opus-5 review approve-with-follow-ups (1 MEDIUM barrier gap, 4 LOW) — residuals go to operator decision, not this round
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: c02e098c-b036-4c69-8798-299cf1c070be
+:END:
