@@ -2762,3 +2762,55 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     9b0afd87-3384-4348-955c-a3d2045a6734
 :END:
+
+* TX 2026-09-01 Tue 15:04:32 implementer.done TASK-TP593.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-0bbbda53-f4c8-4903-8293-39c8af74ed6e
+:TIME:         [2026-09-01 Tue 15:04:32]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-TP593.1
+:REASON:       Fix round 1g is tests plus a verbatim 46 KB fixture ledger (manager cmp-verified every copied file against the live ledger) and one deleted never-running test; no production code; gates green on merged main 7ad3a0e6; review round and merge gate waived on that basis
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: 09d87cf88ac61b716ecfe1c6c8f243b5b23cea33
+:MERGE_SHA:    7ad3a0e65317db6125d32e4319f2c4fd7a6bcf47
+:BRANCH:       task-tp593.1-impl
+:NO_REVIEW_REQUIRED: true
+:FIX_ROUND_FINAL: true
+:CLOSED_TX:    tx-20260901-orgasmic-477609b8-5ffd-4b30-a5eb-2ebcb932d886
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-TP593.1/dispatches/tx-20260901-orgasmic-477609b8-5ffd-4b30-a5eb-2ebcb932d886/report.md
+:EVENT_ID:     af7cc1c9-c09c-42f9-821e-34adee26e3ca
+:END:
+
+* TX 2026-09-01 Tue 15:04:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-e9d1690e-225a-4963-982e-106f0f762e4b
+:TIME:         [2026-09-01 Tue 15:04:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     27a279ed-bfde-4d9d-a4ad-4fa833da3dac
+:END:
+
+* TX 2026-09-01 Tue 15:04:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-5dea23d8-f47c-4fdc-ba10-44fa376738f0
+:TIME:         [2026-09-01 Tue 15:04:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     773ae06b-ea8e-4e71-9824-e3ab4bdd03c7
+:END:

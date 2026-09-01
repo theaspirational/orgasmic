@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-TP593.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-TP593.1 M2+M3: eight tests that cannot fail — node_kernel real_data needs ORGASMIC_MIGRATED_DIR (set nowhere); seven live-corpus fixtures skip on every fresh clone :e01mc:chain-review:
+* DONE TASK-TP593.1 M2+M3: eight tests that cannot fail — node_kernel real_data needs ORGASMIC_MIGRATED_DIR (set nowhere); seven live-corpus fixtures skip on every fresh clone :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-TP593.1
 :PRIORITY: P2
@@ -15,3 +15,5 @@ M3 (LBRX7): =live_ledger_present()= (crates/orgasmic-core/tests/fixtures.rs:37) 
 ** Acceptance
 - [ ] Either the corpus is wired into the gate (a committed fixture tree, or the gate checks out the =orgasmic= ledger branch beside shipped/), or the eight tests are deleted. A test that cannot fail is worse than none because it is counted.
 - [ ] Default =cargo test -p orgasmic-core= prints zero silent skips for these; clippy -D; fmt.
+** Evidence
+Merged 7ad3a0e6 (worker 09d87cf8, codex gpt-5.6-sol). Manager verified every copied fixture file is byte-identical to the live ledger (cmp on 14 files; tx/2026-08.org is an exact 673-line prefix) — no copied content was edited. Gates re-run on merged main 2026-09-01: cargo test -p orgasmic-core --test fixtures → 19 passed, 0 'skipping' lines (the seven corpus tests now RUN); cargo test -p orgasmic-core --lib node_kernel → 3 passed (real_data::every_migrated_node_parses deleted); cargo clippy -p orgasmic-core --all-targets -D warnings clean; cargo fmt --all --check clean. Review round waived (--fix-round-final): tests + a 46 KB verbatim fixture, no production code.
