@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         cffb986b
+:LIVENESS:         ed9070a2
 :LIVENESS_AT:      [2026-09-01 Tue 16:10]
 :UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9

@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-MSYN4.2.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MSYN4.2.1 Fix round 2 for MSYN4.2: untrack already-tracked sidecars, correct the torn-window comment, idle/prune/doctor status hygiene    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-MSYN4.2.1
+:PRIORITY: P1
+:RELATES_TO: TASK-MSYN4.2 TASK-8DWJP
+:FIX_SUBTASK: t
+:END:
+
+Source: review of TASK-MSYN4.2 (=d75dee5a=, reviewer gen tx-20260901-orgasmic-bfdb698d, claude-opus-5 high): APPROVE WITH FOLLOW-UPS. Sequenced AFTER TASK-8DWJP merges (both edit ledger_sync.rs).
+- MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:131 — =git add --all= with =:(exclude,glob)= pathspecs never stages the DELETION of a file matching an exclude. A sidecar already in HEAD (a pre-fix peer committed it, or one of ours sat in HEAD at upgrade) becomes permanently unstageable: =git status= never clears and every 2s tick's =pull --rebase --autostash= churns it forever — exactly the class the staging comment says was fixed. Reproduced by the reviewer in a scratch repo (git 2.52). Live ledger currently has zero tracked sidecars.
+- MEDIUM ledger_sync.rs:117 — the ponytail ceiling comment says the torn window is one sync interval; the backoff added in the same commit holds an already-pushed torn commit for up to MAX_BACKOFF (5 min) or indefinitely while wedged, and only one of the two torn orders is named (add#1 before rename + add#2 after append publishes the close tx WITHOUT the node rewrite — the worse order, since the Done evidence gate reads node.org).
+- LOW ledger_sync.rs:235 — SyncOutcome::Idle (plain checkout, not a synced ledger) writes last_success_at = now every tick: /status claims a fresh successful sync for a path that never synced.
+- LOW ledger_sync.rs:289 — the status map is keyed by board path and never pruned; a removed project keeps its last status for the daemon lifetime.
+- LOW crates/orgasmic-cli/src/doctor.rs:334 — doctor reads /daemon/status but ignores ledger_sync; a wedged ledger still reports a healthy daemon.
+
+** Acceptance
+- [ ] Once per tick, next to the existing views =rm --cached=: =git rm -r -q --cached --ignore-unmatch= over the three sidecar globs so a tracked sidecar can leave the index; test: commit a sidecar with =add -f=, delete it, run sync_once, assert it is gone from ls-files and the tree is clean.
+- [ ] Ceiling comment says until the next SUCCESSFUL sync (backoff can stretch it to MAX_BACKOFF) and names both torn orders.
+- [ ] Idle leaves last_success_at untouched (None if never synced); status map is retained against the live ledger set each tick; doctor prints a warning line per failed/backed_off/conflict ledger. One test each where cheap.
+- [ ] Gates: cargo test -p orgasmic-daemon --lib -- ledger_sync status; cargo test -p orgasmic-cli --bin orgasmic -- doctor daemon_lifecycle; clippy -D daemon+cli; fmt.

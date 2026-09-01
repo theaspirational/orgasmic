@@ -1,0 +1,31 @@
+#+title: orgasmic journal TASK-MSYN4.2.1
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6882 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6882
+:TIME:    [2026-09-01 Tue 15:00:40]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2.1
+:TARGET: .orgasmic/tasks/TASK-MSYN4.2.1/node.org
+:REASON: created task TASK-MSYN4.2.1
+:EVENT_ID: 2fd83d77-d8f6-4815-844f-25105c724284
+:END:
+
+* tx-20260901-orgasmic-6883 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6883
+:TIME:    [2026-09-01 Tue 15:00:40]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.2.1
+:TARGET: .orgasmic/tasks/TASK-MSYN4.2.1/node.org
+:REASON: fix round 2 of TASK-MSYN4.2 (review tx-bfdb698d residuals)
+:FIX_SUBTASK: t
+:EVENT_ID: 79b13b51-736f-44dd-bdfa-8ad00fe7ac02
+:END:
