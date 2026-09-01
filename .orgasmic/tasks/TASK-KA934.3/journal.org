@@ -92,3 +92,34 @@
 :NODE_ID: TASK-KA934.3
 :EVENT_ID: 9000fb18-4706-4084-9b9e-578448a18c50
 :END:
+
+* tx-20260901-orgasmic-7029 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7029
+:TIME:    [2026-09-01 Tue 22:20:43]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-KA934.3/node.org
+:REASON: edited task node TASK-KA934.3
+:NODE_ID: TASK-KA934.3
+:EVENT_ID: c38563fb-1600-423c-8b63-49b63de0e33d
+:END:
+
+* tx-20260901-orgasmic-7030 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7030
+:TIME:    [2026-09-01 Tue 22:20:44]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:TARGET: .orgasmic/tasks/TASK-KA934.3/node.org
+:REASON: transition TASK-KA934.3 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 3df4813a-a90e-415d-9007-bde5dee5fa9b
+:END:
