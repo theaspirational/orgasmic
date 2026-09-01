@@ -1035,3 +1035,31 @@
 :EFFORT_OVERRIDE: high
 :EVENT_ID:     a80f7789-3c81-4d86-b100-adf0155cf3f1
 :END:
+
+* TX 2026-09-01 Tue 13:39:05 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-f8769009-2f5e-426b-84c6-5aee8ebf947a
+:TIME:         [2026-09-01 Tue 13:39:05]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     8c2f6f99-1fcd-43df-b0ec-b3f232211e2c
+:END:
+
+* TX 2026-09-01 Tue 13:39:05 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-82f2de49-dca7-4bc0-bac1-3d78df2273c9
+:TIME:         [2026-09-01 Tue 13:39:05]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     a9f25b30-a308-4c5f-8c8b-6352a8ffd0ed
+:END:

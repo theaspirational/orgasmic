@@ -612,6 +612,7 @@ operator + agent sessions, no manager handoff write in between).
 - FILED (tag =chain-review=, FIX_SUBTASK t unless noted): TASK-MSYN4.1 (P1, H1 denylist), TASK-MSYN4.2 (P1, H2+H5), TASK-MSYN4.3 (P2, M5 tx ids), TASK-EPG6H.1 (P1, H3), TASK-JWHXH.1 (P1, H4 code side + M1), TASK-8DWJP (P1, H6 — minted id because =TASK-CLM6W.1= is refused: parent id contains L; RELATES_TO CLM6W + AS0FS; needs a DECISION first), TASK-KA934.1 (P1, M4), TASK-TP593.1 (P2, M2+M3), TASK-SRBGS.1 (P3, five LOWs, not a fix round).
 - H4 HAND-FIXED on the live ledger: =views/= appended to =.orgasmic/.gitignore=, three files untracked (=a214826b=). Trap: the sync loop's =pull --rebase --autostash= DROPPED the index-only =git rm --cached= on the first attempt and re-committed board.org; the fix had to be committed in the same command. Any index-only change in the ledger worktree must be committed immediately.
 - Reviewer generation closed =--verdict approve-with-follow-ups --reviewed-diff 543782d7^1..31344134= (17 reviewer.done tx); the verdict steered 16 tasks to in_progress; all 17 chain tasks then moved to DONE with seeded Evidence (integration sha + verdict), per the ZKZBF.2 precedent (parent done, follow-ups carry the work). Review worktree removed, branch deleted; dispatch-status empty.
+- 2026-09-01 16:40 — TASK-MSYN4.1 (H1) implementer (codex gpt-5.6-sol, ~15 min) reported one commit =84bda242=; manager read the diff, merged =29f93ba9=, ran gates on the merged tree (org_file+authz 23/23, clippy -D clean, fmt clean). Component-wise denylist + =Action::OrgWrite= (admin-only — editors lose OrgView save; flagged to the reviewer as the claim to judge). Reviewer dispatched 16:45 (opus-5 high).
 
 ** Next likely actions
 Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 DONE (chain landed, 0.0.23 certified). Step 2 half done:
@@ -641,14 +642,10 @@ DONE SINCE LAST HANDOFF (do not re-propose): whole-chain review dispatched, repo
 tasks done; 9 follow-up tasks filed; H4 live-ledger fix; 9 orphan/verdict-less generations closed; TFXR2 orphan.
 
 ** In flight
-ONE LIVE DISPATCH (2026-09-01 16:20): fix round TASK-MSYN4.1 (chain-review H1, org-file denylist + post_org_file identity).
-- started_tx =tx-20260901-orgasmic-ca5b5a35-4622-4763-9965-dc923c9cbca5=, run =run-01M1EJ7E5QYKQZ619NDPD1715Y=, pid 12185
-- worker =implementer-codex-chat-stdio= (driver stdio, harness codex-chat, canonical chat runtime), model =gpt-5.6-sol=, NO --effort (does not reach codex, C7NVH), governance =stall_timeout_secs=3600=
-- OPERATOR PAIR FOR THIS SESSION'S FIX ROUNDS: implementer codex gpt-5.6-sol; reviewer claude-opus-5 high (cross-family).
-- worktree =~/.orgasmic/worktrees/orgasmic/task-msyn4.1=, branch =task-msyn4.1-impl=; brief =.orgasmic/tmp/dispatch/brief-TASK-MSYN4.1/brief-TASK-MSYN4.1.md=
-- watcher armed: =dispatch-wait --started-tx tx-20260901-orgasmic-ca5b5a35-… --timeout 240m=
-WHEN IT REPORTS: read last.txt, run the four gates yourself on the merged tree (targeted, never workspace), =git merge --no-ff task-msyn4.1-impl= on main, =dispatch-close --task TASK-MSYN4.1 --started-tx <above> --status done --merge-sha <sha> --worktree-remove --branch-delete= (lands in_review, FIX_SUBTASK), then dispatch the reviewer (claude-opus-5 high, stdio claude) over =main..<merge>=, wait, close with --verdict. Then 1b TASK-JWHXH.1.
-Runtime 0.0.23-dev.20260830i under launchd, pid 2682. Ledger sync loop live (~2s) — commit any manual ledger index change in the same command.
+TWO OPEN GENERATIONS ON TASK-MSYN4.1 (chain-review H1), 2026-09-01 16:45:
+1. IMPLEMENTER gen =tx-20260901-orgasmic-ca5b5a35-4622-4763-9965-dc923c9cbca5= — REPORTED and MERGED (=29f93ba9=, worker commit =84bda242=). Left open on purpose: its done-close needs a reviewer verdict for the merge (or --no-review-required). Close it AFTER the reviewer's verdict: =dispatch-close --task TASK-MSYN4.1 --started-tx tx-…ca5b5a35 --status done --merge-sha 29f93ba9 --worker-commit 84bda242 --worktree-remove --branch-delete=.
+2. REVIEWER gen =tx-20260901-orgasmic-fde457e2-2817-415e-9ceb-c082784c0944=, run =run-01M1EK32V37KKQ7XVDFDC0R72M=, pid 82467 — LIVE. reviewer-claude-sdk-stdio, model claude-opus-5, effort high, stall 3600. Range =29f93ba9^1..29f93ba9=. Brief =.orgasmic/tmp/dispatch/brief-TASK-MSYN4.1-review/=. Watcher armed (=dispatch-wait --timeout 240m=). Expect it to self-close without a typed verdict — close it yourself: =dispatch-close --task TASK-MSYN4.1 --started-tx tx-…fde457e2 --status done --verdict <v> --reviewed-diff 29f93ba9^1..29f93ba9 --worktree-remove --branch-delete=. REJECT → file TASK-MSYN4.1.1 (FIX_SUBTASK) and re-dispatch codex gpt-5.6-sol. Then close gen 1, then 1b TASK-JWHXH.1.
+SESSION PAIR: implementer codex gpt-5.6-sol (no --effort), reviewer claude-opus-5 high. Runtime 0.0.23-dev.20260830i, pid 2682. Ledger sync loop live.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
