@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JWHXH.1
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-JWHXH.1 H4+M1: views/ tracked on existing ledgers (only the scaffold ignores it) and never regenerated after incremental writes :e01mc:chain-review:
+* IN_PROGRESS TASK-JWHXH.1 H4+M1: views/ tracked on existing ledgers (only the scaffold ignores it) and never regenerated after incremental writes :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-JWHXH.1
 :PRIORITY: P1
@@ -18,3 +18,5 @@ M1: =build_views= (crates/orgasmic-daemon/src/index.rs:2970) is reachable only f
 - [ ] router.org claim is true after the change; clippy -D; fmt.
 ** Evidence
 Merged c3d779af (worker 49de897f, codex gpt-5.6-sol). Manager re-ran gates on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- ledger_sync views → 8 passed / 0 failed (incl. existing_ledger_views_are_ignored_untracked_and_idempotent, incremental_node_write_rebuilds_views_without_claim_churn); cargo clippy -p orgasmic-daemon --all-targets -D warnings clean; cargo fmt --all --check clean. Review round: claude-opus-5 high over c3d779af^1..c3d779af (verdict recorded on the reviewer close).
+** Notes
+RELEASE NOTE (review finding 3, MEDIUM, unverified on hardware): mixed-version fleet hazard. A machine still on a pre-c3d779af daemon commits MODIFICATIONS to tracked views/*.org while a fixed machine commits their DELETION; the old machine's pull --rebase hits a modify/delete conflict and its ledger sync stalls every tick until upgraded. Upgrade every machine before the first fixed daemon pushes the untrack. On this project the live ledger was hand-cut-over 2026-09-01 so the fixed code is a no-op here; gigabyte has no GitHub write creds (its push already fails), so exposure there is nil in practice, but its runtime version was not checked from this session.

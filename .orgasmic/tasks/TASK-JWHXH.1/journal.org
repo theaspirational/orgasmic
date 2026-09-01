@@ -154,3 +154,34 @@
 :REASON: LOW crates/orgasmic-daemon/src/index.rs:848 — the detached drain task holds no handle on the Index or the test TempDir, so every existing test that calls apply_written_path on a node dir now has a build_views firing 200 ms later that create_dir_all's .orgasmic/views inside a directory being torn down; warn noise and stray temp dirs, a new flake surface.
 :EVENT_ID: efefa6cd-60cf-4a77-94fe-970f9fa99949
 :END:
+
+* tx-20260901-orgasmic-6843 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6843
+:TIME:    [2026-09-01 Tue 14:22:27]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:TARGET: .orgasmic/tasks/TASK-JWHXH.1/node.org
+:REASON: Review tx-a4acf9f4 already ran on c3d779af (approve-with-follow-ups); the implementer close re-staged in_review after it. Residual MEDIUM/LOW are in fix round TASK-JWHXH.1.1; non-synced-repo scope in TASK-JWHXH.2. Back to in_progress until .1.1 lands.
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: 8e32a6e6-9089-41b0-ba17-3c973d4ee3fa
+:END:
+
+* tx-20260901-orgasmic-6844 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6844
+:TIME:    [2026-09-01 Tue 14:22:28]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-JWHXH.1/node.org
+:REASON: edited task node TASK-JWHXH.1
+:NODE_ID: TASK-JWHXH.1
+:EVENT_ID: c72ca42f-e4d7-4652-aea6-e65bc3cf65ec
+:END:
