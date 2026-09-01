@@ -89,3 +89,55 @@
 :REASON: MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:370-372 — abort_rebase_with_salvage runs outside the writer barrier (only park_conflict is wrapped at :893), so a tracked ledger write landing between salvage_worktree and git rebase --abort is still discarded with no copy in any ref
 :EVENT_ID: edfdf7b2-03d1-4a34-a5fb-5197c23bf02c
 :END:
+
+* tx-20260901-orgasmic-6984 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6984
+:TIME:    [2026-09-01 Tue 17:10:21]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.3
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:103-116 — an interrupted rebase with an EMPTY unmerged set (reachable: operator resolve+git add without --continue, proved in a temp repo) mints a salvage ref that is never reported, and the follow-up pull then conflicts and names a SECOND post-abort salvage ref that lacks the outage writes, so the status points at the wrong snapshot
+:EVENT_ID: 15911374-1c48-4823-b7a7-d0fce89dfd86
+:END:
+
+* tx-20260901-orgasmic-6985 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6985
+:TIME:    [2026-09-01 Tue 17:10:25]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.3
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:370-372 — any error from salvage_worktree or rebase_orig_head now propagates before the abort, so a salvage failure leaves the ledger wedged mid-rebase and backing off forever, reversing the unwedge guarantee 8DWJP.1.2 added (visible as status failed, so bounded)
+:EVENT_ID: 1d18cab7-0016-4f8f-88ba-bee1428e6247
+:END:
+
+* tx-20260901-orgasmic-6986 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6986
+:TIME:    [2026-09-01 Tue 17:10:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.3
+:REASON: LOW test crates/orgasmic-daemon/src/ledger_sync.rs:1417 — the round deleted the only assertion that the ledger.sync_conflict tx entry carries SALVAGE_REF; that field (:804-807) now has zero test coverage while the new tests assert only the status string
+:EVENT_ID: 6e8140f6-82fd-451d-8994-6ae1f2390820
+:END:
+
+* tx-20260901-orgasmic-6987 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6987
+:TIME:    [2026-09-01 Tue 17:10:32]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.3
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:606-608 — with base=orig-head the unchanged-tree skip almost never fires on a rebase-sourced conflict (the mid-rebase worktree always differs from the pre-pull tip), so every such conflict now names a salvage ref even when the machine wrote nothing during the outage, and these refs are never pruned anywhere in the repo
+:EVENT_ID: 040395f7-6395-468a-8732-48cad7ca3cdf
+:END:
