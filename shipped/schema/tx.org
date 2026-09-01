@@ -71,6 +71,17 @@ recovery run leaves =dispatch-status= showing =[unreported]= forever. Extras:
 
 Not emitted for =reattach_tmux=, which preserves the run id and so needs no link.
 
+*** Ledger sync
+The machine-routed =tx/YYYY-MM.org= type set is:
+- =ledger.sync_conflict=
+
+Properties in addition to the required base properties:
+- :PROJECT: project id
+- :PARKED_REF: local conflict ref preserving this machine's write
+- :PATHS: space-separated conflicting paths
+- :LOCAL_HEAD: commit parked at =PARKED_REF=
+- :REMOTE_HEAD: commit now followed by the ledger worktree
+
 *** Worker / driver
 - worker.spawned
 - worker.ready

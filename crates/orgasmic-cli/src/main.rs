@@ -2788,7 +2788,16 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
                 println!("  fds:     {open}/{limit} (writer session handles: {handles})");
             }
             for (path, sync) in &status.ledger_sync {
-                if sync.outcome == "failed" || sync.outcome == "backed_off" {
+                if sync.outcome == "conflict" {
+                    let error = sync
+                        .error
+                        .as_deref()
+                        .unwrap_or("conflicting paths parked at unknown ref")
+                        .lines()
+                        .next()
+                        .unwrap_or("conflicting paths parked at unknown ref");
+                    println!("  ledger sync: {path} (conflict): {error}");
+                } else if sync.outcome == "failed" || sync.outcome == "backed_off" {
                     let error = sync
                         .error
                         .as_deref()
