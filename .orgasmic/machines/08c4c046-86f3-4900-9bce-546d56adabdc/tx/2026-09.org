@@ -2829,3 +2829,25 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP/dispatches/tx-20260901-orgasmic-304bbc4b-4ae4-4e04-bafb-499145577f57/report.md
 :EVENT_ID:     40c6b60e-6cd9-4a71-a78d-36de0a626ef2
 :END:
+
+* TX 2026-09-01 Tue 15:08:44 reviewer.done TASK-KA934.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-a5511feb-e285-41dc-b7a5-36ebe1af61cb
+:TIME:         [2026-09-01 Tue 15:08:44]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-KA934.1
+:REASON:       Reviewer (claude-opus-5 high) APPROVE WITH FOLLOW-UPS: acceptance met, kernel/writer/error mapping correct, out-of-tree probe proved the upsert replace path; 2 MEDIUM pre-existing (member comment routes absent from MEMBER_ALLOWED_ROUTES → authorship check is defense-in-depth today; UI composer dead for members), 4 LOW (OCC→500, stamps have no reader + tombstone vanishes from activity, ACTOR namespace asymmetry, test pins). Residuals → TASK-KA934.1.1 (LOWs) and TASK-KA934.2 (route decision).
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: cffb986b^1..cffb986b
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260901-orgasmic-5cfb04f1-5b26-481c-9539-0f8a8c202522
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-KA934.1/dispatches/tx-20260901-orgasmic-5cfb04f1-5b26-481c-9539-0f8a8c202522/report.md
+:EVENT_ID:     53d3b1bc-93d3-4017-b38d-2387793f6113
+:END:
