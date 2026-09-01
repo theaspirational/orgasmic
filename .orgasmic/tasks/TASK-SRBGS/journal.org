@@ -1,2 +1,15 @@
 #+title: orgasmic journal TASK-SRBGS
 #+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6744 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6744
+:TIME:    [2026-09-01 Tue 12:53:19]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS
+:REASON: LOW crates/orgasmic-core/src/identity_lint.rs:218 — collect_identity_occurrences and collect_reference_occurrences swallow real IO errors from collection_node_file_paths with unwrap_or_default (NotFound is already Ok(vec![]) inside the helper), and read_org failures continue silently, so an unreadable tasks/ or decisions/ directory makes the id-collision and dangling-reference lints report clean instead of erroring
+:EVENT_ID: 1718e9e9-4053-455f-bb65-c0dfc96edd27
+:END:
