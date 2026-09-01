@@ -175,3 +175,18 @@
 :REASON: LOW api.rs:847 post_artifact_add_comment — POST /artifacts/:id/comments shares the member-attribution pattern and is not namespace-guarded (implementer-disclosed); same class as the POST /tx gap, candidate follow-up alongside it.
 :EVENT_ID: 35a7dab1-b9e3-4ac8-ac54-f8c544d606ad
 :END:
+
+* tx-20260901-orgasmic-7035 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7035
+:TIME:    [2026-09-01 Tue 22:26:35]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-KA934.3/node.org
+:REASON: edited task node TASK-KA934.3
+:NODE_ID: TASK-KA934.3
+:EVENT_ID: 422dc4aa-9a19-4f7b-a015-872a22294cf9
+:END:
