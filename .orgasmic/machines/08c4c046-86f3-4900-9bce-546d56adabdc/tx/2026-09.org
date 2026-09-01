@@ -1078,3 +1078,49 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-MSYN4.1/dispatches/tx-20260901-orgasmic-fde457e2-2817-415e-9ceb-c082784c0944/report.md
 :EVENT_ID:     3c5e6e20-43b9-4b51-b664-1f190a0c1415
 :END:
+
+* TX 2026-09-01 Tue 13:46:06 reviewer.done TASK-MSYN4.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-29976fca-1061-444d-808a-06eeafad3718
+:TIME:         [2026-09-01 Tue 13:46:06]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.1
+:REASON:       reviewer claude-opus-5 high: APPROVE WITH FOLLOW-UPS — 2 MEDIUM (APFS case-folding bypass; tmp surface missing from predicate), 3 LOW (H1 premise: /org/file already admin-only via MEMBER_ALLOWED_ROUTES; members see an Org nav that 403s; org.write doc/type drift); fix round TASK-MSYN4.1.1
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WALL:         12m
+:REVIEWED_DIFF: 29f93ba9^1..29f93ba9
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260901-orgasmic-fde457e2-2817-415e-9ceb-c082784c0944
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-MSYN4.1/dispatches/tx-20260901-orgasmic-fde457e2-2817-415e-9ceb-c082784c0944/report.md
+:EVENT_ID:     5c3cdaef-2e37-4e95-a741-c68fcbc7460c
+:END:
+
+* TX 2026-09-01 Tue 13:46:09 implementer.done TASK-MSYN4.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-41fb6df8-d755-47ac-b515-bf151de451ac
+:TIME:         [2026-09-01 Tue 13:46:09]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.1
+:REASON:       codex gpt-5.6-sol implementer; merged 29f93ba9; manager gates green on merged tree; reviewed approve-with-follow-ups by gen tx-fde457e2
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: 84bda242dde0ad7ae3e97cf7572986d9bf77bf0a
+:MERGE_SHA:    29f93ba9ed65db8263884b66f1726b4473a90c85
+:BRANCH:       task-msyn4.1-impl
+:WALL:         15m
+:CLOSED_TX:    tx-20260901-orgasmic-ca5b5a35-4622-4763-9965-dc923c9cbca5
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-MSYN4.1/dispatches/tx-20260901-orgasmic-ca5b5a35-4622-4763-9965-dc923c9cbca5/report.md
+:EVENT_ID:     0abd0d0a-2693-4415-a415-052edd340234
+:END:
