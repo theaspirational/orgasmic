@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8DWJP.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-8DWJP.1 Fix round for 8DWJP: route the conflict event into machines/<id>/tx/, detect autostash-pop conflicts, read conflicted paths from git, fence park_conflict behind a writer barrier :e01mc:chain-review:
+* IN_REVIEW TASK-8DWJP.1 Fix round for 8DWJP: route the conflict event into machines/<id>/tx/, detect autostash-pop conflicts, read conflicted paths from git, fence park_conflict behind a writer barrier :e01mc:chain-review:
 :PROPERTIES:
 :DEPENDS_ON: TASK-MSYN4.2.1
 :ID: TASK-8DWJP.1
@@ -23,3 +23,5 @@ MEDIUM 4 — ledger_sync.rs:~252 park_conflict runs unfenced on spawn_blocking; 
 LOW 5 (optional, ≤ 5 lines) — daemon status prints the count of refs/orgasmic/conflicts/* for a conflict ledger; otherwise leave as residual. LOW 6 is covered by HIGH 1's test change.
 
 Acceptance: event lands at machines/<id>/tx/<month>.org (test); autostash-pop conflict → outcome conflict with a parked ref holding the local bytes, working tree == origin/orgasmic, NO markers committed on the next tick (test); PATHS correct for a modify/delete conflict (test); park_conflict runs inside a writer barrier (test: an append issued during the barrier is applied after the reset, not lost); existing ledger_sync tests green. Gates: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict writer::tests::barrier; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle; clippy daemon+cli -D warnings; fmt.
+** Evidence
+Merged a64d5cf8 (worker 6692c2e6, codex gpt-5.6-sol): after every pull the unmerged index (git diff --name-only --diff-filter=U -z) decides conflict regardless of exit code; active rebase → abort/salvage/park HEAD; retained autostash → park the stash commit before dropping it; fetch then reset only after the parked ref exists; conflict_paths prose scrape deleted; park_conflict runs inside the new WriterCommand::Barrier (WriterHandle::run_barrier), event appended after the barrier; tests assert the literal machines/<id>/tx/<month>.org route, modify/delete PATHS, parked local bytes, remote reset, clean second tick, no markers on the bare remote, and an append queued during the barrier landing after the reset. LOW 5 (conflict-ref count) skipped by design. Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- ledger_sync status sync_conflict barrier → 23 passed; cargo test -p orgasmic-cli --bin orgasmic -- daemon_lifecycle → 22 passed; clippy daemon+cli -D warnings clean; fmt clean. Logs: scratchpad/gates-8DWJP.1-*.log. Manager pre-check for the reviewer: ledger_sync.rs:184 takes stash@{0} blindly (refs/stash is shared with the source checkout); stage_ledger (:164) has no unmerged-index guard. Review round (claude-opus-5 high) dispatched; it also covers the unreviewed MSYN4.2.1 hunk 9909a41e.

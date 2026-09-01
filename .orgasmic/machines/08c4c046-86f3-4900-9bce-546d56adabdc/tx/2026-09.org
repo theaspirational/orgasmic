@@ -3997,3 +3997,87 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     c9e0c715-dbfa-49d6-b6e9-08c1aba86dea
 :END:
+
+* TX 2026-09-01 Tue 15:55:03 manager.dispatch_started TASK-8DWJP.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-4c89e039-1d4f-4814-989c-9530cd43af0c
+:TIME:         [2026-09-01 Tue 15:55:03]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1-review
+:BRANCH:       task-8dwjp.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1-review/brief-TASK-8DWJP.1-review.md
+:STARTED_AT:   [2026-09-01 Tue 15:55:03]
+:LIVENESS:     a64d5cf8166d00f860667bd826a51bf03e0c6974
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260901-orgasmic-6d10e68b-0b17-45ad-91c2-b44eb671217a
+:REASON_INITIAL: Review round for the conflict-path fix a64d5cf8 (answers the 8DWJP REJECT) plus the unreviewed MSYN4.2.1 hunk 9909a41e in the same file; code drops a stash and hard-resets the live ledger worktree, so a full adversarial read before 8DWJP closes
+:EVENT_ID:     3f1bc624-56cb-496a-8819-f934a42a9b20
+:END:
+
+* TX 2026-09-01 Tue 15:55:03 run.created TASK-8DWJP.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-c7476fa5-2b5e-4ba9-8cf0-93dd83e04a2b
+:TIME:         [2026-09-01 Tue 15:55:03]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-8DWJP.1-reviewer-20260901T155503.jsonl
+:REASON:       Review round for the conflict-path fix a64d5cf8 (answers the 8DWJP REJECT) plus the unreviewed MSYN4.2.1 hunk 9909a41e in the same file; code drops a stash and hard-resets the live ledger worktree, so a full adversarial read before 8DWJP closes
+:RUN_ID:       run-01M1ETWQJAB0TYGHC9JBN4K1TY
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-8dwjp.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1-review/brief-TASK-8DWJP.1-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1-review/brief-TASK-8DWJP.1-review-ad554c87a2004440863c885c45f9087c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-8DWJP.1-review/brief-TASK-8DWJP.1-review-ad554c87a2004440863c885c45f9087c-stdout.log
+:DISPATCH_ATTEMPT: ad554c87a2004440863c885c45f9087c
+:PID:          45282
+:DISPATCH_TX:  tx-20260901-orgasmic-4c89e039-1d4f-4814-989c-9530cd43af0c
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     d06201c4-413e-4b29-934a-908e59fa26e2
+:END:
+
+* TX 2026-09-01 Tue 15:55:04 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-46d313b3-2e3c-49fc-a5d4-9063776d4fa7
+:TIME:         [2026-09-01 Tue 15:55:04]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     f4d4599c-c658-4608-abd7-f65b1e682601
+:END:
+
+* TX 2026-09-01 Tue 15:55:17 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-f33ad156-452b-4bc4-b6dc-d9213989f795
+:TIME:         [2026-09-01 Tue 15:55:17]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     52a779ea-baff-4fe1-856b-eba6551353ea
+:END:
