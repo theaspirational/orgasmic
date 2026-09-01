@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-EPG6H.1.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-EPG6H.1.1 Fix round 2 for EPG6H.1: earlier-journal CLI case, parsed TIME compare (fail closed), per-candidate journal errors, drop journal_tx_entry round-trip :e01mc:chain-review:
+* DONE TASK-EPG6H.1.1 Fix round 2 for EPG6H.1: earlier-journal CLI case, parsed TIME compare (fail closed), per-candidate journal errors, drop journal_tx_entry round-trip :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-EPG6H.1.1
 :PRIORITY: P1
@@ -22,3 +22,5 @@ Source: review of TASK-EPG6H.1 (=beee263b=, reviewer gen tx-20260901-orgasmic-72
 - [ ] Unreadable/unparseable journal skips that ONE candidate (CLI) and refuses that ONE repair (daemon, 400 not 500); test each.
 - [ ] Comment at api.rs:18420 states the unrepairable-done consequence and the operator remedy.
 - [ ] Gates: cargo test -p orgasmic-cli --bin orgasmic -- torn_close; cargo test -p orgasmic-daemon --lib -- repair evidence; clippy -D cli+daemon(+core if touched); fmt.
+** Evidence
+Merged ed9070a2 (worker a2a05e1c, codex gpt-5.6-sol). Manager re-ran gates on merged main 2026-09-01: cargo test -p orgasmic-core --lib full_org_timestamp → 1 passed; cargo test -p orgasmic-cli --bin orgasmic -- torn_close → 1 passed (fixture now has EARLIER kept, BAD-STAMP cleared, BAD-JOURNAL skipped, DATE-ONLY close cleared); cargo test -p orgasmic-daemon --lib -- repair evidence → 11 passed; clippy -D core+cli+daemon clean; fmt clean. Manager read every line: parse_org_timestamp strict full-width; both guards fail closed on unparseable close or journal stamps; CLI skips one candidate on journal error, daemon 400 names the path; ART-04FYD comment states the unrepairable-done remedy; journal_tx_entry private again. Review round waived (--fix-round-final): the four items of review tx-723be31b, nothing else.

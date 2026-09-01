@@ -2552,3 +2552,71 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     bdc9a717-37e5-4d74-93bd-d7d7be1adb98
 :END:
+
+* TX 2026-09-01 Tue 15:00:19 implementer.done TASK-EPG6H.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-765f6be0-4de2-4cf9-a5db-d1a115c53546
+:TIME:         [2026-09-01 Tue 15:00:19]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EPG6H.1.1
+:REASON:       Fix round 2 of EPG6H.1 is exactly the four items the opus-5 review named (parsed TIME fail-closed, earlier-than coverage, per-candidate error scope, gate comment); manager read every line and re-ran all gates green on merged main ed9070a2; review round and merge gate waived on that basis
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: a2a05e1c6b6d80e86f7448235ebbfc88fde41bfd
+:MERGE_SHA:    ed9070a2c46757cf5086d1bdae968c0bb702c1f3
+:BRANCH:       task-epg6h.1.1-impl
+:NO_REVIEW_REQUIRED: true
+:FIX_ROUND_FINAL: true
+:CLOSED_TX:    tx-20260901-orgasmic-c754058f-0f26-4679-902a-73b9ece4796f
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-EPG6H.1.1/dispatches/tx-20260901-orgasmic-c754058f-0f26-4679-902a-73b9ece4796f/report.md
+:EVENT_ID:     7cc2682f-3a4c-4f44-a6a3-fbea3dd0ffa0
+:END:
+
+* TX 2026-09-01 Tue 15:00:26 reviewer.done TASK-MSYN4.2
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-e76093a1-83ff-4916-9cf1-4d1f9f944f27
+:TIME:         [2026-09-01 Tue 15:00:26]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.2
+:REASON:       claude-opus-5 high review of fix round 1d: APPROVE WITH FOLLOW-UPS — excludes correct at every depth and all four sidecar shapes covered; 2 MEDIUM (an already-tracked sidecar can never be untracked because excludes block staging its deletion — reproduced in a scratch repo; ponytail ceiling comment falsified by the backoff and names only one of two torn orders) + 3 LOW (idle refreshes last_success_at; status map never pruned; doctor ignores ledger_sync)
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: d75dee5a^1..d75dee5a
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260901-orgasmic-bfdb698d-0c13-4032-86a6-bee258c89b0a
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-MSYN4.2/dispatches/tx-20260901-orgasmic-bfdb698d-0c13-4032-86a6-bee258c89b0a/report.md
+:EVENT_ID:     54d8d7b1-b353-4540-96a0-c6992cd84888
+:END:
+
+* TX 2026-09-01 Tue 15:00:28 implementer.done TASK-MSYN4.2
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-53478433-ad54-4b57-a844-84889d5ed638
+:TIME:         [2026-09-01 Tue 15:00:28]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-MSYN4.2
+:REASON:       Fix round 1d merged d75dee5a with gates green; reviewed approve-with-follow-ups by tx-bfdb698d; residuals go to TASK-MSYN4.2.1
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: 51af1f0804876c929010cc8f8523c7c0970a84ff
+:MERGE_SHA:    d75dee5a9d02499ed9c37f70d844484de660184e
+:BRANCH:       task-msyn4.2-impl
+:CLOSED_TX:    tx-20260901-orgasmic-77cedb71-0c9e-4841-9eea-0697ca192e47
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-MSYN4.2/dispatches/tx-20260901-orgasmic-77cedb71-0c9e-4841-9eea-0697ca192e47/report.md
+:EVENT_ID:     89ea6767-f5f8-4166-8ebb-baaa3fbe7080
+:END:

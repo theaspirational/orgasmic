@@ -160,3 +160,19 @@
 :TO_STATE: in_review
 :EVENT_ID: c760a623-3554-490a-8ffe-d23c15c833a1
 :END:
+
+* tx-20260901-orgasmic-6879 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6879
+:TIME:    [2026-09-01 Tue 15:00:20]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1
+:TARGET: .orgasmic/tasks/TASK-EPG6H.1/node.org
+:REASON: Fix round 1c complete: beee263b reviewed approve-with-follow-ups (tx-723be31b); residuals landed in TASK-EPG6H.1.1 (ed9070a2).
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 6841cca6-b25b-4538-9784-4e4e40a9f98f
+:END:
