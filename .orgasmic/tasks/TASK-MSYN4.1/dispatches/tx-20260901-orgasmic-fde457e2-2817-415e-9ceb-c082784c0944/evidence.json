@@ -1,0 +1,23 @@
+{
+  "event_count": 475,
+  "tool_call_count": 37,
+  "unparsed_events": 3,
+  "bounded_events": 5,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-MSYN4.1-reviewer-20260901T133843.jsonl",
+    "size_bytes": 711982
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll review the TASK-MSYN4.1 fix. Let me start by reading the diff.Findings confirmed. Filing them.Now the report."
+    }
+  ],
+  "narrative_truncated": false
+}
