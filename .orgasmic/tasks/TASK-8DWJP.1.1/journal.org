@@ -141,3 +141,19 @@
 :REASON: LOW ledger_sync.rs:1294-1319 — leftover_foreign_machine_conflict_does_not_wedge_the_next_tick never asserts parked_ref is non-empty, and conflicting_two_writer_tick's post-conflict 'fresh a write' is an untracked file, so no test would catch a regression to the silent Unrecoverable reset or the tracked-file loss in HIGH 2
 :EVENT_ID: 58da6a15-2f43-46c1-807d-5d8fa06cf7f2
 :END:
+
+* tx-20260901-orgasmic-6965 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6965
+:TIME:    [2026-09-01 Tue 16:29:08]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.1
+:TARGET: .orgasmic/tasks/TASK-8DWJP.1.1/node.org
+:REASON: Review rejected; fix round TASK-8DWJP.1.2 pending
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: dd175f37-02f3-489d-a6a8-edca034877c7
+:END:

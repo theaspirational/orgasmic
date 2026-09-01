@@ -4581,3 +4581,47 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1.1/dispatches/tx-20260901-orgasmic-6a92d428-ee35-4716-89d2-c69fbac1879b/report.md
 :EVENT_ID:     dbc44933-9dc5-4d7f-801c-356b83f41d74
 :END:
+
+* TX 2026-09-01 Tue 16:29:05 reviewer.done TASK-8DWJP.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-1d503b24-5336-4671-abc8-0a494ee17085
+:TIME:         [2026-09-01 Tue 16:29:05]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.1
+:REASON:       Reviewer (claude-opus-5 high) REJECT: six assigned items verified correct (entry guard, stdout autostash parse, stage-3 semantics, identity check, local-only barrier, catch_unwind). New: HIGH the symbolic-ref Idle gate (:98) runs before the unmerged guard (:104) — a mid-rebase ledger (detached HEAD after a crash between the conflicting pull and rebase --abort) reports idle forever, silent permanent sync stop; HIGH Parked/Autostash/Unrecoverable branches never salvage the worktree before reset --hard, so tracked-file writes after the conflicting pull (pre-barrier fetch, queue drain, whole backoff cycle) are discarded silently — dec_EWY0K invariant violation; MEDIUM None==None stage-3 compare lets a stale parked ref match a delete/modify conflict; LOW orphaned autostash after an identity mismatch; LOW push failure only warned; LOW tests under-assert parked_ref and use an untracked file. Residuals → TASK-8DWJP.1.2.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: 59c351dc^1..59c351dc
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260901-orgasmic-6a92d428-ee35-4716-89d2-c69fbac1879b
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1.1/dispatches/tx-20260901-orgasmic-6a92d428-ee35-4716-89d2-c69fbac1879b/report.md
+:EVENT_ID:     4eb50fea-ddaf-44f7-8bf7-a847ea1781ea
+:END:
+
+* TX 2026-09-01 Tue 16:29:07 implementer.done TASK-8DWJP.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-9c88e090-556a-4a00-ae86-e6fe376445a0
+:TIME:         [2026-09-01 Tue 16:29:07]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-8DWJP.1.1
+:REASON:       Merged 59c351dc (worker bcb516c9, codex gpt-5.6-sol); manager gates green; review REJECTED on two new HIGHs (mid-rebase idle gate, unsalvaged tracked writes) → TASK-8DWJP.1.2 on top
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: bcb516c9e3748876c6493ee128760b19e7f05a9e
+:MERGE_SHA:    59c351dcd5c0369f51691db512d44fe5d29afcfb
+:BRANCH:       task-8dwjp.1.1-impl
+:CLOSED_TX:    tx-20260901-orgasmic-63b71bf3-20f1-454a-a17f-dcdf2a1627c7
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1.1/dispatches/tx-20260901-orgasmic-63b71bf3-20f1-454a-a17f-dcdf2a1627c7/report.md
+:EVENT_ID:     669a8e72-b5dd-4e55-8a30-4d4ed01dd70b
+:END:
