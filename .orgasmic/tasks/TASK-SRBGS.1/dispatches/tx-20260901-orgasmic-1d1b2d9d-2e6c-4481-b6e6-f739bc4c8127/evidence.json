@@ -1,0 +1,23 @@
+{
+  "event_count": 365,
+  "tool_call_count": 29,
+  "unparsed_events": 3,
+  "bounded_events": 4,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-SRBGS.1-reviewer-20260901T153601.jsonl",
+    "size_bytes": 621545
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task record and the diff.Now the full diff.Now let me read the actual source at HEAD for the attack points.Findings are solid. Filing them now."
+    }
+  ],
+  "narrative_truncated": false
+}
