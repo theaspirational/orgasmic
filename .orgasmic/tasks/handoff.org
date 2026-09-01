@@ -656,6 +656,7 @@ operator + agent sessions, no manager handoff write in between).
 2. When every chain task is done: report to the operator and ASK before =git push origin main= (17 merges). Then draft the release note: mixed-version fleet — old-runtime machines still mint numeric tx ids until upgraded (safe, see MSYN4.3 review), and the JWHXH.1-review modify/delete hazard for views/ across versions; the live daemon on :4848 runs the pre-fix runtime until publish + reinstall (see memory: orgasmic-runtime-reinstall / release channels).
 3. Record the operator's KA934.2 and JWHXH.2 answers as decisions (=orgasmic decision create=) and file the implementing tasks with IMPLEMENTS.
 4. Housekeeping candidates (not started): MEMBER_ALLOWED_ROUTES audit beyond comments; forum debris tasks; W97C8/W97C8.1/JHWNP.1 leftovers; handoff compaction; stale probe worktree.
+Release note DRAFTED at =scratchpad/release-note-e01mc-step2.md= (session 25219e20…); the publish flow takes it via =--notes-file <path>= (scripts/release-runtime-fast.sh, scripts/sync-release-metadata.sh) — no in-repo notes file. Amend the conflict-path paragraph if 8DWJP.1.1 gets another round; copy it somewhere durable before the scratchpad session ends (e.g. attach to the goal node via =orgasmic node body set= Notes) if publish does not happen this session.
 
 ** In flight
 Session pair: reviewer = stdio/claude-sdk claude-opus-5 --effort high; implementer = stdio/codex-chat gpt-5.6-sol (no --effort). main = =ad8c104d= (17 unpushed merges; do NOT push without asking). Queue: empty.
