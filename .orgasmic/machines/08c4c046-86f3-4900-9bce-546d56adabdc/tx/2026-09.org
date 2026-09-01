@@ -5477,3 +5477,59 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1.4/dispatches/tx-20260901-orgasmic-4f2f42ec-ef25-4425-b15e-b79b67611f24/report.md
 :EVENT_ID:     84d6961e-e50f-424d-9950-2ce3bceb072c
 :END:
+
+* TX 2026-09-01 Tue 18:30:25 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-b8e666b1-4edd-4b68-9541-6bde9d463e4b
+:TIME:         [2026-09-01 Tue 18:30:25]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     ea110577-dc73-41fd-90c7-1c9c847e576f
+:END:
+
+* TX 2026-09-01 Tue 18:30:26 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-bfac2e2d-bd1e-417f-91c9-f736f6166a79
+:TIME:         [2026-09-01 Tue 18:30:26]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     763e088a-e8bd-446d-a5df-875af0229284
+:END:
+
+* TX 2026-09-01 Tue 18:30:26 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-9c49c0c4-3133-46e2-be09-87c4247184c2
+:TIME:         [2026-09-01 Tue 18:30:26]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     9aabeab1-39bd-48af-b974-801a9a9f2d2d
+:END:
+
+* TX 2026-09-01 Tue 18:30:27 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-dc01a3f0-e981-47e2-b80a-d949132aef21
+:TIME:         [2026-09-01 Tue 18:30:27]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     7a871840-65c3-49df-874b-059a9983be7f
+:END:
