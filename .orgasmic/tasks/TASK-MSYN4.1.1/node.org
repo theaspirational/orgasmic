@@ -1,0 +1,22 @@
+#+title: orgasmic task TASK-MSYN4.1.1
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-MSYN4.1.1 fix round: org-file denylist must case-fold (APFS) and refuse tmp/; share the daemon-owned surface list with the writer gate :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-MSYN4.1.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Review of TASK-MSYN4.1 (=29f93ba9=, reviewer gen tx-20260901-orgasmic-fde457e2, claude-opus-5 high): APPROVE WITH FOLLOW-UPS. Two MEDIUM on the same predicate plus three LOW; report at tasks/TASK-MSYN4.1/dispatches/tx-20260901-orgasmic-fde457e2-…/report.md.
+- MEDIUM api.rs:14575 — =reject_ledger_rewrite= compares components byte-exactly. macOS APFS is case-insensitive (probed on this host: =ls .orgasmic/TX= and =ls .orgasmic/Views= list the real files), so =.orgasmic/TX/2026-09.org=, =.orgasmic/Machines/<uuid>/claims.org=, =.orgasmic/Views/board.org=, =.orgasmic/tasks/TASK-X/Journal.org= pass =validate_org_edit_path= (which only pins the first component and the =org= extension) and pass the predicate, then resolve on disk to the daemon-owned files. Windows likewise.
+- MEDIUM api.rs:14575 — the predicate mirrors 3 of the 4 daemon-owned surfaces the writer claim gate exempts (writer.rs:1752: =machines | tx | tmp | views=); =tmp= is missing, so =.orgasmic/tmp/dispatch/**/*.org= (30+ live dispatch prompt bodies) is exempt from the claim gate AND writable through =POST /org/file=.
+- LOW (premise) — =/org/file= is absent from =MEMBER_ALLOWED_ROUTES= (api.rs:896-918) so =identity_middleware= already 403d members before the handler; the =Action::OrgWrite= gate is defense-in-depth, and both MEDIUMs are admin-reachable only.
+- LOW ui/src/lib/capabilities.ts:29/44 — members see an Org nav item that 403s on load; add ='org'= to =MEMBER_HIDDEN_PAGES= (pre-existing, one word).
+- LOW authz.rs:26 / ui/src/lib/types.ts:706 — =org.write= is an addition beyond dec_KF2MR's action list without the doc note =ProjectRead= carries; =MemberCapability= union lacks ='org.write'=.
+** Acceptance
+- [ ] The daemon-owned surface list (=machines=, =tx=, =tmp=, =views=) lives in ONE shared constant consumed by both writer.rs:1752 and api.rs:14575, so they cannot drift again.
+- [ ] Components and the =journal.org= file name are compared case-insensitively (ASCII fold); test cases added for =TX/=, =Machines/…/claims.org=, =Views/board.org=, =tasks/TASK-X/Journal.org=, =tmp/dispatch/x.org= (all refused) alongside the existing allowed cases.
+- [ ] ='org'= added to =MEMBER_HIDDEN_PAGES=; ='org.write'= added to =MemberCapability=; one-line doc note on =OrgWrite= in authz.rs mirroring the =ProjectRead= note.
+- [ ] Gates: cargo test -p orgasmic-daemon --lib -- org_file authz; cargo clippy -p orgasmic-daemon --all-targets -- -D warnings; cargo fmt --all --check; cd ui && npm run typecheck.

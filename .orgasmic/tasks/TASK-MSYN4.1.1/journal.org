@@ -1,0 +1,47 @@
+#+title: orgasmic journal TASK-MSYN4.1.1
+#+orgasmic_version: 2
+
+* tx-20260901-orgasmic-6824 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6824
+:TIME:    [2026-09-01 Tue 13:46:40]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1.1
+:TARGET: .orgasmic/tasks/TASK-MSYN4.1.1/node.org
+:REASON: review of TASK-MSYN4.1 (tx-fde457e2, opus-5 high) returned approve-with-follow-ups with 2 MEDIUM on the predicate
+:EVENT_ID: 7e5ea72c-8de0-4390-8b70-7ba6a2764d88
+:END:
+
+* tx-20260901-orgasmic-6825 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6825
+:TIME:    [2026-09-01 Tue 13:46:40]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1.1
+:TARGET: .orgasmic/tasks/TASK-MSYN4.1.1/node.org
+:REASON: fix round of TASK-MSYN4.1
+:FIX_SUBTASK: t
+:EVENT_ID: 757bc10d-60d1-43a2-87b7-d4f99d28e13f
+:END:
+
+* tx-20260901-orgasmic-6826 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6826
+:TIME:    [2026-09-01 Tue 13:46:41]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.1.1
+:TARGET: .orgasmic/tasks/TASK-MSYN4.1.1/node.org
+:REASON: transition TASK-MSYN4.1.1 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: a6d66cb4-a778-480b-9e4b-86cb2c430ecb
+:END:
