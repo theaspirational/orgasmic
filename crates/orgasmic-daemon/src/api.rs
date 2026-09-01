@@ -14495,15 +14495,17 @@ async fn get_org_file(
 
 async fn post_org_file(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Json(req): Json<OrgFileWriteRequest>,
 ) -> Result<Json<OrgFileResponse>, ApiError> {
+    let (resolved_project_id, snap) =
+        resolve_authorized_project(&state, &identity, req.project.as_deref(), Action::OrgWrite)
+            .await?;
     let rel = validate_org_edit_path(&req.path)?;
     reject_ledger_rewrite(&rel)?;
     let rel_str = rel.to_string_lossy().to_string();
     OrgFile::parse(req.contents.clone(), rel_str.clone())
         .map_err(|e| org_input_parse_error(FsPath::new(&rel_str), e))?;
-    let (resolved_project_id, snap) =
-        ensure_loaded_snapshot(&state, req.project.as_deref()).await?;
     let project = select_loaded_project(&snap, &resolved_project_id)?;
     let project_id = project.project_id.clone();
     let path = project.root.join(&rel);
@@ -14568,24 +14570,31 @@ fn validate_org_edit_path(path: &str) -> Result<PathBuf, ApiError> {
     Ok(rel)
 }
 
-/// The generic org-file rewrite surface must never touch an append-only
-/// ledger: a whole-file rewrite can silently erase committed history that the
-/// writer's append path goes to great lengths to keep durable. Reads stay
-/// open; only `post_org_file` calls this.
+/// The generic org-file rewrite surface must never touch daemon-owned ledger,
+/// journal, or derived-view state. Reads stay open; only `post_org_file` calls
+/// this.
 fn reject_ledger_rewrite(rel: &FsPath) -> Result<(), ApiError> {
-    if rel.starts_with(".orgasmic/tx") {
-        return Err(ApiError::bad_request(
+    let mut components = rel.components();
+    if components.next() != Some(Component::Normal(".orgasmic".as_ref())) {
+        return Ok(());
+    }
+    match components.next() {
+        Some(Component::Normal(surface)) if surface == "machines" => Err(ApiError::bad_request(
+            "org file path is machine-owned ledger state; write it through tx and claim operations instead of rewriting the file",
+        )),
+        Some(Component::Normal(surface)) if surface == "views" => Err(ApiError::bad_request(
+            "org file path is a derived view; regenerate it through the view refresh operation instead of rewriting the file",
+        )),
+        Some(Component::Normal(surface)) if surface == "tx" => Err(ApiError::bad_request(
             "org file path is an append-only tx ledger; append entries through the tx surface instead of rewriting the file",
-        ));
+        )),
+        _ if rel.file_name().and_then(|name| name.to_str()) == Some("journal.org") => {
+            Err(ApiError::bad_request(
+                "org file path is a structured node journal; use journal entry/comment operations instead of rewriting the file",
+            ))
+        }
+        _ => Ok(()),
     }
-    if rel.starts_with(".orgasmic")
-        && rel.file_name().and_then(|name| name.to_str()) == Some("journal.org")
-    {
-        return Err(ApiError::bad_request(
-            "org file path is a structured node journal; use journal entry/comment operations instead of rewriting the file",
-        ));
-    }
-    Ok(())
 }
 
 fn org_file_artifact_label(relative_path: &FsPath) -> &'static str {
@@ -21210,14 +21219,89 @@ pub(crate) mod tests {
 
     #[test]
     fn org_file_rewrite_refuses_ledger_paths() {
-        reject_ledger_rewrite(FsPath::new(".orgasmic/tx/2026-08.org"))
-            .expect_err("tx ledger rewrite must be refused");
-        reject_ledger_rewrite(FsPath::new(".orgasmic/tasks/TASK-X/journal.org"))
-            .expect_err("node journal rewrite must be refused");
-        reject_ledger_rewrite(FsPath::new(".orgasmic/decisions.org"))
-            .expect("non-ledger org file must stay writable");
+        for (path, reason) in [
+            (
+                ".orgasmic/machines/00000000-0000-0000-0000-000000000000/tx/2026-09.org",
+                "machine tx ledger",
+            ),
+            (
+                ".orgasmic/machines/00000000-0000-0000-0000-000000000000/claims.org",
+                "machine claims",
+            ),
+            (".orgasmic/views/board.org", "derived view"),
+            (".orgasmic/tx/2026-09.org", "tx ledger"),
+            (".orgasmic/tasks/TASK-X/journal.org", "node journal"),
+        ] {
+            assert!(
+                reject_ledger_rewrite(FsPath::new(path)).is_err(),
+                "{reason} rewrite must be refused"
+            );
+        }
+        reject_ledger_rewrite(FsPath::new(".orgasmic/gotchas.org"))
+            .expect("ordinary org file must stay writable");
+        reject_ledger_rewrite(FsPath::new(".orgasmic/tx-notes.org"))
+            .expect("a tx string prefix is not the tx path component");
         reject_ledger_rewrite(FsPath::new("docs/adr/adr-0001.org"))
             .expect("adr must stay writable");
+    }
+
+    #[tokio::test]
+    async fn authz_org_file_write_refuses_member_before_path_validation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        let state = direct_catalog_test_state(home).await;
+
+        let error = post_org_file(
+            State(state.clone()),
+            Extension(member(&[("proj-a", "editor")])),
+            Json(OrgFileWriteRequest {
+                project: Some("proj-a".into()),
+                path: "/invalid.org".into(),
+                contents: "not org".into(),
+                request_id: None,
+            }),
+        )
+        .await
+        .expect_err("member roles must not rewrite whole org files");
+
+        assert_eq!(error.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            state.index.snapshot().await.project_loads["proj-a"].state,
+            ProjectLoadState::Unloaded,
+            "authorization must run before path validation or project loading"
+        );
+    }
+
+    #[tokio::test]
+    async fn org_file_write_allows_admin_on_an_allowed_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        let path = project_root.join(".orgasmic/gotchas.org");
+        write(path.clone(), "#+title: old\n");
+        let state = direct_catalog_test_state(home).await;
+        let contents = "#+title: gotchas\n#+orgasmic_version: 1\n\n* Gotchas\n";
+
+        let response = post_org_file(
+            State(state),
+            Extension(Identity::Admin),
+            Json(OrgFileWriteRequest {
+                project: Some("proj-a".into()),
+                path: ".orgasmic/gotchas.org".into(),
+                contents: contents.into(),
+                request_id: None,
+            }),
+        )
+        .await
+        .expect("admin may rewrite an allowed org file");
+
+        assert_eq!(response.0.project, "proj-a");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), contents);
     }
 
     fn write(path: PathBuf, contents: &str) {
