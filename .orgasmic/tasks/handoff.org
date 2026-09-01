@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         c3d779af
+:LIVENESS:         beee263b
 :LIVENESS_AT:      [2026-09-01 Tue 16:10]
 :UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
@@ -618,6 +618,7 @@ operator + agent sessions, no manager handoff write in between).
 - 2026-09-01 (session, cont.): TASK-JWHXH.1 (H4+M1) implemented by codex gpt-5.6-sol (49de897f), merged =c3d779af=, gates green (8 tests, clippy -D, fmt). Evidence recorded. Reviewer claude-opus-5 high dispatched over c3d779af^1..c3d779af (tx-20260901-orgasmic-a4acf9f4). Implementer generation tx-fc68afdc stays open until the verdict.
 - 2026-09-01 (session, cont.): TASK-JWHXH.1 review (claude-opus-5 high, tx-a4acf9f4) = APPROVE WITH FOLLOW-UPS: 3 MEDIUM (views.rs write_if_changed PID-only tmp name races drain vs claims arm; ignore+untrack reaches only synced ledgers; mixed-version modify/delete rebase hazard) + 3 LOW. Both generations closed (reviewer tx-41c5bd67 with verdict, implementer tx-9595221a merge c3d779af). Filed TASK-JWHXH.1.1 (P1 fix round: tmp name + rebuild scope + exists guard + drain teardown) and TASK-JWHXH.2 (P2, decision: where views/ migration lives for NON-synced checkouts; manager leans explicit verb + doctor warning, never a daemon git-rm in a user repo). Release note recorded on TASK-JWHXH.1 Notes. JWHXH.1 set back to in_progress until .1.1 lands (implementer close had re-staged it in_review after the review). Gotcha: closing reviewer BEFORE implementer leaves a fix-round task at in_review — close implementer first next time, or expect to reset the stage.
 - 2026-09-01 (session, cont.): OPERATOR DECISION for H6/AS0FS: conflict path, not pen-on-write → recorded as =dec_EWY0K= (RELATES_TO 8DWJP AS0FS CLM6W MSYN4 MSYN4.2). TASK-8DWJP now IMPLEMENTS dec_EWY0K and DEPENDS_ON TASK-MSYN4.2 (builds on its status/backoff surface); TASK-AS0FS folded (IMPLEMENTS dec_EWY0K, closes with 8DWJP). Both tasks carry a Notes section with the implementation scope.
+- 2026-09-01 (session, cont.): TASK-EPG6H.1 (H3) implemented by codex gpt-5.6-sol (1139bc0f), merged =beee263b=, gates green (torn_close 1, repair 5, evidence 6, clippy -D cli+daemon, fmt). Evidence recorded. Reviewer claude-opus-5 high dispatched next. Gotcha: orgasmic-cli has NO lib target — targeted CLI tests are =cargo test -p orgasmic-cli --bin orgasmic -- <filter>= (still never unfiltered).
 
 ** Next likely actions
 Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 DONE (chain landed, 0.0.23 certified). Step 2 half done:
