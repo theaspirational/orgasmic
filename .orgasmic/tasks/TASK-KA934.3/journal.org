@@ -45,3 +45,35 @@
 :TO_STATE: in_progress
 :EVENT_ID: 9b29f2b0-6603-4454-ad3e-4f5544e81d35
 :END:
+
+* tx-20260901-orgasmic-7026 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7026
+:TIME:    [2026-09-01 Tue 22:05:16]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:TARGET: .orgasmic/tasks/TASK-KA934.3/node.org
+:REASON: dispatch timed out client-side after the lifecycle hop; resetting so the retry is accepted
+:FROM_STATE: in_progress
+:TO_STATE: todo
+:EVENT_ID: a117b221-5211-42bc-89ae-f6bfbea687f5
+:END:
+
+* tx-20260901-orgasmic-7027 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7027
+:TIME:    [2026-09-01 Tue 22:05:17]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3
+:TARGET: .orgasmic/tasks/TASK-KA934.3/node.org
+:REASON: transition TASK-KA934.3 to in_progress
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: c795e437-cbac-4159-a99a-8e505a276fa3
+:END:
