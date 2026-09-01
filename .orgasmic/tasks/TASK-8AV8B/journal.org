@@ -13,3 +13,16 @@
 :REASON: MEDIUM crates/orgasmic-daemon/src/index.rs:2970 — AP971.8 decision 2 (views generated after each affected refresh) is broken by the incremental refresh: build_views is reachable only from load_project (boot, project add, reindex) and from the machines/*/claims.org branch of apply_written_path; reload_node_dir never calls it, and the watcher now routes every project path through apply_written_path instead of schedule_watcher_refresh, so after a task/decision/glossary node write views/{board,glossary,decisions}.org are stale until the next full scan. On this repo it looks fresh only because dispatch claim/release churn rewrites claims.org constantly; a project without dispatches serves stale views to the context-packs, the entry router and OrgView as fact
 :EVENT_ID: cda82571-0505-41a5-bfe9-e183ceaf19e3
 :END:
+
+* tx-20260901-orgasmic-6747 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6747
+:TIME:    [2026-09-01 Tue 12:55:41]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8AV8B
+:REASON: LOW crates/orgasmic-daemon/src/api.rs:8570 — writer.take_apply_failure() is a single daemon-wide slot, so a projection failure from one request surfaces as a committed-503 on the next unrelated request that reaches refresh_after_tx, and that early return skips repair_projection; the queued paths are only repaired on a later request
+:EVENT_ID: 9487bc70-962f-4bdf-b756-49c672c5e25e
+:END:

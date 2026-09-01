@@ -13,3 +13,16 @@
 :REASON: LOW crates/orgasmic-core/src/identity_lint.rs:218 — collect_identity_occurrences and collect_reference_occurrences swallow real IO errors from collection_node_file_paths with unwrap_or_default (NotFound is already Ok(vec![]) inside the helper), and read_org failures continue silently, so an unreadable tasks/ or decisions/ directory makes the id-collision and dangling-reference lints report clean instead of erroring
 :EVENT_ID: 1718e9e9-4053-455f-bb65-c0dfc96edd27
 :END:
+
+* tx-20260901-orgasmic-6746 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6746
+:TIME:    [2026-09-01 Tue 12:55:41]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SRBGS
+:REASON: LOW crates/orgasmic-cli/src/project_migrate.rs:345 — apply() is not atomic (per-node create_dir + write, then rewrites, then remove_file of the old sources) and there is no recovery path: a failure partway leaves node dirs behind, after which plan() bails 'migration target already exists' and refuse_dirty_tree() bails on the now-dirty tree, so the verb refuses forever and the operator must know to git checkout/git clean by hand; no test covers partial failure
+:EVENT_ID: d59bf2da-301c-4e1c-a08f-608317e52392
+:END:
