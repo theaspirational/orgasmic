@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-8H8A2
+#+orgasmic_version: 2
+
+* DONE TASK-8H8A2 Make daemon soak manual-only
+:PROPERTIES:
+:ID: TASK-8H8A2
+:PRIORITY: P2
+:TEST_CMD: actionlint -ignore SC2046 .github/workflows/nightly-soak.yml
+:WRITE_SCOPE: .github/workflows/nightly-soak.yml
+:END:
+
