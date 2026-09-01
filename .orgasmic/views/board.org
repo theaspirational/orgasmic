@@ -5277,6 +5277,323 @@ Answer the parent run question independently. This is report-only; do not edit p
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
 
+* TODO TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
+:PROPERTIES:
+:ID: TASK-6AYEJ
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-cli
+:END:
+
+The worker's own success signal closes the dispatch record, so the manager's
+`dispatch-close` can never run on a successful dispatch. Found while trying to
+close TASK-D0GA3 after merging it.
+
+REPRODUCED, not inferred:
+- TASK-D0GA3 merged at 0daa77c. `orgasmic manager dispatch-close --task
+  TASK-D0GA3 --status done --merge-sha 0daa77c ... --worktree-remove
+  --branch-delete` fails with "no open manager.dispatch_started tx for
+  TASK-D0GA3".
+- `orgasmic manager dispatch-status` prints nothing — zero open dispatches —
+  while `git worktree list` shows 17 live dispatch worktrees and their branches.
+
+MECHANISM, read from code: scan_open_dispatches (crates/orgasmic-cli/src/manager.rs:3316)
+pairs each manager.dispatch_started with the first terminal tx it sees, and
+manager.rs:3338-3341 counts `implementer.done` / `reviewer.done` /
+`architector.done` / `manager.dispatch_aborted` as terminal. Per dec_3M7M0 the
+worker's `orgasmic dispatch finalize --commit` is the SOLE success signal and it
+emits `implementer.done` itself. So the dispatch is closed by the worker before
+the manager has even read the report.
+
+The tx history shows the switchover cleanly. Every terminal tx up to 2026-07-23
+carries ACTOR theaspirational@users.noreply.github.com (the manager, via
+dispatch-close). Every one from 2026-07-26 carries ACTOR agent.implementer or
+agent.reviewer (the worker, via finalize). Not one manager-recorded close since.
+
+WHAT IS LOST, per successful dispatch:
+1. Worktree and branch cleanup never runs. cleanup_dispatch — and with it the
+   whole salvage path just hardened by TASK-2BPWM and TASK-D0GA3 — is dead on
+   the success path. 17 stale worktrees is the accumulated evidence.
+2. MERGE_SHA in the close tx is the WORKER's commit, not the manager's merge.
+   TASK-D0GA3's implementer.done (tx-20260726-orgasmic-2967) records
+   SHA = MERGE_SHA = e7837f1; the actual merge is 0daa77c. Any later audit that
+   trusts MERGE_SHA is looking at a commit that was never on main as such.
+3. REVIEWED_DIFF, worker-session, tokens and wall are never recorded, because
+   only dispatch-close accepts them.
+4. The manager's verdict is not the closing record. The worker's self-report is.
+   That inverts the "treat worker summaries as claims" rule at the tx layer.
+
+NOT AFFECTED, so scope this correctly: the salvage machinery still runs on the
+failure paths, which is where it matters most — cleanup_created_resources
+(dispatch rollback), the daemon POST cleanup endpoint, and dispatch-close on an
+orphan dispatch that never finalized. TASK-2BPWM and TASK-D0GA3 are not wasted
+work.
+
+DIRECTION, to be argued rather than assumed:
+- The likely fix is that `finalize` should record worker completion WITHOUT
+  closing the dispatch — a distinct tx type (implementer.reported?) that
+  scan_open_dispatches does not treat as terminal — leaving implementer.done to
+  the manager. That preserves dec_3M7M0's "finalize is the sole success signal"
+  for the WATCHER while restoring the manager's close.
+- Whatever shape is chosen, closing must stay idempotent and must not strand a
+  dispatch open forever when the manager dies mid-integration.
+- Backfill is out of scope, but the fix must not choke on the ~10 dispatches
+  already closed this way.
+
+Acceptance:
+- after a worker runs `dispatch finalize --commit`, `manager dispatch-status`
+  still lists the dispatch as open
+- `manager dispatch-close --status done --merge-sha <real merge>` succeeds and
+  records the manager's merge sha, and removes the worktree and branch
+- a dispatch that is never finalized still closes via dispatch-close, unchanged
+- double-close is a clean no-op, not an error
+
+MANAGER VERDICT [2026-07-26] — MERGED at a41934a3d12d6a28c36eef75bfeffaefc7428d34 (worker commit ff902ee on top of
+the salvaged b40163f; implementer-claude-rmux, rmux / claude / claude-opus-5 /
+high, run run-20260726T195450-ca46c33862b7462fb515be5eef7c4da9, 21 min).
+
+This was round 2. Round 1 (run-20260726T193954) was killed at exactly 600s by
+the rmux stall-detector defect, TASK-RWCRN, with the worker mid-edit; its tree
+was salvaged to b40163f and round 2 resumed from it with the detector disabled.
+
+VERIFIED BY THE MANAGER:
+- cargo test -p orgasmic-cli — exit 0, all binaries green. Both headline tests
+  ran and passed: dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up
+  and dispatch_finalize_reports_without_closing_and_releases_lease.
+- cargo clippy --workspace --all-targets -- -D warnings — clean.
+- cargo fmt --all --check — clean.
+- The no-migration invariant, against real data rather than a fixture: built the
+  new binary and ran manager dispatch-status against this repo's live ledger,
+  which holds 141 historical *.done entries. Zero open dispatches, exit 0, no
+  crash. The old binary prints the same. Historical closes stay closed.
+
+TEST NOTE. cargo test -p orgasmic-daemon --lib gave 505 passed / 3 failed — the
+same three TASK-STWVB in-suite flakes as the D0GA3 merge, no new ones. The
+worker reported 508 / 0 for that command. That is now the third worker daemon-lib
+number this session that does not reproduce on the manager's machine. The
+failures are pre-existing and this change touches no daemon source, so the merge
+stands, but do not accept a daemon-lib count from a worker without re-running it.
+
+THE FIX IS MERGED BUT DORMANT. Workers resolve  from the daemon's
+launchd PATH, where both ~/.local/bin/orgasmic and ~/.orgasmic/bin/orgasmic are
+the INSTALLED runtime (0.0.15-dev.1, built 2026-07-25), not this build. Proof:
+this very dispatch's worker emitted implementer.done at 20:15:58, the old shape,
+so TASK-6AYEJ's own dispatch closed itself and dispatch-close was again
+unreachable — its worktree and branch were removed by hand for the second time.
+Nothing changes for live dispatches until the runtime is rebuilt. Until then the
+manager must keep removing worktrees by hand, and the 17 stale ones remain.
+
+MANAGER FINDINGS:
+1. The report's strongest evidence is understated. It frames the enumeration as
+   cheaper than the brief predicted, which is true, but the reason matters more
+   than the count: the daemon keys completion off the finalize TOMBSTONE
+   (requires_worker_finalize / finalized_by_worker), never the tx type. That is
+   why dec_3M7M0 survives a tx-type change at all. Worth carrying into
+   architecture notes rather than leaving in a dispatch report.
+2. The architector call is argued well and I accept it, but it rests on "a stage
+   run on main has no manager.dispatch_started, so a report-only tx leaves
+   nothing open". That invariant is load-bearing and is asserted in prose, not by
+   a test. If stage runs ever gain a dispatch record, this breaks silently.
+3. New ordering constraint, correctly flagged as a consequence rather than a
+   regression: a reviewer cannot be dispatched for a task whose implementer
+   dispatch is still open. That is the forcing function that makes cleanup
+   happen, and the error names the remedy — but it changes the manager's
+   habitual sequence and will surprise the first manager who hits it.
+4. mark_matching_dispatch_reported's task-overlap fallback can paint [reported]
+   on the wrong record for legacy entries with no RUN_ID. Cosmetic; it gates
+   nothing. Accepted as written.
+
+Reviewer pass still owed on the merged diff.
+
+* TODO TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact :drivers:rmux:bug:production:
+:PROPERTIES:
+:ID: TASK-6FNAY
+:PRIORITY:    P1
+:END:
+
+Fix round for the reviewer BLOCK on TASK-8W30B (merged d60c4ed / d3fae4d).
+Reviewer: reviewer-codex-acp-stdio (acp-stdio / codex / unknown / unknown),
+run-20260726T110214. Findings are also in tx as reviewer.finding
+tx-20260726-orgasmic-2872..2876. The merged change is NOT reverted: measured
+release growth did go from +8 to 0 on the happy path. What follows is the
+failure path it did not make reliable.
+
+1. HIGH — the reaper can be cancelled before its fallback ever runs.
+`run_live_session` builds the SDK facade with a 5s default timeout;
+`reap_rmux_session` awaits `Session::kill()` before starting a separately
+bounded 5s CLI fallback; and `stop_and_join_driver_producer`
+(supervisor.rs:3983-3989) wraps the whole `release` in a third 5s timeout. A
+transport that is gone but does not fail fast eats the entire outer budget in
+the SDK attempt, and the fallback gets no guaranteed opportunity to start.
+
+The severe part is what cancellation costs. `release` sets `released = true` and
+does `self.session.take()` BEFORE the await, so when the outer timeout drops the
+future the only `Session` handle drops with it. The following `drop(control)`
+sees `session == None` and the Drop backstop cannot retry. That reproduces the
+original production symptom exactly: session, pty and harness survive release.
+Fix: one authoritative release budget with the SDK attempt strictly shorter than
+the total and time reserved for the CLI fallback, or a caller budget large enough
+for both. Do not `take()` the only handle before a cancellable await without a
+durable retry owner.
+
+2. MEDIUM — the reap error is still invisible. `release` returns `reap_result`,
+but supervisor.rs:3988 assigns the nested timeout result to `_`, discarding both
+`Ok(Err(DriverError::Transport(..)))` and `Err(Elapsed)`. `release_one` then
+removes the record, writes `Lifecycle::Release` and returns success. The
+invisible warn became an invisible Result. Fix: inspect both layers; keep
+producer/drain/lifecycle cleanup unconditional so an error can never strand a
+run, but emit an error with run and transport context after cleanup.
+
+3. MEDIUM — the CLI fallback can address the wrong daemon. It shells out to bare
+`rmux kill-session -t <stored string>`, but rmux-sdk 0.9.0 stores the resolved
+endpoint AND the sanitized protocol-owned name on `Session`, and its builder
+honours `RMUX_SDK_ENDPOINT`, while the CLI resolves `-S`/`-L`/`$RMUX`/default
+instead. A session acquired via a custom endpoint falls back against a different
+daemon: usually it just leaks, but if that daemon holds the same target name it
+kills the wrong session. The name happens to match today only because
+`make_run_id`/`RuntimeIdentity::new` emit safe components —
+`RuntimeIdentity::planned` accepts arbitrary strings and `run_live_session`
+copies `session_target` before `SessionName::new` sanitizes `.` and `:`. Fix:
+capture `session.name()` and `session.endpoint()` from the handle before the
+primary kill and pass the endpoint explicitly. Do not maintain a second, weaker
+identity.
+
+4. MEDIUM — a cancelled release loses its `RunComplete`. Confirmed, with the
+manager s no-strand reasoning upheld: explicit release keeps the RunRecord until
+the drain joins, then removes it and writes `Lifecycle::Release`, and a
+terminal-event-driven release already persisted its terminal event first. So no
+run is stranded — but the latch is set before the reap, Drop aborts the competing
+watcher, and the driver summary is simply lost. Fix: publish the release-owned
+`RunComplete` claim before the fallible reap, or make terminal publication
+cancellation-safe.
+
+5. MEDIUM — the regression test cannot gate anything. It returns success when the
+binary is missing/incompatible and again when acquire reports inert, and it calls
+`control.release` directly, so it cannot reach any of the four failures above.
+Keep it as a live smoke and add deterministic coverage for SDK failure, CLI
+fallback, cancellation, and endpoint/target propagation — including a
+supervisor-path regression that stalls the SDK request and proves the fallback
+runs and the session is gone after `Supervisor::release`.
+
+Out of scope: the known-red trio, and TASK-099T6.
+
+Acceptance:
+- a stalled SDK kill still results in a reaped session via the CLI fallback,
+  proven by a supervisor-path test that goes through the real 5s caller timeout
+- a reap failure appears in the daemon log with run and transport context, and
+  cleanup still happens unconditionally
+- the fallback targets the endpoint and name owned by the SDK handle
+- a cancelled release does not silently drop its RunComplete
+- at least one test fails, rather than skips, when rmux is absent in a lane
+  designated as a gate
+
+* TODO TASK-BX5SR One bad mutation kills the daemon writer task, and every write in the process fails until restart :daemon:writer:availability:
+:PROPERTIES:
+:ID: TASK-BX5SR
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-core/**,crates/orgasmic-daemon/**
+:END:
+
+** Description
+
+MEASURED DURING A LIVE OUTAGE, 2026-08-02, daemon boot =f8f67c0c=.
+
+Timeline from =~/.orgasmic/logs/daemon.out.log=:
+
+: 22:20:22.139  ERROR api: writer transaction failed
+:                     error=cached mutation lacks its recorded identity
+: 22:20:22.770  WARN  supervisor: session append failed
+:                     error=writer task is gone  run_id=run-20260802T215608-...
+: 22:21:45.489  ERROR api: writer transaction failed error=writer task is gone
+: 22:21:52.686  ERROR api: writer transaction failed error=writer task is gone
+
+One transaction failed on a cache-identity check, and 0.63s later the WRITER
+TASK ITSELF WAS GONE. From that moment every write in the daemon failed:
+=task update --state= returned 500 =failed to apply changes=, =manager
+dispatch-close= appended its tx but could not update the lifecycle, and the live
+TASK-FZB6T.2 workers session appends were dropped on the floor.
+
+Reads stayed healthy throughout — =orgasmic status=, =task get= and
+=dispatch-status= all answered normally — so from the outside the daemon looked
+FINE. That is the worst property of this failure: a manager can keep issuing
+commands and reading plausible state while nothing is being persisted.
+
+** What it cost
+
+The in-flight implementer for TASK-FZB6T.2 was guaranteed to lose its report,
+because =orgasmic dispatch finalize= is a WRITE. Recovering the writer required a
+daemon restart; the restart released the run and the rmux pane died with it, so
+the worker was killed mid-task with 2,452 insertions uncommitted. The manager
+preserved them as =d982af1= on =task-fzb6t.2-impl=.
+
+Note the shape: this is the SECOND report lost on this task in one session, by
+two completely different mechanisms (the first was the tmux stall ceiling). The
+=dispatch finalize= contract has no durable fallback when the daemon cannot
+write.
+
+** Two defects, and they should probably be separated
+
+1. *A failing transaction must not kill the writer.* Whatever
+   "cached mutation lacks its recorded identity" is, it is a per-request error
+   and belongs in a 500 for THAT request. Taking the writer down converts one
+   bad request into a total write outage. Same class as TASK-KKGKM, where one
+   unreadable project killed the whole runtime.
+2. *A dead writer must be loud and must be recoverable without a restart.*
+   =orgasmic status= reported =parse_errors: 0= and looked healthy while every
+   write was failing. At minimum status should report writer liveness; better,
+   the writer should be supervised and restarted in place.
+
+Note =orgasmic restart= itself degraded: it reported
+=daemon pre-stop drain returned 500: failed to drain writer before restart=
+and warned that mid-flight releases may be unreported — correct behaviour given
+the state, but it means the recovery path is also compromised by the same fault.
+
+** Acceptance
+
+- A writer transaction that fails for any reason returns an error for that
+  request and leaves the writer task running. A regression injects a failing
+  mutation and proves the NEXT write succeeds.
+- =orgasmic status= (and =doctor=) report writer liveness, so a dead writer is
+  visible without reading daemon logs.
+- The writer is supervised: if the task does exit, it is restarted in place, or
+  the daemon fails loudly rather than serving reads as if healthy.
+- Root-cause =cached mutation lacks its recorded identity= specifically: what
+  produces a cached mutation with no recorded identity, and why is it reachable
+  from =manager dispatch-close=? The outage began on that exact call.
+- Consider a durable fallback for =dispatch finalize= so a worker report is not
+  lost when the daemon cannot write. Related: TASK-P9T4N (multi-tx writer
+  transaction so dispatch-close is one commit).
+
+* TODO TASK-D6N77.1 repair rejected manager wake: make claim authority, pane delivery, and generation waiting honest :daemon:cli:manager:hardening:
+:PROPERTIES:
+:ID: TASK-D6N77.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Fix every BLOCK SHIP finding from Sol/high review generation =tx-20260809-orgasmic-5580=. The full durable report is =.orgasmic/dispatch-records/tx-20260809-orgasmic-5580/last.txt= and the actionable finding tx entries are =5582= through =5590=.
+
+The normal app-terminal flow must work through plain =orgasmic manager register= after Claude Code or Codex CLI starts. Claim authority must be bound to the calling run and atomically participate in the one-manager-per-project supervisor lease across launch, external register, release, restart, and reattach. A claimed terminal must be represented consistently in manager state/UI.
+
+Automated pane delivery must remain =unsupported= unless the transport can prove a fresh, revision-bound foreground provider and bounded composer and condition the send on that same state. Never advertise fail-closed behavior over stale rmux foreground state or a tmux check-then-paste gap. Typed wake outcomes and stable distinct CLI exit codes are required.
+
+Move =dispatch-wait= to one daemon-owned generation authority or otherwise make the release-before-terminal-tx boundary and already-closed generations race-free. Preserve reported, died, and timeout outcomes by =started_tx= and ignore tmux =[pid-gone]=.
+
+*Manager plan correction after the blocked first fix pass.* A zero-byte guarantee is impossible for a manually started provider over tmux because process exit can race any check-then-paste. The honest shippable invariant is safe-by-construction delivery: remove arbitrary =--input= entirely; inject only the fixed marker =: 'ORGASMIC_MANAGER_WAKE_V1'=; teach the injected entry router to treat that marker exactly as =/orgasmic resume=. In Claude/Codex it is a resume request. If delivery races into zsh/bash, it is the =:= builtin with one inert literal argument and has no side effects. Foreground/composer proof remains a UX/targeting gate, not the safety authority. Prove the exact bytes and shell behavior in tests.
+
+** Acceptance
+1. All eight review findings are closed or explicitly superseded by the fixed-marker invariant, with targeted tests.
+2. Plain registration is caller-bound and singleton-safe across claim, launch, external register, release, restart, and state reporting.
+3. The only pane-injectable payload is exactly =: 'ORGASMIC_MANAGER_WAKE_V1'= plus submit; no user/project/task text reaches pane input. Real zsh and bash tests prove it is a side-effect-free no-op before provider start and after provider exit; Claude and Codex router tests prove it maps to resume.
+4. Foreground/composer mismatch and busy states remain typed refusals; unsupported is returned where the transport cannot deliver the fixed marker reliably.
+5. =dispatch-wait= uses daemon-owned generation authority and is race-free across release, report, and close while ignoring =[pid-gone]=.
+6. Typed wake and wait outcomes have stable distinct CLI exit codes and documented help.
+7. Isolated-daemon concurrency/lifecycle tests and a real non-billed dispatch-wait proof pass.
+8. No live runtime or LaunchAgent is touched during implementation.
+** Evidence
+*Round-two live evidence.* Terra/xhigh generation =tx-20260809-orgasmic-5609= committed =53d9fc4= (865 insertions / 285 deletions, 10 files) and finalized at 12:40 as =manager.dispatch_aborted= because reattach persistence and the full wait matrix remained. The manager watcher then waited falsely for over an hour: it searched only =dispatch-status= open lines for =[reported]/[run-gone]=; the aborted generation disappeared from that inventory, so an empty match looped forever. This is direct production-shaped proof that generation waiting must query durable daemon-owned terminal state by =started_tx=, including aborted/closed generations, rather than only open-dispatch lines.
+*Native-agent completion.* The operator disabled orgasmic dispatches for the remaining rounds and explicitly retained Terra/xhigh for implementation plus Sol/high for review. Terra implemented the reviewed candidate through commit =2f1bc78=; it was merged to main as =0423ae5=. Sol/high independently reviewed =fcf0825..2f1bc78= and returned PASS with no actionable findings. Guarded final verification passed: =cargo fmt --all -- --check=; =cargo check -p orgasmic-daemon -p orgasmic-drivers -p orgasmic-cli=; scoped WriterHandle failure isolation; malformed-header and lifecycle rollback; crash/restart recovery lineage; Present/Absent/Unobserved tmux recovery behavior; exact raw tmux marker bytes; typed target loss; composer gating; and shipped-router mapping. UI execution remained unavailable because local UI dependencies were absent; static UI contract changes were reviewed and no code defect was found. No live daemon, LaunchAgent, billed test, or external service was touched.
+
 * TODO TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-NMV4P.1
@@ -5289,6 +5606,1059 @@ Answer the parent run question independently. This is report-only; do not edit p
 
 ** Acceptance Criteria
 - [ ] A standalone evidence-led extraction report is promoted.
+
+* TODO TASK-RRT4T Eight rmux-dependent daemon tests silently pass when rmux is missing, which is why worker green claims keep not reproducing :testing:daemon:dispatch:trust:
+:PROPERTIES:
+:ID: TASK-RRT4T
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/boot_resilience.rs crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/tests/driver_modes.rs crates/orgasmic-drivers/tests/cursor_agent.rs crates/orgasmic-cli/tests/dispatch.rs
+:TEST_CMD:    cargo test -p orgasmic-daemon --lib
+:END:
+
+Eight rmux-dependent tests in `crates/orgasmic-daemon/src/api.rs` silently
+return (and therefore PASS) when `rmux` is not on PATH:
+
+    if !rmux_available_for_test() {
+        eprintln!("skipping <name>: rmux binary not found");
+        return;
+    }
+
+`rmux_available_for_test()` is `probe_rmux_binary().found`, which resolves
+`rmux` from PATH only (crates/orgasmic-drivers/src/modes/rmux.rs:197-210). The
+skip prints to stderr, which `cargo test` swallows without `--nocapture`. The
+run then reports `504 passed; 0 failed` — literally true, and completely
+misleading.
+
+MEASURED 2026-07-26, manager-direct, on main at the TASK-STWVB merge, same
+machine, same commit, one variable changed:
+
+| PATH                             | result          | wall   | syspolicyd CPU |
+|----------------------------------|-----------------|--------|----------------|
+| normal (rmux on ~/.local/bin)    | 502 passed, 2 failed | 106.5 s | +281 s |
+| /usr/bin:/bin:/usr/sbin:/sbin... | 504 passed, 0 failed |  22.3 s | + 32 s |
+
+The second row reproduces, to the second, what the TASK-STWVB round-2
+implementer reported as proof its fix worked: 504/0 at 24.9 / 27.5 / 26.1 s.
+Its fix did not green those tests; its environment skipped them.
+
+WHY THIS IS P0
+
+This is the mechanism behind three consecutive over-reports today:
+- TASK-8W30B: worker measured +5 leaked sessions/run, manager measured +1
+- TASK-6FNAY: worker reported 504/0, manager measured 502/2 three times
+- TASK-STWVB r2: worker reported 504/0 x3, manager measured 502/2 four times
+
+Every one is the same shape, and the shape is not worker dishonesty — each
+phrased its claim carefully. A dispatched worker inherits the daemon's PATH.
+The daemon runs under launchd, which does not carry `~/.local/bin`, so `rmux`
+is absent for workers and present for the operator. Worker green on this crate
+therefore does not mean what it says, and no amount of brief discipline fixes
+it.
+
+Corroborating evidence in the round-2 report itself: it recorded
+`orgasmic-rmux-run-*` sessions as 7 before / 7 after three runs. A real run of
+`post_artifact_regenerate_hot_path_reuses_live_run_id` creates rmux sessions,
+and the manager's runs grew 7 -> 10 (+1 per run, the known panic-abandon).
+Zero growth was the tell that the test never ran.
+
+FIX
+
+1. A skipped test must be visible in the default `cargo test` summary. Options,
+   in preference order: (a) make the guard `panic!` unless an explicit
+   `ORGASMIC_ALLOW_SKIP_RMUX_TESTS=1` opt-out is set, so the default is loud;
+   (b) mark them `#[ignore]` and run them via an explicit filtered gate, so the
+   summary counts them as ignored rather than passed.
+2. Whatever the mechanism, `cargo test -p orgasmic-daemon --lib` must not be
+   able to print `504 passed; 0 failed` while eight tests did nothing.
+3. Give dispatched workers a PATH that finds the tools their gates need, OR
+   make the worker persona report the skip count with every test claim. Prefer
+   the first; the second is a documentation fix for an environment defect.
+4. Audit for the same pattern elsewhere: any `if !X_available() { return }` in
+   a test is the same trap. tmux and cursor-agent guards are the likely
+   siblings.
+
+Acceptance:
+- with rmux absent, the daemon suite cannot report a clean all-passed summary
+- the count of skipped-for-missing-tooling tests is visible without --nocapture
+- a manager reading a worker's test claim can tell whether the scoped test ran
+
+FOOTPRINT CORRECTED [2026-07-26], before dispatch. Two changes to the numbers
+above; neither weakens the finding and one widens it considerably.
+
+1. The count is SEVEN `if !rmux_available_for_test()` call sites in api.rs, not
+   eight. The eighth match in the original grep was the helper's own definition.
+   Every measurement in this task stands; only the count was wrong, and it was
+   repeated into gotchas.org and three commit messages.
+
+2. The pattern is not confined to api.rs. Fourteen files across three crates
+   carry a tooling skip:
+   - crates/orgasmic-daemon/src/api.rs (7 rmux guards), supervisor.rs
+     (command_available_for_test("tmux")), watcher.rs
+   - crates/orgasmic-drivers/src/modes/rmux.rs, modes/tmux.rs,
+     adapters/claude.rs, adapters/codex.rs
+   - crates/orgasmic-daemon/tests/{dispatch_endpoint,boot_resilience,
+     recovery_fault_restart}.rs
+   - crates/orgasmic-drivers/tests/{driver_modes,cursor_agent}.rs
+   - crates/orgasmic-cli/tests/dispatch.rs, crates/orgasmic-cli/src/manager.rs
+
+   So `cargo test -p orgasmic-drivers` reporting "236 passed / 0 failed" has the
+   same hole, and that figure was already quoted as evidence in a worker report
+   today.
+
+3. Four of the skips are worse than tool-absent — they read
+   "skipping ...: SDK degraded to inert". A test that skips because the driver
+   degraded skips exactly when there is something to find. Those deserve to be
+   errors, not skips, and are worth calling out separately from the PATH problem.
+
+DESIGN DIRECTION chosen for the dispatch: one sentinel test per test binary that
+fails when tooling its gated tests need is absent, plus a per-tool environment
+opt-out, plus routing the existing guards through one shared helper so the gated
+set is discoverable in one place. Converting 63 call sites into 63 hard failures
+was rejected: it would stop anyone without claude on PATH from running the suite
+at all, which is how an escape hatch becomes permanent.
+LANDED [2026-07-26]. Merged f894a7a. Second attempt — the first reached `ready`
+and never began a turn (see TASK-VZMZE). Implementer implementer-codex-acp-stdio
+(acp-stdio / codex / gpt-5.6-sol / xhigh), run
+run-20260726T154818-c0acbe719bd141879e00d3d3d3a483be, 42 minutes, +579/-214
+across 13 files.
+
+MANAGER VERIFICATION — the acceptance criterion, run directly, not read from the
+report.
+
+A. Hidden PATH, `cargo test -p orgasmic-daemon --lib`. Before this change that
+   printed `504 passed; 0 failed` in 22 s while seven tests did nothing. Now:
+
+     exit 101
+     test supervisor::tests::required_test_tooling_is_present ... FAILED
+     required test tooling is missing: rmux (gates 7 tests); gated tests did not
+     run. Install the tooling or explicitly acknowledge only these skips with
+     ORGASMIC_ALLOW_MISSING_TOOLS=rmux
+
+   That is exactly the scenario that produced three false green reports today,
+   and it can no longer happen silently. The message names the tool, the count,
+   and the remedy.
+
+B. Hidden PATH with ORGASMIC_ALLOW_MISSING_TOOLS=rmux: the sentinel passes, so
+   the per-tool opt-out works. The run was not clean for an unrelated reason —
+   `api::tests::recovery_reattaches_tmux_session_when_handle_exists` failed with
+   "interrupted" instead of "reattached". That test is on the original TASK-STWVB
+   list of four and has a history of intermittency, but note it FAILED rather
+   than skipped under a restricted PATH, which suggests it may be sensitive to
+   PATH in production code rather than in the test. Worth its own look; not
+   attributed to this change.
+
+C. Normal PATH: 504 passed / 2 failed of 506. The two are exactly the
+   pre-existing STWVB pair. Test count rose by one for the sentinel. No
+   regression.
+
+WHAT SHIPPED
+- `orgasmic_drivers::modes::rmux::test_tooling` — per-tool probes, the sentinel
+  API, per-test skip diagnostics, a shared environment lock, and
+  `assert_not_degraded`.
+- `required_test_tooling_is_present` in every affected default-running test
+  binary, with explicit gated-test counts: daemon lib rmux 7 / tmux 6 / bash 1;
+  drivers lib rmux 9 / tmux 8 / claude 7 / codex 1 / sleep 1 / bash 1; and
+  smaller counts for the four integration binaries.
+- The four "SDK degraded to inert" exits became assertion failures. Those were
+  the worst of the set — a test that skips because the driver degraded skips
+  exactly when there is something to find.
+- Paid live smokes moved to `#[ignore]`, so default output counts them instead
+  of hiding them, and an explicit invocation fails loudly if its tool is absent.
+
+FINDINGS FOR THE REVIEWER PASS
+1. `test_tooling` is a `pub mod` in the production drivers crate, not test-gated.
+   The comment gives a real reason — integration-test crates cannot import
+   `#[cfg(test)]` modules — but the idiomatic answer is a `test-support` cargo
+   feature or a separate dev-dependency crate. As shipped, test scaffolding is
+   public API of a production library and cannot be removed without a breaking
+   change.
+2. The sentinel is slow: `has been running for over 60 seconds` in-suite, while
+   `command_available` is only a PATH lookup. Either `command_succeeds` spawns
+   are paying the macOS exec cost, or the sentinel is queued behind live tests on
+   the shared `test_environment_lock`. Either way its duration is a function of
+   unrelated tests, which is a poor property for the one test that reports
+   environment health.
+3. Suite wall time went from ~106 s to 152 s on the same machine. Some of that is
+   variance — 140 s was observed earlier today — but it should be measured
+   deliberately rather than assumed.
+
+* TODO TASK-RRVX0 TASK-35TK4 fix: eliminate CLI lock-probe acquisition race :fix:daemon:
+:PROPERTIES:
+:ID: TASK-RRVX0
+:PRIORITY: high
+:READ_SCOPE: .orgasmic/gotchas.org,crates/orgasmic-daemon,crates/orgasmic-cli
+:TEST_CMD: cargo test -p orgasmic-daemon && cargo test -p orgasmic-cli
+:WRITE_SCOPE: crates/orgasmic-daemon,crates/orgasmic-cli
+:END:
+
+** Description
+Claude Opus review of b18808c..bd3d7bd returned SHIP but identified one medium new regression: the CLI lock-state probe briefly acquires daemon.lock exclusively, while daemon startup makes a single nonblocking exclusive-lock attempt. A microsecond overlap can make a legitimate booting daemon misclassify the CLI probe as an unhealthy incumbent and exit.
+
+** Acceptance Criteria
+- Daemon lock acquisition tolerates the CLI probe transient without weakening single-instance exclusion or spawning work before lock ownership.
+- Retry behavior is tightly bounded (roughly 100-150 ms total), handles only WouldBlock, and preserves immediate propagation of other filesystem/lock errors.
+- Deterministic regression forces the overlap and proves the daemon eventually acquires after the probe releases; a continuously held incumbent still fails closed.
+- Preserve Rust 1.87 compatibility by calling fs2::FileExt methods explicitly.
+- Run focused lock/autostart/double-serve tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings; classify known baseline watcher/bootstrap flakes separately.
+** Notes
+The two originally assigned Codex gpt-5.6-terra/high attempts were interrupted by shared daemon restarts and produced no edits. A concurrently dispatched equivalent fix completed under TASK-870YX: commit 4c0a151, merged to main as e4b6b7b. Manager independently reran the focused daemon-lock, CLI boot-owner, and double-serve regressions; all passed. This duplicate record is cancelled as superseded, not left as an unfixed defect.
+
+* TODO TASK-STWVB The daemon suite has no trustworthy full-run signal on this host, so its gate cannot return a verdict :testing:daemon:flake:
+:PROPERTIES:
+:ID: TASK-STWVB
+:PRIORITY: P2
+:WRITE_SCOPE: crates/**,scripts/**,verify/**
+:END:
+
+=== READ THIS FIRST — STATUS [2026-08-05] ===
+NOT BLOCKED. TASK-8W30B is DONE; the block recorded below was lifted on
+2026-07-26. No worker has ever been dispatched for this task.
+
+THE TITLE AND THE OPENING PARAGRAPH BELOW ARE BOTH DISPROVED. Read the LAST
+section of this task, not the first. Three successive re-measurements superseded
+the original inventory:
+  - [2026-07-26] of the four tests named below, THREE never failed in 5 runs,
+    and two tests not on the list did. The 13-minute runs behind the original
+    claim were made on a thrashing disk (89% full, 57 GB target/); repaired, the
+    suite runs in ~45s.
+  - [2026-07-26] the "shared global state" hypothesis is wrong for
+    poll_direct_child_pid: the process is alive, blocked, and has consumed ZERO
+    CPU, so it is wedged before executing an instruction — a deadline the
+    machine cannot meet, not a data race.
+  - [2026-08-02] a full run produced 14 failures, NONE of them the three in the
+    table; all 14 touch a live mux or probe processes, and all 14 passed alone
+    in 8s against the same binary. syspolicyd at 586% CPU was the discriminator.
+
+CURRENT FRAMING, which supersedes everything above it: the suite has NO
+TRUSTWORTHY FULL-RUN SIGNAL ON THIS HOST, so the original acceptance criterion
+("green, repeatedly, at full parallelism") CANNOT BE EVALUATED. The first
+deliverable is a gate that returns a defensible verdict on a loaded machine.
+Naming a per-test cause still matters, but it is no longer the entry point.
+=== END STATUS ===
+
+Every full `cargo test -p orgasmic-daemon --lib` run fails the same four tests,
+and each passes alone:
+
+- api::tests::post_artifact_regenerate_hot_path_reuses_live_run_id
+- api::tests::recovery_inventory_waits_for_atomic_claim_commit
+- api::tests::recovery_reattaches_tmux_session_when_handle_exists
+- supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling
+
+Measured 2026-07-25: 496 passed / 4 failed, and the identical four with an
+unrelated change stashed out. They only fail under full-suite parallelism, not
+in a filtered subset, so the trigger is cross-test interference rather than any
+one test's logic.
+
+Why this is worth fixing rather than tolerating: a suite that always fails four
+tests cannot answer "did my change break something?". Establishing that these
+four were pre-existing cost two full 13-minute runs during TASK-KKGKM — a
+stash-and-compare that every future change to this crate has to repeat. A red
+suite is also indistinguishable from a red suite with one new real failure in
+it.
+
+Leads, not conclusions:
+- These tests share process-global state: `live_session_guard()` and static
+  hooks such as `RECOVERY_POST_ORIGIN_AUTHORITY_HOOK`, which serialize some
+  tests against each other but not against everything that observes the same
+  state.
+- The same class of bug was found and fixed in the CLI crate on the same day:
+  `path_env`'s tests set process-global PATH to a bare tempdir, so any
+  concurrently running test spawning a PATH-resolved tool failed with a bare
+  `NotFound` (~3 runs in 4). Worth checking whether these four have an analogous
+  shared-environment dependency before assuming a timing race.
+- Two of the four are tmux/mux-dependent, so a real external session leaking
+  between tests is also plausible.
+
+Acceptance:
+- `cargo test -p orgasmic-daemon --lib` is green, repeatedly, at full
+  parallelism
+- the cause is named per test, not worked around by serializing the whole suite
+- if any test genuinely requires exclusive global state, it says so and enforces
+  it, rather than depending on scheduling luck
+RE-MEASURED [2026-07-26], and the original inventory does not hold.
+
+The "four tests fail on every full run" claim was made while the build
+environment was badly degraded: the disk was 89% full, target/ was 57 GB with
+164,619 retained .o files, and a full `cargo test -p orgasmic-daemon --lib` run
+took 13 minutes. After clearing that (dead worktree targets, 31 GB of
+incremental, a stale Time Machine snapshot, and switching the dev profile to
+line-tables-only) the same suite runs in ~45 seconds and target/debug is 3.4 GB.
+
+Five consecutive full runs at default parallelism on the repaired environment:
+
+| test                                                          | failed |
+|---------------------------------------------------------------|--------|
+| api::post_artifact_regenerate_hot_path_reuses_live_run_id       | 3/5    |
+| recovery_claim::reconcile_pending_rejects_rename_swap_after_open| 2/5    |
+| api::post_artifact_regenerate_cold_changed_address_replaces_... | 1/5    |
+| api::recovery_inventory_waits_for_atomic_claim_commit           | 0/5    |
+| api::recovery_reattaches_tmux_session_when_handle_exists        | 0/5    |
+| supervisor::poll_direct_child_pid_prefers_worker_server_over_...| 0/5    |
+
+So three of the four originally named tests did not fail once, and two tests
+that were never on the list do fail. The suite is green outright in 1 run of 5.
+
+What this means: a 13-minute run on a thrashing disk stretches every await long
+enough to tip deadline-bounded waits, which is why the failure set looked stable
+and looked like those four. The environment was a confound. The remaining three
+are real flakes but a smaller and different problem than recorded.
+
+Also fixed and split out of this task:
+- stall_detector_revalidates_after_driver_event_race — root-caused to
+  Supervisor::new's own 50ms timeout monitor releasing the aged run out from
+  under the test, not to load. Fixed in a629a51 with Supervisor::unmonitored.
+  wait_for_event_count no longer reports a released run as "event_count 0".
+- The 3 dispatch_endpoint failures were a separate, deterministic defect
+  (TASK-5T575, fixed in 05d029b).
+
+Remaining scope for this task is the three flakes in the table, not the original
+four. The regenerate pair are the priority — both touch the same hot/cold
+artifact-regenerate launch-record path, so they are likely one cause.
+GATE IS BLOCKED BY TASK-8W30B [2026-07-26], and this is a measurement problem
+rather than a remaining-work problem.
+
+The rmux session leak adds 8 leaked sessions per full-suite run (manager-
+confirmed: 23 -> 31 across one run, from a known-empty daemon). Saturation
+degrades the rmux driver to inert, at which point
+`post_artifact_regenerate_hot_path_reuses_live_run_id` fails on all retries with
+`409 capability_unsupported: send_input`.
+
+So '5 consecutive green full-suite runs' cannot be satisfied on a machine where
+each run makes the next one worse. The gate should be re-run only after
+TASK-8W30B lands, and the two fixed tests should be judged on the controlled
+before/after they already have rather than on an absolute streak.
+
+Post-merge state, 3 runs on a quiet machine (499-500 passed):
+- reconcile_pending_rejects_rename_swap_after_open: 0/3 — FIXED, was 4/6
+- post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 — TASK-8W30B
+- poll_direct_child_pid_prefers_worker_server_over_generic_sibling: 3/3 in-suite
+  but PASSES ALONE on both the pre-merge and post-merge commits, so it is
+  in-suite interference and specifically NOT a regression from the merge
+  (checked deliberately, since the implementer touched its sibling)
+- recovery_inventory_waits_for_atomic_claim_commit: 1/3
+
+Remaining scope after the merge: the interference behind poll_direct_child_pid
+and recovery_inventory, both of which pass in isolation.
+STATE CORRECTED [2026-07-26]: in_review -> in_progress, and the root-cause
+attribution above is DISCONFIRMED.
+
+The block is lifted: TASK-8W30B merged (d60c4ed / d3fae4d) and release growth
+went from +8 per suite run to 0, manager-measured independently. So the
+"measurement problem" framing above no longer applies — the environment no
+longer degrades run over run.
+
+But the line "post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 —
+TASK-8W30B" attributed that failure to the leak, and that is now wrong. On the
+merged tree, with release growth at zero, the test still fails:
+
+    assertion `left == right` failed: two consecutive rounds must reuse one run_id
+      left:  run-20260726T105347-034ff6ca59844f43a18a9a0ae8a3ba2c
+      right: run-20260726T105337-c9b87801bc334547a747b5b8ebf2277a
+
+That is a run-id reuse failure, not a `409 capability_unsupported: send_input`
+saturation failure. The leak may have aggravated its environment; it was not the
+cause. The reviewer on TASK-8W30B reached the same conclusion independently.
+
+Remaining scope is therefore three tests, not two:
+- post_artifact_regenerate_hot_path_reuses_live_run_id — needs its own root
+  cause, in the hot/cold artifact-regenerate launch-record path
+- poll_direct_child_pid_prefers_worker_server_over_generic_sibling — in-suite
+  interference, passes alone
+- recovery_inventory_waits_for_atomic_claim_commit — same shape, passes alone
+
+Do not re-run a "5 consecutive green" gate as the closing condition until the
+first of those has a named cause. An absolute streak was the wrong instrument
+while the environment degraded, and it is still the wrong instrument for a
+deterministic assertion failure.
+ROOT CAUSE MEASURED [2026-07-26], manager-direct. The "cross-test shared global
+state" hypothesis at the top of this task is WRONG for poll_direct_child_pid.
+The cause is process-creation latency, and the test is simply asserting a
+deadline the machine cannot meet while the suite runs.
+
+WHAT WAS MEASURED
+
+Both remaining tests pass alone and fast: poll_direct_child_pid in 0.42 s,
+post_artifact_regenerate_hot_path in 0.80 s. In-suite they now fail 3/3, not
+intermittently — that is an improvement, because deterministic is debuggable.
+
+Running each module alone at full parallelism is green:
+- supervisor::tests  99 passed, 12.0 s
+- api::tests        199 passed, 37.5 s
+So the interference is cross-module, not within either.
+
+Live capture of the fake cursor-agent during a full run (three separate runs,
+same result). The test writes a bash script that backgrounds two sleeps, touches
+`children-ready`, then sleeps; it waits up to 30 s for that file:
+
+- the process IS alive the whole time — it is not killed, not starved of a slot
+- it has ZERO children, so it never reached even its first `&`
+- state is S (blocked), never R (runnable), so it is not losing a CPU race
+- CPU time stays at 0:00.00 across 28+ seconds of sampling — it never executed
+  a single instruction
+
+A process that is alive, blocked, and has consumed no CPU is wedged BEFORE
+execution, not running slowly.
+
+THE DISCRIMINATOR
+
+An unrelated trivial bash script (`#!/bin/bash` + one `touch`), spawned from
+outside the test binary while the suite ran, timed at:
+
+    6205 ms, 2993 ms, 63771 ms, 64 ms, 354 ms
+
+Sixty-three seconds to spawn a two-line shell script, then 64 ms a few seconds
+later. Process creation on this machine intermittently stalls for seconds to a
+minute while this suite runs. Nothing about the test is special; it is just the
+one test that asserts a 30 s deadline on a freshly spawned external process.
+
+Caveat on that measurement, stated so nobody over-reads it: the timestamps were
+taken by spawning python3, so each figure includes one additional process
+spawn. That does not change the conclusion — spawning anything is what is slow —
+but the per-call attribution is not exact.
+
+Peak process count during a run was only ~720 against a 5333 maxprocperuid, and
+fd limit is 1048576, so this is not simple resource exhaustion. The likely
+mechanism is serialization in macOS exec (code-signing / syspolicy validation)
+under many concurrent spawns, which is worth confirming before designing around
+it.
+
+CONSEQUENCE FOR THE FIX
+
+Do not fix this by raising the 30 s deadline. Sixty seconds was observed, so any
+constant is a guess. Either remove the dependence on a freshly spawned external
+process reaching a checkpoint, or serialize the process-spawning tests against
+each other so the suite stops competing with itself for exec.
+
+The same mechanism is a plausible cause for post_artifact_regenerate_hot_path:
+its two run_ids are 10 s apart, consistent with round one exceeding a deadline
+and its run being released before round two. Not yet confirmed — do not record
+it as established.
+MECHANISM CONFIRMED [2026-07-26]. It is macOS first-exec evaluation, and it is
+measurable in three lines on a completely idle machine:
+
+    fresh script #1 first exec: 0.18 s    second exec: 0.00 s
+    fresh script #2 first exec: 0.15 s    second exec: 0.00 s
+    fresh script #3 first exec: 0.16 s    second exec: 0.00 s
+
+macOS charges roughly 150-180 ms of syspolicy/Gatekeeper evaluation the first
+time a newly created executable is exec-ed, and nothing thereafter. Idle spawns
+of an already-evaluated script are 0.00 s, which is why every one of these tests
+passes alone.
+
+That per-file cost is paid through a single system daemon, so concurrent first
+execs queue. This suite writes many fresh executable fixtures into tempdirs and
+execs them in parallel, which is how a 150 ms cost becomes the 3 s / 6 s / 63 s
+spawns measured earlier. The failing test is not special; it is the one that
+asserts a 30 s deadline against that queue.
+
+So the chain is: fresh fixture -> per-file Gatekeeper evaluation -> serialized
+daemon -> queue under suite parallelism -> a spawned helper that never reaches
+its first instruction inside the deadline.
+
+FIX DIRECTION
+
+Stop paying the per-file cost per test. The fixture script should be created and
+exec-ed ONCE per test binary and then reused, with the per-test variation moved
+out of the file contents and into argv, so the second and subsequent uses hit
+the warm path. Pre-warming a shared fixture is preferable to serializing the
+tests, because it removes the cost rather than queueing it, and it also speeds up
+every other spawn-based test in the crate.
+
+Raising the deadline is not a fix. 63 s was observed; any constant is a guess.
+
+NOTE FOR CI (TASK-S2KM0): this mechanism is macOS-specific. A Linux runner has
+no Gatekeeper and will very likely not reproduce it, so this test could pass in
+CI while failing on every developer Mac. That is an argument for fixing the
+fixture rather than tolerating the failure locally, and for not concluding "green
+in CI" means "green".
+
+ROUND 2 MERGED, GATE NOT MET [2026-07-26]. The fix is real and kept; the green
+claim is not reproducible.
+
+Merged 67e427c (shared warm fixture in crates/orgasmic-daemon/src/test_fixtures.rs,
+converted spawn fixtures, gotchas entry). Worker: implementer-codex-acp-stdio
+(acp-stdio / codex / gpt-5.6-sol / xhigh), run
+run-20260726T125001-9e991bce9f75485a84e2f4be1d127800. It reported 504 passed /
+0 failed on three consecutive runs at 24.9 / 27.5 / 26.1 s.
+
+Manager measurement on the merged tree, four runs:
+
+    502 passed / 2 failed   106.5 s
+    501 passed / 3 failed   112.1 s   (+ recovery_inventory, known flake)
+    502 passed / 2 failed   108.2 s
+    502 passed / 2 failed   106.5 s
+
+Both target tests still fail:
+- post_artifact_regenerate_hot_path_reuses_live_run_id — now 409 "harness busy"
+  rather than the earlier run_id mismatch
+- poll_direct_child_pid_prefers_worker_server_over_generic_sibling — still
+  "fake cursor-agent did not start children" at its 30 s deadline
+
+WHY THE WORKER SAW GREEN — see TASK-RRT4T. Removing rmux from PATH, changing
+nothing else, turns the manager's own run into 504 passed / 0 failed in 22.3 s,
+reproducing the worker's numbers exactly. Eight rmux-dependent tests silently
+return when the rmux binary is not found. The worker's own 7-before / 7-after
+session count was the tell: the test never ran.
+
+WHAT THE ROUND-2 WORK DID ESTABLISH, verified independently:
+- Hard-linking a warmed executable does dodge first-exec evaluation. Measured:
+  fresh direct exec 196 ms, second exec 4 ms, hard link to a new path 4 ms, a
+  byte-identical COPY 162 ms. So link_shared_test_executable is sound and the
+  inode, not the path, is the cache key.
+- The pressure is inside the rmux test path, not in the converted fixtures.
+  syspolicyd CPU during one suite run: +281 s with rmux present, +32 s with
+  rmux absent, against ~106 s and ~22 s of wall time. The rmux binary itself is
+  cheap (9.2 ms/exec, 0.0 ms of syspolicyd), so the cost is something the rmux
+  session path execs, and it has not been identified.
+- A strictly simpler primitive exists and was not used: invoking a fresh script
+  through a signed interpreter skips evaluation entirely. Measured on the same
+  fresh file — `./script` 270 ms, `/bin/sh script` 5 ms, `/bin/bash script`
+  3 ms. Round 3 should prefer this over warm-and-hard-link wherever the callee
+  is a script, because it needs no shared state, no OnceLock, and no argv
+  multiplexing.
+
+REMAINING SCOPE
+1. Land TASK-RRT4T first. Until a skipped test is visible in the default
+   summary, no gate on this crate can be trusted, including this task's.
+2. Identify what the rmux test path execs that costs syspolicyd ~250 s per
+   suite run. That is the actual remaining cause for poll_direct_child_pid,
+   which passes when that pressure is absent.
+3. post_artifact_regenerate_hot_path now fails as 409 "harness busy", a
+   different symptom than before; treat its cause as unestablished.
+
+A note on the fixture module for round 3: shared_test_executable() asserts the
+on-disk fixture equals FIXTURE_SCRIPT and panics otherwise, while its doc
+comment claims a changed script gets a new path because the path is derived from
+the hashed test binary name. That reasoning does not hold — cargo's test-binary
+hash is not content-derived — so editing FIXTURE_SCRIPT can leave a stale file
+at the same path and fail every spawn test until it is deleted by hand. Make it
+overwrite, or key the filename on a content hash.
+
+Also weakened, worth restoring: the old pinned-exec wrapper asserted
+[ "$1" = __exec-pinned ] || exit 97, so a production regression that stopped
+passing that argv failed loudly. The shared fixture falls through to exit 0
+instead.
+
+CORRECTION TO THE ABOVE [2026-07-26], same session: the sentence "the pressure is
+inside the rmux test path" states a real correlation but the mechanism it implies
+is DISPROVEN. rmux does not trip Gatekeeper.
+
+Measured directly, rmux 0.9.0 (crates.io, pinned =0.9.0) against tmux 3.x on the
+same machine:
+
+| operation                                | tmux    | rmux    | syspolicyd |
+|------------------------------------------|---------|---------|------------|
+| 15x create session + kill session         | 13.1 ms | 12.1 ms | +0.01 / +0.00 s |
+| 20x pane runs an already-warm script      |  6.9 ms | 12.8 ms | +0.00 / +0.01 s |
+| leftover sessions after all kills         | none    | none    | — |
+
+So rmux is leak-free and Gatekeeper-neutral at this level, and roughly 2x slower
+than tmux per pane spawn — which at 6 ms of absolute difference explains nothing.
+
+What survives: with rmux on PATH the suite is 106 s and syspolicyd burns +281 s;
+with rmux hidden it is 22 s and +32 s, one variable changed. The correlation is
+solid. The attribution is not. Whatever spends that CPU has not been identified,
+and it is NOT rmux exec-ing things.
+
+A better lead, found while checking: the hot-path test polls for the harness
+prompt `for _ in 0..40` at 250 ms — a 10 s ceiling, which is exactly the 10 s gap
+between the two run_ids in the original failure. The eight rmux tests also all
+take `live_session_guard()`, so they are serialized against each other while the
+other ~496 tests run in parallel around them. A serialized 10 s deadline under
+full-suite load is a plausible mechanism that needs no Gatekeeper story at all.
+
+THE EXPERIMENT THAT WOULD SETTLE IT
+These tests exist only in the rmux mode. Parameterize post_artifact_regenerate_*
+over rmux AND tmux. Red under rmux and green under tmux indicts rmux; red under
+both is ours. Right now the question cannot be answered, which is the actual
+problem.
+
+THIRD MEMBER OF THE FAMILY [2026-07-26, found integrating TASK-D0GA3]. The
+full-suite run of `cargo test -p orgasmic-daemon --lib` at merge 0daa77c failed
+THREE tests, not two:
+
+- post_artifact_regenerate_hot_path_reuses_live_run_id
+  (api.rs:25772 — "second regenerate should route via send_input (hot path)",
+  got 409 "harness busy")
+- poll_direct_child_pid_prefers_worker_server_over_generic_sibling
+  (supervisor.rs:8788 — "fake cursor-agent did not start children")
+- recovery_reattaches_tmux_session_when_handle_exists  <-- NEW
+  (api.rs:21866 — left "interrupted", right "reattached")
+
+All three pass together in isolation: `--exact` on the three names gives
+3 passed / 0 failed in 0.54s, 505 filtered out. Whole-suite time was 182.9s with
+rmux present on PATH.
+
+The new one is informative. It is not a spawn-fixture test — it is tmux session
+REATTACH, and it lands on "interrupted" rather than "reattached", i.e. something
+else in the suite killed or claimed the tmux session it expected to find. That
+points at cross-test contention over shared external mux state (session names,
+sockets), not at the executable-fixture path that round 2 addressed. Round 3
+should start from "which tests share a tmux/rmux namespace" rather than from the
+fixture.
+
+Note also that the TASK-D0GA3 worker reported "508 passed, 0 failed" for this
+same command with rmux present. That is a fourth over-report, and unlike the
+first three it is NOT explained by silent tooling skips — TASK-RRT4T's sentinel
+was already in place and would have fired. Either the worker's run genuinely
+came up green (making this load- or order-dependent, which fits) or the number
+was not measured. Do not treat any single green run of this suite as evidence.
+
+=== Measured again 2026-07-28, and the set is larger than four
+
+Full `cargo test -p orgasmic-daemon --lib` in the manager environment at HEAD
+`15997c6`: **528 passed, 5 failed, 451 s**.
+
+| test | symptom |
+|------|---------|
+| `api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim` | `recover: 500 Internal Server Error` |
+| `api::tests::two_recovery_chain_second_resume_uses_first_fork_session_id` | `first recover: 500 Internal Server Error` |
+| `api::tests::recovery_reattaches_tmux_session_when_handle_exists` | `tmux test session should start` |
+| `api::tests::equal_run_id_across_projects_requires_canonical_project` | `project-b recover should succeed independently: 500` |
+| `supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling` | `fake cursor-agent did not start children` |
+
+The first three also failed, identically, inside the TASK-1T3FZ dispatched
+worker, which additionally lost
+`boot_reattach_respawns_dispatch_completion_watcher_without_artifacts`,
+`failed_terminal_with_live_tmux_never_offers_reattach`, and the tmux sentinel.
+The underlying daemon error in the worker was
+`tmux new-session failed (exit 1): server exited unexpectedly`.
+
+Three things this rules out (tx-20260728-orgasmic-3226):
+
+- Not environment. Each of these passes in isolation, in both the manager
+  environment and a replicated dispatched-worker environment.
+- Not a worker-only blindspot. Three reproduce in the manager environment with
+  no rmux shim and no `$TMUX`.
+- Not a missing or broken tmux. Under the exact worker `PATH` + `TMUX`,
+  `tmux new-session -d` exits 0; the tmux the worker resolves is an rmux shim
+  pointing at a live server.
+
+Four of the five are a **recovery** path — three `recover` calls returning 500
+and one tmux session failing to start for a reattach test. That concentration is
+the strongest structural clue on this task so far, and it is not a generic
+"slow machine" story.
+
+TASK-0RCRY carries the one concrete candidate mechanism: no tmux call site
+passes `-L`/`-S`, so every probe, test session and production call shares a
+single tmux server. If isolating that server does not fix these, the result
+belongs back here.
+
+
+=== MANAGER MEASUREMENT 2026-07-28: production_resume_native_fork has TWO failure modes
+
+Recorded after TASK-5HBST merged, because the manager had been mislabelling this
+test as purely 5HBST's.
+
+`api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim`
+fails in two distinct ways:
+
+1. **Env race (5HBST's, now fixed).** A concurrent test clobbers process-global
+   `HOME`, so `pin_trusted_claude_binary` (api.rs:9906) resolves the wrong
+   `~/.local/bin/claude`. Presents as a wrong path or found/not_found mismatch.
+2. **Recovery 500 (this task's, still open).** `resume_native_fork recover:
+   500 Internal Server Error` at api.rs:25171. Nothing to do with the
+   environment.
+
+Measured on the merged 5HBST tree, full `cargo test -p orgasmic-daemon --lib`
+at load ~10: it still failed, with **mode 2**. So 5HBST removed one mode and the
+test remains on the known-flake list until this task lands.
+
+That makes the recovery cluster on this axis larger than previously recorded.
+In the same run: `production_resume_native_fork...` (500 on recover),
+`recovery_inventory_waits_for_atomic_claim_commit`, and
+`recovery_reattaches_tmux_session_when_handle_exists` — three of the four
+failures were recovery-path, and the fourth
+(`poll_direct_child_pid_prefers_worker_server_over_generic_sibling`) is the
+fixture-process one, a different class.
+
+The 'recover returns 500 under load' signature is now observed on three separate
+tests. Whatever this task finds should explain all three, not one.
+PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: during a 3-worker compile window, one manager dispatch-status poll reported ALL THREE live runs as [run-gone] simultaneously; the next poll (60s later) and rmux ls showed every session alive and attached, daemon on the same pid/boot throughout. A transient inventory read under load flips run-liveness for every run at once — same family as the 'recover: 500 under load' signature already on this task, observed on the live daemon rather than in a test.
+PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: during a 3-worker compile window, one manager dispatch-status poll reported ALL THREE live runs as [run-gone] simultaneously; the next poll (60s later) and rmux ls showed every session alive and attached, daemon on the same pid/boot throughout. A transient inventory read under load flips run-liveness for every run at once. Two minutes later, a node body append to THIS task failed once with 'daemon request failed: error sending request ... is the daemon reachable?' and succeeded on retry — the HTTP surface itself goes briefly unreachable under load. Same family as the 'recover: 500 under load' signature already recorded here; both observed on the live daemon rather than in a test.
+PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: with load average 164 (a worker deliberately inducing load per TASK-5FEN5's repro recipe), one dispatch-status poll flipped ALL THREE live runs to [run-gone] at once, and two manager CLI calls failed with 'daemon request failed ... is the daemon reachable?'. Direct diagnosis DURING the failures: daemon pid alive, port 4848 LISTEN, raw HTTP answered 401 in 0.4s. So the daemon was healthy throughout — the CLI's client-side request path times out under scheduler starvation and reports it as daemon unreachability, and the inventory read degrades the same way. Relevant to this task because the same mechanism plausibly explains the 'recover: 500 under load' family: not a daemon defect expressing under load, but load starving some request leg. The error text 'is the daemon reachable?' is also a misdiagnosis-generator: the truthful message would be 'request timed out after Ns (system load may be the cause)'.
+PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: with load average 164 (a worker deliberately inducing load per TASK-5FEN5's repro recipe), one dispatch-status poll flipped ALL THREE live runs to [run-gone] at once, and repeated manager CLI calls failed with 'daemon request failed ... is the daemon reachable?'. Direct diagnosis DURING the failures: daemon pid alive, port 4848 LISTEN, raw HTTP answered 401 in 0.4s. So the daemon was healthy throughout — the CLI's client-side request path times out under scheduler starvation and reports it as daemon unreachability, and the run-inventory read degrades the same way. Relevant to this task: the same mechanism plausibly explains the 'recover: 500 under load' family — load starving a request leg rather than a daemon defect. Also: the error text 'is the daemon reachable?' is a misdiagnosis-generator; the truthful message is 'request timed out after Ns (system load may be the cause)'.
+
+FIRST CAPTURED PANIC for the registry's quoted-origin entry [2026-07-29, from TASK-5FEN5's load runs]: `index::tests::git_resolves_quoted_included_origin_from_linked_worktree` — index.rs:2247, `assertion left == right failed, left: None, right: Some("ssh://git@example.com/org/quoted.git")`. The registry names this test as a known STWVB flake awaiting its first verbatim panic; this is it. Registering the row (with this task as owner) is now unblocked and is this task's call, per the DJ1WV rule that only the owning task writes its own entries.
+
+CANDIDATE PANIC [2026-07-29, TASK-0RCRY full-workspace run]: `task_010_recovery_routes_classify_and_continue_runs` (crates/orgasmic-daemon/tests/integration.rs:2637) — `recover: 409 Conflict` under load, green in isolation. Distinct shape from the quoted-origin flake; first time this panic has been written down. Route or register under this task's diagnosis as appropriate.
+
+ATTRIBUTION CONTRADICTED [2026-07-29, TASK-K4G1D differential]: the `left: "interrupted"` reattach flake is now named for the first time — `driver tmux/claude attach proof exceeded inventory deadline`, the Err(_) timeout branch of finish_driver_attach (api.rs:9858). Measured with real tmux 3.6a on a 0RCRY owned server, with the rmux arm GREEN in the same process under the same load. This contradicts this task's standing attribution (cross-test contention over shared external mux state) — that would be the third withdrawn attribution. The live question is why a one-process-spawn tmux attach probe cannot finish inside the inventory deadline under load, and whether that deadline is sized for process-spawn starvation. Also note: K4G1D found the seven tmux_on_path-gated tests execute rmux in worker environments (owned by its follow-up task), so any worker-vs-manager comparison recorded here that relied on "the worker ran these under tmux" needs re-reading.
+
+CANDIDATE PANIC [2026-07-29, TASK-GEZHQ gate run 3 of 5]: `api::tests::recovery_inventory_waits_for_atomic_claim_commit` (crates/orgasmic-daemon/src/api.rs:25017) — `recover POST completes: Elapsed(())` under load, green in isolation. Another recover-route timeout shape for this task's diagnosis; first time written down.
+
+RE-READING FLAGS [2026-07-29, TASK-JGHNC, merged 724dd6b] — four recorded comparisons need correction:
+1. The 2026-07-28 five-failure section: the TASK-1T3FZ worker's two extra failures (boot_reattach_respawns…, failed_terminal_with_live_tmux…) plus its tmux sentinel were RMUX failures wearing tmux names, on the shared rmux default server; they say nothing about tmux. Post-JGHNC that comparison cannot be reproduced in a worker at all (strict-gated, NOT RUN).
+2. recovery_reattaches_tmux_session_when_handle_exists: the manager symptom ('tmux test session should start') and the worker symptom ('server exited unexpectedly') were read as one signature; the worker half was an rmux-server symptom. Superseded by K4G1D's tmux-arm and JGHNC's rmux-arm measurements.
+3. The D0GA3 worker's '508 passed, 0 failed' anomaly has a third explanation: in a worker, seven tests ran a different multiplexer than the manager's run of the same names — never a like-for-like comparison.
+4. THE DIFFERENTIAL NOW READS BOTH WAYS: JGHNC's worker run caught recovery_reattaches_RMUX_session_when_handle_exists red with the IDENTICAL sentence K4G1D measured on the tmux arm ('driver rmux/claude attach proof exceeded inventory deadline', api.rs:24464). Red under BOTH multiplexers = the defect is ours (the inventory deadline / attach-proof path), NOT rmux. Any future worker-vs-manager comparison on this family needs the real-tmux PATH recipe (K4G1D report §2); the five new rmux arms are the worker's honest column.
+
+SIBLING WITH ITS OWN SIGNATURE [2026-07-29, TASK-J1XCB rounds]: `supervisor::tests::direct_child_pid_finds_wrapper_child_process` (supervisor.rs:10801) — `wrapper never forked a direct child` — 5/12 and 2/12 under the 4x64-thread concurrency harness, green in isolation. Sibling of this task's registered `poll_direct_child_pid_prefers_worker_server_over_generic_sibling` but a DIFFERENT signature, so the registry correctly reports it REAL until a row exists. Register under this task with the captured signature when convenient (only the owner writes its rows).
+
+LOAD-STARVATION SIGHTING [2026-07-29, TASK-K5NDR gate]: `dispatch_finalize_from_subprocess_stream_json_mode` (orgasmic-cli tests) — `daemon request timed out after 30s (1m load average 22.75)` with three workers live; green in isolation, green bare 20 min earlier, green alone at load 34. Pure client-starvation shape with the EP3H1 diagnostics naming it. Unowned; recurrence in a loaded gate classifies REAL. Route under this task's load-starvation family or spin off when the family gets its own task.
+
+A SECOND AXIS: WORKTREE, NOT ONLY LOAD [2026-07-31, TASK-CB6GQ gate]. This
+task's standing frame is "fails on a full-suite run, passes alone", with load as
+the explanation. There is an independent axis: WHICH WORKTREE runs the suite,
+measured on a quiet machine with sequential runs and no concurrency at all.
+
+Measured, =cargo test -p orgasmic-daemon --lib=, both trees on 75fe95f:
+- =/private/tmp/cb6gq-control= (detached at 75fe95f): 640 passed / 0 failed in
+  42.73s, then 42.90s. Twice, clean.
+- =/private/tmp/task-cb6gq= (a branch one commit on top of 75fe95f): 638-639
+  passed / 1-2 failed, in 122.71s and 123.01s.
+Narrowed to =api::tests= alone: control 36.64s / 0 failed, branch 88.93s / 1
+failed.
+
+THE DECISIVE CONTROL, and the reason this is worth recording: =git checkout
+75fe95f= INSIDE the slow worktree — byte-identical code to the fast one — still
+gave 85.87s and the same failure. Same commit, same machine, same moment,
+different worktree: 2.3x runtime and a red. Whatever this is, it is not the diff
+under test and not concurrent load.
+
+Failures seen on the slow worktree, each green in isolation on the first retry:
+=api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=
+(already registered here), =api::tests::recovery_reattaches_rmux_session_when_handle_exists=,
+=api::tests::recovery_inventory_waits_for_atomic_claim_commit= (the recover-route
+family already on this task), and
+=supervisor::tests::a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies=.
+A different subset each run, which is the probabilistic shape already recorded —
+but the 2.3x runtime is reproducible, not probabilistic, and is the part that
+points somewhere.
+
+NOT stale mux state, checked during the slow runs: =rmux ls= empty, no tmux
+server on the default socket, and although 43 leftover
+=/private/tmp/tmux-501/orgasmic-test-*= sockets had accumulated, zero of them
+had a live server behind it. Cause unidentified; the candidates worth trying
+first are per-worktree =target/= state and anything the suite resolves from cwd.
+
+WHY IT MATTERS BEYOND THIS TASK, and the practical rule it produces: a green
+full-suite number is not evidence unless the worktree is held constant, and a
+red one cannot be attributed to a diff without re-running the BASE code in the
+SAME worktree. That control costs one checkout and one run. It was the only
+thing separating "my change broke the suite" from "this worktree is slow" during
+TASK-CB6GQ, where four consecutive full-suite reds on the branch looked exactly
+like a regression and were not.
+THIRD ENVIRONMENT AXIS, MEASURED [2026-08-03]: macOS =syspolicyd= scan pressure.
+And it is the same lesson this task has now learned three times — 89%-full disk
+(2026-07-26), worktree identity (2026-07-31), host scan load (now). Every one of
+them produced a *stable-looking* failure set that read as a code regression.
+
+Measured on =d1a41c1=, repo-root worktree, against the binary cargo had ALREADY
+built (=orgasmic_daemon-5f50721007a8fd8c=, so no compile in the window):
+
+| run                                    | result                  | wall    |
+|----------------------------------------|-------------------------|---------|
+| =cargo test -p orgasmic-daemon --lib=  | 637 passed / 14 FAILED  | 659.90s |
+| the same 14, one at a time, same binary| 14 passed / 0 failed    | 8s      |
+
+Comparable for that suite is 42.9-85.9s, so this run was 8-15x slowed. The
+discriminator was =syspolicyd= at 586% CPU with load average 11.41; killing the
+suite dropped it to 75% within seconds. See the syspolicyd->tccd->WindowServer
+entry in =gotchas.org=: the same chain hard-rebooted this machine at 20:01:36 on
+2026-08-02.
+
+The 14 were not the three flakes in the table above. They were every test that
+touches a live mux or probes processes:
+=explicit_reattach_{rmux,tmux}_is_fenced_out_of_a_worktree_a_close_guard_holds=,
+=recovery_reattaches_{rmux,tmux}_session_when_handle_exists=,
+=two_recovery_chain_second_resume_uses_first_fork_session_id=,
+=live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
+=a_network_waiting_{provider,tmux}_turn_...=, =an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued=,
+=a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline=,
+=direct_child_pid_finds_wrapper_child_process=,
+=poll_direct_child_pid_prefers_worker_server_over_generic_sibling=,
+=process_subtree_cpu_probe_{does_not_mistake_a_live_idle_child_for_work,sees_a_real_cpu_burning_child}=.
+Only 4 of the 14 are in =verify/flake-registry.toml=.
+
+TWO THINGS THIS CHANGES FOR THIS TASK.
+
+1. The cheap control is now known and it costs 8 seconds. Re-run the failures
+   ONE AT A TIME AGAINST THE ALREADY-BUILT BINARY before believing any red:
+   =target/debug/deps/orgasmic_daemon-<hash> --exact <test> --test-threads=1=.
+   That is what =scripts/run-tests.sh= does after a full run; doing it directly
+   skips the 11-minute run you already know is untrustworthy. It also costs
+   almost no scan load, because re-executing an existing binary is not what
+   triggers syspolicyd.
+
+2. COMPILATION IS NOT THE TRIGGER — TEST EXECUTION IS. Measured the same night:
+   a full rebuild of the daemon, core and cli test binaries at =jobs=4= ran with
+   =syspolicyd= at 0-64%, while the earlier test RUN pinned it at 586%. The
+   gotcha attributes the burst to build scripts and proc-macro dylibs; that is
+   at best incomplete. The mux suites write and exec many short-lived shim
+   scripts per test, and that is the exec pattern that actually bursts.
+
+So this task should stop being framed as "three flakes in a table". The stable
+finding across all three axes is that the suite has NO trustworthy full-run
+signal on this host, and the acceptance criterion "green, repeatedly, at full
+parallelism" cannot currently be evaluated. Naming a per-test cause still
+matters, but the first deliverable is a gate that reports a defensible verdict
+on a loaded machine.
+** Evidence
+
+MEASUREMENT [2026-08-02], from the TASK-4CSMY integration. Three full-suite
+runs plus the implementer's own, deliberately varying ONE axis at a time:
+
+| # | site | tree | real failures |
+| 0 | dispatch worktree | =75255e5= | 0 (implementer's run) |
+| 1 | repo root | =7d9c60c= (tree-identical to =75255e5=) | 8 |
+| 2 | repo root | =9017514= (base, pre-merge) | 4 |
+| 3 | dispatch worktree | =75255e5= | 2 |
+
+THE AXIS IS ALSO THE RUN, NOT ONLY LOAD AND WORKTREE. Runs 0 and 3 are the same
+tree in the same worktree and disagree: 0 failures against 2. That kills the
+working assumption that a worktree has a stable failure signature — so a claim
+of the form "N tests, worktree X" is still not reproducible without a RUN COUNT.
+This task's own title ("fail on every full-suite run") is now too strong:
+nothing here failed on every run.
+
+PERSISTENCE RANKING across my three runs (1,2,3), which is what a fix should be
+aimed at first:
+
+| test | runs failed |
+| =process_subtree_cpu_probe_sees_a_real_cpu_burning_child= | 3/3 |
+| =recovery_reattaches_rmux_session_when_handle_exists= | 3/3 |
+| =explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds= | 2/3 |
+| =direct_child_pid_finds_wrapper_child_process= | 2/3 |
+| =recovery_inventory_waits_for_atomic_claim_commit= | 1/3 |
+| =live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh= | 1/3 |
+| =dead_pid_aborts_joins_hung_producer_then_receiver_releases= | 1/3 |
+| =a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies= | 1/3 |
+
+The top two failed at BASE as well, so they are the durable core of this task
+and are not waiting on anything else to land. Every failure in every run passed
+in isolation under =run-tests.sh='s own re-run, so the class is contention, not
+correctness.
+
+Logs kept for this session at the scratchpad paths named in the tx; the
+per-test panics are in each run's =suite.log=.
+IMPLEMENTED 2026-08-06, all three parts (A+B+C) in one round. Worker
+implementer-cursor-agent-tmux; driver tmux, harness cursor-agent, model
+cursor-grok-4.5-high-fast, effort omitted deliberately (the cursor model id
+carries the tier — stated on the dispatch --reason, not an unnoticed omission).
+Merged b94f942. Worker report preserved at
+=.orgasmic/dispatch-records/tx-20260806-orgasmic-4975/last.txt=.
+
+A — FIXTURE CONSOLIDATION. Converted the top =--lib= contributors onto the
+warmed inode (hanging mux stall-probe shim, =write_executable_stub= PATH stubs,
+malicious PATH claude shim, trusted-claude symlink layout seed, never-executed
+provider PATH stubs). Fresh creates KEPT where a distinct inode IS the assertion
+(pin retarget / wrapper replacement), routed through
+=create_fresh_test_executable= so they stay visible in the counter. Measured
+after: =fresh_first_execs=4=, =shared_link_reuses=134=, 49.41s, 734 passed / 0
+failed. Both full =--lib= runs in the dispatch had ZERO failures, against this
+task history of 14-20 isolation-green reds under parallelism.
+
+*The before-number is inventory-derived, not measured* (+8 converted first-exec
+sites), because a pre-A full run was outside the 3-run execution budget the
+brief imposed. So "A took 14-20 reds to 0" is a plausible reading of two runs,
+not a controlled result — the host also differed. Treat it as promising, not
+proven.
+
+B — HOST STATE IN THE VERDICT. =LOAD_DEGRADED_THRESHOLD=8.0= (below the measured
+11.41 thrash reading, above a quiet Mac) and =SYSPOLICYD_CPU_DEGRADED=200.0=
+(below the measured 586% peak), justified next to the constants. New exit code
+*4 = INCONCLUSIVE — re-run when calm*. A degraded host makes the run
+inconclusive EITHER WAY, so a green under load is no longer silently trusted —
+which is the property the design called the sharper one. Sampler injectable via
+=ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>= so the selftest drives
+calm and degraded hosts deterministically with no real load.
+
+C — INTERLOCK. Unregistered + isolation-green + host degraded -> LOAD-SENSITIVE;
+the same shape on a CALM host stays REAL; failing alone is always REAL. A
+LOAD-SENSITIVE label on a calm host is itself an error (exit 1). The ten
+unregistered 2026-08-02 failures were NOT registered; =verify/flake-registry.toml=
+is byte-unchanged by this merge (7 entries, every owner open).
+
+GATES at merge, manager-run: =run-tests-selftest.sh= 24 passed / 0 failed;
+=run-tests.sh --check= OK; =cargo clippy --workspace --all-targets -D warnings=
+clean; =cargo fmt --all --check= clean; =orgasmic verify TASK-STWVB= PASS
+(red-then-green). The pinned red was checked against the red log rather than
+trusted: the pinned message IS the first FAIL in the log, and the artifact aims
+at C interlock, the load-bearing new behaviour.
+
+NOT RUN BY THE MANAGER: =cargo test --workspace= and a third full daemon
+=--lib=. Deliberate — test EXECUTION is the syspolicyd trigger and this host has
+hard-rebooted twice from that chain. The worker s two full =--lib= runs are the
+evidence, and its final verdict block is in the preserved report.
+
+DEFECT FOUND AT INTEGRATION REVIEW, MERGED KNOWINGLY: *the syspolicyd signal
+never fires.* =sample_host_state_live= reads =ps -axo comm=,pcpu== and matches
+=/(^|\/)syspolicyd$/=, but =comm= truncates to 16 chars, so the live line is
+=/usr/libexec/sys= and the string "syspolicyd" is never present at all.
+Measured on this host: =ps aux= shows pid 495 =/usr/libexec/syspolicyd=, while
+the sampler awk yields =0.0=. Worse, the =END { if (NR || s > 0) ... }= guard
+makes NR always true, so the miss reports a MEASURED ZERO rather than =?= — the
+exact failure shape B exists to prevent, reproduced inside B. Consistent with
+the run: all three samples read =syspolicyd_cpu=0.0= while load ran 12.95 ->
+22.49. B therefore runs on load average ALONE today, and the headline evidence
+for this whole task (586% syspolicyd) is the signal that is dead. Merged anyway
+because it is fail-SAFE — it can only under-report degradation, never invent it,
+and load average still tripped INCONCLUSIVE correctly on the gate run.
+** How to fix it — design [2026-08-05]
+The classification machinery ALREADY EXISTS and is good. =scripts/run-tests.sh=
+(654 lines) runs the suite, reruns every failure IN ISOLATION, and matches panic
+text against =verify/flake-registry.toml= (6 entries, each requiring an OPEN
+owning task and a literal panic SIGNATURE, so one name carrying two failure
+modes cannot be confused). Do not rebuild any of that.
+
+*THE GAP, precisely.* The classifier has exactly three outcomes:
+1. not in the registry -> REAL
+2. registered NAME but unregistered SIGNATURE -> REAL (the mislabel detector)
+3. registered + signature match + green alone -> FLAKE (exit 0 eligible)
+
+and NO HOST-STATE AWARENESS whatsoever — the only occurrence of "load" in the
+script is a comment. So the 2026-08-02 run (14 failures, 4 registered, all 14
+green alone in 8s, =syspolicyd= at 586% and load average 11.41) put 10 tests in
+branch 1 and returned RED. The verdict vocabulary has no way to say "the host
+was degraded, so this run has no verdict".
+
+*THE FIX IS NOT TO REGISTER THE TEN.* The registry's own header says an entry is
+"an excuse with an expiry" that must name an open owning task, and warns that
+"a registry that only grows is a graveyard". Ten environment-induced failures
+have no owner because there is no code defect to own. Registering them would
+corrupt the instrument that currently works.
+
+=== A. Attack the trigger — the only durable fix
+Test EXECUTION is the trigger, not compilation (measured 2026-08-02: a full
+rebuild at jobs=4 kept syspolicyd at 0-64%, while the test RUN pinned it at
+586%). The mux and process-probe suites write and exec MANY short-lived shim
+scripts per test, and first-exec of a newly written file is what gets scanned.
+
+- Create the shims ONCE PER SUITE RUN behind a shared fixture rather than once
+  per test, so repeated execs of an identical path+content hit a cached scan
+  verdict instead of a fresh one.
+- Prefer a long-lived helper process or an in-process fake over spawning a fresh
+  script per assertion.
+- Where a fresh script is unavoidable, reuse content-identical files from one
+  directory instead of minting a new temp path each time.
+
+This lowers scan load at the source. Everything else below is instrumentation
+around a load problem; this is the part that removes it.
+
+=== B. Make host state a first-class input to the verdict
+Sample load average and =syspolicyd= CPU before, during and after the run, and
+stamp it on the verdict. If the host was degraded past a threshold, the run
+returns *INCONCLUSIVE — re-run when calm*, which is a THIRD outcome the exit
+codes do not currently have (today: 0 clean/all-flake, 1 REAL, 2 registry).
+
+Two things this buys, and the second is the sharper one:
+- a red on a thrashing host stops being read as a code fact;
+- a GREEN on a thrashing host stops being trusted, which today it silently is.
+  Right now a degraded run that happens to pass reports clean, and nothing in
+  the output hints that the run was not worth believing.
+
+=== C. Separate two different facts that currently look identical
+"Passes alone because of a genuine race" is a code defect: it has an owner, an
+expiry, and belongs in the registry. "Passes alone because the host was
+thrashing" is an environmental fact with no owner at all. Branch 1 collapses
+both into REAL, and the obvious workaround collapses both into the registry.
+
+Add a classification for load-sensitivity that is valid ONLY when the run's
+MEASURED host state (from B) justifies it. That interlock is what keeps the
+"excuse with an expiry" discipline intact: the excuse is bounded by a
+measurement taken during that run, not by a name sitting on a list forever.
+
+=== Sequencing
+B before C — C is unsound without a measurement to gate it. A is independent and
+is the one that actually shrinks the problem, so it can run in parallel and
+should not wait on the gate work.
+
+=== What NOT to do
+- Do not serialize the whole suite. The original acceptance already rejected
+  this, and it hides the interference rather than naming it.
+- Do not raise timeouts to fit a degraded host; that makes every future run
+  slower and still returns a meaningless verdict.
+- Do not add registry entries for the ten unregistered 2026-08-02 failures.
+** Measured 2026-08-05 — the red is nondeterministic on unchanged code
+A controlled same-code repeat, run 2026-08-05 while gating TASK-M47E5.1.1 at
+merge =3a825cb=. This is the measurement this task's design question has been
+missing: not "does the suite flake" but "is its red a function of the code".
+
+*Two runs of =scripts/run-tests.sh -p orgasmic-daemon=, identical tree, no
+rebuild between them:*
+
+| | run 1 | run 2 |
+|---|---|---|
+| header failure count | 20 | 19 |
+| failing test names extracted | 19 | 19 |
+| passed the runner's isolation rerun | 19/19 | 19/19 |
+| common to both runs | 17 | |
+| unique to that run | 2 | 2 |
+
+Run 1 only: =index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
+=supervisor::tests::an_at_rest_rmux_pane_quoting_marker_text_is_not_rescued=.
+Run 2 only: =api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=,
+=supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases=.
+
+*The conclusion, stated precisely:* the failing SET is nondeterministic across
+runs of unchanged code, and 100% of failures pass in isolation. So a daemon-suite
+red currently carries NO information about whether the change under test broke
+anything. That is stronger than "the suite is flaky" — it means the gate cannot
+discriminate, which is the property a gate exists to have.
+
+*What this does and does not license.* It does NOT license ignoring daemon red.
+It licenses exactly one inference: a red whose failures all pass in isolation, on
+a change that cannot touch them, is not evidence of regression. The change being
+gated here was three substantive lines (one parameter, one JSON field, one
+expression) and none of the 19 tests reference either symbol.
+
+*Why the runner still says "This red means something".* By design: an
+unregistered failure is REAL, because the registry is the only sanctioned excuse
+and a signature-less excuse is what trains people to discount red. That is
+correct behaviour and it is what surfaced TASK-3ZR2E earlier the same day. The
+defect is not the classifier — it is that ~17 daemon tests have no owner and no
+entry, so every daemon gate reads RED and the manager has to re-derive this
+analysis by hand each time. Which is this task.
+
+*A cheap discriminator this measurement suggests*, offered as input to the design
+rather than as the design: the runner already reruns each failure in isolation.
+It therefore already knows the difference between "failed in parallel, passed
+alone" and "failed both ways". Today both land in REAL when unregistered. A
+distinct third verdict for "failed only under parallelism, unregistered" would
+separate the load population from genuine red WITHOUT weakening the registry
+rule, and would have made both of today's daemon gates readable at a glance.
+** Third measurement — a stable 14-test core with a rotating fringe
+A THIRD run, 2026-08-05, while gating TASK-M47E5.1.1.1.1 at merge =8e3b317=.
+Same host, same wrapper, and the change under test was TEST-ONLY inside
+=#[cfg(test)]= — so production daemon code was identical to runs 1 and 2.
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| header failure count | 20 | 19 | 18 |
+| failing names extracted | 19 | 19 | 18 |
+| isolation-green | 19/19 | 19/19 | *18/18* |
+
+- Common to ALL THREE runs: *14*.
+- Unique to run 3: =api::tests::boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run=.
+- Present in runs 1 AND 2 but PASSING in run 3:
+  =api::tests::boot_reattach_respawns_plan_stage_completion_watcher=,
+  =api::tests::recovery_reattaches_tmux_session_when_handle_exists=,
+  =supervisor::tests::direct_child_pid_finds_wrapper_child_process=.
+
+*Three runs, three different failure sets, 100% isolation-green every time.* Two
+runs could be coincidence; three with a stable 14-test core and a rotating
+fringe is a population, not an accident. There is a persistent set that fails
+under parallelism and a fringe whose membership is decided by scheduling.
+
+*The shape this suggests for the fix*, offered as input rather than as the
+design: the 14-test core and the rotating fringe may not be one problem. A core
+that fails on almost every parallel run is a candidate for registration or a real
+isolation fix with an owner each; a fringe that appears once in three runs is
+what an "unregistered AND isolation-green under parallelism" verdict would
+absorb without weakening the registry rule. Sizing the core is now cheap — it is
+the 14.
+
+*Also measured here*: the suite exceeded a 10-minute foreground budget on this
+host and had to be backgrounded. Whatever this task builds should assume the
+daemon suite is not something a manager runs casually between gates; that cost is
+part of why its red gets waved through rather than read.
+
+*And the control worked.* The round-5 test added by TASK-M47E5.1.1.1.1
+(=dispatch_spawn_derives_the_authoritative_artifact_dir_from_last_path=) does NOT
+appear in run 3's failures, so a genuinely new test lands green inside a red
+suite — further evidence the red is environmental rather than a property of the
+tree.
 
 * TODO TASK-V6JW4.1 Extract — codex · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
@@ -9686,133 +11056,6 @@ define it with a test or record why those kinds are exempt.
 - Do not touch the `LiveSessionGuard` reap (TASK-Z3093, `268de73`); it is
   merged, verified, and orthogonal.
 
-* DONE TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
-:PROPERTIES:
-:ID: TASK-6AYEJ
-:PRIORITY: P1
-:TEST_CMD: cargo test -p orgasmic-cli
-:END:
-
-The worker's own success signal closes the dispatch record, so the manager's
-`dispatch-close` can never run on a successful dispatch. Found while trying to
-close TASK-D0GA3 after merging it.
-
-REPRODUCED, not inferred:
-- TASK-D0GA3 merged at 0daa77c. `orgasmic manager dispatch-close --task
-  TASK-D0GA3 --status done --merge-sha 0daa77c ... --worktree-remove
-  --branch-delete` fails with "no open manager.dispatch_started tx for
-  TASK-D0GA3".
-- `orgasmic manager dispatch-status` prints nothing — zero open dispatches —
-  while `git worktree list` shows 17 live dispatch worktrees and their branches.
-
-MECHANISM, read from code: scan_open_dispatches (crates/orgasmic-cli/src/manager.rs:3316)
-pairs each manager.dispatch_started with the first terminal tx it sees, and
-manager.rs:3338-3341 counts `implementer.done` / `reviewer.done` /
-`architector.done` / `manager.dispatch_aborted` as terminal. Per dec_3M7M0 the
-worker's `orgasmic dispatch finalize --commit` is the SOLE success signal and it
-emits `implementer.done` itself. So the dispatch is closed by the worker before
-the manager has even read the report.
-
-The tx history shows the switchover cleanly. Every terminal tx up to 2026-07-23
-carries ACTOR theaspirational@users.noreply.github.com (the manager, via
-dispatch-close). Every one from 2026-07-26 carries ACTOR agent.implementer or
-agent.reviewer (the worker, via finalize). Not one manager-recorded close since.
-
-WHAT IS LOST, per successful dispatch:
-1. Worktree and branch cleanup never runs. cleanup_dispatch — and with it the
-   whole salvage path just hardened by TASK-2BPWM and TASK-D0GA3 — is dead on
-   the success path. 17 stale worktrees is the accumulated evidence.
-2. MERGE_SHA in the close tx is the WORKER's commit, not the manager's merge.
-   TASK-D0GA3's implementer.done (tx-20260726-orgasmic-2967) records
-   SHA = MERGE_SHA = e7837f1; the actual merge is 0daa77c. Any later audit that
-   trusts MERGE_SHA is looking at a commit that was never on main as such.
-3. REVIEWED_DIFF, worker-session, tokens and wall are never recorded, because
-   only dispatch-close accepts them.
-4. The manager's verdict is not the closing record. The worker's self-report is.
-   That inverts the "treat worker summaries as claims" rule at the tx layer.
-
-NOT AFFECTED, so scope this correctly: the salvage machinery still runs on the
-failure paths, which is where it matters most — cleanup_created_resources
-(dispatch rollback), the daemon POST cleanup endpoint, and dispatch-close on an
-orphan dispatch that never finalized. TASK-2BPWM and TASK-D0GA3 are not wasted
-work.
-
-DIRECTION, to be argued rather than assumed:
-- The likely fix is that `finalize` should record worker completion WITHOUT
-  closing the dispatch — a distinct tx type (implementer.reported?) that
-  scan_open_dispatches does not treat as terminal — leaving implementer.done to
-  the manager. That preserves dec_3M7M0's "finalize is the sole success signal"
-  for the WATCHER while restoring the manager's close.
-- Whatever shape is chosen, closing must stay idempotent and must not strand a
-  dispatch open forever when the manager dies mid-integration.
-- Backfill is out of scope, but the fix must not choke on the ~10 dispatches
-  already closed this way.
-
-Acceptance:
-- after a worker runs `dispatch finalize --commit`, `manager dispatch-status`
-  still lists the dispatch as open
-- `manager dispatch-close --status done --merge-sha <real merge>` succeeds and
-  records the manager's merge sha, and removes the worktree and branch
-- a dispatch that is never finalized still closes via dispatch-close, unchanged
-- double-close is a clean no-op, not an error
-
-MANAGER VERDICT [2026-07-26] — MERGED at a41934a3d12d6a28c36eef75bfeffaefc7428d34 (worker commit ff902ee on top of
-the salvaged b40163f; implementer-claude-rmux, rmux / claude / claude-opus-5 /
-high, run run-20260726T195450-ca46c33862b7462fb515be5eef7c4da9, 21 min).
-
-This was round 2. Round 1 (run-20260726T193954) was killed at exactly 600s by
-the rmux stall-detector defect, TASK-RWCRN, with the worker mid-edit; its tree
-was salvaged to b40163f and round 2 resumed from it with the detector disabled.
-
-VERIFIED BY THE MANAGER:
-- cargo test -p orgasmic-cli — exit 0, all binaries green. Both headline tests
-  ran and passed: dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up
-  and dispatch_finalize_reports_without_closing_and_releases_lease.
-- cargo clippy --workspace --all-targets -- -D warnings — clean.
-- cargo fmt --all --check — clean.
-- The no-migration invariant, against real data rather than a fixture: built the
-  new binary and ran manager dispatch-status against this repo's live ledger,
-  which holds 141 historical *.done entries. Zero open dispatches, exit 0, no
-  crash. The old binary prints the same. Historical closes stay closed.
-
-TEST NOTE. cargo test -p orgasmic-daemon --lib gave 505 passed / 3 failed — the
-same three TASK-STWVB in-suite flakes as the D0GA3 merge, no new ones. The
-worker reported 508 / 0 for that command. That is now the third worker daemon-lib
-number this session that does not reproduce on the manager's machine. The
-failures are pre-existing and this change touches no daemon source, so the merge
-stands, but do not accept a daemon-lib count from a worker without re-running it.
-
-THE FIX IS MERGED BUT DORMANT. Workers resolve  from the daemon's
-launchd PATH, where both ~/.local/bin/orgasmic and ~/.orgasmic/bin/orgasmic are
-the INSTALLED runtime (0.0.15-dev.1, built 2026-07-25), not this build. Proof:
-this very dispatch's worker emitted implementer.done at 20:15:58, the old shape,
-so TASK-6AYEJ's own dispatch closed itself and dispatch-close was again
-unreachable — its worktree and branch were removed by hand for the second time.
-Nothing changes for live dispatches until the runtime is rebuilt. Until then the
-manager must keep removing worktrees by hand, and the 17 stale ones remain.
-
-MANAGER FINDINGS:
-1. The report's strongest evidence is understated. It frames the enumeration as
-   cheaper than the brief predicted, which is true, but the reason matters more
-   than the count: the daemon keys completion off the finalize TOMBSTONE
-   (requires_worker_finalize / finalized_by_worker), never the tx type. That is
-   why dec_3M7M0 survives a tx-type change at all. Worth carrying into
-   architecture notes rather than leaving in a dispatch report.
-2. The architector call is argued well and I accept it, but it rests on "a stage
-   run on main has no manager.dispatch_started, so a report-only tx leaves
-   nothing open". That invariant is load-bearing and is asserted in prose, not by
-   a test. If stage runs ever gain a dispatch record, this breaks silently.
-3. New ordering constraint, correctly flagged as a consequence rather than a
-   regression: a reviewer cannot be dispatched for a task whose implementer
-   dispatch is still open. That is the forcing function that makes cleanup
-   happen, and the error names the remedy — but it changes the manager's
-   habitual sequence and will surprise the first manager who hits it.
-4. mark_matching_dispatch_reported's task-overlap fallback can paint [reported]
-   on the wrong record for legacy entries with no RUN_ID. Cosmetic; it gates
-   nothing. Accepted as written.
-
-Reviewer pass still owed on the merged diff.
-
 * DONE TASK-6AYEJ.1 6AYEJ fix round: bind dispatch-close to a generation, not a task, and fail closed on unmatched RUN_ID :cli:dispatch:fix:
 :PROPERTIES:
 :ID: TASK-6AYEJ.1
@@ -9915,88 +11158,6 @@ FIX DIRECTION: normalize/tokenize git command examples instead of using fixed by
 - Normal uninterrupted and nested recovery associations accumulate correctly through run_ids; non-worker runs correctly skip the association.
 - run_ids is unbounded but its ordered-set iteration is not a material hot-path regression at realistic recovery counts, and globally generated run ids do not create cross-generation overlap absent a forged ledger or an identity collision.
 - The TASK-WGXKD.1 capability-refusal operator path is recoverable: preflight happens before commit/output mutation, the lease stays live, tokenless close prints the generation token, and exact-token close can release it.
-
-* DONE TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact :drivers:rmux:bug:production:
-:PROPERTIES:
-:ID: TASK-6FNAY
-:PRIORITY:    P1
-:END:
-
-Fix round for the reviewer BLOCK on TASK-8W30B (merged d60c4ed / d3fae4d).
-Reviewer: reviewer-codex-acp-stdio (acp-stdio / codex / unknown / unknown),
-run-20260726T110214. Findings are also in tx as reviewer.finding
-tx-20260726-orgasmic-2872..2876. The merged change is NOT reverted: measured
-release growth did go from +8 to 0 on the happy path. What follows is the
-failure path it did not make reliable.
-
-1. HIGH — the reaper can be cancelled before its fallback ever runs.
-`run_live_session` builds the SDK facade with a 5s default timeout;
-`reap_rmux_session` awaits `Session::kill()` before starting a separately
-bounded 5s CLI fallback; and `stop_and_join_driver_producer`
-(supervisor.rs:3983-3989) wraps the whole `release` in a third 5s timeout. A
-transport that is gone but does not fail fast eats the entire outer budget in
-the SDK attempt, and the fallback gets no guaranteed opportunity to start.
-
-The severe part is what cancellation costs. `release` sets `released = true` and
-does `self.session.take()` BEFORE the await, so when the outer timeout drops the
-future the only `Session` handle drops with it. The following `drop(control)`
-sees `session == None` and the Drop backstop cannot retry. That reproduces the
-original production symptom exactly: session, pty and harness survive release.
-Fix: one authoritative release budget with the SDK attempt strictly shorter than
-the total and time reserved for the CLI fallback, or a caller budget large enough
-for both. Do not `take()` the only handle before a cancellable await without a
-durable retry owner.
-
-2. MEDIUM — the reap error is still invisible. `release` returns `reap_result`,
-but supervisor.rs:3988 assigns the nested timeout result to `_`, discarding both
-`Ok(Err(DriverError::Transport(..)))` and `Err(Elapsed)`. `release_one` then
-removes the record, writes `Lifecycle::Release` and returns success. The
-invisible warn became an invisible Result. Fix: inspect both layers; keep
-producer/drain/lifecycle cleanup unconditional so an error can never strand a
-run, but emit an error with run and transport context after cleanup.
-
-3. MEDIUM — the CLI fallback can address the wrong daemon. It shells out to bare
-`rmux kill-session -t <stored string>`, but rmux-sdk 0.9.0 stores the resolved
-endpoint AND the sanitized protocol-owned name on `Session`, and its builder
-honours `RMUX_SDK_ENDPOINT`, while the CLI resolves `-S`/`-L`/`$RMUX`/default
-instead. A session acquired via a custom endpoint falls back against a different
-daemon: usually it just leaks, but if that daemon holds the same target name it
-kills the wrong session. The name happens to match today only because
-`make_run_id`/`RuntimeIdentity::new` emit safe components —
-`RuntimeIdentity::planned` accepts arbitrary strings and `run_live_session`
-copies `session_target` before `SessionName::new` sanitizes `.` and `:`. Fix:
-capture `session.name()` and `session.endpoint()` from the handle before the
-primary kill and pass the endpoint explicitly. Do not maintain a second, weaker
-identity.
-
-4. MEDIUM — a cancelled release loses its `RunComplete`. Confirmed, with the
-manager s no-strand reasoning upheld: explicit release keeps the RunRecord until
-the drain joins, then removes it and writes `Lifecycle::Release`, and a
-terminal-event-driven release already persisted its terminal event first. So no
-run is stranded — but the latch is set before the reap, Drop aborts the competing
-watcher, and the driver summary is simply lost. Fix: publish the release-owned
-`RunComplete` claim before the fallible reap, or make terminal publication
-cancellation-safe.
-
-5. MEDIUM — the regression test cannot gate anything. It returns success when the
-binary is missing/incompatible and again when acquire reports inert, and it calls
-`control.release` directly, so it cannot reach any of the four failures above.
-Keep it as a live smoke and add deterministic coverage for SDK failure, CLI
-fallback, cancellation, and endpoint/target propagation — including a
-supervisor-path regression that stalls the SDK request and proves the fallback
-runs and the session is gone after `Supervisor::release`.
-
-Out of scope: the known-red trio, and TASK-099T6.
-
-Acceptance:
-- a stalled SDK kill still results in a reaped session via the CLI fallback,
-  proven by a supervisor-path test that goes through the real 5s caller timeout
-- a reap failure appears in the daemon log with run and transport context, and
-  cleanup still happens unconditionally
-- the fallback targets the endpoint and name owned by the SDK handle
-- a cancelled release does not silently drop its RunComplete
-- at least one test fails, rather than skips, when rmux is absent in a lane
-  designated as a gate
 
 * DONE TASK-6HJYT Split the liveness question out of the recovery inventory :daemon:api:architecture:
 :PROPERTIES:
@@ -12967,83 +14128,6 @@ Audit-surfaced arch_C87Z9 gap: =orgasmic tasks=, =orgasmic task=, =orgasmic glos
 
 ** Worklog
 
-* DONE TASK-BX5SR One bad mutation kills the daemon writer task, and every write in the process fails until restart :daemon:writer:availability:
-:PROPERTIES:
-:ID: TASK-BX5SR
-:PRIORITY: P1
-:WRITE_SCOPE: crates/orgasmic-core/**,crates/orgasmic-daemon/**
-:END:
-
-** Description
-
-MEASURED DURING A LIVE OUTAGE, 2026-08-02, daemon boot =f8f67c0c=.
-
-Timeline from =~/.orgasmic/logs/daemon.out.log=:
-
-: 22:20:22.139  ERROR api: writer transaction failed
-:                     error=cached mutation lacks its recorded identity
-: 22:20:22.770  WARN  supervisor: session append failed
-:                     error=writer task is gone  run_id=run-20260802T215608-...
-: 22:21:45.489  ERROR api: writer transaction failed error=writer task is gone
-: 22:21:52.686  ERROR api: writer transaction failed error=writer task is gone
-
-One transaction failed on a cache-identity check, and 0.63s later the WRITER
-TASK ITSELF WAS GONE. From that moment every write in the daemon failed:
-=task update --state= returned 500 =failed to apply changes=, =manager
-dispatch-close= appended its tx but could not update the lifecycle, and the live
-TASK-FZB6T.2 workers session appends were dropped on the floor.
-
-Reads stayed healthy throughout — =orgasmic status=, =task get= and
-=dispatch-status= all answered normally — so from the outside the daemon looked
-FINE. That is the worst property of this failure: a manager can keep issuing
-commands and reading plausible state while nothing is being persisted.
-
-** What it cost
-
-The in-flight implementer for TASK-FZB6T.2 was guaranteed to lose its report,
-because =orgasmic dispatch finalize= is a WRITE. Recovering the writer required a
-daemon restart; the restart released the run and the rmux pane died with it, so
-the worker was killed mid-task with 2,452 insertions uncommitted. The manager
-preserved them as =d982af1= on =task-fzb6t.2-impl=.
-
-Note the shape: this is the SECOND report lost on this task in one session, by
-two completely different mechanisms (the first was the tmux stall ceiling). The
-=dispatch finalize= contract has no durable fallback when the daemon cannot
-write.
-
-** Two defects, and they should probably be separated
-
-1. *A failing transaction must not kill the writer.* Whatever
-   "cached mutation lacks its recorded identity" is, it is a per-request error
-   and belongs in a 500 for THAT request. Taking the writer down converts one
-   bad request into a total write outage. Same class as TASK-KKGKM, where one
-   unreadable project killed the whole runtime.
-2. *A dead writer must be loud and must be recoverable without a restart.*
-   =orgasmic status= reported =parse_errors: 0= and looked healthy while every
-   write was failing. At minimum status should report writer liveness; better,
-   the writer should be supervised and restarted in place.
-
-Note =orgasmic restart= itself degraded: it reported
-=daemon pre-stop drain returned 500: failed to drain writer before restart=
-and warned that mid-flight releases may be unreported — correct behaviour given
-the state, but it means the recovery path is also compromised by the same fault.
-
-** Acceptance
-
-- A writer transaction that fails for any reason returns an error for that
-  request and leaves the writer task running. A regression injects a failing
-  mutation and proves the NEXT write succeeds.
-- =orgasmic status= (and =doctor=) report writer liveness, so a dead writer is
-  visible without reading daemon logs.
-- The writer is supervised: if the task does exit, it is restarted in place, or
-  the daemon fails loudly rather than serving reads as if healthy.
-- Root-cause =cached mutation lacks its recorded identity= specifically: what
-  produces a cached mutation with no recorded identity, and why is it reachable
-  from =manager dispatch-close=? The outage began on that exact call.
-- Consider a durable fallback for =dispatch finalize= so a worker report is not
-  lost when the daemon cannot write. Related: TASK-P9T4N (multi-tx writer
-  transaction so dispatch-close is one commit).
-
 * DONE TASK-BX5SR.1 Add a daemon-level retained-descriptor writer-sync regression and remove the transaction-loop panic :daemon:writer:
 :PROPERTIES:
 :ID: TASK-BX5SR.1
@@ -14181,37 +15265,6 @@ state that the CLI could consume? Answer this before writing a poll loop; a
 *Manager live probe 2026-08-09.* In an app-created =rmux/custom= terminal, Claude Code 2.1.226 was launched manually. An authenticated =POST /api/runs/<terminal-run>/input= returned =accepted:true= and Claude replied exactly =TMUX_POKE_OK=, proving daemon-to-pane wake is technically viable without provider-specific remote control. After =/exit= returned the pane to zsh, the same endpoint accepted the harmless payload =:= and executed it at the shell prompt, proving the current generic =pane_has_input_prompt= check is unsafe for a bare terminal because both Claude and zsh render =❯=. Inside that terminal, =orgasmic manager register= printed =already supervised ... nothing to do=, proving a manually launched manager remains role =terminal= rather than claiming the project manager slot. rmux-sdk 0.9 exposes =Pane::foreground_state= with best-effort pid, command, cwd, executable, and source labels; use that plus composer readiness to fail closed before pane injection. Traditional tmux lacks =DriverControl::send_input= today and needs parity. The corrected design target is one manager-wake contract with an explicit claimed terminal run, provider identity, foreground-process proof, composer readiness, and unsupported/busy states; =dispatch-wait= remains a fallback rather than the wake mechanism.
 *Implementation candidate.* Worker =implementer-codex-tmux=, driver =tmux=, harness =codex=, model =gpt-5.6-terra=, effort =xhigh=, generation =tx-20260809-orgasmic-5575=. Worker commit =585dfb6= merged as =e98ed372=. Manager gate under the syspolicyd watchdog: =cargo fmt --check=, targeted three-crate =cargo check=, and targeted three-crate =cargo clippy --all-targets -- -D warnings= all green. Independent review is still required; manager audit specifically handed off automatic provider claim UX and singleton-race enforcement as claims to attack.
 *Final completion.* Hardening subtask =TASK-D6N77.1= closed every rejected-review finding and is =done=. The final candidate =fcf0825..2f1bc78= received independent native Sol/high PASS with no actionable findings and was merged to main as =0423ae5=. The implementation provides documented =dispatch-wait= outcomes, daemon-owned generation/recovery authority, caller-bound manager claims, tmux fixed-marker wake with exact raw-byte proof, typed busy/mismatch/unavailable results, and the shipped manager convention/router updates. Guarded tests cover reported/died/timeout classification, restart recovery, exact marker delivery, shell no-op behavior, target loss, composer gating, claim lifecycle, and fail-closed authentication. No live daemon or LaunchAgent was touched.
-
-* DONE TASK-D6N77.1 repair rejected manager wake: make claim authority, pane delivery, and generation waiting honest :daemon:cli:manager:hardening:
-:PROPERTIES:
-:ID: TASK-D6N77.1
-:PRIORITY: P1
-:FIX_SUBTASK: t
-:END:
-
-** Description
-Fix every BLOCK SHIP finding from Sol/high review generation =tx-20260809-orgasmic-5580=. The full durable report is =.orgasmic/dispatch-records/tx-20260809-orgasmic-5580/last.txt= and the actionable finding tx entries are =5582= through =5590=.
-
-The normal app-terminal flow must work through plain =orgasmic manager register= after Claude Code or Codex CLI starts. Claim authority must be bound to the calling run and atomically participate in the one-manager-per-project supervisor lease across launch, external register, release, restart, and reattach. A claimed terminal must be represented consistently in manager state/UI.
-
-Automated pane delivery must remain =unsupported= unless the transport can prove a fresh, revision-bound foreground provider and bounded composer and condition the send on that same state. Never advertise fail-closed behavior over stale rmux foreground state or a tmux check-then-paste gap. Typed wake outcomes and stable distinct CLI exit codes are required.
-
-Move =dispatch-wait= to one daemon-owned generation authority or otherwise make the release-before-terminal-tx boundary and already-closed generations race-free. Preserve reported, died, and timeout outcomes by =started_tx= and ignore tmux =[pid-gone]=.
-
-*Manager plan correction after the blocked first fix pass.* A zero-byte guarantee is impossible for a manually started provider over tmux because process exit can race any check-then-paste. The honest shippable invariant is safe-by-construction delivery: remove arbitrary =--input= entirely; inject only the fixed marker =: 'ORGASMIC_MANAGER_WAKE_V1'=; teach the injected entry router to treat that marker exactly as =/orgasmic resume=. In Claude/Codex it is a resume request. If delivery races into zsh/bash, it is the =:= builtin with one inert literal argument and has no side effects. Foreground/composer proof remains a UX/targeting gate, not the safety authority. Prove the exact bytes and shell behavior in tests.
-
-** Acceptance
-1. All eight review findings are closed or explicitly superseded by the fixed-marker invariant, with targeted tests.
-2. Plain registration is caller-bound and singleton-safe across claim, launch, external register, release, restart, and state reporting.
-3. The only pane-injectable payload is exactly =: 'ORGASMIC_MANAGER_WAKE_V1'= plus submit; no user/project/task text reaches pane input. Real zsh and bash tests prove it is a side-effect-free no-op before provider start and after provider exit; Claude and Codex router tests prove it maps to resume.
-4. Foreground/composer mismatch and busy states remain typed refusals; unsupported is returned where the transport cannot deliver the fixed marker reliably.
-5. =dispatch-wait= uses daemon-owned generation authority and is race-free across release, report, and close while ignoring =[pid-gone]=.
-6. Typed wake and wait outcomes have stable distinct CLI exit codes and documented help.
-7. Isolated-daemon concurrency/lifecycle tests and a real non-billed dispatch-wait proof pass.
-8. No live runtime or LaunchAgent is touched during implementation.
-** Evidence
-*Round-two live evidence.* Terra/xhigh generation =tx-20260809-orgasmic-5609= committed =53d9fc4= (865 insertions / 285 deletions, 10 files) and finalized at 12:40 as =manager.dispatch_aborted= because reattach persistence and the full wait matrix remained. The manager watcher then waited falsely for over an hour: it searched only =dispatch-status= open lines for =[reported]/[run-gone]=; the aborted generation disappeared from that inventory, so an empty match looped forever. This is direct production-shaped proof that generation waiting must query durable daemon-owned terminal state by =started_tx=, including aborted/closed generations, rather than only open-dispatch lines.
-*Native-agent completion.* The operator disabled orgasmic dispatches for the remaining rounds and explicitly retained Terra/xhigh for implementation plus Sol/high for review. Terra implemented the reviewed candidate through commit =2f1bc78=; it was merged to main as =0423ae5=. Sol/high independently reviewed =fcf0825..2f1bc78= and returned PASS with no actionable findings. Guarded final verification passed: =cargo fmt --all -- --check=; =cargo check -p orgasmic-daemon -p orgasmic-drivers -p orgasmic-cli=; scoped WriterHandle failure isolation; malformed-header and lifecycle rollback; crash/restart recovery lineage; Present/Absent/Unobserved tmux recovery behavior; exact raw tmux marker bytes; typed target loss; composer gating; and shipped-router mapping. UI execution remained unavailable because local UI dependencies were absent; static UI contract changes were reviewed and no code defect was found. No live daemon, LaunchAgent, billed test, or external service was touched.
 
 * DONE TASK-D6Y0Y Implement manager tick loop and design-pipeline task surfaces :manager:
 :PROPERTIES:
@@ -30748,181 +31801,6 @@ the code. The reviewer's harness is the model: compile the test file's own
 extractor functions verbatim into a standalone probe and run them against
 mutated copies.
 
-* DONE TASK-RRT4T Eight rmux-dependent daemon tests silently pass when rmux is missing, which is why worker green claims keep not reproducing :testing:daemon:dispatch:trust:
-:PROPERTIES:
-:ID: TASK-RRT4T
-:PRIORITY: P0
-:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/boot_resilience.rs crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/tests/driver_modes.rs crates/orgasmic-drivers/tests/cursor_agent.rs crates/orgasmic-cli/tests/dispatch.rs
-:TEST_CMD:    cargo test -p orgasmic-daemon --lib
-:END:
-
-Eight rmux-dependent tests in `crates/orgasmic-daemon/src/api.rs` silently
-return (and therefore PASS) when `rmux` is not on PATH:
-
-    if !rmux_available_for_test() {
-        eprintln!("skipping <name>: rmux binary not found");
-        return;
-    }
-
-`rmux_available_for_test()` is `probe_rmux_binary().found`, which resolves
-`rmux` from PATH only (crates/orgasmic-drivers/src/modes/rmux.rs:197-210). The
-skip prints to stderr, which `cargo test` swallows without `--nocapture`. The
-run then reports `504 passed; 0 failed` — literally true, and completely
-misleading.
-
-MEASURED 2026-07-26, manager-direct, on main at the TASK-STWVB merge, same
-machine, same commit, one variable changed:
-
-| PATH                             | result          | wall   | syspolicyd CPU |
-|----------------------------------|-----------------|--------|----------------|
-| normal (rmux on ~/.local/bin)    | 502 passed, 2 failed | 106.5 s | +281 s |
-| /usr/bin:/bin:/usr/sbin:/sbin... | 504 passed, 0 failed |  22.3 s | + 32 s |
-
-The second row reproduces, to the second, what the TASK-STWVB round-2
-implementer reported as proof its fix worked: 504/0 at 24.9 / 27.5 / 26.1 s.
-Its fix did not green those tests; its environment skipped them.
-
-WHY THIS IS P0
-
-This is the mechanism behind three consecutive over-reports today:
-- TASK-8W30B: worker measured +5 leaked sessions/run, manager measured +1
-- TASK-6FNAY: worker reported 504/0, manager measured 502/2 three times
-- TASK-STWVB r2: worker reported 504/0 x3, manager measured 502/2 four times
-
-Every one is the same shape, and the shape is not worker dishonesty — each
-phrased its claim carefully. A dispatched worker inherits the daemon's PATH.
-The daemon runs under launchd, which does not carry `~/.local/bin`, so `rmux`
-is absent for workers and present for the operator. Worker green on this crate
-therefore does not mean what it says, and no amount of brief discipline fixes
-it.
-
-Corroborating evidence in the round-2 report itself: it recorded
-`orgasmic-rmux-run-*` sessions as 7 before / 7 after three runs. A real run of
-`post_artifact_regenerate_hot_path_reuses_live_run_id` creates rmux sessions,
-and the manager's runs grew 7 -> 10 (+1 per run, the known panic-abandon).
-Zero growth was the tell that the test never ran.
-
-FIX
-
-1. A skipped test must be visible in the default `cargo test` summary. Options,
-   in preference order: (a) make the guard `panic!` unless an explicit
-   `ORGASMIC_ALLOW_SKIP_RMUX_TESTS=1` opt-out is set, so the default is loud;
-   (b) mark them `#[ignore]` and run them via an explicit filtered gate, so the
-   summary counts them as ignored rather than passed.
-2. Whatever the mechanism, `cargo test -p orgasmic-daemon --lib` must not be
-   able to print `504 passed; 0 failed` while eight tests did nothing.
-3. Give dispatched workers a PATH that finds the tools their gates need, OR
-   make the worker persona report the skip count with every test claim. Prefer
-   the first; the second is a documentation fix for an environment defect.
-4. Audit for the same pattern elsewhere: any `if !X_available() { return }` in
-   a test is the same trap. tmux and cursor-agent guards are the likely
-   siblings.
-
-Acceptance:
-- with rmux absent, the daemon suite cannot report a clean all-passed summary
-- the count of skipped-for-missing-tooling tests is visible without --nocapture
-- a manager reading a worker's test claim can tell whether the scoped test ran
-
-FOOTPRINT CORRECTED [2026-07-26], before dispatch. Two changes to the numbers
-above; neither weakens the finding and one widens it considerably.
-
-1. The count is SEVEN `if !rmux_available_for_test()` call sites in api.rs, not
-   eight. The eighth match in the original grep was the helper's own definition.
-   Every measurement in this task stands; only the count was wrong, and it was
-   repeated into gotchas.org and three commit messages.
-
-2. The pattern is not confined to api.rs. Fourteen files across three crates
-   carry a tooling skip:
-   - crates/orgasmic-daemon/src/api.rs (7 rmux guards), supervisor.rs
-     (command_available_for_test("tmux")), watcher.rs
-   - crates/orgasmic-drivers/src/modes/rmux.rs, modes/tmux.rs,
-     adapters/claude.rs, adapters/codex.rs
-   - crates/orgasmic-daemon/tests/{dispatch_endpoint,boot_resilience,
-     recovery_fault_restart}.rs
-   - crates/orgasmic-drivers/tests/{driver_modes,cursor_agent}.rs
-   - crates/orgasmic-cli/tests/dispatch.rs, crates/orgasmic-cli/src/manager.rs
-
-   So `cargo test -p orgasmic-drivers` reporting "236 passed / 0 failed" has the
-   same hole, and that figure was already quoted as evidence in a worker report
-   today.
-
-3. Four of the skips are worse than tool-absent — they read
-   "skipping ...: SDK degraded to inert". A test that skips because the driver
-   degraded skips exactly when there is something to find. Those deserve to be
-   errors, not skips, and are worth calling out separately from the PATH problem.
-
-DESIGN DIRECTION chosen for the dispatch: one sentinel test per test binary that
-fails when tooling its gated tests need is absent, plus a per-tool environment
-opt-out, plus routing the existing guards through one shared helper so the gated
-set is discoverable in one place. Converting 63 call sites into 63 hard failures
-was rejected: it would stop anyone without claude on PATH from running the suite
-at all, which is how an escape hatch becomes permanent.
-LANDED [2026-07-26]. Merged f894a7a. Second attempt — the first reached `ready`
-and never began a turn (see TASK-VZMZE). Implementer implementer-codex-acp-stdio
-(acp-stdio / codex / gpt-5.6-sol / xhigh), run
-run-20260726T154818-c0acbe719bd141879e00d3d3d3a483be, 42 minutes, +579/-214
-across 13 files.
-
-MANAGER VERIFICATION — the acceptance criterion, run directly, not read from the
-report.
-
-A. Hidden PATH, `cargo test -p orgasmic-daemon --lib`. Before this change that
-   printed `504 passed; 0 failed` in 22 s while seven tests did nothing. Now:
-
-     exit 101
-     test supervisor::tests::required_test_tooling_is_present ... FAILED
-     required test tooling is missing: rmux (gates 7 tests); gated tests did not
-     run. Install the tooling or explicitly acknowledge only these skips with
-     ORGASMIC_ALLOW_MISSING_TOOLS=rmux
-
-   That is exactly the scenario that produced three false green reports today,
-   and it can no longer happen silently. The message names the tool, the count,
-   and the remedy.
-
-B. Hidden PATH with ORGASMIC_ALLOW_MISSING_TOOLS=rmux: the sentinel passes, so
-   the per-tool opt-out works. The run was not clean for an unrelated reason —
-   `api::tests::recovery_reattaches_tmux_session_when_handle_exists` failed with
-   "interrupted" instead of "reattached". That test is on the original TASK-STWVB
-   list of four and has a history of intermittency, but note it FAILED rather
-   than skipped under a restricted PATH, which suggests it may be sensitive to
-   PATH in production code rather than in the test. Worth its own look; not
-   attributed to this change.
-
-C. Normal PATH: 504 passed / 2 failed of 506. The two are exactly the
-   pre-existing STWVB pair. Test count rose by one for the sentinel. No
-   regression.
-
-WHAT SHIPPED
-- `orgasmic_drivers::modes::rmux::test_tooling` — per-tool probes, the sentinel
-  API, per-test skip diagnostics, a shared environment lock, and
-  `assert_not_degraded`.
-- `required_test_tooling_is_present` in every affected default-running test
-  binary, with explicit gated-test counts: daemon lib rmux 7 / tmux 6 / bash 1;
-  drivers lib rmux 9 / tmux 8 / claude 7 / codex 1 / sleep 1 / bash 1; and
-  smaller counts for the four integration binaries.
-- The four "SDK degraded to inert" exits became assertion failures. Those were
-  the worst of the set — a test that skips because the driver degraded skips
-  exactly when there is something to find.
-- Paid live smokes moved to `#[ignore]`, so default output counts them instead
-  of hiding them, and an explicit invocation fails loudly if its tool is absent.
-
-FINDINGS FOR THE REVIEWER PASS
-1. `test_tooling` is a `pub mod` in the production drivers crate, not test-gated.
-   The comment gives a real reason — integration-test crates cannot import
-   `#[cfg(test)]` modules — but the idiomatic answer is a `test-support` cargo
-   feature or a separate dev-dependency crate. As shipped, test scaffolding is
-   public API of a production library and cannot be removed without a breaking
-   change.
-2. The sentinel is slow: `has been running for over 60 seconds` in-suite, while
-   `command_available` is only a PATH lookup. Either `command_succeeds` spawns
-   are paying the macOS exec cost, or the sentinel is queued behind live tests on
-   the shared `test_environment_lock`. Either way its duration is a function of
-   unrelated tests, which is a poor property for the one test that reports
-   environment health.
-3. Suite wall time went from ~106 s to 152 s on the same machine. Some of that is
-   variance — 140 s was observed earlier today — but it should be measured
-   deliberately rather than assumed.
-
 * DONE TASK-RVEKT Fix daemon /tx endpoint to persist tx records to .orgasmic/tx/*.org :daemon:tx:dispatch:reliability:bug:
 :PROPERTIES:
 :ID:               TASK-RVEKT
@@ -31798,863 +32676,6 @@ Reply =accept= to let planning complete, or describe revisions to task boundarie
 - [2026-05-21 Thu 19:41] Verified the planning-only edit against the current Rust workspace.
 - [2026-05-21 Thu 19:42] Backfilled the planner draft audit event into the project tx file with explicit operator authorization.
 - [2026-05-21 Thu 20:16] Closed planner draft after user acceptance; handed implementation chain off to manager.
-
-* DONE TASK-STWVB The daemon suite has no trustworthy full-run signal on this host, so its gate cannot return a verdict :testing:daemon:flake:
-:PROPERTIES:
-:ID: TASK-STWVB
-:PRIORITY: P2
-:WRITE_SCOPE: crates/**,scripts/**,verify/**
-:END:
-
-=== READ THIS FIRST — STATUS [2026-08-05] ===
-NOT BLOCKED. TASK-8W30B is DONE; the block recorded below was lifted on
-2026-07-26. No worker has ever been dispatched for this task.
-
-THE TITLE AND THE OPENING PARAGRAPH BELOW ARE BOTH DISPROVED. Read the LAST
-section of this task, not the first. Three successive re-measurements superseded
-the original inventory:
-  - [2026-07-26] of the four tests named below, THREE never failed in 5 runs,
-    and two tests not on the list did. The 13-minute runs behind the original
-    claim were made on a thrashing disk (89% full, 57 GB target/); repaired, the
-    suite runs in ~45s.
-  - [2026-07-26] the "shared global state" hypothesis is wrong for
-    poll_direct_child_pid: the process is alive, blocked, and has consumed ZERO
-    CPU, so it is wedged before executing an instruction — a deadline the
-    machine cannot meet, not a data race.
-  - [2026-08-02] a full run produced 14 failures, NONE of them the three in the
-    table; all 14 touch a live mux or probe processes, and all 14 passed alone
-    in 8s against the same binary. syspolicyd at 586% CPU was the discriminator.
-
-CURRENT FRAMING, which supersedes everything above it: the suite has NO
-TRUSTWORTHY FULL-RUN SIGNAL ON THIS HOST, so the original acceptance criterion
-("green, repeatedly, at full parallelism") CANNOT BE EVALUATED. The first
-deliverable is a gate that returns a defensible verdict on a loaded machine.
-Naming a per-test cause still matters, but it is no longer the entry point.
-=== END STATUS ===
-
-Every full `cargo test -p orgasmic-daemon --lib` run fails the same four tests,
-and each passes alone:
-
-- api::tests::post_artifact_regenerate_hot_path_reuses_live_run_id
-- api::tests::recovery_inventory_waits_for_atomic_claim_commit
-- api::tests::recovery_reattaches_tmux_session_when_handle_exists
-- supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling
-
-Measured 2026-07-25: 496 passed / 4 failed, and the identical four with an
-unrelated change stashed out. They only fail under full-suite parallelism, not
-in a filtered subset, so the trigger is cross-test interference rather than any
-one test's logic.
-
-Why this is worth fixing rather than tolerating: a suite that always fails four
-tests cannot answer "did my change break something?". Establishing that these
-four were pre-existing cost two full 13-minute runs during TASK-KKGKM — a
-stash-and-compare that every future change to this crate has to repeat. A red
-suite is also indistinguishable from a red suite with one new real failure in
-it.
-
-Leads, not conclusions:
-- These tests share process-global state: `live_session_guard()` and static
-  hooks such as `RECOVERY_POST_ORIGIN_AUTHORITY_HOOK`, which serialize some
-  tests against each other but not against everything that observes the same
-  state.
-- The same class of bug was found and fixed in the CLI crate on the same day:
-  `path_env`'s tests set process-global PATH to a bare tempdir, so any
-  concurrently running test spawning a PATH-resolved tool failed with a bare
-  `NotFound` (~3 runs in 4). Worth checking whether these four have an analogous
-  shared-environment dependency before assuming a timing race.
-- Two of the four are tmux/mux-dependent, so a real external session leaking
-  between tests is also plausible.
-
-Acceptance:
-- `cargo test -p orgasmic-daemon --lib` is green, repeatedly, at full
-  parallelism
-- the cause is named per test, not worked around by serializing the whole suite
-- if any test genuinely requires exclusive global state, it says so and enforces
-  it, rather than depending on scheduling luck
-RE-MEASURED [2026-07-26], and the original inventory does not hold.
-
-The "four tests fail on every full run" claim was made while the build
-environment was badly degraded: the disk was 89% full, target/ was 57 GB with
-164,619 retained .o files, and a full `cargo test -p orgasmic-daemon --lib` run
-took 13 minutes. After clearing that (dead worktree targets, 31 GB of
-incremental, a stale Time Machine snapshot, and switching the dev profile to
-line-tables-only) the same suite runs in ~45 seconds and target/debug is 3.4 GB.
-
-Five consecutive full runs at default parallelism on the repaired environment:
-
-| test                                                          | failed |
-|---------------------------------------------------------------|--------|
-| api::post_artifact_regenerate_hot_path_reuses_live_run_id       | 3/5    |
-| recovery_claim::reconcile_pending_rejects_rename_swap_after_open| 2/5    |
-| api::post_artifact_regenerate_cold_changed_address_replaces_... | 1/5    |
-| api::recovery_inventory_waits_for_atomic_claim_commit           | 0/5    |
-| api::recovery_reattaches_tmux_session_when_handle_exists        | 0/5    |
-| supervisor::poll_direct_child_pid_prefers_worker_server_over_...| 0/5    |
-
-So three of the four originally named tests did not fail once, and two tests
-that were never on the list do fail. The suite is green outright in 1 run of 5.
-
-What this means: a 13-minute run on a thrashing disk stretches every await long
-enough to tip deadline-bounded waits, which is why the failure set looked stable
-and looked like those four. The environment was a confound. The remaining three
-are real flakes but a smaller and different problem than recorded.
-
-Also fixed and split out of this task:
-- stall_detector_revalidates_after_driver_event_race — root-caused to
-  Supervisor::new's own 50ms timeout monitor releasing the aged run out from
-  under the test, not to load. Fixed in a629a51 with Supervisor::unmonitored.
-  wait_for_event_count no longer reports a released run as "event_count 0".
-- The 3 dispatch_endpoint failures were a separate, deterministic defect
-  (TASK-5T575, fixed in 05d029b).
-
-Remaining scope for this task is the three flakes in the table, not the original
-four. The regenerate pair are the priority — both touch the same hot/cold
-artifact-regenerate launch-record path, so they are likely one cause.
-GATE IS BLOCKED BY TASK-8W30B [2026-07-26], and this is a measurement problem
-rather than a remaining-work problem.
-
-The rmux session leak adds 8 leaked sessions per full-suite run (manager-
-confirmed: 23 -> 31 across one run, from a known-empty daemon). Saturation
-degrades the rmux driver to inert, at which point
-`post_artifact_regenerate_hot_path_reuses_live_run_id` fails on all retries with
-`409 capability_unsupported: send_input`.
-
-So '5 consecutive green full-suite runs' cannot be satisfied on a machine where
-each run makes the next one worse. The gate should be re-run only after
-TASK-8W30B lands, and the two fixed tests should be judged on the controlled
-before/after they already have rather than on an absolute streak.
-
-Post-merge state, 3 runs on a quiet machine (499-500 passed):
-- reconcile_pending_rejects_rename_swap_after_open: 0/3 — FIXED, was 4/6
-- post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 — TASK-8W30B
-- poll_direct_child_pid_prefers_worker_server_over_generic_sibling: 3/3 in-suite
-  but PASSES ALONE on both the pre-merge and post-merge commits, so it is
-  in-suite interference and specifically NOT a regression from the merge
-  (checked deliberately, since the implementer touched its sibling)
-- recovery_inventory_waits_for_atomic_claim_commit: 1/3
-
-Remaining scope after the merge: the interference behind poll_direct_child_pid
-and recovery_inventory, both of which pass in isolation.
-STATE CORRECTED [2026-07-26]: in_review -> in_progress, and the root-cause
-attribution above is DISCONFIRMED.
-
-The block is lifted: TASK-8W30B merged (d60c4ed / d3fae4d) and release growth
-went from +8 per suite run to 0, manager-measured independently. So the
-"measurement problem" framing above no longer applies — the environment no
-longer degrades run over run.
-
-But the line "post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 —
-TASK-8W30B" attributed that failure to the leak, and that is now wrong. On the
-merged tree, with release growth at zero, the test still fails:
-
-    assertion `left == right` failed: two consecutive rounds must reuse one run_id
-      left:  run-20260726T105347-034ff6ca59844f43a18a9a0ae8a3ba2c
-      right: run-20260726T105337-c9b87801bc334547a747b5b8ebf2277a
-
-That is a run-id reuse failure, not a `409 capability_unsupported: send_input`
-saturation failure. The leak may have aggravated its environment; it was not the
-cause. The reviewer on TASK-8W30B reached the same conclusion independently.
-
-Remaining scope is therefore three tests, not two:
-- post_artifact_regenerate_hot_path_reuses_live_run_id — needs its own root
-  cause, in the hot/cold artifact-regenerate launch-record path
-- poll_direct_child_pid_prefers_worker_server_over_generic_sibling — in-suite
-  interference, passes alone
-- recovery_inventory_waits_for_atomic_claim_commit — same shape, passes alone
-
-Do not re-run a "5 consecutive green" gate as the closing condition until the
-first of those has a named cause. An absolute streak was the wrong instrument
-while the environment degraded, and it is still the wrong instrument for a
-deterministic assertion failure.
-ROOT CAUSE MEASURED [2026-07-26], manager-direct. The "cross-test shared global
-state" hypothesis at the top of this task is WRONG for poll_direct_child_pid.
-The cause is process-creation latency, and the test is simply asserting a
-deadline the machine cannot meet while the suite runs.
-
-WHAT WAS MEASURED
-
-Both remaining tests pass alone and fast: poll_direct_child_pid in 0.42 s,
-post_artifact_regenerate_hot_path in 0.80 s. In-suite they now fail 3/3, not
-intermittently — that is an improvement, because deterministic is debuggable.
-
-Running each module alone at full parallelism is green:
-- supervisor::tests  99 passed, 12.0 s
-- api::tests        199 passed, 37.5 s
-So the interference is cross-module, not within either.
-
-Live capture of the fake cursor-agent during a full run (three separate runs,
-same result). The test writes a bash script that backgrounds two sleeps, touches
-`children-ready`, then sleeps; it waits up to 30 s for that file:
-
-- the process IS alive the whole time — it is not killed, not starved of a slot
-- it has ZERO children, so it never reached even its first `&`
-- state is S (blocked), never R (runnable), so it is not losing a CPU race
-- CPU time stays at 0:00.00 across 28+ seconds of sampling — it never executed
-  a single instruction
-
-A process that is alive, blocked, and has consumed no CPU is wedged BEFORE
-execution, not running slowly.
-
-THE DISCRIMINATOR
-
-An unrelated trivial bash script (`#!/bin/bash` + one `touch`), spawned from
-outside the test binary while the suite ran, timed at:
-
-    6205 ms, 2993 ms, 63771 ms, 64 ms, 354 ms
-
-Sixty-three seconds to spawn a two-line shell script, then 64 ms a few seconds
-later. Process creation on this machine intermittently stalls for seconds to a
-minute while this suite runs. Nothing about the test is special; it is just the
-one test that asserts a 30 s deadline on a freshly spawned external process.
-
-Caveat on that measurement, stated so nobody over-reads it: the timestamps were
-taken by spawning python3, so each figure includes one additional process
-spawn. That does not change the conclusion — spawning anything is what is slow —
-but the per-call attribution is not exact.
-
-Peak process count during a run was only ~720 against a 5333 maxprocperuid, and
-fd limit is 1048576, so this is not simple resource exhaustion. The likely
-mechanism is serialization in macOS exec (code-signing / syspolicy validation)
-under many concurrent spawns, which is worth confirming before designing around
-it.
-
-CONSEQUENCE FOR THE FIX
-
-Do not fix this by raising the 30 s deadline. Sixty seconds was observed, so any
-constant is a guess. Either remove the dependence on a freshly spawned external
-process reaching a checkpoint, or serialize the process-spawning tests against
-each other so the suite stops competing with itself for exec.
-
-The same mechanism is a plausible cause for post_artifact_regenerate_hot_path:
-its two run_ids are 10 s apart, consistent with round one exceeding a deadline
-and its run being released before round two. Not yet confirmed — do not record
-it as established.
-MECHANISM CONFIRMED [2026-07-26]. It is macOS first-exec evaluation, and it is
-measurable in three lines on a completely idle machine:
-
-    fresh script #1 first exec: 0.18 s    second exec: 0.00 s
-    fresh script #2 first exec: 0.15 s    second exec: 0.00 s
-    fresh script #3 first exec: 0.16 s    second exec: 0.00 s
-
-macOS charges roughly 150-180 ms of syspolicy/Gatekeeper evaluation the first
-time a newly created executable is exec-ed, and nothing thereafter. Idle spawns
-of an already-evaluated script are 0.00 s, which is why every one of these tests
-passes alone.
-
-That per-file cost is paid through a single system daemon, so concurrent first
-execs queue. This suite writes many fresh executable fixtures into tempdirs and
-execs them in parallel, which is how a 150 ms cost becomes the 3 s / 6 s / 63 s
-spawns measured earlier. The failing test is not special; it is the one that
-asserts a 30 s deadline against that queue.
-
-So the chain is: fresh fixture -> per-file Gatekeeper evaluation -> serialized
-daemon -> queue under suite parallelism -> a spawned helper that never reaches
-its first instruction inside the deadline.
-
-FIX DIRECTION
-
-Stop paying the per-file cost per test. The fixture script should be created and
-exec-ed ONCE per test binary and then reused, with the per-test variation moved
-out of the file contents and into argv, so the second and subsequent uses hit
-the warm path. Pre-warming a shared fixture is preferable to serializing the
-tests, because it removes the cost rather than queueing it, and it also speeds up
-every other spawn-based test in the crate.
-
-Raising the deadline is not a fix. 63 s was observed; any constant is a guess.
-
-NOTE FOR CI (TASK-S2KM0): this mechanism is macOS-specific. A Linux runner has
-no Gatekeeper and will very likely not reproduce it, so this test could pass in
-CI while failing on every developer Mac. That is an argument for fixing the
-fixture rather than tolerating the failure locally, and for not concluding "green
-in CI" means "green".
-
-ROUND 2 MERGED, GATE NOT MET [2026-07-26]. The fix is real and kept; the green
-claim is not reproducible.
-
-Merged 67e427c (shared warm fixture in crates/orgasmic-daemon/src/test_fixtures.rs,
-converted spawn fixtures, gotchas entry). Worker: implementer-codex-acp-stdio
-(acp-stdio / codex / gpt-5.6-sol / xhigh), run
-run-20260726T125001-9e991bce9f75485a84e2f4be1d127800. It reported 504 passed /
-0 failed on three consecutive runs at 24.9 / 27.5 / 26.1 s.
-
-Manager measurement on the merged tree, four runs:
-
-    502 passed / 2 failed   106.5 s
-    501 passed / 3 failed   112.1 s   (+ recovery_inventory, known flake)
-    502 passed / 2 failed   108.2 s
-    502 passed / 2 failed   106.5 s
-
-Both target tests still fail:
-- post_artifact_regenerate_hot_path_reuses_live_run_id — now 409 "harness busy"
-  rather than the earlier run_id mismatch
-- poll_direct_child_pid_prefers_worker_server_over_generic_sibling — still
-  "fake cursor-agent did not start children" at its 30 s deadline
-
-WHY THE WORKER SAW GREEN — see TASK-RRT4T. Removing rmux from PATH, changing
-nothing else, turns the manager's own run into 504 passed / 0 failed in 22.3 s,
-reproducing the worker's numbers exactly. Eight rmux-dependent tests silently
-return when the rmux binary is not found. The worker's own 7-before / 7-after
-session count was the tell: the test never ran.
-
-WHAT THE ROUND-2 WORK DID ESTABLISH, verified independently:
-- Hard-linking a warmed executable does dodge first-exec evaluation. Measured:
-  fresh direct exec 196 ms, second exec 4 ms, hard link to a new path 4 ms, a
-  byte-identical COPY 162 ms. So link_shared_test_executable is sound and the
-  inode, not the path, is the cache key.
-- The pressure is inside the rmux test path, not in the converted fixtures.
-  syspolicyd CPU during one suite run: +281 s with rmux present, +32 s with
-  rmux absent, against ~106 s and ~22 s of wall time. The rmux binary itself is
-  cheap (9.2 ms/exec, 0.0 ms of syspolicyd), so the cost is something the rmux
-  session path execs, and it has not been identified.
-- A strictly simpler primitive exists and was not used: invoking a fresh script
-  through a signed interpreter skips evaluation entirely. Measured on the same
-  fresh file — `./script` 270 ms, `/bin/sh script` 5 ms, `/bin/bash script`
-  3 ms. Round 3 should prefer this over warm-and-hard-link wherever the callee
-  is a script, because it needs no shared state, no OnceLock, and no argv
-  multiplexing.
-
-REMAINING SCOPE
-1. Land TASK-RRT4T first. Until a skipped test is visible in the default
-   summary, no gate on this crate can be trusted, including this task's.
-2. Identify what the rmux test path execs that costs syspolicyd ~250 s per
-   suite run. That is the actual remaining cause for poll_direct_child_pid,
-   which passes when that pressure is absent.
-3. post_artifact_regenerate_hot_path now fails as 409 "harness busy", a
-   different symptom than before; treat its cause as unestablished.
-
-A note on the fixture module for round 3: shared_test_executable() asserts the
-on-disk fixture equals FIXTURE_SCRIPT and panics otherwise, while its doc
-comment claims a changed script gets a new path because the path is derived from
-the hashed test binary name. That reasoning does not hold — cargo's test-binary
-hash is not content-derived — so editing FIXTURE_SCRIPT can leave a stale file
-at the same path and fail every spawn test until it is deleted by hand. Make it
-overwrite, or key the filename on a content hash.
-
-Also weakened, worth restoring: the old pinned-exec wrapper asserted
-[ "$1" = __exec-pinned ] || exit 97, so a production regression that stopped
-passing that argv failed loudly. The shared fixture falls through to exit 0
-instead.
-
-CORRECTION TO THE ABOVE [2026-07-26], same session: the sentence "the pressure is
-inside the rmux test path" states a real correlation but the mechanism it implies
-is DISPROVEN. rmux does not trip Gatekeeper.
-
-Measured directly, rmux 0.9.0 (crates.io, pinned =0.9.0) against tmux 3.x on the
-same machine:
-
-| operation                                | tmux    | rmux    | syspolicyd |
-|------------------------------------------|---------|---------|------------|
-| 15x create session + kill session         | 13.1 ms | 12.1 ms | +0.01 / +0.00 s |
-| 20x pane runs an already-warm script      |  6.9 ms | 12.8 ms | +0.00 / +0.01 s |
-| leftover sessions after all kills         | none    | none    | — |
-
-So rmux is leak-free and Gatekeeper-neutral at this level, and roughly 2x slower
-than tmux per pane spawn — which at 6 ms of absolute difference explains nothing.
-
-What survives: with rmux on PATH the suite is 106 s and syspolicyd burns +281 s;
-with rmux hidden it is 22 s and +32 s, one variable changed. The correlation is
-solid. The attribution is not. Whatever spends that CPU has not been identified,
-and it is NOT rmux exec-ing things.
-
-A better lead, found while checking: the hot-path test polls for the harness
-prompt `for _ in 0..40` at 250 ms — a 10 s ceiling, which is exactly the 10 s gap
-between the two run_ids in the original failure. The eight rmux tests also all
-take `live_session_guard()`, so they are serialized against each other while the
-other ~496 tests run in parallel around them. A serialized 10 s deadline under
-full-suite load is a plausible mechanism that needs no Gatekeeper story at all.
-
-THE EXPERIMENT THAT WOULD SETTLE IT
-These tests exist only in the rmux mode. Parameterize post_artifact_regenerate_*
-over rmux AND tmux. Red under rmux and green under tmux indicts rmux; red under
-both is ours. Right now the question cannot be answered, which is the actual
-problem.
-
-THIRD MEMBER OF THE FAMILY [2026-07-26, found integrating TASK-D0GA3]. The
-full-suite run of `cargo test -p orgasmic-daemon --lib` at merge 0daa77c failed
-THREE tests, not two:
-
-- post_artifact_regenerate_hot_path_reuses_live_run_id
-  (api.rs:25772 — "second regenerate should route via send_input (hot path)",
-  got 409 "harness busy")
-- poll_direct_child_pid_prefers_worker_server_over_generic_sibling
-  (supervisor.rs:8788 — "fake cursor-agent did not start children")
-- recovery_reattaches_tmux_session_when_handle_exists  <-- NEW
-  (api.rs:21866 — left "interrupted", right "reattached")
-
-All three pass together in isolation: `--exact` on the three names gives
-3 passed / 0 failed in 0.54s, 505 filtered out. Whole-suite time was 182.9s with
-rmux present on PATH.
-
-The new one is informative. It is not a spawn-fixture test — it is tmux session
-REATTACH, and it lands on "interrupted" rather than "reattached", i.e. something
-else in the suite killed or claimed the tmux session it expected to find. That
-points at cross-test contention over shared external mux state (session names,
-sockets), not at the executable-fixture path that round 2 addressed. Round 3
-should start from "which tests share a tmux/rmux namespace" rather than from the
-fixture.
-
-Note also that the TASK-D0GA3 worker reported "508 passed, 0 failed" for this
-same command with rmux present. That is a fourth over-report, and unlike the
-first three it is NOT explained by silent tooling skips — TASK-RRT4T's sentinel
-was already in place and would have fired. Either the worker's run genuinely
-came up green (making this load- or order-dependent, which fits) or the number
-was not measured. Do not treat any single green run of this suite as evidence.
-
-=== Measured again 2026-07-28, and the set is larger than four
-
-Full `cargo test -p orgasmic-daemon --lib` in the manager environment at HEAD
-`15997c6`: **528 passed, 5 failed, 451 s**.
-
-| test | symptom |
-|------|---------|
-| `api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim` | `recover: 500 Internal Server Error` |
-| `api::tests::two_recovery_chain_second_resume_uses_first_fork_session_id` | `first recover: 500 Internal Server Error` |
-| `api::tests::recovery_reattaches_tmux_session_when_handle_exists` | `tmux test session should start` |
-| `api::tests::equal_run_id_across_projects_requires_canonical_project` | `project-b recover should succeed independently: 500` |
-| `supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling` | `fake cursor-agent did not start children` |
-
-The first three also failed, identically, inside the TASK-1T3FZ dispatched
-worker, which additionally lost
-`boot_reattach_respawns_dispatch_completion_watcher_without_artifacts`,
-`failed_terminal_with_live_tmux_never_offers_reattach`, and the tmux sentinel.
-The underlying daemon error in the worker was
-`tmux new-session failed (exit 1): server exited unexpectedly`.
-
-Three things this rules out (tx-20260728-orgasmic-3226):
-
-- Not environment. Each of these passes in isolation, in both the manager
-  environment and a replicated dispatched-worker environment.
-- Not a worker-only blindspot. Three reproduce in the manager environment with
-  no rmux shim and no `$TMUX`.
-- Not a missing or broken tmux. Under the exact worker `PATH` + `TMUX`,
-  `tmux new-session -d` exits 0; the tmux the worker resolves is an rmux shim
-  pointing at a live server.
-
-Four of the five are a **recovery** path — three `recover` calls returning 500
-and one tmux session failing to start for a reattach test. That concentration is
-the strongest structural clue on this task so far, and it is not a generic
-"slow machine" story.
-
-TASK-0RCRY carries the one concrete candidate mechanism: no tmux call site
-passes `-L`/`-S`, so every probe, test session and production call shares a
-single tmux server. If isolating that server does not fix these, the result
-belongs back here.
-
-
-=== MANAGER MEASUREMENT 2026-07-28: production_resume_native_fork has TWO failure modes
-
-Recorded after TASK-5HBST merged, because the manager had been mislabelling this
-test as purely 5HBST's.
-
-`api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim`
-fails in two distinct ways:
-
-1. **Env race (5HBST's, now fixed).** A concurrent test clobbers process-global
-   `HOME`, so `pin_trusted_claude_binary` (api.rs:9906) resolves the wrong
-   `~/.local/bin/claude`. Presents as a wrong path or found/not_found mismatch.
-2. **Recovery 500 (this task's, still open).** `resume_native_fork recover:
-   500 Internal Server Error` at api.rs:25171. Nothing to do with the
-   environment.
-
-Measured on the merged 5HBST tree, full `cargo test -p orgasmic-daemon --lib`
-at load ~10: it still failed, with **mode 2**. So 5HBST removed one mode and the
-test remains on the known-flake list until this task lands.
-
-That makes the recovery cluster on this axis larger than previously recorded.
-In the same run: `production_resume_native_fork...` (500 on recover),
-`recovery_inventory_waits_for_atomic_claim_commit`, and
-`recovery_reattaches_tmux_session_when_handle_exists` — three of the four
-failures were recovery-path, and the fourth
-(`poll_direct_child_pid_prefers_worker_server_over_generic_sibling`) is the
-fixture-process one, a different class.
-
-The 'recover returns 500 under load' signature is now observed on three separate
-tests. Whatever this task finds should explain all three, not one.
-PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: during a 3-worker compile window, one manager dispatch-status poll reported ALL THREE live runs as [run-gone] simultaneously; the next poll (60s later) and rmux ls showed every session alive and attached, daemon on the same pid/boot throughout. A transient inventory read under load flips run-liveness for every run at once — same family as the 'recover: 500 under load' signature already on this task, observed on the live daemon rather than in a test.
-PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: during a 3-worker compile window, one manager dispatch-status poll reported ALL THREE live runs as [run-gone] simultaneously; the next poll (60s later) and rmux ls showed every session alive and attached, daemon on the same pid/boot throughout. A transient inventory read under load flips run-liveness for every run at once. Two minutes later, a node body append to THIS task failed once with 'daemon request failed: error sending request ... is the daemon reachable?' and succeeded on retry — the HTTP surface itself goes briefly unreachable under load. Same family as the 'recover: 500 under load' signature already recorded here; both observed on the live daemon rather than in a test.
-PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: with load average 164 (a worker deliberately inducing load per TASK-5FEN5's repro recipe), one dispatch-status poll flipped ALL THREE live runs to [run-gone] at once, and two manager CLI calls failed with 'daemon request failed ... is the daemon reachable?'. Direct diagnosis DURING the failures: daemon pid alive, port 4848 LISTEN, raw HTTP answered 401 in 0.4s. So the daemon was healthy throughout — the CLI's client-side request path times out under scheduler starvation and reports it as daemon unreachability, and the inventory read degrades the same way. Relevant to this task because the same mechanism plausibly explains the 'recover: 500 under load' family: not a daemon defect expressing under load, but load starving some request leg. The error text 'is the daemon reachable?' is also a misdiagnosis-generator: the truthful message would be 'request timed out after Ns (system load may be the cause)'.
-PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: with load average 164 (a worker deliberately inducing load per TASK-5FEN5's repro recipe), one dispatch-status poll flipped ALL THREE live runs to [run-gone] at once, and repeated manager CLI calls failed with 'daemon request failed ... is the daemon reachable?'. Direct diagnosis DURING the failures: daemon pid alive, port 4848 LISTEN, raw HTTP answered 401 in 0.4s. So the daemon was healthy throughout — the CLI's client-side request path times out under scheduler starvation and reports it as daemon unreachability, and the run-inventory read degrades the same way. Relevant to this task: the same mechanism plausibly explains the 'recover: 500 under load' family — load starving a request leg rather than a daemon defect. Also: the error text 'is the daemon reachable?' is a misdiagnosis-generator; the truthful message is 'request timed out after Ns (system load may be the cause)'.
-
-FIRST CAPTURED PANIC for the registry's quoted-origin entry [2026-07-29, from TASK-5FEN5's load runs]: `index::tests::git_resolves_quoted_included_origin_from_linked_worktree` — index.rs:2247, `assertion left == right failed, left: None, right: Some("ssh://git@example.com/org/quoted.git")`. The registry names this test as a known STWVB flake awaiting its first verbatim panic; this is it. Registering the row (with this task as owner) is now unblocked and is this task's call, per the DJ1WV rule that only the owning task writes its own entries.
-
-CANDIDATE PANIC [2026-07-29, TASK-0RCRY full-workspace run]: `task_010_recovery_routes_classify_and_continue_runs` (crates/orgasmic-daemon/tests/integration.rs:2637) — `recover: 409 Conflict` under load, green in isolation. Distinct shape from the quoted-origin flake; first time this panic has been written down. Route or register under this task's diagnosis as appropriate.
-
-ATTRIBUTION CONTRADICTED [2026-07-29, TASK-K4G1D differential]: the `left: "interrupted"` reattach flake is now named for the first time — `driver tmux/claude attach proof exceeded inventory deadline`, the Err(_) timeout branch of finish_driver_attach (api.rs:9858). Measured with real tmux 3.6a on a 0RCRY owned server, with the rmux arm GREEN in the same process under the same load. This contradicts this task's standing attribution (cross-test contention over shared external mux state) — that would be the third withdrawn attribution. The live question is why a one-process-spawn tmux attach probe cannot finish inside the inventory deadline under load, and whether that deadline is sized for process-spawn starvation. Also note: K4G1D found the seven tmux_on_path-gated tests execute rmux in worker environments (owned by its follow-up task), so any worker-vs-manager comparison recorded here that relied on "the worker ran these under tmux" needs re-reading.
-
-CANDIDATE PANIC [2026-07-29, TASK-GEZHQ gate run 3 of 5]: `api::tests::recovery_inventory_waits_for_atomic_claim_commit` (crates/orgasmic-daemon/src/api.rs:25017) — `recover POST completes: Elapsed(())` under load, green in isolation. Another recover-route timeout shape for this task's diagnosis; first time written down.
-
-RE-READING FLAGS [2026-07-29, TASK-JGHNC, merged 724dd6b] — four recorded comparisons need correction:
-1. The 2026-07-28 five-failure section: the TASK-1T3FZ worker's two extra failures (boot_reattach_respawns…, failed_terminal_with_live_tmux…) plus its tmux sentinel were RMUX failures wearing tmux names, on the shared rmux default server; they say nothing about tmux. Post-JGHNC that comparison cannot be reproduced in a worker at all (strict-gated, NOT RUN).
-2. recovery_reattaches_tmux_session_when_handle_exists: the manager symptom ('tmux test session should start') and the worker symptom ('server exited unexpectedly') were read as one signature; the worker half was an rmux-server symptom. Superseded by K4G1D's tmux-arm and JGHNC's rmux-arm measurements.
-3. The D0GA3 worker's '508 passed, 0 failed' anomaly has a third explanation: in a worker, seven tests ran a different multiplexer than the manager's run of the same names — never a like-for-like comparison.
-4. THE DIFFERENTIAL NOW READS BOTH WAYS: JGHNC's worker run caught recovery_reattaches_RMUX_session_when_handle_exists red with the IDENTICAL sentence K4G1D measured on the tmux arm ('driver rmux/claude attach proof exceeded inventory deadline', api.rs:24464). Red under BOTH multiplexers = the defect is ours (the inventory deadline / attach-proof path), NOT rmux. Any future worker-vs-manager comparison on this family needs the real-tmux PATH recipe (K4G1D report §2); the five new rmux arms are the worker's honest column.
-
-SIBLING WITH ITS OWN SIGNATURE [2026-07-29, TASK-J1XCB rounds]: `supervisor::tests::direct_child_pid_finds_wrapper_child_process` (supervisor.rs:10801) — `wrapper never forked a direct child` — 5/12 and 2/12 under the 4x64-thread concurrency harness, green in isolation. Sibling of this task's registered `poll_direct_child_pid_prefers_worker_server_over_generic_sibling` but a DIFFERENT signature, so the registry correctly reports it REAL until a row exists. Register under this task with the captured signature when convenient (only the owner writes its rows).
-
-LOAD-STARVATION SIGHTING [2026-07-29, TASK-K5NDR gate]: `dispatch_finalize_from_subprocess_stream_json_mode` (orgasmic-cli tests) — `daemon request timed out after 30s (1m load average 22.75)` with three workers live; green in isolation, green bare 20 min earlier, green alone at load 34. Pure client-starvation shape with the EP3H1 diagnostics naming it. Unowned; recurrence in a loaded gate classifies REAL. Route under this task's load-starvation family or spin off when the family gets its own task.
-
-A SECOND AXIS: WORKTREE, NOT ONLY LOAD [2026-07-31, TASK-CB6GQ gate]. This
-task's standing frame is "fails on a full-suite run, passes alone", with load as
-the explanation. There is an independent axis: WHICH WORKTREE runs the suite,
-measured on a quiet machine with sequential runs and no concurrency at all.
-
-Measured, =cargo test -p orgasmic-daemon --lib=, both trees on 75fe95f:
-- =/private/tmp/cb6gq-control= (detached at 75fe95f): 640 passed / 0 failed in
-  42.73s, then 42.90s. Twice, clean.
-- =/private/tmp/task-cb6gq= (a branch one commit on top of 75fe95f): 638-639
-  passed / 1-2 failed, in 122.71s and 123.01s.
-Narrowed to =api::tests= alone: control 36.64s / 0 failed, branch 88.93s / 1
-failed.
-
-THE DECISIVE CONTROL, and the reason this is worth recording: =git checkout
-75fe95f= INSIDE the slow worktree — byte-identical code to the fast one — still
-gave 85.87s and the same failure. Same commit, same machine, same moment,
-different worktree: 2.3x runtime and a red. Whatever this is, it is not the diff
-under test and not concurrent load.
-
-Failures seen on the slow worktree, each green in isolation on the first retry:
-=api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=
-(already registered here), =api::tests::recovery_reattaches_rmux_session_when_handle_exists=,
-=api::tests::recovery_inventory_waits_for_atomic_claim_commit= (the recover-route
-family already on this task), and
-=supervisor::tests::a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies=.
-A different subset each run, which is the probabilistic shape already recorded —
-but the 2.3x runtime is reproducible, not probabilistic, and is the part that
-points somewhere.
-
-NOT stale mux state, checked during the slow runs: =rmux ls= empty, no tmux
-server on the default socket, and although 43 leftover
-=/private/tmp/tmux-501/orgasmic-test-*= sockets had accumulated, zero of them
-had a live server behind it. Cause unidentified; the candidates worth trying
-first are per-worktree =target/= state and anything the suite resolves from cwd.
-
-WHY IT MATTERS BEYOND THIS TASK, and the practical rule it produces: a green
-full-suite number is not evidence unless the worktree is held constant, and a
-red one cannot be attributed to a diff without re-running the BASE code in the
-SAME worktree. That control costs one checkout and one run. It was the only
-thing separating "my change broke the suite" from "this worktree is slow" during
-TASK-CB6GQ, where four consecutive full-suite reds on the branch looked exactly
-like a regression and were not.
-THIRD ENVIRONMENT AXIS, MEASURED [2026-08-03]: macOS =syspolicyd= scan pressure.
-And it is the same lesson this task has now learned three times — 89%-full disk
-(2026-07-26), worktree identity (2026-07-31), host scan load (now). Every one of
-them produced a *stable-looking* failure set that read as a code regression.
-
-Measured on =d1a41c1=, repo-root worktree, against the binary cargo had ALREADY
-built (=orgasmic_daemon-5f50721007a8fd8c=, so no compile in the window):
-
-| run                                    | result                  | wall    |
-|----------------------------------------|-------------------------|---------|
-| =cargo test -p orgasmic-daemon --lib=  | 637 passed / 14 FAILED  | 659.90s |
-| the same 14, one at a time, same binary| 14 passed / 0 failed    | 8s      |
-
-Comparable for that suite is 42.9-85.9s, so this run was 8-15x slowed. The
-discriminator was =syspolicyd= at 586% CPU with load average 11.41; killing the
-suite dropped it to 75% within seconds. See the syspolicyd->tccd->WindowServer
-entry in =gotchas.org=: the same chain hard-rebooted this machine at 20:01:36 on
-2026-08-02.
-
-The 14 were not the three flakes in the table above. They were every test that
-touches a live mux or probes processes:
-=explicit_reattach_{rmux,tmux}_is_fenced_out_of_a_worktree_a_close_guard_holds=,
-=recovery_reattaches_{rmux,tmux}_session_when_handle_exists=,
-=two_recovery_chain_second_resume_uses_first_fork_session_id=,
-=live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
-=a_network_waiting_{provider,tmux}_turn_...=, =an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued=,
-=a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline=,
-=direct_child_pid_finds_wrapper_child_process=,
-=poll_direct_child_pid_prefers_worker_server_over_generic_sibling=,
-=process_subtree_cpu_probe_{does_not_mistake_a_live_idle_child_for_work,sees_a_real_cpu_burning_child}=.
-Only 4 of the 14 are in =verify/flake-registry.toml=.
-
-TWO THINGS THIS CHANGES FOR THIS TASK.
-
-1. The cheap control is now known and it costs 8 seconds. Re-run the failures
-   ONE AT A TIME AGAINST THE ALREADY-BUILT BINARY before believing any red:
-   =target/debug/deps/orgasmic_daemon-<hash> --exact <test> --test-threads=1=.
-   That is what =scripts/run-tests.sh= does after a full run; doing it directly
-   skips the 11-minute run you already know is untrustworthy. It also costs
-   almost no scan load, because re-executing an existing binary is not what
-   triggers syspolicyd.
-
-2. COMPILATION IS NOT THE TRIGGER — TEST EXECUTION IS. Measured the same night:
-   a full rebuild of the daemon, core and cli test binaries at =jobs=4= ran with
-   =syspolicyd= at 0-64%, while the earlier test RUN pinned it at 586%. The
-   gotcha attributes the burst to build scripts and proc-macro dylibs; that is
-   at best incomplete. The mux suites write and exec many short-lived shim
-   scripts per test, and that is the exec pattern that actually bursts.
-
-So this task should stop being framed as "three flakes in a table". The stable
-finding across all three axes is that the suite has NO trustworthy full-run
-signal on this host, and the acceptance criterion "green, repeatedly, at full
-parallelism" cannot currently be evaluated. Naming a per-test cause still
-matters, but the first deliverable is a gate that reports a defensible verdict
-on a loaded machine.
-** Evidence
-
-MEASUREMENT [2026-08-02], from the TASK-4CSMY integration. Three full-suite
-runs plus the implementer's own, deliberately varying ONE axis at a time:
-
-| # | site | tree | real failures |
-| 0 | dispatch worktree | =75255e5= | 0 (implementer's run) |
-| 1 | repo root | =7d9c60c= (tree-identical to =75255e5=) | 8 |
-| 2 | repo root | =9017514= (base, pre-merge) | 4 |
-| 3 | dispatch worktree | =75255e5= | 2 |
-
-THE AXIS IS ALSO THE RUN, NOT ONLY LOAD AND WORKTREE. Runs 0 and 3 are the same
-tree in the same worktree and disagree: 0 failures against 2. That kills the
-working assumption that a worktree has a stable failure signature — so a claim
-of the form "N tests, worktree X" is still not reproducible without a RUN COUNT.
-This task's own title ("fail on every full-suite run") is now too strong:
-nothing here failed on every run.
-
-PERSISTENCE RANKING across my three runs (1,2,3), which is what a fix should be
-aimed at first:
-
-| test | runs failed |
-| =process_subtree_cpu_probe_sees_a_real_cpu_burning_child= | 3/3 |
-| =recovery_reattaches_rmux_session_when_handle_exists= | 3/3 |
-| =explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds= | 2/3 |
-| =direct_child_pid_finds_wrapper_child_process= | 2/3 |
-| =recovery_inventory_waits_for_atomic_claim_commit= | 1/3 |
-| =live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh= | 1/3 |
-| =dead_pid_aborts_joins_hung_producer_then_receiver_releases= | 1/3 |
-| =a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies= | 1/3 |
-
-The top two failed at BASE as well, so they are the durable core of this task
-and are not waiting on anything else to land. Every failure in every run passed
-in isolation under =run-tests.sh='s own re-run, so the class is contention, not
-correctness.
-
-Logs kept for this session at the scratchpad paths named in the tx; the
-per-test panics are in each run's =suite.log=.
-IMPLEMENTED 2026-08-06, all three parts (A+B+C) in one round. Worker
-implementer-cursor-agent-tmux; driver tmux, harness cursor-agent, model
-cursor-grok-4.5-high-fast, effort omitted deliberately (the cursor model id
-carries the tier — stated on the dispatch --reason, not an unnoticed omission).
-Merged b94f942. Worker report preserved at
-=.orgasmic/dispatch-records/tx-20260806-orgasmic-4975/last.txt=.
-
-A — FIXTURE CONSOLIDATION. Converted the top =--lib= contributors onto the
-warmed inode (hanging mux stall-probe shim, =write_executable_stub= PATH stubs,
-malicious PATH claude shim, trusted-claude symlink layout seed, never-executed
-provider PATH stubs). Fresh creates KEPT where a distinct inode IS the assertion
-(pin retarget / wrapper replacement), routed through
-=create_fresh_test_executable= so they stay visible in the counter. Measured
-after: =fresh_first_execs=4=, =shared_link_reuses=134=, 49.41s, 734 passed / 0
-failed. Both full =--lib= runs in the dispatch had ZERO failures, against this
-task history of 14-20 isolation-green reds under parallelism.
-
-*The before-number is inventory-derived, not measured* (+8 converted first-exec
-sites), because a pre-A full run was outside the 3-run execution budget the
-brief imposed. So "A took 14-20 reds to 0" is a plausible reading of two runs,
-not a controlled result — the host also differed. Treat it as promising, not
-proven.
-
-B — HOST STATE IN THE VERDICT. =LOAD_DEGRADED_THRESHOLD=8.0= (below the measured
-11.41 thrash reading, above a quiet Mac) and =SYSPOLICYD_CPU_DEGRADED=200.0=
-(below the measured 586% peak), justified next to the constants. New exit code
-*4 = INCONCLUSIVE — re-run when calm*. A degraded host makes the run
-inconclusive EITHER WAY, so a green under load is no longer silently trusted —
-which is the property the design called the sharper one. Sampler injectable via
-=ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>= so the selftest drives
-calm and degraded hosts deterministically with no real load.
-
-C — INTERLOCK. Unregistered + isolation-green + host degraded -> LOAD-SENSITIVE;
-the same shape on a CALM host stays REAL; failing alone is always REAL. A
-LOAD-SENSITIVE label on a calm host is itself an error (exit 1). The ten
-unregistered 2026-08-02 failures were NOT registered; =verify/flake-registry.toml=
-is byte-unchanged by this merge (7 entries, every owner open).
-
-GATES at merge, manager-run: =run-tests-selftest.sh= 24 passed / 0 failed;
-=run-tests.sh --check= OK; =cargo clippy --workspace --all-targets -D warnings=
-clean; =cargo fmt --all --check= clean; =orgasmic verify TASK-STWVB= PASS
-(red-then-green). The pinned red was checked against the red log rather than
-trusted: the pinned message IS the first FAIL in the log, and the artifact aims
-at C interlock, the load-bearing new behaviour.
-
-NOT RUN BY THE MANAGER: =cargo test --workspace= and a third full daemon
-=--lib=. Deliberate — test EXECUTION is the syspolicyd trigger and this host has
-hard-rebooted twice from that chain. The worker s two full =--lib= runs are the
-evidence, and its final verdict block is in the preserved report.
-
-DEFECT FOUND AT INTEGRATION REVIEW, MERGED KNOWINGLY: *the syspolicyd signal
-never fires.* =sample_host_state_live= reads =ps -axo comm=,pcpu== and matches
-=/(^|\/)syspolicyd$/=, but =comm= truncates to 16 chars, so the live line is
-=/usr/libexec/sys= and the string "syspolicyd" is never present at all.
-Measured on this host: =ps aux= shows pid 495 =/usr/libexec/syspolicyd=, while
-the sampler awk yields =0.0=. Worse, the =END { if (NR || s > 0) ... }= guard
-makes NR always true, so the miss reports a MEASURED ZERO rather than =?= — the
-exact failure shape B exists to prevent, reproduced inside B. Consistent with
-the run: all three samples read =syspolicyd_cpu=0.0= while load ran 12.95 ->
-22.49. B therefore runs on load average ALONE today, and the headline evidence
-for this whole task (586% syspolicyd) is the signal that is dead. Merged anyway
-because it is fail-SAFE — it can only under-report degradation, never invent it,
-and load average still tripped INCONCLUSIVE correctly on the gate run.
-** How to fix it — design [2026-08-05]
-The classification machinery ALREADY EXISTS and is good. =scripts/run-tests.sh=
-(654 lines) runs the suite, reruns every failure IN ISOLATION, and matches panic
-text against =verify/flake-registry.toml= (6 entries, each requiring an OPEN
-owning task and a literal panic SIGNATURE, so one name carrying two failure
-modes cannot be confused). Do not rebuild any of that.
-
-*THE GAP, precisely.* The classifier has exactly three outcomes:
-1. not in the registry -> REAL
-2. registered NAME but unregistered SIGNATURE -> REAL (the mislabel detector)
-3. registered + signature match + green alone -> FLAKE (exit 0 eligible)
-
-and NO HOST-STATE AWARENESS whatsoever — the only occurrence of "load" in the
-script is a comment. So the 2026-08-02 run (14 failures, 4 registered, all 14
-green alone in 8s, =syspolicyd= at 586% and load average 11.41) put 10 tests in
-branch 1 and returned RED. The verdict vocabulary has no way to say "the host
-was degraded, so this run has no verdict".
-
-*THE FIX IS NOT TO REGISTER THE TEN.* The registry's own header says an entry is
-"an excuse with an expiry" that must name an open owning task, and warns that
-"a registry that only grows is a graveyard". Ten environment-induced failures
-have no owner because there is no code defect to own. Registering them would
-corrupt the instrument that currently works.
-
-=== A. Attack the trigger — the only durable fix
-Test EXECUTION is the trigger, not compilation (measured 2026-08-02: a full
-rebuild at jobs=4 kept syspolicyd at 0-64%, while the test RUN pinned it at
-586%). The mux and process-probe suites write and exec MANY short-lived shim
-scripts per test, and first-exec of a newly written file is what gets scanned.
-
-- Create the shims ONCE PER SUITE RUN behind a shared fixture rather than once
-  per test, so repeated execs of an identical path+content hit a cached scan
-  verdict instead of a fresh one.
-- Prefer a long-lived helper process or an in-process fake over spawning a fresh
-  script per assertion.
-- Where a fresh script is unavoidable, reuse content-identical files from one
-  directory instead of minting a new temp path each time.
-
-This lowers scan load at the source. Everything else below is instrumentation
-around a load problem; this is the part that removes it.
-
-=== B. Make host state a first-class input to the verdict
-Sample load average and =syspolicyd= CPU before, during and after the run, and
-stamp it on the verdict. If the host was degraded past a threshold, the run
-returns *INCONCLUSIVE — re-run when calm*, which is a THIRD outcome the exit
-codes do not currently have (today: 0 clean/all-flake, 1 REAL, 2 registry).
-
-Two things this buys, and the second is the sharper one:
-- a red on a thrashing host stops being read as a code fact;
-- a GREEN on a thrashing host stops being trusted, which today it silently is.
-  Right now a degraded run that happens to pass reports clean, and nothing in
-  the output hints that the run was not worth believing.
-
-=== C. Separate two different facts that currently look identical
-"Passes alone because of a genuine race" is a code defect: it has an owner, an
-expiry, and belongs in the registry. "Passes alone because the host was
-thrashing" is an environmental fact with no owner at all. Branch 1 collapses
-both into REAL, and the obvious workaround collapses both into the registry.
-
-Add a classification for load-sensitivity that is valid ONLY when the run's
-MEASURED host state (from B) justifies it. That interlock is what keeps the
-"excuse with an expiry" discipline intact: the excuse is bounded by a
-measurement taken during that run, not by a name sitting on a list forever.
-
-=== Sequencing
-B before C — C is unsound without a measurement to gate it. A is independent and
-is the one that actually shrinks the problem, so it can run in parallel and
-should not wait on the gate work.
-
-=== What NOT to do
-- Do not serialize the whole suite. The original acceptance already rejected
-  this, and it hides the interference rather than naming it.
-- Do not raise timeouts to fit a degraded host; that makes every future run
-  slower and still returns a meaningless verdict.
-- Do not add registry entries for the ten unregistered 2026-08-02 failures.
-** Measured 2026-08-05 — the red is nondeterministic on unchanged code
-A controlled same-code repeat, run 2026-08-05 while gating TASK-M47E5.1.1 at
-merge =3a825cb=. This is the measurement this task's design question has been
-missing: not "does the suite flake" but "is its red a function of the code".
-
-*Two runs of =scripts/run-tests.sh -p orgasmic-daemon=, identical tree, no
-rebuild between them:*
-
-| | run 1 | run 2 |
-|---|---|---|
-| header failure count | 20 | 19 |
-| failing test names extracted | 19 | 19 |
-| passed the runner's isolation rerun | 19/19 | 19/19 |
-| common to both runs | 17 | |
-| unique to that run | 2 | 2 |
-
-Run 1 only: =index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
-=supervisor::tests::an_at_rest_rmux_pane_quoting_marker_text_is_not_rescued=.
-Run 2 only: =api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=,
-=supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases=.
-
-*The conclusion, stated precisely:* the failing SET is nondeterministic across
-runs of unchanged code, and 100% of failures pass in isolation. So a daemon-suite
-red currently carries NO information about whether the change under test broke
-anything. That is stronger than "the suite is flaky" — it means the gate cannot
-discriminate, which is the property a gate exists to have.
-
-*What this does and does not license.* It does NOT license ignoring daemon red.
-It licenses exactly one inference: a red whose failures all pass in isolation, on
-a change that cannot touch them, is not evidence of regression. The change being
-gated here was three substantive lines (one parameter, one JSON field, one
-expression) and none of the 19 tests reference either symbol.
-
-*Why the runner still says "This red means something".* By design: an
-unregistered failure is REAL, because the registry is the only sanctioned excuse
-and a signature-less excuse is what trains people to discount red. That is
-correct behaviour and it is what surfaced TASK-3ZR2E earlier the same day. The
-defect is not the classifier — it is that ~17 daemon tests have no owner and no
-entry, so every daemon gate reads RED and the manager has to re-derive this
-analysis by hand each time. Which is this task.
-
-*A cheap discriminator this measurement suggests*, offered as input to the design
-rather than as the design: the runner already reruns each failure in isolation.
-It therefore already knows the difference between "failed in parallel, passed
-alone" and "failed both ways". Today both land in REAL when unregistered. A
-distinct third verdict for "failed only under parallelism, unregistered" would
-separate the load population from genuine red WITHOUT weakening the registry
-rule, and would have made both of today's daemon gates readable at a glance.
-** Third measurement — a stable 14-test core with a rotating fringe
-A THIRD run, 2026-08-05, while gating TASK-M47E5.1.1.1.1 at merge =8e3b317=.
-Same host, same wrapper, and the change under test was TEST-ONLY inside
-=#[cfg(test)]= — so production daemon code was identical to runs 1 and 2.
-
-| | run 1 | run 2 | run 3 |
-|---|---|---|---|
-| header failure count | 20 | 19 | 18 |
-| failing names extracted | 19 | 19 | 18 |
-| isolation-green | 19/19 | 19/19 | *18/18* |
-
-- Common to ALL THREE runs: *14*.
-- Unique to run 3: =api::tests::boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run=.
-- Present in runs 1 AND 2 but PASSING in run 3:
-  =api::tests::boot_reattach_respawns_plan_stage_completion_watcher=,
-  =api::tests::recovery_reattaches_tmux_session_when_handle_exists=,
-  =supervisor::tests::direct_child_pid_finds_wrapper_child_process=.
-
-*Three runs, three different failure sets, 100% isolation-green every time.* Two
-runs could be coincidence; three with a stable 14-test core and a rotating
-fringe is a population, not an accident. There is a persistent set that fails
-under parallelism and a fringe whose membership is decided by scheduling.
-
-*The shape this suggests for the fix*, offered as input rather than as the
-design: the 14-test core and the rotating fringe may not be one problem. A core
-that fails on almost every parallel run is a candidate for registration or a real
-isolation fix with an owner each; a fringe that appears once in three runs is
-what an "unregistered AND isolation-green under parallelism" verdict would
-absorb without weakening the registry rule. Sizing the core is now cheap — it is
-the 14.
-
-*Also measured here*: the suite exceeded a 10-minute foreground budget on this
-host and had to be backgrounded. Whatever this task builds should assume the
-daemon suite is not something a manager runs casually between gates; that cost is
-part of why its red gets waved through rather than read.
-
-*And the control worked.* The round-5 test added by TASK-M47E5.1.1.1.1
-(=dispatch_spawn_derives_the_authoritative_artifact_dir_from_last_path=) does NOT
-appear in run 3's failures, so a genuinely new test lands green inside a red
-suite — further evidence the red is environmental rather than a property of the
-tree.
 
 * DONE TASK-STWVB.1 fix-round: the gate now returns INCONCLUSIVE forever, and B's headline signal is both dead and sampled at the wrong time :testing:daemon:flake:
 :PROPERTIES:
@@ -39693,27 +39714,6 @@ and the SIGTERM routing in isolation is what let finding 1 through.
 :BASELINE_16: 16
 :UPGRADED_16: 16
 :END:
-
-* CANCELLED TASK-RRVX0 TASK-35TK4 fix: eliminate CLI lock-probe acquisition race :fix:daemon:
-:PROPERTIES:
-:ID: TASK-RRVX0
-:PRIORITY: high
-:READ_SCOPE: .orgasmic/gotchas.org,crates/orgasmic-daemon,crates/orgasmic-cli
-:TEST_CMD: cargo test -p orgasmic-daemon && cargo test -p orgasmic-cli
-:WRITE_SCOPE: crates/orgasmic-daemon,crates/orgasmic-cli
-:END:
-
-** Description
-Claude Opus review of b18808c..bd3d7bd returned SHIP but identified one medium new regression: the CLI lock-state probe briefly acquires daemon.lock exclusively, while daemon startup makes a single nonblocking exclusive-lock attempt. A microsecond overlap can make a legitimate booting daemon misclassify the CLI probe as an unhealthy incumbent and exit.
-
-** Acceptance Criteria
-- Daemon lock acquisition tolerates the CLI probe transient without weakening single-instance exclusion or spawning work before lock ownership.
-- Retry behavior is tightly bounded (roughly 100-150 ms total), handles only WouldBlock, and preserves immediate propagation of other filesystem/lock errors.
-- Deterministic regression forces the overlap and proves the daemon eventually acquires after the probe releases; a continuously held incumbent still fails closed.
-- Preserve Rust 1.87 compatibility by calling fs2::FileExt methods explicitly.
-- Run focused lock/autostart/double-serve tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings; classify known baseline watcher/bootstrap flakes separately.
-** Notes
-The two originally assigned Codex gpt-5.6-terra/high attempts were interrupted by shared daemon restarts and produced no edits. A concurrently dispatched equivalent fix completed under TASK-870YX: commit 4c0a151, merged to main as e4b6b7b. Manager independently reran the focused daemon-lock, CLI boot-owner, and double-serve regressions; all passed. This duplicate record is cancelled as superseded, not left as an unfixed defect.
 
 * CANCELLED TASK-TH906 manager dispatch --effort is silently dropped for every non-claude harness, and the ledger records it as fact anyway
 :PROPERTIES:

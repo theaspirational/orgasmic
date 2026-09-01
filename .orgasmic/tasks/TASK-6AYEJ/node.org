@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-6AYEJ
 #+orgasmic_version: 2
 
-* DONE TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
+* TODO TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
 :PROPERTIES:
 :ID: TASK-6AYEJ
 :PRIORITY: P1

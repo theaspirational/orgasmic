@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-D6N77.1
 #+orgasmic_version: 2
 
-* DONE TASK-D6N77.1 repair rejected manager wake: make claim authority, pane delivery, and generation waiting honest :daemon:cli:manager:hardening:
+* TODO TASK-D6N77.1 repair rejected manager wake: make claim authority, pane delivery, and generation waiting honest :daemon:cli:manager:hardening:
 :PROPERTIES:
 :ID: TASK-D6N77.1
 :PRIORITY: P1

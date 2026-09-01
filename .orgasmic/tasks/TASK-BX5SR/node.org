@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-BX5SR
 #+orgasmic_version: 2
 
-* DONE TASK-BX5SR One bad mutation kills the daemon writer task, and every write in the process fails until restart :daemon:writer:availability:
+* TODO TASK-BX5SR One bad mutation kills the daemon writer task, and every write in the process fails until restart :daemon:writer:availability:
 :PROPERTIES:
 :ID: TASK-BX5SR
 :PRIORITY: P1

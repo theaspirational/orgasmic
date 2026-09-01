@@ -19,3 +19,136 @@
 :CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-25hse/worktree
 :EVENT_ID:     b98ef4ae-c946-44d8-9f28-75b1e8cfa363
 :END:
+
+* TX 2026-09-01 Tue 12:13:50 manager.dispatch_aborted TASK-RRVX0
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-64242e48-a6a6-4b32-bb07-aa7166b00864
+:TIME:         [2026-09-01 Tue 12:13:50]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-RRVX0
+:REASON:       orphan: worker pid/run/worktree all gone, never reported; driver era retired (board hygiene 2026-09-01)
+:CLOSED_TX:    tx-20260723-orgasmic-2461
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rrvx0-fix/worktree
+:LIFECYCLE_FROM: cancelled
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rrvx0-fix/worktree
+:EVENT_ID:     5795414b-f3ab-406e-af8a-13a3d59be2b1
+:END:
+
+* TX 2026-09-01 Tue 12:13:51 manager.dispatch_aborted TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-dcc78240-5ab2-48d0-8627-d81f9269c83b
+:TIME:         [2026-09-01 Tue 12:13:51]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:REASON:       orphan: worker pid/run/worktree all gone, never reported; driver era retired (board hygiene 2026-09-01)
+:CLOSED_TX:    tx-20260726-orgasmic-2884
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6fnay/worktree
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6fnay/worktree
+:EVENT_ID:     1c319ad3-9394-4398-b5aa-9794f3efcc2b
+:END:
+
+* TX 2026-09-01 Tue 12:13:52 manager.dispatch_aborted TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-3971a203-98bb-4a46-a361-b34fe4b4336b
+:TIME:         [2026-09-01 Tue 12:13:52]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:REASON:       orphan: worker pid/run/worktree all gone, never reported; driver era retired (board hygiene 2026-09-01)
+:CLOSED_TX:    tx-20260726-orgasmic-2897
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-stwvb/worktree
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-stwvb/worktree
+:EVENT_ID:     25727c92-f9ba-436d-8a69-c2b78d4722d1
+:END:
+
+* TX 2026-09-01 Tue 12:13:52 manager.dispatch_aborted TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-90b5aecb-061c-4669-9ce9-ec4f2ddbb5a4
+:TIME:         [2026-09-01 Tue 12:13:52]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:REASON:       orphan: worker pid/run/worktree all gone, never reported; driver era retired (board hygiene 2026-09-01)
+:CLOSED_TX:    tx-20260726-orgasmic-2956
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-RRT4T/worktree
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-RRT4T/worktree
+:EVENT_ID:     1e830664-8c9e-41b7-9764-5b785770af3b
+:END:
+
+* TX 2026-09-01 Tue 12:13:53 manager.dispatch_aborted TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-b48c2909-2eda-442e-a98f-2e2151c62bc0
+:TIME:         [2026-09-01 Tue 12:13:53]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:REASON:       orphan: worker pid/run/worktree all gone, never reported; driver era retired (board hygiene 2026-09-01)
+:CLOSED_TX:    tx-20260726-orgasmic-2985
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6AYEJ/worktree
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6AYEJ/worktree
+:EVENT_ID:     fe9b6d4d-cbd6-4681-bc8b-5631a7213bdb
+:END:
+
+* TX 2026-09-01 Tue 12:13:54 manager.dispatch_aborted TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-0f12be86-498e-4e5d-b7bf-e6e89b9c42a0
+:TIME:         [2026-09-01 Tue 12:13:54]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       orphan: worker pid/run/worktree all gone, never reported; driver era retired (board hygiene 2026-09-01)
+:CLOSED_TX:    tx-20260809-orgasmic-5609
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77.1
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77.1
+:EVENT_ID:     99f3d914-d6d2-4b93-918c-f8b1a46544df
+:END:
+
+* TX 2026-09-01 Tue 12:13:54 manager.dispatch_aborted TASK-BX5SR
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-4ca3f0cd-ea45-498d-a378-fdcf5b25f91e
+:TIME:         [2026-09-01 Tue 12:13:54]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-BX5SR
+:REASON:       orphan: worker pid/run/worktree all gone, never reported; driver era retired (board hygiene 2026-09-01)
+:CLOSED_TX:    tx-20260812-orgasmic-5922
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/TASK-BX5SR/impl
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: worktree_failed
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/.orgasmic/worktrees/orgasmic/TASK-BX5SR/impl
+:EVENT_ID:     c29da882-9cd0-451e-a457-b368651d9e9a
+:END:

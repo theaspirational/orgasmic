@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-STWVB
 #+orgasmic_version: 2
 
-* DONE TASK-STWVB The daemon suite has no trustworthy full-run signal on this host, so its gate cannot return a verdict :testing:daemon:flake:
+* TODO TASK-STWVB The daemon suite has no trustworthy full-run signal on this host, so its gate cannot return a verdict :testing:daemon:flake:
 :PROPERTIES:
 :ID: TASK-STWVB
 :PRIORITY: P2
