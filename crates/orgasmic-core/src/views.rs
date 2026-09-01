@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{bail, Context, Result};
 
 use crate::{collection_node_file_paths, read_claims, LifecycleStage, OrgFile, OrgRewriter};
 
-const VIEWS: [(&str, &str, &str); 3] = [
+pub const VIEWS: [(&str, &str, &str); 3] = [
     (
         "tasks",
         "board.org",
@@ -22,6 +23,8 @@ const VIEWS: [(&str, &str, &str); 3] = [
         "#+title: orgasmic project decisions\n#+orgasmic_version: 2\n\n",
     ),
 ];
+
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Rebuild the throwaway aggregate views from node directories.
 /// Returns the number of files whose bytes changed.
@@ -119,7 +122,11 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
         .file_name()
         .context("view path has no file name")?
         .to_os_string();
-    tmp_name.push(format!(".{}.tmp", std::process::id()));
+    tmp_name.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     let tmp = path.with_file_name(tmp_name);
     std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
     if let Err(error) = std::fs::rename(&tmp, path) {
@@ -133,6 +140,8 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
 mod tests {
     use super::*;
     use crate::{claims::CLAIMED, TxEntry, TxWriter};
+    use std::io::Write;
+    use std::sync::{Arc, Barrier};
 
     fn seed(root: &Path, machine_order: &[&str]) {
         let node = root.join(".orgasmic/tasks/TASK-CLAIM/node.org");
@@ -184,5 +193,64 @@ mod tests {
             parsed.headings[0].property("DOUBLE_CLAIM"),
             Some("machine-a machine-b")
         );
+    }
+
+    #[test]
+    fn concurrent_builds_publish_well_formed_views() {
+        let root = tempfile::tempdir().unwrap();
+        seed(root.path(), &["machine-a"]);
+        let task = root.path().join(".orgasmic/tasks/TASK-CLAIM/node.org");
+        let padding = vec![b'x'; 1024 * 1024];
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(task)
+            .unwrap()
+            .write_all(&padding)
+            .unwrap();
+
+        let root = Arc::new(root.path().to_path_buf());
+        let start = Arc::new(Barrier::new(3));
+        let done = Arc::new(Barrier::new(3));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let root = root.clone();
+                let start = start.clone();
+                let done = done.clone();
+                std::thread::spawn(move || {
+                    let mut results = Vec::new();
+                    for _ in 0..32 {
+                        start.wait();
+                        results.push(build_views(&root));
+                        done.wait();
+                    }
+                    results
+                })
+            })
+            .collect();
+        for _ in 0..32 {
+            let _ = std::fs::remove_dir_all(root.join(".orgasmic/views"));
+            start.wait();
+            done.wait();
+        }
+        for worker in workers {
+            for result in worker.join().unwrap() {
+                result.unwrap();
+            }
+        }
+
+        let entries = std::fs::read_dir(root.join(".orgasmic/views"))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), VIEWS.len());
+        for entry in entries {
+            let path = entry.path();
+            assert!(!path.to_string_lossy().ends_with(".tmp"));
+            OrgFile::parse(
+                std::fs::read_to_string(&path).unwrap(),
+                path.to_string_lossy(),
+            )
+            .unwrap();
+        }
     }
 }

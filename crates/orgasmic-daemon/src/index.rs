@@ -850,6 +850,11 @@ impl Index {
                 tokio::time::sleep(VIEW_REBUILD_DEBOUNCE).await;
                 let roots = std::mem::take(&mut *dirty.lock().unwrap());
                 for root in roots {
+                    if !root.join(".orgasmic").is_dir() {
+                        // A rebuild lost to shutdown/teardown is safe: node dirs are
+                        // authoritative, and the next write or boot rebuilds the views.
+                        continue;
+                    }
                     let root_path = root.clone();
                     match tokio::task::spawn_blocking(move || orgasmic_core::build_views(&root))
                         .await
@@ -1174,7 +1179,12 @@ impl Index {
         load.generation = load.generation.saturating_add(1);
         load.last_loaded_at = Some(Utc::now());
         drop(snap);
-        self.schedule_view_rebuild(board_entry.path.clone());
+        if orgasmic_core::views::VIEWS
+            .iter()
+            .any(|(view_collection, _, _)| *view_collection == collection)
+        {
+            self.schedule_view_rebuild(board_entry.path.clone());
+        }
         Ok(true)
     }
 
