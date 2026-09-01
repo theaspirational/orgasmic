@@ -37,6 +37,37 @@ fn sync_once_inner(
         return Ok(SyncOutcome::Idle);
     }
 
+    let dotorg = ledger.join(".orgasmic");
+    std::fs::create_dir_all(&dotorg).context("create .orgasmic")?;
+    let ignore = dotorg.join(".gitignore");
+    let mut ignored = match std::fs::read(&ignore) {
+        Ok(ignored) => ignored,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error).context("read .orgasmic/.gitignore"),
+    };
+    if !ignored
+        .split(|byte| *byte == b'\n')
+        .any(|line| line.strip_suffix(b"\r").unwrap_or(line) == b"views/")
+    {
+        if !ignored.is_empty() && !ignored.ends_with(b"\n") {
+            ignored.push(b'\n');
+        }
+        ignored.extend_from_slice(b"views/\n");
+        std::fs::write(&ignore, ignored).context("write .orgasmic/.gitignore")?;
+    }
+    git(
+        ledger,
+        &[
+            "rm",
+            "-r",
+            "-q",
+            "--cached",
+            "--ignore-unmatch",
+            "--",
+            ".orgasmic/views",
+        ],
+    )?;
+
     // Stage everything this machine changed inside the ledger, minus other
     // machines' pens.
     //
@@ -45,9 +76,9 @@ fn sync_once_inner(
     // milliseconds after writing the node, and the next tick is seconds later,
     // so the node write was never committed and never reached another machine.
     // It also never staged the files that are not claim-gated at all — the
-    // singleton `project.org`, `tasks/goal.org`, `tasks/handoff.org`,
-    // `gotchas.org`, and the generated `views/` — which were left as permanent
-    // uncommitted changes for `--autostash` to churn on every tick.
+    // singleton `project.org`, `tasks/goal.org`, `tasks/handoff.org`, and
+    // `gotchas.org` — which were left as permanent uncommitted changes for
+    // `--autostash` to churn on every tick.
     //
     // A foreign node dir can only appear modified here if something wrote
     // outside its pen, which the claim gate refuses. Staging it makes the next
@@ -332,6 +363,50 @@ mod tests {
         assert_eq!(
             sync_once(tmp.path(), &uuid::Uuid::new_v4().to_string()).unwrap(),
             SyncOutcome::Idle
+        );
+    }
+
+    #[test]
+    fn existing_ledger_views_are_ignored_untracked_and_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_remote, a, _b) = seed_remote(&tmp);
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        std::fs::create_dir_all(a.join(".orgasmic/views")).unwrap();
+        std::fs::write(a.join(".orgasmic/.gitignore"), "tmp/\n").unwrap();
+        std::fs::write(a.join(".orgasmic/views/board.org"), "derived\n").unwrap();
+        run(&a, &["add", ".orgasmic"]);
+        run(
+            &a,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "seed tracked views",
+            ],
+        );
+        run(&a, &["push", "origin", "orgasmic"]);
+
+        sync_once(&a, &machine_id).unwrap();
+        assert_eq!(
+            git_optional(&a, &["ls-files", ".orgasmic/views"])
+                .unwrap()
+                .as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            std::fs::read(a.join(".orgasmic/.gitignore")).unwrap(),
+            b"tmp/\nviews/\n"
+        );
+        assert!(a.join(".orgasmic/views/board.org").is_file());
+
+        let first_commit = git_optional(&a, &["rev-parse", "HEAD"]).unwrap();
+        sync_once(&a, &machine_id).unwrap();
+        assert_eq!(
+            git_optional(&a, &["rev-parse", "HEAD"]).unwrap(),
+            first_commit
         );
     }
 
