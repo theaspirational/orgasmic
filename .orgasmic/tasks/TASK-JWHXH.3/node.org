@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JWHXH.3
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-JWHXH.3 Stop writing .orgasmic/views/*.org; render on demand; project migrate + doctor for stragglers :e01mc:chain-review:
+* IN_REVIEW TASK-JWHXH.3 Stop writing .orgasmic/views/*.org; render on demand; project migrate + doctor for stragglers :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-JWHXH.3
 :IMPLEMENTS: dec_AF61D dec_XH2XY
