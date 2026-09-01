@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-JWHXH.1.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-JWHXH.1.1 Fix round 2 for JWHXH.1: unique views tmp name, rebuild only for view collections, .orgasmic exists guard, drain vs test teardown    :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-JWHXH.1.1
+:PRIORITY: P1
+:RELATES_TO: TASK-JWHXH.1
+:FIX_SUBTASK: t
+:END:
+
+Source: review of TASK-JWHXH.1 (=c3d779af=, reviewer gen tx-20260901-orgasmic-a4acf9f4, claude-opus-5 high): APPROVE WITH FOLLOW-UPS. This round takes the mechanical residuals; the non-synced-repo scope question is TASK-JWHXH.2 and the mixed-version fleet hazard is a release note (recorded on TASK-JWHXH.1).
+- MEDIUM crates/orgasmic-core/src/views.rs:122 — =write_if_changed= names its scratch file =<file>.<pid>.tmp=. Two =build_views= callers now run concurrently in one process for the same root: the debounced drain (index.rs:854, spawn_blocking) and the synchronous =machines/*/claims.org= arm (index.rs:959). Both can truncate/write the same tmp path (board.org is 3.0 MB on the live ledger) and rename a torn view into place. Pre-existing (load_project vs claims arm) but now routine.
+- LOW crates/orgasmic-daemon/src/index.rs:1177 — =schedule_view_rebuild= fires at the tail of =reload_node_dir= for every collection incl. =artifacts=; =build_views= renders only tasks/glossary/decisions.
+- LOW crates/orgasmic-daemon/src/ledger_sync.rs:41 — unconditional =create_dir_all(.orgasmic)= makes the guard at :86 dead and lets the daemon fabricate+commit a =.orgasmic/.gitignore= in a synced repo that had no =.orgasmic/=.
+- LOW crates/orgasmic-daemon/src/index.rs:848 — the detached drain holds no handle on Index/TempDir; every existing test calling =apply_written_path= on a node dir arms a rebuild that can fire during TempDir teardown (warn noise, stray temp dirs, new flake surface).
+
+** Acceptance
+- [ ] views.rs tmp name is unique per write (PID + process-local AtomicU64 counter); rename stays the atomic publish. One-line change plus a test that two concurrent =build_views= on one root leave a well-formed board.org.
+- [ ] =schedule_view_rebuild= is called only when =collection= is tasks | glossary | decisions.
+- [ ] The ignore+untrack block in =sync_once_inner= runs only when =.orgasmic/= already exists (no fabrication); the :86 guard is no longer dead or is removed with the block moved under it.
+- [ ] Drain vs teardown: either gate the spawn behind the daemon shutdown watch / keep the JoinHandle on Index, or record in a comment that the flake surface is accepted knowingly and why. State which.
+- [ ] Gates: cargo test -p orgasmic-core --lib views; cargo test -p orgasmic-daemon --lib -- ledger_sync views; cargo clippy -p orgasmic-core -p orgasmic-daemon --all-targets -- -D warnings; cargo fmt --all --check.
