@@ -882,7 +882,7 @@ impl WriterHandle {
     /// unprojected 503 (with its tx id) instead of a generic "write failed".
     async fn publish_paths(
         &self,
-        owner: &str,
+        owner: Option<&str>,
         paths: impl IntoIterator<Item = PathBuf>,
     ) -> Result<()> {
         let Some(index) = self.index.as_ref() else {
@@ -892,10 +892,12 @@ impl WriterHandle {
         for (i, path) in pending.iter().enumerate() {
             if let Err(error) = index.apply_written_path(path).await {
                 tracing::error!(path = %path.display(), error = %error, "write committed but index apply failed");
-                self.apply_failures
-                    .lock()
-                    .unwrap()
-                    .insert(owner.to_string(), error);
+                if let Some(owner) = owner {
+                    self.apply_failures
+                        .lock()
+                        .unwrap()
+                        .insert(owner.to_string(), error);
+                }
                 // Stop at the first failure. Applying the remaining paths would
                 // leave the projection torn — half this write visible — which is
                 // harder to reason about than uniformly stale. This path and
@@ -913,18 +915,12 @@ impl WriterHandle {
     /// Take only this write's projection failure. A foreign failure remains
     /// until its owner takes it or a later request repairs the queued paths.
     pub(crate) fn take_apply_failure(&self, owner: &str) -> Option<String> {
-        let mut failures = self.apply_failures.lock().unwrap();
-        if let Some(error) = failures.remove(owner) {
-            return Some(error);
-        }
-        if let Some(foreign_owner) = failures.keys().next() {
-            tracing::warn!(
-                owner,
-                foreign_owner,
-                "projection failure belongs to another request; attempting repair"
-            );
-        }
-        None
+        self.apply_failures.lock().unwrap().remove(owner)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_failure_count(&self) -> usize {
+        self.apply_failures.lock().unwrap().len()
     }
 
     /// Re-apply everything committed but not yet projected, and report whether
@@ -983,7 +979,8 @@ impl WriterHandle {
             }
         };
         if let Some(result) = cached {
-            self.publish_paths(&result.tx_id, [written_path]).await?;
+            self.publish_paths(Some(&result.tx_id), [written_path])
+                .await?;
             return Ok(result);
         }
         let (reply, rx) = oneshot::channel();
@@ -1000,7 +997,7 @@ impl WriterHandle {
                 mutation_id: None,
             },
         );
-        self.publish_paths(&res.tx_id, [written_path]).await?;
+        self.publish_paths(Some(&res.tx_id), [written_path]).await?;
         Ok(res)
     }
 
@@ -1054,7 +1051,8 @@ impl WriterHandle {
             cached_transaction_from_map(&cache, &request_id, &mutation)?
         };
         if let Some(result) = cached {
-            self.publish_paths(&result.tx_id, written_paths).await?;
+            self.publish_paths(Some(&result.tx_id), written_paths)
+                .await?;
             return Ok(result.tx_id);
         }
         let (reply, rx) = oneshot::channel();
@@ -1072,7 +1070,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(&res.tx_id, written_paths).await?;
+        self.publish_paths(Some(&res.tx_id), written_paths).await?;
         Ok(res.tx_id)
     }
 
@@ -1113,7 +1111,8 @@ impl WriterHandle {
             let owner = results
                 .first()
                 .ok_or_else(|| anyhow!("writer returned no transactions"))?;
-            self.publish_paths(&owner.tx_id, written_paths).await?;
+            self.publish_paths(Some(&owner.tx_id), written_paths)
+                .await?;
             return Ok(results);
         }
         let (reply, rx) = oneshot::channel();
@@ -1133,7 +1132,8 @@ impl WriterHandle {
         let owner = results
             .first()
             .ok_or_else(|| anyhow!("writer returned no transactions"))?;
-        self.publish_paths(&owner.tx_id, written_paths).await?;
+        self.publish_paths(Some(&owner.tx_id), written_paths)
+            .await?;
         Ok(results)
     }
 
@@ -1158,7 +1158,8 @@ impl WriterHandle {
             cached_transaction_from_map(&cache, &request_id, &mutation)?
         };
         if let Some(result) = cached {
-            self.publish_paths(&result.tx_id, written_paths).await?;
+            self.publish_paths(Some(&result.tx_id), written_paths)
+                .await?;
             return Ok(result.tx_id);
         }
         let (reply, rx) = oneshot::channel();
@@ -1176,7 +1177,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(&res.tx_id, written_paths).await?;
+        self.publish_paths(Some(&res.tx_id), written_paths).await?;
         Ok(res.tx_id)
     }
 
@@ -1197,7 +1198,8 @@ impl WriterHandle {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
-            self.publish_paths(&cached.tx_id, written_paths).await?;
+            self.publish_paths(Some(&cached.tx_id), written_paths)
+                .await?;
             return Ok(cached);
         }
         let (reply, rx) = oneshot::channel();
@@ -1215,7 +1217,8 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let result = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(&result.tx_id, written_paths).await?;
+        self.publish_paths(Some(&result.tx_id), written_paths)
+            .await?;
         self.cached_mutation(&request_id, &mutation)
             .await?
             .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
@@ -1244,7 +1247,8 @@ impl WriterHandle {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
-            self.publish_paths(&cached.tx_id, written_paths).await?;
+            self.publish_paths(Some(&cached.tx_id), written_paths)
+                .await?;
             return Ok(cached);
         }
         let (reply, rx) = oneshot::channel();
@@ -1262,7 +1266,8 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let result = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(&result.tx_id, written_paths).await?;
+        self.publish_paths(Some(&result.tx_id), written_paths)
+            .await?;
         self.cached_mutation(&request_id, &mutation)
             .await?
             .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
@@ -1445,7 +1450,6 @@ impl WriterHandle {
     /// against the same path serialize through the writer channel.
     pub async fn mutate_file(&self, req: FileMutate) -> Result<()> {
         let written_path = req.path.clone();
-        let apply_owner = Uuid::new_v4().to_string();
         self.guard_node_paths([written_path.as_path()])?;
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -1453,7 +1457,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(&apply_owner, [written_path]).await
+        self.publish_paths(None, [written_path]).await
     }
 
     /// Append one structured entry without exposing journal.org to whole-file
@@ -1546,7 +1550,8 @@ impl WriterHandle {
             matches!(cache.get(&request_id), Some(CachedResponse::Rewrite))
         };
         if cached {
-            self.publish_paths(&request_id, [written_path]).await?;
+            self.publish_paths(Some(&request_id), [written_path])
+                .await?;
             return Ok(());
         }
         let (reply, rx) = oneshot::channel();
@@ -1559,7 +1564,8 @@ impl WriterHandle {
             .lock()
             .await
             .insert(request_id.clone(), CachedResponse::Rewrite);
-        self.publish_paths(&request_id, [written_path]).await?;
+        self.publish_paths(Some(&request_id), [written_path])
+            .await?;
         Ok(())
     }
 

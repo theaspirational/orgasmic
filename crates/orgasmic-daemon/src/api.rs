@@ -8769,23 +8769,8 @@ struct TxDestination {
     tx_id_policy: TxIdPolicy,
 }
 
-const DISPATCH_PROJECT_TX_TYPES: &[&str] = &[
-    "manager.dispatch_started",
-    "run.created",
-    "implementer.commit_pending",
-    "implementer.reported",
-    "reviewer.reported",
-    "architector.reported",
-    "implementer.done",
-    "reviewer.done",
-    "architector.done",
-    "fixer.done",
-    "manager.dispatch_aborted",
-    "manager.dispatch_orphaned",
-];
-
 fn event_routes_to_journal(ty: &str) -> bool {
-    if ty.ends_with(".deleted") || DISPATCH_PROJECT_TX_TYPES.contains(&ty) {
+    if ty.ends_with(".deleted") {
         return false;
     }
     matches!(
@@ -24141,6 +24126,117 @@ pub(crate) mod tests {
         entry
     }
 
+    const PINNED_LEDGER_ROUTES: &[(&str, bool)] = &[
+        ("comment", true),
+        ("worker.comment", true),
+        ("task.created", true),
+        ("task.edited", true),
+        ("task.property_updated", true),
+        ("task.state_transitioned", true),
+        ("graph.architecture.created", true),
+        ("graph.architecture.edited", true),
+        ("graph.decision.created", true),
+        ("graph.decision.edited", true),
+        ("graph.decision.reparent", true),
+        ("graph.glossary.created", true),
+        ("graph.glossary.edited", true),
+        ("graph.gotcha.created", true),
+        ("graph.gotcha.edited", true),
+        ("graph.convention.created", true),
+        ("graph.convention.edited", true),
+        ("reviewer.finding", true),
+        ("review.verdict", true),
+        ("artifact.created", true),
+        ("artifact.submitted", true),
+        ("artifact.comment.added", true),
+        ("artifact.comment.resolved", true),
+        ("artifact.regenerated", true),
+        ("artifact.generation.failed", true),
+        ("artifact.launch_address", true),
+        ("manager.dispatch_started", false),
+        ("run.created", false),
+        ("implementer.reported", false),
+        ("reviewer.reported", false),
+        ("architector.reported", false),
+        ("implementer.done", false),
+        ("reviewer.done", false),
+        ("architector.done", false),
+        ("fixer.done", false),
+        ("implementer.commit_pending", false),
+        ("manager.dispatch_aborted", false),
+        ("manager.dispatch_orphaned", false),
+        ("ledger.sync_conflict", false),
+        ("manager.action", false),
+        ("manager.board_reconciled", false),
+        ("manager.correction", false),
+        ("manager.decision", false),
+        ("manager.evidence", false),
+        ("manager.handoff_updated", false),
+        ("manager.note", false),
+        ("manager.review_close", false),
+        ("manager.set_goal", false),
+        ("manager.clear_goal", false),
+        ("manager.supersede_goal", false),
+        ("manager.tier", false),
+        ("manager.verify", false),
+        ("goal.set", false),
+        ("goal.clear", false),
+        ("goal.supersede", false),
+        ("graph.handoff.edited", false),
+        ("graph.project.edited", false),
+        ("graph.decision.deleted", false),
+        ("task.claimed", false),
+        ("task.claim_released", false),
+        ("task.deleted", false),
+        ("artifact.deleted", false),
+        ("project.edited", false),
+        ("release.published", false),
+        ("daemon.restart_requested", false),
+        ("benchmark.concurrent_control", false),
+        ("question.raised", false),
+        ("question.answered", false),
+        ("note", false),
+        ("review", false),
+        ("verification", false),
+        ("correction", false),
+        ("unrecorded", false),
+    ];
+
+    const NON_DISPATCH_TX_ROUTE_TYPES: &[&str] = &[
+        "ledger.sync_conflict",
+        "manager.action",
+        "manager.board_reconciled",
+        "manager.correction",
+        "manager.decision",
+        "manager.evidence",
+        "manager.handoff_updated",
+        "manager.note",
+        "manager.review_close",
+        "manager.set_goal",
+        "manager.clear_goal",
+        "manager.supersede_goal",
+        "manager.tier",
+        "manager.verify",
+        "goal.set",
+        "goal.clear",
+        "goal.supersede",
+        "graph.handoff.edited",
+        "graph.project.edited",
+        "task.claimed",
+        "task.claim_released",
+        "project.edited",
+        "release.published",
+        "daemon.restart_requested",
+        "benchmark.concurrent_control",
+        "question.raised",
+        "question.answered",
+        "note",
+        "review",
+        "verification",
+        "correction",
+        "unrecorded",
+    ];
+
     #[tokio::test]
     async fn ap971_every_known_event_type_has_a_pinned_ledger_route() {
         let tmp = tempfile::tempdir().unwrap();
@@ -24165,80 +24261,7 @@ pub(crate) mod tests {
             node_dir.join("journal.org"),
             &orgasmic_core::node_kernel::journal_header("TASK-TEST"),
         );
-        let routes = [
-            ("comment", true),
-            ("worker.comment", true),
-            ("task.created", true),
-            ("task.edited", true),
-            ("task.property_updated", true),
-            ("task.state_transitioned", true),
-            ("graph.architecture.created", true),
-            ("graph.architecture.edited", true),
-            ("graph.decision.created", true),
-            ("graph.decision.edited", true),
-            ("graph.decision.reparent", true),
-            ("graph.glossary.created", true),
-            ("graph.glossary.edited", true),
-            ("graph.gotcha.created", true),
-            ("graph.gotcha.edited", true),
-            ("graph.convention.created", true),
-            ("graph.convention.edited", true),
-            ("reviewer.finding", true),
-            ("review.verdict", true),
-            ("artifact.created", true),
-            ("artifact.submitted", true),
-            ("artifact.comment.added", true),
-            ("artifact.comment.resolved", true),
-            ("artifact.regenerated", true),
-            ("artifact.generation.failed", true),
-            ("artifact.launch_address", true),
-            ("manager.dispatch_started", false),
-            ("run.created", false),
-            ("implementer.reported", false),
-            ("reviewer.reported", false),
-            ("architector.reported", false),
-            ("implementer.done", false),
-            ("reviewer.done", false),
-            ("architector.done", false),
-            ("fixer.done", false),
-            ("implementer.commit_pending", false),
-            ("manager.dispatch_aborted", false),
-            ("manager.dispatch_orphaned", false),
-            ("ledger.sync_conflict", false),
-            ("manager.action", false),
-            ("manager.board_reconciled", false),
-            ("manager.correction", false),
-            ("manager.decision", false),
-            ("manager.evidence", false),
-            ("manager.handoff_updated", false),
-            ("manager.note", false),
-            ("manager.review_close", false),
-            ("manager.set_goal", false),
-            ("manager.clear_goal", false),
-            ("manager.supersede_goal", false),
-            ("manager.tier", false),
-            ("manager.verify", false),
-            ("goal.set", false),
-            ("goal.clear", false),
-            ("goal.supersede", false),
-            ("graph.handoff.edited", false),
-            ("graph.project.edited", false),
-            ("graph.decision.deleted", false),
-            ("task.deleted", false),
-            ("artifact.deleted", false),
-            ("project.edited", false),
-            ("release.published", false),
-            ("daemon.restart_requested", false),
-            ("benchmark.concurrent_control", false),
-            ("question.raised", false),
-            ("question.answered", false),
-            ("note", false),
-            ("review", false),
-            ("verification", false),
-            ("correction", false),
-            ("unrecorded", false),
-        ];
-        for (ty, journal) in routes {
+        for &(ty, journal) in PINNED_LEDGER_ROUTES {
             let creating_task = ty == "task.created";
             let req = TxAppendRequest {
                 request_id: None,
@@ -24299,10 +24322,14 @@ pub(crate) mod tests {
                     .expect("routed type block contains only bullets")
             })
             .collect::<BTreeSet<_>>();
-        let rust = DISPATCH_PROJECT_TX_TYPES
+        let rust = PINNED_LEDGER_ROUTES
             .iter()
-            .copied()
-            .filter(|ty| !event_routes_to_journal(ty))
+            .filter_map(|(ty, routes_to_journal)| {
+                (!routes_to_journal
+                    && !ty.ends_with(".deleted")
+                    && !NON_DISPATCH_TX_ROUTE_TYPES.contains(ty))
+                .then_some(*ty)
+            })
             .collect::<BTreeSet<_>>();
 
         assert_eq!(shipped, rust);
@@ -32906,7 +32933,17 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        state.writer.append_tx(first.tx, None).await.unwrap();
+        let first_tx = state.writer.append_tx(first.tx, None).await.unwrap();
+        let error = refresh_after_tx(
+            &state,
+            first.project_tx,
+            first.destination_project_id,
+            &first_tx.tx_id,
+        )
+        .await
+        .expect_err("the owner must receive its committed projection failure");
+        assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(error.committed_tx_id(), Some(first_tx.tx_id.as_str()));
 
         let second = post_task_create(
             State(state.clone()),
@@ -32916,6 +32953,44 @@ pub(crate) mod tests {
         .await
         .expect("the next request must repair, not inherit, the first request's failure");
         assert_eq!(second.0.id, "TASK-SCND2");
+    }
+
+    #[tokio::test]
+    async fn plain_comment_journal_write_has_no_phantom_apply_failure_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let journal = task_node_file_path(&project_root, "TASK-PRE")
+            .with_file_name(orgasmic_core::node_kernel::JOURNAL_FILE);
+        write(
+            journal.clone(),
+            &orgasmic_core::node_kernel::journal_header("TASK-PRE"),
+        );
+        let state = direct_stage_test_state(home).await;
+
+        state.index.fail_next_refresh();
+        state
+            .writer
+            .append_journal_entry(
+                journal,
+                "TASK-PRE".into(),
+                orgasmic_core::node_kernel::JournalEntry {
+                    entry_id: "comment-no-owner".into(),
+                    time: "[2026-09-01 Tue 00:00:00]".into(),
+                    ty: "comment".into(),
+                    actor: "test".into(),
+                    machine: "test".into(),
+                    extras: Vec::new(),
+                    body: "queued without a claimant".into(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(state.writer.apply_failure_count(), 0);
+        state.writer.repair_projection().await.unwrap();
     }
 
     #[tokio::test]

@@ -48,7 +48,6 @@ struct Migration {
     rewrites: BTreeMap<PathBuf, String>,
     old_files: Vec<PathBuf>,
     headings: BTreeMap<&'static str, usize>,
-    anomalies: usize,
     in_place_nodes: usize,
     bytes: usize,
     project_source: String,
@@ -86,7 +85,6 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
         migration.nodes.len() + migration.in_place_nodes
     );
     println!("  bytes {}", migration.bytes);
-    println!("  anomalies {}", migration.anomalies);
     println!("  heading_round_trip byte-for-byte");
     if to_branch {
         println!("  target orphan branch orgasmic");
@@ -201,7 +199,6 @@ fn plan(root: &Path) -> Result<Migration> {
                     .map(|heading| file.slice(heading.span.clone()))
                     .collect::<String>();
             if reassembled != file.source() {
-                migration.anomalies += 1;
                 bail!(
                     "byte-for-byte heading round trip failed: {}",
                     source_path.display()
@@ -407,56 +404,88 @@ fn migrate_to_branch(home: &Home, root: &Path, migration: &Migration) -> Result<
     }
 
     let target = home.project_ledger(&id);
-    if !target.join(".orgasmic/project.org").is_file() {
-        let stage = ScratchDir::new("ledger-stage")?;
-        copy_tree(&root.join(".orgasmic"), &stage.path().join(".orgasmic"))?;
-        let staged = plan(stage.path())?;
-        if !staged.old_files.is_empty() {
-            apply(stage.path(), &staged)?;
+    let mut branch_created = false;
+    let mut worktree_added = false;
+    let mut source_removal_started = false;
+    let result = (|| {
+        if !target.join(".orgasmic/project.org").is_file() {
+            let stage = ScratchDir::new("ledger-stage")?;
+            copy_tree(&root.join(".orgasmic"), &stage.path().join(".orgasmic"))?;
+            let staged = plan(stage.path())?;
+            if !staged.old_files.is_empty() {
+                apply(stage.path(), &staged)?;
+            }
+            branch_created = create_orphan_branch(root, stage.path())?;
+            if target.exists() {
+                bail!(
+                    "ledger target already exists but is incomplete: {}",
+                    target.display()
+                );
+            }
+            std::fs::create_dir_all(target.parent().expect("ledger has project parent"))?;
+            git(
+                root,
+                &[
+                    "worktree",
+                    "add",
+                    target.to_str().context("ledger path is not UTF-8")?,
+                    "orgasmic",
+                ],
+            )?;
+            worktree_added = true;
         }
-        create_orphan_branch(root, stage.path())?;
-        if target.exists() {
-            bail!(
-                "ledger target already exists but is incomplete: {}",
-                target.display()
-            );
-        }
-        std::fs::create_dir_all(target.parent().expect("ledger has project parent"))?;
-        git(
-            root,
-            &[
-                "worktree",
-                "add",
-                target.to_str().context("ledger path is not UTF-8")?,
-                "orgasmic",
-            ],
-        )?;
-    }
 
-    let target_source = std::fs::read_to_string(target.join(".orgasmic/project.org"))?;
-    if project_id(&target_source)? != id {
-        bail!("orgasmic branch belongs to another project");
-    }
-    if !target_source
-        .lines()
-        .any(|line| line.trim() == "#+orgasmic_version: 2")
-    {
-        bail!("orgasmic branch ledger is not migrated to version 2");
-    }
-    ensure_ledger_worktree(root, &target)?;
-    ensure_orphan(root)?;
-    let source_tmp = root.join(".orgasmic/tmp");
-    if source_tmp.is_dir() {
-        copy_tree(&source_tmp, &target.join(".orgasmic/tmp"))?;
-    }
-    std::fs::remove_dir_all(root.join(".orgasmic")).context("remove .orgasmic from main tree")?;
-    Ok(())
+        let target_source = std::fs::read_to_string(target.join(".orgasmic/project.org"))?;
+        if project_id(&target_source)? != id {
+            bail!("orgasmic branch belongs to another project");
+        }
+        if !target_source
+            .lines()
+            .any(|line| line.trim() == "#+orgasmic_version: 2")
+        {
+            bail!("orgasmic branch ledger is not migrated to version 2");
+        }
+        ensure_ledger_worktree(root, &target)?;
+        ensure_orphan(root)?;
+        let source_tmp = root.join(".orgasmic/tmp");
+        if source_tmp.is_dir() {
+            copy_tree(&source_tmp, &target.join(".orgasmic/tmp"))?;
+        }
+        source_removal_started = true;
+        std::fs::remove_dir_all(root.join(".orgasmic"))
+            .context("remove .orgasmic from main tree")?;
+        Ok(())
+    })();
+    result.with_context(|| {
+        let mut recovery = Vec::new();
+        if source_removal_started {
+            recovery.push(format!("  git -C {} checkout -- .orgasmic", root.display()));
+        }
+        if worktree_added {
+            recovery.push(format!(
+                "  git -C {} worktree remove {}",
+                root.display(),
+                target.display()
+            ));
+        }
+        if branch_created {
+            recovery.push(format!("  git -C {} branch -D orgasmic", root.display()));
+        }
+        if recovery.is_empty() {
+            "branch cutover failed before this run changed the repository".to_string()
+        } else {
+            format!(
+                "branch cutover partially applied; undo this run with:\n{}",
+                recovery.join("\n")
+            )
+        }
+    })
 }
 
-fn create_orphan_branch(repo: &Path, work_tree: &Path) -> Result<()> {
+fn create_orphan_branch(repo: &Path, work_tree: &Path) -> Result<bool> {
     if git_ok(repo, &["rev-parse", "--verify", "refs/heads/orgasmic"]) {
         ensure_orphan(repo)?;
-        return Ok(());
+        return Ok(false);
     }
     let index_dir = ScratchDir::new("ledger-index")?;
     let index = index_dir.path().join("index");
@@ -481,7 +510,8 @@ fn create_orphan_branch(repo: &Path, work_tree: &Path) -> Result<()> {
             "Initialize orgasmic ledger",
         ],
     )?;
-    git(repo, &["update-ref", "refs/heads/orgasmic", &commit])
+    git(repo, &["update-ref", "refs/heads/orgasmic", &commit])?;
+    Ok(true)
 }
 
 fn ensure_orphan(repo: &Path) -> Result<()> {
@@ -712,8 +742,18 @@ mod tests {
         assert!(repo.join(".orgasmic").is_dir());
         assert!(!git_ok(&repo, &["rev-parse", "--verify", "orgasmic"]));
 
-        run_at(&home, &repo, false, true).unwrap();
         let ledger = home.project_ledger("demo");
+        std::fs::create_dir_all(&ledger).unwrap();
+        let error = run_at(&home, &repo, false, true).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("branch cutover partially applied; undo this run with:"));
+        assert!(message.contains(&format!("git -C {} branch -D orgasmic", repo.display())));
+        assert!(!message.contains("worktree remove"));
+        assert!(!message.contains("checkout -- .orgasmic"));
+        std::fs::remove_dir_all(&ledger).unwrap();
+        git(&repo, &["branch", "-D", "orgasmic"]).unwrap();
+
+        run_at(&home, &repo, false, true).unwrap();
         assert!(!repo.join(".orgasmic").exists());
         assert!(ledger.join(".orgasmic/tasks/TASK-A/node.org").is_file());
         assert_eq!(
