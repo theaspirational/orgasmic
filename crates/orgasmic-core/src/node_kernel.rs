@@ -253,53 +253,67 @@ fn comment_spans(content: &str, entry_id: &str) -> Result<EntrySpans> {
     Ok(spans)
 }
 
+fn upsert_comment_property(
+    content: &str,
+    entry_id: &str,
+    key: &str,
+    value: &str,
+) -> Result<String> {
+    let (body, props) = comment_spans(content, entry_id)?;
+    if let Some((_, span)) = props.iter().find(|(property, _)| property == key) {
+        let mut out = content.to_string();
+        out.replace_range(span.clone(), value);
+        return Ok(out);
+    }
+    let end_line = content[..body.start].rfind(":END:").context("drawer end")?;
+    let mut out = content.to_string();
+    out.insert_str(end_line, &format!(":{key}: {value}\n"));
+    Ok(out)
+}
+
 /// Authored prose is edited IN PLACE (AP971.1 item 7): one copy ever exists,
-/// git holds the previous text. Stamps `:EDITED_AT:`; the caller supplies it
-/// and performs the OCC check before calling.
+/// git holds the previous text. The caller supplies the audit stamps and
+/// performs the OCC check before calling.
 pub fn edit_comment_body(
     content: &str,
     entry_id: &str,
     new_body: &str,
+    edited_by: &str,
     edited_at: &str,
 ) -> Result<String> {
-    let (body, props) = comment_spans(content, entry_id)?;
-    let mut out = String::with_capacity(content.len() + new_body.len());
-    match props.iter().find(|(k, _)| k == "EDITED_AT") {
-        Some((_, span)) => {
-            out.push_str(&content[..span.start]);
-            out.push_str(edited_at);
-            out.push_str(&content[span.end..body.start]);
-        }
-        None => {
-            // Insert the stamp as the last drawer line: `:END:` sits just
-            // before the body, after the last property's newline.
-            let end_line = content[..body.start].rfind(":END:").context("drawer end")?;
-            out.push_str(&content[..end_line]);
-            out.push_str(&format!(":EDITED_AT: {edited_at}\n"));
-            out.push_str(&content[end_line..body.start]);
-        }
-    }
+    let stamped = upsert_comment_property(content, entry_id, "EDITED_BY", edited_by)?;
+    let stamped = upsert_comment_property(&stamped, entry_id, "EDITED_AT", edited_at)?;
+    let (body, _) = comment_spans(&stamped, entry_id)?;
+    let mut out = String::with_capacity(stamped.len() + new_body.len());
+    out.push_str(&stamped[..body.start]);
     out.push('\n');
     out.push_str(new_body.trim());
     out.push('\n');
-    out.push_str(&content[body.end..]);
+    out.push_str(&stamped[body.end..]);
     Ok(out)
 }
 
 /// Delete = drop the body, leave the one-line tombstone so reply chains never
 /// dangle (AP971.1 item 7).
-pub fn tombstone_comment(content: &str, entry_id: &str) -> Result<String> {
-    let (body, props) = comment_spans(content, entry_id)?;
+pub fn tombstone_comment(
+    content: &str,
+    entry_id: &str,
+    deleted_by: &str,
+    deleted_at: &str,
+) -> Result<String> {
+    let stamped = upsert_comment_property(content, entry_id, "DELETED_BY", deleted_by)?;
+    let stamped = upsert_comment_property(&stamped, entry_id, "DELETED_AT", deleted_at)?;
+    let (body, props) = comment_spans(&stamped, entry_id)?;
     let ty = &props
         .iter()
         .find(|(key, _)| key == "TYPE")
         .expect("comment_spans checked TYPE")
         .1;
-    let mut out = String::with_capacity(content.len());
-    out.push_str(&content[..ty.start]);
+    let mut out = String::with_capacity(stamped.len());
+    out.push_str(&stamped[..ty.start]);
     out.push_str("comment.deleted");
-    out.push_str(&content[ty.end..body.start]);
-    out.push_str(&content[body.end..]);
+    out.push_str(&stamped[ty.end..body.start]);
+    out.push_str(&stamped[body.end..]);
     Ok(out)
 }
 
@@ -364,14 +378,24 @@ mod tests {
         assert_eq!(parsed[0].body, "first\n\nmulti-line");
         assert!(parsed.iter().all(JournalEntry::is_open_comment));
 
-        let j =
-            edit_comment_body(&j, "tx-2", "second, edited", "[2026-08-22 Sat 13:01:00]").unwrap();
+        let j = edit_comment_body(
+            &j,
+            "tx-2",
+            "second, edited",
+            "editor",
+            "[2026-08-22 Sat 13:01:00]",
+        )
+        .unwrap();
         let parsed = parse_journal(&j, JOURNAL_FILE).unwrap();
         assert_eq!(parsed[1].body, "second, edited");
-        assert!(parsed[1].extra("EDITED_AT").is_some());
+        assert_eq!(parsed[1].extra("EDITED_BY"), Some("editor"));
+        assert_eq!(
+            parsed[1].extra("EDITED_AT"),
+            Some("[2026-08-22 Sat 13:01:00]")
+        );
         assert_eq!(parsed[0].body, "first\n\nmulti-line", "sibling untouched");
 
-        let j = tombstone_comment(&j, "tx-1").unwrap();
+        let j = tombstone_comment(&j, "tx-1", "deleter", "[2026-08-22 Sat 13:02:00]").unwrap();
         let (j, consumed) = consume_open_comments(&j).unwrap();
         assert_eq!(consumed, vec!["tx-2"]);
         let parsed = parse_journal(&j, JOURNAL_FILE).unwrap();
@@ -380,6 +404,11 @@ mod tests {
         assert_eq!(
             parsed[0].body, "",
             "tombstone keeps the entry, drops the prose"
+        );
+        assert_eq!(parsed[0].extra("DELETED_BY"), Some("deleter"));
+        assert_eq!(
+            parsed[0].extra("DELETED_AT"),
+            Some("[2026-08-22 Sat 13:02:00]")
         );
         // second consume is a no-op
         let (again, none) = consume_open_comments(&j).unwrap();
