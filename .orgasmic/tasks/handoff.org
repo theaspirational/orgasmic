@@ -620,7 +620,7 @@ the independent whole-chain review ran 2026-09-01 (APPROVE WITH FOLLOW-UPS, 6H/5
 
 1. *FIX ROUNDS, in this order* (all tag =chain-review=; one implementer per task, reviewer cross-family; ask the
    operator for the implementer model/effort at the first dispatch):
-   a. TASK-MSYN4.1 (P1) H1 denylist — SECURITY, live today, smallest diff; go first.
+   a. TASK-MSYN4.1 (P1) H1 denylist — DISPATCHED 2026-09-01 16:20 (tx-ca5b5a35, codex gpt-5.6-sol); see In flight.
    b. TASK-JWHXH.1 (P1) H4 code side + M1 views regeneration.
    c. TASK-EPG6H.1 (P1) H3 torn-close repair reads journals / drops the dead arm.
    d. TASK-MSYN4.2 (P1) H2 writer lease or sidecar exclusion + H5 surface the wedge.
@@ -641,7 +641,14 @@ DONE SINCE LAST HANDOFF (do not re-propose): whole-chain review dispatched, repo
 tasks done; 9 follow-up tasks filed; H4 live-ledger fix; 9 orphan/verdict-less generations closed; TFXR2 orphan.
 
 ** In flight
-NOTHING IN FLIGHT (2026-09-01 16:10). The whole-chain review generation tx-1c6d2115 is closed; dispatch-status is empty; no worker worktrees. Runtime 0.0.23-dev.20260830i under launchd, pid 2682. The ledger sync loop is live and commits every ~2s — commit any manual ledger index change in the same command or autostash drops it. vscode-orsl's manager dispatches on its own schedule — not this board's. Fix-round dispatches need the operator's IMPLEMENTER model/effort for this session (review ran on claude-opus-5 high; the implementer should differ in family or state why).
+ONE LIVE DISPATCH (2026-09-01 16:20): fix round TASK-MSYN4.1 (chain-review H1, org-file denylist + post_org_file identity).
+- started_tx =tx-20260901-orgasmic-ca5b5a35-4622-4763-9965-dc923c9cbca5=, run =run-01M1EJ7E5QYKQZ619NDPD1715Y=, pid 12185
+- worker =implementer-codex-chat-stdio= (driver stdio, harness codex-chat, canonical chat runtime), model =gpt-5.6-sol=, NO --effort (does not reach codex, C7NVH), governance =stall_timeout_secs=3600=
+- OPERATOR PAIR FOR THIS SESSION'S FIX ROUNDS: implementer codex gpt-5.6-sol; reviewer claude-opus-5 high (cross-family).
+- worktree =~/.orgasmic/worktrees/orgasmic/task-msyn4.1=, branch =task-msyn4.1-impl=; brief =.orgasmic/tmp/dispatch/brief-TASK-MSYN4.1/brief-TASK-MSYN4.1.md=
+- watcher armed: =dispatch-wait --started-tx tx-20260901-orgasmic-ca5b5a35-… --timeout 240m=
+WHEN IT REPORTS: read last.txt, run the four gates yourself on the merged tree (targeted, never workspace), =git merge --no-ff task-msyn4.1-impl= on main, =dispatch-close --task TASK-MSYN4.1 --started-tx <above> --status done --merge-sha <sha> --worktree-remove --branch-delete= (lands in_review, FIX_SUBTASK), then dispatch the reviewer (claude-opus-5 high, stdio claude) over =main..<merge>=, wait, close with --verdict. Then 1b TASK-JWHXH.1.
+Runtime 0.0.23-dev.20260830i under launchd, pid 2682. Ledger sync loop live (~2s) — commit any manual ledger index change in the same command.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
