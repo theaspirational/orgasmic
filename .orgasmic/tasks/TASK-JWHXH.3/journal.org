@@ -106,3 +106,94 @@
 :TO_STATE: in_review
 :EVENT_ID: 8849ed1e-0531-4ba8-9eee-e9529416ee4b
 :END:
+
+* tx-20260901-orgasmic-7038 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7038
+:TIME:    [2026-09-01 Tue 22:35:15]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:REASON: MEDIUM crates/orgasmic-cli/src/doctor.rs:254 — push_tracked_views_findings returns early for any project that is not a git work tree, so a registered non-git project keeps a stale never-updated .orgasmic/views/board.org with no doctor warning, against dec_XH2XY's 'doctor warns while it is still there'.
+:EVENT_ID: 1ae1a965-29e9-411e-bb6a-1fe87f6a6848
+:END:
+
+* tx-20260901-orgasmic-7039 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7039
+:TIME:    [2026-09-01 Tue 22:35:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:REASON: LOW crates/orgasmic-daemon/src/api.rs:14571 — get_org_file calls render_view synchronously on the async executor thread (no spawn_blocking); measured on the live 814-task ledger: board.org 41ms cold / 24ms warm, 3.1 MB, decisions 3ms, glossary 1.5ms — no stall today, but it blocks a tokio worker per request and grows linearly with task count.
+:EVENT_ID: 20baada4-2d40-46f9-b0b3-5af2816132a4
+:END:
+
+* tx-20260901-orgasmic-7040 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7040
+:TIME:    [2026-09-01 Tue 22:35:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:REASON: LOW crates/orgasmic-daemon/src/api.rs:14705 — post_org_file's refusal for .orgasmic/views/* still says 'regenerate it through the view refresh operation', an operation this change deleted (CLI views build + index rebuild); the message now points users at nothing.
+:EVENT_ID: 17f9a455-74cf-4dfe-ba4c-00f421ca9ded
+:END:
+
+* tx-20260901-orgasmic-7041 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7041
+:TIME:    [2026-09-01 Tue 22:35:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:REASON: LOW crates/orgasmic-core/src/views.rs:55 — render_collection bails on the first malformed node, so one corrupt task node.org now 500s GET .orgasmic/views/board.org for the whole project, where the old build_views failure left the last-good on-disk file readable plus a recorded parse error (index-derived UI unaffected).
+:EVENT_ID: 4a52f3d7-0b5c-4029-86c1-a23bba286d58
+:END:
+
+* tx-20260901-orgasmic-7042 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7042
+:TIME:    [2026-09-01 Tue 22:35:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:REASON: LOW crates/orgasmic-cli/src/project_migrate.rs:170 — the 'else if views_applied' arm is unreachable (views_applied==true implies tracked non-empty or dir_present, so an earlier arm always fires); 'views untracked and directory removed' can never print, and the tracked-count line at :155 reports the pre-apply state as if current.
+:EVENT_ID: c5b77f0f-f8cd-4ce0-b36f-3e4646a5ddf9
+:END:
+
+* tx-20260901-orgasmic-7043 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7043
+:TIME:    [2026-09-01 Tue 22:35:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:REASON: LOW shipped/schema/tx.org:294 and shipped/skills/orgasmic/meta/corpus-manifest.json:135-136 — stale docs: tx.org still documents 'derived aggregate read views under .orgasmic/views/', and the corpus manifest still lists cli-help/views.txt + cli-help/views/build.txt for the deleted verb.
+:EVENT_ID: d9a47dac-ae26-4eb3-94dc-7c6365438ec3
+:END:
+
+* tx-20260901-orgasmic-7044 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-7044
+:TIME:    [2026-09-01 Tue 22:35:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3
+:REASON: LOW crates/orgasmic-core/src/projects.rs:188 — the task's own line 'init_project must not skip the ignore rule when .gitignore already exists' is not implemented; init still skips a pre-existing .orgasmic/.gitignore wholesale, so it never gains tmp/. dec_XH2XY removes the views/ motivation, so only the pre-existing tmp/ gap remains — needs an explicit manager call to drop the line.
+:EVENT_ID: f99407de-51cf-4256-8aad-39f5a503b4ec
+:END:
