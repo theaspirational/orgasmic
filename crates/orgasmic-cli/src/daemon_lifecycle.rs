@@ -5,6 +5,7 @@
 //! the CLI-only case: daemon-backed commands can ensure a local daemon exists
 //! without asking the user to keep a shell, tmux pane, or terminal window alive.
 
+use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom};
 use std::net::IpAddr;
@@ -94,6 +95,17 @@ pub struct DaemonStatus {
     pub fd_limit: Option<u64>,
     #[serde(default)]
     pub writer: Option<WriterFdStatus>,
+    #[serde(default)]
+    pub ledger_sync: BTreeMap<String, LedgerSyncStatus>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedgerSyncStatus {
+    pub outcome: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub consecutive_failures: u32,
 }
 
 /// The slice of the daemon's writer status that explains fd pressure.
@@ -1217,6 +1229,27 @@ mod tests {
     // a private mutex here doesn't exclude those modules' `ORGASMIC_DAEMON_URL`
     // reads, which flaked under `cargo test --workspace` (TASK-SJQ9V residual).
     use crate::test_support::{env_guard, RecordingDaemon, ScopedEnv};
+
+    #[test]
+    fn daemon_status_decodes_ledger_sync_failures() {
+        let status: DaemonStatus = serde_json::from_value(serde_json::json!({
+            "boot_id": "boot-test",
+            "pid": 42,
+            "ledger_sync": {
+                "/tmp/ledger": {
+                    "outcome": "backed_off",
+                    "error": "git pull --rebase failed: conflict\nmore detail",
+                    "consecutive_failures": 2
+                }
+            }
+        }))
+        .unwrap();
+
+        let sync = &status.ledger_sync["/tmp/ledger"];
+        assert_eq!(sync.outcome, "backed_off");
+        assert_eq!(sync.consecutive_failures, 2);
+        assert!(sync.error.as_deref().unwrap().starts_with("git pull"));
+    }
 
     /// A board whose durable recovery history cannot be read at all: the
     /// inventory endpoint answers 500 the way it would if every session file

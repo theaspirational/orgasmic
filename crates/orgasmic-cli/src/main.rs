@@ -2787,6 +2787,21 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
                     .unwrap_or(0);
                 println!("  fds:     {open}/{limit} (writer session handles: {handles})");
             }
+            for (path, sync) in &status.ledger_sync {
+                if sync.outcome == "failed" || sync.outcome == "backed_off" {
+                    let error = sync
+                        .error
+                        .as_deref()
+                        .unwrap_or("unknown error")
+                        .lines()
+                        .next()
+                        .unwrap_or("unknown error");
+                    println!(
+                        "  ledger sync: {path} ({} failures): {error}",
+                        sync.consecutive_failures
+                    );
+                }
+            }
         }
         daemon_lifecycle::LocalDaemonState::Starting(starting) => {
             match (&starting.phase, starting.started_at) {

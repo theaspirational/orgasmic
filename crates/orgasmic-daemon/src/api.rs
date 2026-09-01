@@ -230,6 +230,7 @@ pub struct ApiState {
     /// fast. A test that starts a release and then restarts proves the
     /// already-registered case and passes against the broken code too.
     pub release_admission_delay: Option<std::time::Duration>,
+    pub(crate) ledger_sync: crate::ledger_sync::LedgerSyncStatuses,
     /// Per-node locks serializing node.org/journal.org read-modify-write.
     pub node_write_locks:
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
@@ -8932,6 +8933,7 @@ pub struct StatusResponse {
     pub rebuilt_at: Option<String>,
     pub writer: crate::writer::WriterStatus,
     pub index_refresh: crate::index::IndexRefreshStatus,
+    pub(crate) ledger_sync: BTreeMap<String, crate::ledger_sync::LedgerSyncStatus>,
     /// Descriptor headroom: an fd leak shows here long before EMFILE.
     pub open_fds: Option<usize>,
     pub fd_limit: Option<u64>,
@@ -8942,6 +8944,13 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
     let writer = state.writer.status();
     let index_refresh = state.index.refresh_status().await;
     let (open_fds, fd_limit) = crate::fd_usage();
+    let ledger_sync = state
+        .ledger_sync
+        .lock()
+        .expect("ledger sync status lock")
+        .iter()
+        .map(|(path, status)| (path.display().to_string(), status.clone()))
+        .collect();
     let unloaded_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Unloaded);
     let loading_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Loading);
     let ready_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Ready);
@@ -8996,6 +9005,7 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
         rebuilt_at: snap.rebuilt_at.map(|t| t.to_rfc3339()),
         writer,
         index_refresh,
+        ledger_sync,
         open_fds,
         fd_limit,
     })
@@ -22357,6 +22367,7 @@ pub(crate) mod tests {
             trusted_exec_wrapper: None,
             release_tasks: ReleaseTaskTracker::new(),
             recovery_generation_transitions: RecoveryGenerationTransitionTracker::default(),
+            ledger_sync: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -30471,6 +30482,17 @@ pub(crate) mod tests {
         let state = direct_stage_test_state(home.clone()).await;
         seed_project(&home, &tmp.path().join("proj"), "orgasmic");
         state.index.refresh_board().await;
+        state.ledger_sync.lock().unwrap().insert(
+            tmp.path().join("proj"),
+            crate::ledger_sync::LedgerSyncStatus {
+                outcome: "failed",
+                error: Some("git pull --rebase failed: conflict".into()),
+                consecutive_failures: 1,
+                last_attempt_at: None,
+                last_success_at: None,
+                next_attempt_at: None,
+            },
+        );
 
         let Json(status) = get_status(State(state)).await;
         let status = serde_json::to_value(&status).unwrap();
@@ -30488,6 +30510,10 @@ pub(crate) mod tests {
         assert_eq!(status["ready_projects"], serde_json::json!([]));
         assert_eq!(status["delayed_projects"], serde_json::json!({}));
         assert_eq!(status["failed_projects"], serde_json::json!({}));
+        assert_eq!(
+            status["ledger_sync"][tmp.path().join("proj").display().to_string()]["error"],
+            "git pull --rebase failed: conflict"
+        );
     }
     #[tokio::test]
     async fn tmux_ws_mock_streams_and_echoes_send_keys() {
