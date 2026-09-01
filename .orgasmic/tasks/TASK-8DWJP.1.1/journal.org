@@ -89,3 +89,55 @@
 :REASON: HIGH ledger_sync.rs:98-104 — an interrupted pull --rebase leaves HEAD detached, so the Idle gate returns before the new unmerged-paths entry guard at :104 and every tick reports idle forever: a crash between the conflicting pull and rebase --abort is a permanent silent wedge, unmet acceptance 're-entrant across a crashed or interrupted attempt'
 :EVENT_ID: c5686996-3d2e-4b3a-9ff0-ab4cc7ab9f35
 :END:
+
+* tx-20260901-orgasmic-6961 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6961
+:TIME:    [2026-09-01 Tue 16:26:41]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.1
+:REASON: HIGH ledger_sync.rs:424-462 — the Parked/Autostash/Unrecoverable recovery branches never stage the worktree before reset --hard origin/orgasmic, so every daemon write to a TRACKED ledger file made after the conflicting pull (fetch window, barrier queue drain, and the whole backoff window before a retried recovery tick) is destroyed and exists in no parked ref; probed verbatim in a temp repo, zero surviving copies, and the conflict status string says only 'parked at <ref>'
+:EVENT_ID: 3af85fd5-c820-42ef-9279-12782e1ce0c6
+:END:
+
+* tx-20260901-orgasmic-6962 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6962
+:TIME:    [2026-09-01 Tue 16:26:48]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.1
+:REASON: MEDIUM ledger_sync.rs:320-329 — commit_matches_conflict_side compares Option==Option, so a conflicted path with no stage 3 (delete/modify, verified git 2.52 'in the index, but not at stage 3') makes None==None a match: a stale parked ref that also lacks the path can be reused as this conflict's local side, leaving the real retained autostash undropped and the current local bytes reset away
+:EVENT_ID: 19916c3d-f90c-4c43-86dc-9ee96af2afc7
+:END:
+
+* tx-20260901-orgasmic-6963 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6963
+:TIME:    [2026-09-01 Tue 16:26:54]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.1
+:REASON: LOW ledger_sync.rs:451-458 — after the identity check bails, the parked ref already exists, so the next tick takes ConflictSource::Parked with retained_stash=false and never drops the daemon autostash: one orphan entry accumulates on the shared refs/stash per foreign-stash collision (bytes safe, stack litter)
+:EVENT_ID: 11f72ada-99d1-4051-9a76-e5854fae7577
+:END:
+
+* tx-20260901-orgasmic-6964 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6964
+:TIME:    [2026-09-01 Tue 16:26:54]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP.1.1
+:REASON: LOW ledger_sync.rs:1294-1319 — leftover_foreign_machine_conflict_does_not_wedge_the_next_tick never asserts parked_ref is non-empty, and conflicting_two_writer_tick's post-conflict 'fresh a write' is an untracked file, so no test would catch a regression to the silent Unrecoverable reset or the tracked-file loss in HIGH 2
+:EVENT_ID: 58da6a15-2f43-46c1-807d-5d8fa06cf7f2
+:END:
