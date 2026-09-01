@@ -392,6 +392,8 @@ pub struct Index {
     project_refresh_scan_timeout: Duration,
     repo_url_refresh_enabled: Arc<AtomicBool>,
     repo_url_probed: Arc<std::sync::Mutex<HashSet<(String, PathBuf)>>>,
+    view_dirty_roots: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+    view_drain_scheduled: Arc<AtomicBool>,
     #[cfg(test)]
     git_spawn_attempts: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(test)]
@@ -423,6 +425,7 @@ pub(crate) struct TestRefreshGate {
 // orgasmic:TASK-K9WWM
 const REFRESH_COALESCE_WINDOW: Duration = Duration::from_millis(50);
 const REFRESH_COALESCE_MAX_WAIT: Duration = Duration::from_millis(200);
+const VIEW_REBUILD_DEBOUNCE: Duration = Duration::from_millis(200);
 const PROJECT_REFRESH_SCAN_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PROJECT_REFRESH_SCAN_TIMEOUT: Duration = Duration::from_secs(300);
 const PROJECT_REFRESH_SCAN_TIMEOUT_ENV: &str = "ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS";
@@ -822,6 +825,8 @@ impl Index {
             project_refresh_scan_timeout: configured_project_refresh_scan_timeout(),
             repo_url_refresh_enabled: Arc::new(AtomicBool::new(false)),
             repo_url_probed: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            view_dirty_roots: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            view_drain_scheduled: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
             git_spawn_attempts: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             #[cfg(test)]
@@ -831,6 +836,40 @@ impl Index {
 
     pub async fn snapshot(&self) -> IndexSnapshot {
         self.inner.read().await.clone()
+    }
+
+    fn schedule_view_rebuild(&self, root: PathBuf) {
+        self.view_dirty_roots.lock().unwrap().insert(root);
+        if self.view_drain_scheduled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let dirty = self.view_dirty_roots.clone();
+        let scheduled = self.view_drain_scheduled.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(VIEW_REBUILD_DEBOUNCE).await;
+                let roots = std::mem::take(&mut *dirty.lock().unwrap());
+                for root in roots {
+                    let root_path = root.clone();
+                    match tokio::task::spawn_blocking(move || orgasmic_core::build_views(&root))
+                        .await
+                    {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(error)) => {
+                            warn!(project = %root_path.display(), %error, "build derived views failed")
+                        }
+                        Err(error) => {
+                            warn!(project = %root_path.display(), %error, "build derived views task failed")
+                        }
+                    }
+                }
+                let pending = dirty.lock().unwrap();
+                if pending.is_empty() {
+                    scheduled.store(false, Ordering::SeqCst);
+                    return;
+                }
+            }
+        });
     }
 
     /// Apply one filesystem write to the live projection. Classified node and
@@ -1134,6 +1173,8 @@ impl Index {
         load.state = ProjectLoadState::Ready;
         load.generation = load.generation.saturating_add(1);
         load.last_loaded_at = Some(Utc::now());
+        drop(snap);
+        self.schedule_view_rebuild(board_entry.path.clone());
         Ok(true)
     }
 
@@ -5736,6 +5777,36 @@ mod tests {
         let changed = std::fs::read_to_string(views.join("board.org")).unwrap();
         assert_ne!(changed.as_bytes(), first);
         assert!(changed.contains("* IN_PROGRESS TASK-001 Changed"));
+    }
+
+    #[tokio::test]
+    async fn incremental_node_write_rebuilds_views_without_claim_churn() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        let index = Index::new(home);
+        index.rebuild().await;
+
+        let node = project_root.join(".orgasmic/tasks/TASK-NEW/node.org");
+        write(
+            &node,
+            "#+title: orgasmic task TASK-NEW\n#+orgasmic_version: 2\n\n* BACKLOG TASK-NEW New task\n:PROPERTIES:\n:ID: TASK-NEW\n:END:\n",
+        );
+        assert!(index.apply_written_path(&node).await.unwrap());
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let board = std::fs::read_to_string(project_root.join(".orgasmic/views/board.org"))
+                    .unwrap();
+                if board.contains("* BACKLOG TASK-NEW New task") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("debounced view rebuild did not finish");
     }
 
     #[tokio::test]
