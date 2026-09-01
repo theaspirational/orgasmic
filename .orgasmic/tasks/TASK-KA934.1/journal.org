@@ -76,3 +76,42 @@
 :TO_STATE: in_review
 :EVENT_ID: d8aaeadc-a3af-42c1-8e19-ecc458776002
 :END:
+
+* tx-20260901-orgasmic-6884 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6884
+:TIME:    [2026-09-01 Tue 15:02:01]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:REASON: MEDIUM api.rs:897 — MEMBER_ALLOWED_ROUTES omits POST /tasks/:id/comments and the /edit and /delete routes, so no Identity::Member can reach these handlers (403 at identity_middleware); the new authorship check is unreachable defense-in-depth exercised only by direct-handler unit tests, and the original M4 premise was not reachable over HTTP.
+:EVENT_ID: 1300335c-77d0-4387-a3ef-a6ca35a1f063
+:END:
+
+* tx-20260901-orgasmic-6885 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6885
+:TIME:    [2026-09-01 Tue 15:02:08]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:REASON: MEDIUM ui/src/components/TaskDialog.tsx:179 (pre-existing) — /me advertises tasks.comment for the viewer role (authz.rs:80) so canComment enables the composer, but POST /tasks/:id/comments is not in MEMBER_ALLOWED_ROUTES; a member's comment always 403s with 'forbidden for this member role'. Either the allow-list is missing the three comment routes or the member-attribution code in post_task_comment (api.rs:2348) is dead.
+:EVENT_ID: 5a30ca1b-814d-4fc7-ac26-43356d8dfe60
+:END:
+
+* tx-20260901-orgasmic-6886 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6886
+:TIME:    [2026-09-01 Tue 15:02:08]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.1
+:REASON: LOW crates/orgasmic-daemon/src/index.rs:4321 — activity_entry_from_tx returns None for TYPE comment.deleted and ActivityEntry carries no EDITED_BY/EDITED_AT/DELETED_BY/DELETED_AT fields, so the new audit stamps have no reader outside journal.org and the tombstone row vanishes from GET /tasks/:id/activity, leaving IN_REPLY_TO chains dangling despite node_kernel.rs:311's stated intent.
+:EVENT_ID: 54715cc3-0b44-4806-a92a-385c46695805
+:END:
