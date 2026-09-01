@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-MSYN4.3
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-MSYN4.3 M5: tx ids collide across machines (no machine component; per-project seq; stale in-memory max after pull) :e01mc:chain-review:
+* IN_REVIEW TASK-MSYN4.3 M5: tx ids collide across machines (no machine component; per-project seq; stale in-memory max after pull) :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-MSYN4.3
 :PRIORITY: P2
@@ -15,3 +15,5 @@ Source: whole-chain review tx-20260901-orgasmic-1c6d2115 (reviewer-claude-sdk-st
 - [ ] Machine id (or a machine-scoped sequence) is part of the minted tx id, or the fold keys on EVENT_ID; existing ids stay valid as references.
 - [ ] =project_max= is refreshed after a pull (or derived from all machines/*/tx on mint).
 - [ ] Two-writer collision test in the fold; clippy -D; fmt.
+** Evidence
+Merged 568cb5be (worker 2bbd467e, codex gpt-5.6-sol): every TxIdPolicy::ProjectSequence append mints tx-{date}-{slug}-{uuid_v4}; ProjectTxSeqCache/next_project_tx_id/scan_project_tx_max_seq deleted (+130/-437). Manager gates re-run on merged main 2026-09-01: cargo test -p orgasmic-core --lib tx → 25 passed; cargo test -p orgasmic-daemon --lib -- writer → 32 passed (all writer tests); cargo test -p orgasmic-daemon --test writer_durability → 9 passed; cargo clippy -p orgasmic-core -p orgasmic-daemon --all-targets -D warnings clean; cargo fmt --all --check clean. Logs: scratchpad/gates-MSYN4.3-{core,writer,durability,clippy,fmt}.log. Review round (claude-opus-5 high) dispatched on the merged diff.

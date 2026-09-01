@@ -45,3 +45,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: fb3b5c4b-82cc-4607-b310-8602da2fff0e
 :END:
+
+* tx-20260901-orgasmic-6900 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6900
+:TIME:    [2026-09-01 Tue 15:16:58]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-MSYN4.3/node.org
+:REASON: edited task node TASK-MSYN4.3
+:NODE_ID: TASK-MSYN4.3
+:EVENT_ID: 34196b85-fb05-4a1d-b702-1a8a7d3d16b2
+:END:
+
+* tx-20260901-orgasmic-6901 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6901
+:TIME:    [2026-09-01 Tue 15:16:59]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MSYN4.3
+:TARGET: .orgasmic/tasks/TASK-MSYN4.3/node.org
+:REASON: transition TASK-MSYN4.3 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 0737c75d-65e5-460e-8d67-cf9d37de8529
+:END:
