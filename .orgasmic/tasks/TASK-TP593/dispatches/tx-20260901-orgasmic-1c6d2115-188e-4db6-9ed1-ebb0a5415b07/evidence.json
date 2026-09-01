@@ -1,0 +1,23 @@
+{
+  "event_count": 1205,
+  "tool_call_count": 114,
+  "unparsed_events": 26,
+  "bounded_events": 37,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-TP593_TASK-7A0H4_TASK-GCXB7_TASK-SRBGS_TASK-JWHXH_TASK-EPG6H_TASK-ARRV8_TASK-AN992_TASK-IXPD4_TASK-TFXR2_TASK-RGRD5_TASK-LBRX7_TASK-8AV8B_TASK-MSYN4_TASK-8DMQS_TASK-CLM6W_TASK-KA934-reviewer-20260901T124202.jsonl",
+    "size_bytes": 1793063
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by getting oriented — the repo state, the diff scope, and the spec.Confirmed my first finding. Filing it.Production data confirms it. Filing.Confirmed: sync failure only reaches a tracing warn. Filing.Reproduced on the live ledger. Filing.Confirmed — no `build_views` on the incremental path. Filing.Reproduced: all 7 live-corpus tests skip and report green. Filing.Verified with the exact predicate. Filing.All 15 findings are durably filed. Writing the report."
+    }
+  ],
+  "narrative_truncated": false
+}
