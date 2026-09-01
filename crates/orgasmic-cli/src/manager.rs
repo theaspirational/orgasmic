@@ -9760,7 +9760,7 @@ fn reconcile_torn_closes_best_effort(home: &Home, project_root: &Path, project_i
 /// tx carrying `LIFECYCLE_FROM`/`LIFECYCLE_TO`, dropped again as soon as a
 /// later `task.state_transitioned` for that task appears.
 fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransition)>> {
-    let mut pending: Vec<(String, CloseTransition)> = Vec::new();
+    let mut pending: Vec<(String, CloseTransition, String)> = Vec::new();
     for entry in read_tx_entries(project_root)? {
         let Some(task) = entry.task.as_deref() else {
             continue;
@@ -9772,7 +9772,7 @@ fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransi
             | "reviewer.done"
             | "architector.done"
             | "manager.dispatch_aborted" => {
-                pending.retain(|(_, pending)| pending.task != task);
+                pending.retain(|(_, pending, _)| pending.task != task);
                 let from = extra(&entry, LIFECYCLE_FROM_KEY).and_then(|v| v.parse().ok());
                 let to = extra(&entry, LIFECYCLE_TO_KEY).and_then(|v| v.parse().ok());
                 if let (Some(from), Some(to), Some(started_tx)) =
@@ -9785,6 +9785,7 @@ fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransi
                             from,
                             to,
                         },
+                        entry.time,
                     ));
                 }
             }
@@ -9793,12 +9794,36 @@ fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransi
             // integration test and the unit case below both require this as
             // the durable evidence that an older close no longer needs repair.
             "task.state_transitioned" | "manager.dispatch_started" => {
-                pending.retain(|(_, pending)| pending.task != task);
+                pending.retain(|(_, pending, _)| pending.task != task);
             }
             _ => {}
         }
     }
-    Ok(pending)
+
+    let mut candidates = Vec::new();
+    for (started_tx, transition, close_time) in pending {
+        let journal_path = task_node_file_path(project_root, &transition.task)
+            .with_file_name(orgasmic_core::node_kernel::JOURNAL_FILE);
+        if journal_path.is_file() {
+            let source = std::fs::read_to_string(&journal_path)
+                .with_context(|| format!("read {}", journal_path.display()))?;
+            let entries = orgasmic_core::node_kernel::parse_journal(
+                &source,
+                journal_path.to_string_lossy().as_ref(),
+            )
+            .with_context(|| format!("parse {}", journal_path.display()))?;
+            if entries.iter().any(|entry| {
+                matches!(
+                    entry.ty.as_str(),
+                    "task.state_transitioned" | "manager.dispatch_started"
+                ) && entry.time >= close_time
+            }) {
+                continue;
+            }
+        }
+        candidates.push((started_tx, transition));
+    }
+    Ok(candidates)
 }
 
 /// Already-closed tasks whose pre-atomic terminal tx still needs the legacy
@@ -12306,7 +12331,7 @@ mod tests {
     #[test]
     fn torn_close_candidates_yield_to_any_later_lifecycle_event() {
         let tmp = tempfile::tempdir().unwrap();
-        let tx_dir = tmp.path().join(".orgasmic/tx");
+        let tx_dir = tmp.path().join(".orgasmic/machines/test-machine/tx");
         std::fs::create_dir_all(&tx_dir).unwrap();
         let close = |tx_id: &str, task: &str, from: &str, to: &str| {
             format!(
@@ -12326,15 +12351,35 @@ mod tests {
         std::fs::write(
             tx_dir.join("2026-07.org"),
             format!(
-                "#+title: tx\n#+orgasmic_version: 1\n\n{}\n{}\n{}\n{}\n{}\n{}",
+                "#+title: tx\n#+orgasmic_version: 1\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                 close("tx-1", "TASK-TORN", "in_progress", "in_review"),
                 close("tx-2", "TASK-LANDED", "in_progress", "in_review"),
                 transitioned("TASK-LANDED"),
                 close("tx-4", "TASK-REDISPATCHED", "in_progress", "in_review"),
                 dispatched("TASK-REDISPATCHED"),
+                close("tx-5", "TASK-JOURNAL", "in_progress", "in_review"),
                 // No LIFECYCLE_* at all: a close written before this task
                 // shipped carries no intent and is not repairable.
                 "* TX 2026-07-29 Wed 12:00:00 implementer.done TASK-LEGACY\n:PROPERTIES:\n:TX_ID:        tx-3\n:TIME:         [2026-07-29 Wed 12:00:00]\n:TYPE:         implementer.done\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-LEGACY\n:CLOSED_TX:    tx-start-legacy\n:END:\n",
+            ),
+        )
+        .unwrap();
+        let journal_dir = tmp.path().join(".orgasmic/tasks/TASK-JOURNAL");
+        std::fs::create_dir_all(&journal_dir).unwrap();
+        std::fs::write(
+            journal_dir.join("journal.org"),
+            orgasmic_core::node_kernel::append_entry(
+                "",
+                "TASK-JOURNAL",
+                &orgasmic_core::node_kernel::JournalEntry {
+                    entry_id: "tx-moved-TASK-JOURNAL".into(),
+                    time: "[2026-07-29 Wed 11:00:00]".into(),
+                    ty: "task.state_transitioned".into(),
+                    actor: "a@example.com".into(),
+                    machine: "host".into(),
+                    extras: Vec::new(),
+                    body: String::new(),
+                },
             ),
         )
         .unwrap();

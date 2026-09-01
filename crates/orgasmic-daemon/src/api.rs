@@ -18417,10 +18417,10 @@ async fn update_task_state(
     }
     // ART-04FYD: a task does not close on a bare claim. `done` requires the
     // task's own Evidence section to carry at least one proof line (a run id,
-    // review verdict, test output, commit). A repair replays an already
-    // recorded close, and dispatch-close carries its dispatch record as
-    // evidence — both stay outside this gate.
-    if to_state == LifecycleStage::Done && !repair_allowed {
+    // review verdict, test output, commit), including a legacy close repair.
+    // Atomic dispatch-close uses a separate endpoint and carries its dispatch
+    // record as evidence.
+    if to_state == LifecycleStage::Done {
         let has_evidence = project
             .task_bodies
             .get(task_id)
@@ -18502,7 +18502,7 @@ fn recorded_close_allows_repair(
     from_state: LifecycleStage,
     to_state: LifecycleStage,
 ) -> Result<bool, ApiError> {
-    let mut allowed = false;
+    let mut close_time = None;
     for entry in project_tx_entries(project_root)? {
         if entry.project.as_deref() != Some(project_id) || entry.task.as_deref() != Some(task_id) {
             continue;
@@ -18519,15 +18519,44 @@ fn recorded_close_allows_repair(
             | "reviewer.done"
             | "architector.done"
             | "manager.dispatch_aborted" => {
-                allowed = extra("CLOSED_TX") == Some(closed_tx)
+                close_time = (extra("CLOSED_TX") == Some(closed_tx)
                     && extra("LIFECYCLE_FROM") == Some(from_state.as_str())
-                    && extra("LIFECYCLE_TO") == Some(to_state.as_str());
+                    && extra("LIFECYCLE_TO") == Some(to_state.as_str()))
+                .then_some(entry.time);
             }
-            "task.state_transitioned" => allowed = false,
+            "task.state_transitioned" => close_time = None,
             _ => {}
         }
     }
-    Ok(allowed)
+    let Some(close_time) = close_time else {
+        return Ok(false);
+    };
+    let journal_path = task_node_file_path(project_root, task_id)
+        .with_file_name(orgasmic_core::node_kernel::JOURNAL_FILE);
+    if journal_path.is_file() {
+        let source = std::fs::read_to_string(&journal_path).map_err(|error| {
+            ApiError::internal(format!(
+                "read task journal {}: {error}",
+                journal_path.display()
+            ))
+        })?;
+        let entries =
+            orgasmic_core::node_kernel::parse_journal(&source, &journal_path.display().to_string())
+                .map_err(|error| {
+                    ApiError::internal(format!(
+                        "parse task journal {}: {error}",
+                        journal_path.display()
+                    ))
+                })?;
+        if entries
+            .into_iter()
+            .map(|entry| crate::index::journal_tx_entry(entry, project_id, Some(task_id)))
+            .any(|entry| entry.ty == "task.state_transitioned" && entry.time >= close_time)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 struct TaskPropertyWriteRequest<'a> {
@@ -22423,6 +22452,68 @@ pub(crate) mod tests {
             },
             state: LifecycleStage::InReview.as_str().to_string(),
         }
+    }
+
+    #[test]
+    fn recorded_close_repair_yields_to_later_journal_transition() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path();
+        let task_id = "TASK-TORN";
+        let closed_tx = "tx-started";
+        let mut close = TxEntry::new(
+            "tx-close",
+            "implementer.done",
+            "[2026-09-01 Tue 10:00:00]",
+            "test",
+            "test-machine",
+        );
+        close.project = Some("orgasmic".into());
+        close.task = Some(task_id.into());
+        close.extra = vec![
+            ("CLOSED_TX".into(), closed_tx.into()),
+            ("LIFECYCLE_FROM".into(), "in_progress".into()),
+            ("LIFECYCLE_TO".into(), "in_review".into()),
+        ];
+        write(
+            project_root.join(".orgasmic/machines/test-machine/tx/2026-09.org"),
+            &format!("#+title: tx\n#+orgasmic_version: 1\n\n{}", close.render()),
+        );
+        assert!(recorded_close_allows_repair(
+            project_root,
+            "orgasmic",
+            task_id,
+            closed_tx,
+            LifecycleStage::InProgress,
+            LifecycleStage::InReview,
+        )
+        .unwrap());
+
+        let journal = orgasmic_core::node_kernel::append_entry(
+            "",
+            task_id,
+            &orgasmic_core::node_kernel::JournalEntry {
+                entry_id: "tx-operator-move".into(),
+                time: "[2026-09-01 Tue 10:00:00]".into(),
+                ty: "task.state_transitioned".into(),
+                actor: "operator".into(),
+                machine: "test-machine".into(),
+                extras: Vec::new(),
+                body: String::new(),
+            },
+        );
+        write(
+            project_root.join(".orgasmic/tasks/TASK-TORN/journal.org"),
+            &journal,
+        );
+        assert!(!recorded_close_allows_repair(
+            project_root,
+            "orgasmic",
+            task_id,
+            closed_tx,
+            LifecycleStage::InProgress,
+            LifecycleStage::InReview,
+        )
+        .unwrap());
     }
 
     #[tokio::test]
@@ -32943,12 +33034,24 @@ pub(crate) mod tests {
             "** Description\nHas proof.\n** Evidence\n- reviewer verdict: clean (tx_XYZ)\n",
         )
         .await;
+        let repair = create(
+            "Repair still needs recorded proof",
+            "** Description\nNo proof.\n",
+        )
+        .await;
         for task in [&bare, &proven] {
             for state in ["in_progress", "in_review"] {
                 let moved = transition(task, state).await;
                 assert!(moved.status().is_success(), "walk {task} to {state}");
             }
         }
+        assert!(
+            transition(&repair, "in_progress")
+                .await
+                .status()
+                .is_success(),
+            "walk repair fixture to in_progress"
+        );
 
         let refused = transition(&bare, "done").await;
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
@@ -32956,6 +33059,41 @@ pub(crate) mod tests {
         assert!(
             message.contains("Evidence") && message.contains("node body set"),
             "refusal must name the section and the write door: {message}"
+        );
+
+        let mut close = TxEntry::new(
+            "tx-repair-close",
+            "implementer.done",
+            "[9999-12-31 Fri 23:59:59]",
+            "agent.implementer",
+            "test-machine",
+        );
+        close.project = Some("orgasmic".into());
+        close.task = Some(repair.clone());
+        close.extra = vec![
+            ("CLOSED_TX".into(), "tx-repair-started".into()),
+            ("LIFECYCLE_FROM".into(), "in_progress".into()),
+            ("LIFECYCLE_TO".into(), "done".into()),
+        ];
+        write(
+            project_root.join(".orgasmic/machines/test-machine/tx/2026-09.org"),
+            &format!("#+title: tx\n#+orgasmic_version: 1\n\n{}", close.render()),
+        );
+        let repair_refused = client
+            .post(format!("{base}/api/projects/orgasmic/tasks/{repair}"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "state": "done",
+                "repair_closed_tx": "tx-repair-started",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(repair_refused.status(), StatusCode::BAD_REQUEST);
+        let message = repair_refused.text().await.unwrap();
+        assert!(
+            message.contains("Evidence"),
+            "repair must pass its lifecycle exception but not the Evidence gate: {message}"
         );
 
         let closed = transition(&proven, "done").await;
