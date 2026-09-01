@@ -2132,3 +2132,16 @@
 :TARGET:       .orgasmic/tasks/TASK-JWHXH.1.1
 :EVENT_ID:     9b60f5ca-c519-4348-8490-7581c936ecb3
 :END:
+
+* TX 2026-09-01 Tue 14:29:42.584802 task.claimed TASK-EPG6H.1
+:PROPERTIES:
+:TX_ID:        tx-20260901142942-1ee9424a
+:TIME:         [2026-09-01 Tue 14:29:42.584802]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-EPG6H.1
+:TARGET:       .orgasmic/tasks/TASK-EPG6H.1
+:EVENT_ID:     e76ebde4-32cc-40ae-9a86-cbe2366e8252
+:END:

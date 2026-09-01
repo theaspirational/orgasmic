@@ -60,3 +60,19 @@
 :NODE_ID: TASK-EPG6H.1
 :EVENT_ID: e1f43417-2fe7-4697-b26e-984bf775647b
 :END:
+
+* tx-20260901-orgasmic-6853 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6853
+:TIME:    [2026-09-01 Tue 14:29:42]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EPG6H.1
+:TARGET: .orgasmic/tasks/TASK-EPG6H.1/node.org
+:REASON: transition TASK-EPG6H.1 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: a0f7e166-acf1-41d5-b268-b9954c06e12b
+:END:
