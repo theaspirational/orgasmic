@@ -713,6 +713,7 @@ export type MemberCapability =
   | 'artifacts.read'
   | 'artifacts.comment'
   | 'artifacts.generate'
+  | 'org.write'
   | 'members.manage';
 
 export type MeIdentity = 'admin' | 'member';

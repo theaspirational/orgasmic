@@ -68,7 +68,9 @@ pub fn action_name(action: Action) -> &'static str {
 /// addition beyond the decision's literal action list: every built-in role
 /// needs *some* basis for "this project is visible to me at all" (board
 /// filtering, `/me`), so it is included in all three rather than special-cased
-/// as an implicit any-grant check outside the table. Public so the `/me`
+/// as an implicit any-grant check outside the table.
+/// `OrgWrite` also exceeds that list: it gates the admin-only whole-file rewrite.
+/// Public so the `/me`
 /// handler can list a resolved role's capabilities without duplicating the
 /// table or testing role names itself.
 pub fn role_capabilities(role: &str) -> &'static [Action] {

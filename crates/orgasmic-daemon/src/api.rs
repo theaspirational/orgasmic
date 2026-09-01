@@ -94,7 +94,7 @@ use crate::supervisor::{
 };
 use crate::writer::{
     CommittedSyncUncertainError, FileMutate, FileRewrite, MutationIdentity, TxAppend, TxIdPolicy,
-    WriterHandle,
+    WriterHandle, DAEMON_OWNED_SURFACES,
 };
 use crate::ws;
 
@@ -14578,17 +14578,33 @@ fn reject_ledger_rewrite(rel: &FsPath) -> Result<(), ApiError> {
     if components.next() != Some(Component::Normal(".orgasmic".as_ref())) {
         return Ok(());
     }
-    match components.next() {
-        Some(Component::Normal(surface)) if surface == "machines" => Err(ApiError::bad_request(
+    let surface = components.next().and_then(|component| match component {
+        Component::Normal(surface) => surface.to_str(),
+        _ => None,
+    });
+    match surface.and_then(|surface| {
+        DAEMON_OWNED_SURFACES
+            .iter()
+            .find(|owned| surface.eq_ignore_ascii_case(owned))
+            .copied()
+    }) {
+        Some("machines") => Err(ApiError::bad_request(
             "org file path is machine-owned ledger state; write it through tx and claim operations instead of rewriting the file",
         )),
-        Some(Component::Normal(surface)) if surface == "views" => Err(ApiError::bad_request(
+        Some("views") => Err(ApiError::bad_request(
             "org file path is a derived view; regenerate it through the view refresh operation instead of rewriting the file",
         )),
-        Some(Component::Normal(surface)) if surface == "tx" => Err(ApiError::bad_request(
+        Some("tx") => Err(ApiError::bad_request(
             "org file path is an append-only tx ledger; append entries through the tx surface instead of rewriting the file",
         )),
-        _ if rel.file_name().and_then(|name| name.to_str()) == Some("journal.org") => {
+        Some("tmp") => Err(ApiError::bad_request(
+            "org file path is dispatch scratch state, not a hand-editable org file",
+        )),
+        _ if rel
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("journal.org")) =>
+        {
             Err(ApiError::bad_request(
                 "org file path is a structured node journal; use journal entry/comment operations instead of rewriting the file",
             ))
@@ -21231,6 +21247,17 @@ pub(crate) mod tests {
             (".orgasmic/views/board.org", "derived view"),
             (".orgasmic/tx/2026-09.org", "tx ledger"),
             (".orgasmic/tasks/TASK-X/journal.org", "node journal"),
+            (".orgasmic/TX/2026-09.org", "case-folded tx ledger"),
+            (
+                ".orgasmic/Machines/00000000-0000-0000-0000-000000000000/claims.org",
+                "case-folded machine claims",
+            ),
+            (".orgasmic/Views/board.org", "case-folded derived view"),
+            (
+                ".orgasmic/tasks/TASK-X/Journal.org",
+                "case-folded node journal",
+            ),
+            (".orgasmic/tmp/dispatch/x.org", "dispatch scratch state"),
         ] {
             assert!(
                 reject_ledger_rewrite(FsPath::new(path)).is_err(),
@@ -21243,6 +21270,17 @@ pub(crate) mod tests {
             .expect("a tx string prefix is not the tx path component");
         reject_ledger_rewrite(FsPath::new("docs/adr/adr-0001.org"))
             .expect("adr must stay writable");
+    }
+
+    #[test]
+    fn org_file_rewrite_agrees_with_writer_daemon_owned_surfaces() {
+        for surface in DAEMON_OWNED_SURFACES {
+            let path = format!(".orgasmic/{surface}/state.org");
+            assert!(
+                reject_ledger_rewrite(FsPath::new(&path)).is_err(),
+                "writer-exempt {surface} surface must reject generic org rewrites"
+            );
+        }
     }
 
     #[tokio::test]
