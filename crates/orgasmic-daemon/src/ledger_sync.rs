@@ -47,10 +47,12 @@ pub(crate) enum SyncOutcome {
     Idle,
     Synced {
         push_retries: usize,
+        pending_salvage: Option<String>,
     },
     Conflict {
         parked_ref: String,
         salvage_ref: String,
+        pending_salvage: Option<String>,
         parked_ref_push_failed: bool,
         paths: Vec<String>,
         local_head: String,
@@ -87,6 +89,7 @@ fn sync_once_inner(
         |ledger, machine_id, paths, local_commit| {
             park_conflict(ledger, machine_id, paths, local_commit)
         },
+        abort_rebase_with_salvage,
     )
 }
 
@@ -95,16 +98,18 @@ fn sync_once_with_park(
     machine_id: &str,
     mut before_push: impl FnMut(usize),
     mut park: impl FnMut(&Path, &str, Vec<String>, ConflictSource) -> Result<SyncOutcome>,
+    mut abort: impl FnMut(&Path, &str) -> Result<String>,
 ) -> Result<SyncOutcome> {
     uuid::Uuid::parse_str(machine_id).context("machine-id is not a UUID")?;
     if git_optional(ledger, &["remote", "get-url", "origin"])?.is_none() {
         return Ok(SyncOutcome::Idle);
     }
+    let mut pending_salvage: Option<String> = None;
     if rebase_in_progress(ledger)?
         && rebase_head_name(ledger)?.as_deref() == Some("refs/heads/orgasmic")
     {
         let paths = unmerged_paths(ledger)?;
-        let salvage_ref = abort_rebase_with_salvage(ledger, machine_id)?;
+        let salvage_ref = abort(ledger, machine_id)?;
         if !paths.is_empty() {
             return recover_conflict(
                 ledger,
@@ -113,6 +118,9 @@ fn sync_once_with_park(
                 ConflictSource::Worktree(salvage_ref),
                 &mut park,
             );
+        }
+        if !salvage_ref.is_empty() {
+            pending_salvage = Some(salvage_ref);
         }
     }
     if git_optional(ledger, &["symbolic-ref", "--short", "HEAD"])?.as_deref() != Some("orgasmic") {
@@ -208,11 +216,19 @@ fn sync_once_with_park(
             let paths = unmerged_paths(ledger)?;
             if !paths.is_empty() {
                 let source = if rebase_in_progress(ledger)? {
-                    ConflictSource::Worktree(abort_rebase_with_salvage(ledger, machine_id)?)
+                    ConflictSource::Worktree(abort(ledger, machine_id)?)
                 } else {
                     ConflictSource::Autostash(created_autostash(ledger, &pull)?)
                 };
-                return recover_conflict(ledger, machine_id, paths, source, &mut park);
+                let mut outcome = recover_conflict(ledger, machine_id, paths, source, &mut park)?;
+                if let SyncOutcome::Conflict {
+                    pending_salvage: outcome_pending,
+                    ..
+                } = &mut outcome
+                {
+                    *outcome_pending = pending_salvage.take();
+                }
+                return Ok(outcome);
             }
             if !pull.status.success() {
                 let _ = git_output(ledger, &["rebase", "--abort"]);
@@ -224,6 +240,7 @@ fn sync_once_with_park(
         if push.status.success() {
             return Ok(SyncOutcome::Synced {
                 push_retries: retry,
+                pending_salvage,
             });
         }
         if retry + 1 == PUSH_ATTEMPTS {
@@ -367,7 +384,24 @@ fn rebase_orig_head(ledger: &Path) -> Result<String> {
 }
 
 fn abort_rebase_with_salvage(ledger: &Path, machine_id: &str) -> Result<String> {
-    let salvage_ref = salvage_worktree(ledger, machine_id, &rebase_orig_head(ledger)?)?;
+    // ponytail: a failed salvage must not outrank the unwedge. Propagating the
+    // error here skips `git rebase --abort`, every later tick re-enters the
+    // same stopped rebase, and the ledger never syncs again — the exact wedge
+    // 8DWJP.1.2 fixed. Degrade instead: warn, hand back the empty "no
+    // snapshot" salvage ref, and still abort. The outage writes are then in no
+    // ref at all, which loses strictly less than a wedged ledger.
+    let salvage_ref = match rebase_orig_head(ledger)
+        .and_then(|orig| salvage_worktree(ledger, machine_id, &orig))
+    {
+        Ok(salvage_ref) => salvage_ref,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "ledger conflict salvage failed; aborting the rebase without a snapshot"
+            );
+            String::new()
+        }
+    };
     git(ledger, &["rebase", "--abort"])?;
     Ok(salvage_ref)
 }
@@ -556,6 +590,7 @@ fn park_conflict_inner(
     Ok(SyncOutcome::Conflict {
         parked_ref,
         salvage_ref,
+        pending_salvage: None,
         parked_ref_push_failed: false,
         paths,
         local_head,
@@ -652,6 +687,7 @@ fn sync_ledger_at(
         |ledger, machine_id, paths, local_commit| {
             park_conflict(ledger, machine_id, paths, local_commit)
         },
+        abort_rebase_with_salvage,
     )
 }
 
@@ -661,6 +697,7 @@ fn sync_ledger_at_with_park(
     statuses: &LedgerSyncStatuses,
     now: DateTime<Utc>,
     park: impl FnMut(&Path, &str, Vec<String>, ConflictSource) -> Result<SyncOutcome>,
+    abort: impl FnMut(&Path, &str) -> Result<String>,
 ) -> Option<SyncOutcome> {
     let previous = {
         let mut statuses = statuses.lock().expect("ledger sync status lock");
@@ -676,15 +713,28 @@ fn sync_ledger_at_with_park(
         status.clone()
     };
 
-    match sync_once_with_park(ledger, machine_id, |_| {}, park) {
+    match sync_once_with_park(ledger, machine_id, |_| {}, park, abort) {
         Ok(outcome) => {
             let recovered = previous.consecutive_failures > 0;
             let (status_outcome, error) = match &outcome {
                 SyncOutcome::Idle => ("idle", None),
-                SyncOutcome::Synced { .. } => ("synced", None),
+                SyncOutcome::Synced {
+                    pending_salvage, ..
+                } => (
+                    "synced",
+                    pending_salvage
+                        .as_deref()
+                        .filter(|reference| !reference.is_empty())
+                        .map(|reference| {
+                            format!(
+                                "pending salvage from aborted rebase at {reference}; worktree writes from the outage live only in that ref"
+                            )
+                        }),
+                ),
                 SyncOutcome::Conflict {
                     parked_ref,
                     salvage_ref,
+                    pending_salvage,
                     parked_ref_push_failed,
                     paths,
                     ..
@@ -705,6 +755,11 @@ fn sync_ledger_at_with_park(
                     if !salvage_ref.is_empty() {
                         error.push_str(&format!(
                             "; raw worktree snapshot at {salvage_ref} (conflicted paths carry markers)"
+                        ));
+                    }
+                    if let Some(pending) = pending_salvage.as_deref().filter(|r| !r.is_empty()) {
+                        error.push_str(&format!(
+                            "; pending salvage from aborted rebase at {pending}"
                         ));
                     }
                     if *parked_ref_push_failed {
@@ -733,8 +788,23 @@ fn sync_ledger_at_with_park(
             if recovered {
                 tracing::info!(ledger = %ledger.display(), "ledger sync recovered");
             }
-            if let Some(error) = error {
-                tracing::warn!(ledger = %ledger.display(), %error, "ledger sync conflict parked");
+            match &outcome {
+                SyncOutcome::Conflict { .. } => {
+                    if let Some(error) = &error {
+                        tracing::warn!(ledger = %ledger.display(), %error, "ledger sync conflict parked");
+                    }
+                }
+                SyncOutcome::Synced {
+                    pending_salvage: Some(pending),
+                    ..
+                } if !pending.is_empty() => {
+                    tracing::warn!(
+                        ledger = %ledger.display(),
+                        pending_salvage_ref = %pending,
+                        "ledger sync synced out of an aborted rebase with a pending salvage ref"
+                    );
+                }
+                _ => {}
             }
             matches!(outcome, SyncOutcome::Conflict { .. }).then_some(outcome)
         }
@@ -775,6 +845,7 @@ async fn record_sync_conflict(
     let SyncOutcome::Conflict {
         parked_ref,
         salvage_ref,
+        pending_salvage,
         paths,
         local_head,
         remote_head,
@@ -804,6 +875,11 @@ async fn record_sync_conflict(
         entry
             .extra
             .push(("SALVAGE_REF".into(), salvage_ref.clone()));
+    }
+    if let Some(pending) = pending_salvage.as_deref().filter(|r| !r.is_empty()) {
+        entry
+            .extra
+            .push(("PENDING_SALVAGE_REF".into(), pending.to_string()));
     }
     let request_id = if parked_ref.is_empty() {
         if salvage_ref.is_empty() {
@@ -885,7 +961,9 @@ pub(crate) fn spawn(
                 let statuses = statuses.clone();
                 let sync_ledger = ledger.clone();
                 let barrier_writer = writer.clone();
+                let abort_writer = writer.clone();
                 let runtime = tokio::runtime::Handle::current();
+                let abort_runtime = runtime.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     sync_ledger_at_with_park(
                         &sync_ledger,
@@ -900,6 +978,15 @@ pub(crate) fn spawn(
                                     park_conflict(&ledger, &machine_id, paths, local_commit)
                                 }))
                                 .context("run ledger conflict writer barrier")?
+                        },
+                        move |ledger, machine_id| {
+                            let ledger = ledger.to_path_buf();
+                            let machine_id = machine_id.to_string();
+                            abort_runtime
+                                .block_on(abort_writer.run_barrier(move || {
+                                    abort_rebase_with_salvage(&ledger, &machine_id)
+                                }))
+                                .context("run ledger abort writer barrier")?
                         },
                     )
                 })
@@ -1159,7 +1246,7 @@ mod tests {
             .collect();
         assert!(outcomes.iter().any(|outcome| matches!(
             outcome,
-            SyncOutcome::Synced { push_retries } if *push_retries > 0
+            SyncOutcome::Synced { push_retries, .. } if *push_retries > 0
         )));
 
         sync_once(&a, &a_id).unwrap();
@@ -1417,6 +1504,13 @@ mod tests {
             .extra
             .iter()
             .any(|(key, value)| key == "PARKED_REF" && value == parked_ref));
+        // The in-tick abort salvages against the pre-rebase HEAD, which
+        // already contains every write this tick staged, and the stopped
+        // rebase's worktree adds nothing to it — so no salvage ref exists
+        // here and the event must not name one. The SALVAGE_REF event
+        // assertion lives in the mid-rebase tick test, whose abort snapshots
+        // real outage writes.
+        assert!(!events[0].extra.iter().any(|(key, _)| key == "SALVAGE_REF"));
         assert_eq!(
             git_optional(&a, &["show", &format!("{parked_ref}:{fresh}")])
                 .unwrap()
@@ -1450,7 +1544,8 @@ mod tests {
                 park_conflict_inner(ledger, machine_id, paths, source, || {
                     bail!("injected failure before reset")
                 })
-            }
+            },
+            abort_rebase_with_salvage,
         )
         .is_none());
         assert_eq!(statuses.lock().unwrap()[&a].outcome, "failed");
@@ -1505,8 +1600,8 @@ mod tests {
         assert!(!remote_bytes.contains("<<<<<<<"));
     }
 
-    #[test]
-    fn mid_rebase_tick_aborts_and_recovers_instead_of_idling() {
+    #[tokio::test]
+    async fn mid_rebase_tick_aborts_and_recovers_instead_of_idling() {
         let tmp = tempfile::tempdir().unwrap();
         let (_remote, a, b) = seed_remote(&tmp);
         let machine_id = uuid::Uuid::new_v4().to_string();
@@ -1575,12 +1670,13 @@ mod tests {
         std::fs::write(a.join(&tx_path), "tx base\ntx during outage\n").unwrap();
         let statuses = LedgerSyncStatuses::default();
 
+        let conflict = sync_ledger_at(&a, &machine_id, &statuses, Utc::now())
+            .expect("mid-rebase tick must recover the conflict");
         let SyncOutcome::Conflict {
             parked_ref,
             salvage_ref,
             ..
-        } = sync_ledger_at(&a, &machine_id, &statuses, Utc::now())
-            .expect("mid-rebase tick must recover the conflict")
+        } = &conflict
         else {
             panic!("mid-rebase tick returned idle instead of recovering");
         };
@@ -1610,6 +1706,362 @@ mod tests {
         );
         assert_eq!(
             git_optional(&a, &["show", &format!("{parked_ref}:{relative}")])
+                .unwrap()
+                .as_deref(),
+            Some("local bytes")
+        );
+
+        let writer = crate::writer::spawn(crate::events::EventBus::new());
+        record_sync_conflict(&writer, &a, "project-a", &machine_id, Utc::now(), &conflict)
+            .await
+            .unwrap();
+        let event_tx_path = a.join(format!(
+            ".orgasmic/machines/{machine_id}/tx/{}.org",
+            Utc::now().format("%Y-%m")
+        ));
+        let tx = orgasmic_core::tx::parse_tx_file(
+            &std::fs::read_to_string(&event_tx_path).unwrap(),
+            "machine conflict tx",
+        )
+        .unwrap();
+        let events: Vec<_> = tx
+            .iter()
+            .filter(|entry| entry.ty == "ledger.sync_conflict")
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(events[0]
+            .extra
+            .iter()
+            .any(|(key, value)| key == "SALVAGE_REF" && value == salvage_ref));
+    }
+
+    /// Stop `a` mid-rebase with the conflict resolved but the rebase not
+    /// continued, then write tracked outage files: the state a daemon finds
+    /// when it crashed on a conflicted tick and an operator resolved the
+    /// conflict by hand.
+    fn prepare_resolved_stopped_rebase(
+        tmp: &tempfile::TempDir,
+        tracked_path: &str,
+        tx_path: &str,
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let relative = ".orgasmic/tasks/T1/node.org";
+        let (remote, a, b) = seed_remote(tmp);
+        std::fs::create_dir_all(b.join(relative).parent().unwrap()).unwrap();
+        std::fs::write(b.join(relative), "base\n").unwrap();
+        std::fs::create_dir_all(b.join(tracked_path).parent().unwrap()).unwrap();
+        std::fs::write(b.join(tracked_path), "tracked base\n").unwrap();
+        std::fs::create_dir_all(b.join(tx_path).parent().unwrap()).unwrap();
+        std::fs::write(b.join(tx_path), "tx base\n").unwrap();
+        run(&b, &["add", relative, tracked_path, tx_path]);
+        run(
+            &b,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "base conflict file",
+            ],
+        );
+        run(&b, &["push", "origin", "orgasmic"]);
+        run(&a, &["pull", "--ff-only", "origin", "orgasmic"]);
+        std::fs::write(a.join(relative), "local bytes\n").unwrap();
+        run(&a, &["add", relative]);
+        run(
+            &a,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "local conflict edit",
+            ],
+        );
+        std::fs::write(b.join(relative), "remote bytes\n").unwrap();
+        run(&b, &["add", relative]);
+        run(
+            &b,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "remote conflict edit",
+            ],
+        );
+        run(&b, &["push", "origin", "orgasmic"]);
+        let pull = git_output(&a, &["pull", "--rebase", "origin", "orgasmic"]).unwrap();
+        assert!(!pull.status.success());
+        assert!(rebase_in_progress(&a).unwrap());
+        assert_eq!(
+            rebase_head_name(&a).unwrap().as_deref(),
+            Some("refs/heads/orgasmic")
+        );
+        assert!(!unmerged_paths(&a).unwrap().is_empty());
+        run(&a, &["add", relative]);
+        assert!(unmerged_paths(&a).unwrap().is_empty());
+        std::fs::write(a.join(tracked_path), "tracked during outage\n").unwrap();
+        std::fs::write(a.join(tx_path), "tx base\ntx during outage\n").unwrap();
+        (remote, a, b)
+    }
+
+    /// The abort of a stopped rebase runs under the writer barrier: an append
+    /// issued while the abort runs must land after it. Unbarriered, the
+    /// append's rename onto the tx file can land between the salvage snapshot
+    /// and `git rebase --abort`, and the abort's hard reset destroys the tx
+    /// with no copy left in any ref.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn writer_append_during_the_abort_barrier_lands_after_it_and_survives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        let tracked_path = ".orgasmic/tasks/T2/node.org";
+        let tx_rel = format!(".orgasmic/machines/{machine_id}/tx/2026-09.org");
+        let (remote, a, _b) = prepare_resolved_stopped_rebase(&tmp, tracked_path, &tx_rel);
+
+        let writer = crate::writer::spawn(crate::events::EventBus::new());
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+        let mut entered_tx = Some(entered_tx);
+        let mut release_rx = Some(release_rx);
+        let abort_writer = writer.clone();
+        let park_writer = writer.clone();
+        let abort_runtime = tokio::runtime::Handle::current();
+        let park_runtime = abort_runtime.clone();
+        let statuses = LedgerSyncStatuses::default();
+        let thread_statuses = statuses.clone();
+        let sync_ledger = a.clone();
+        let sync_machine_id = machine_id.clone();
+        let sync = std::thread::spawn(move || {
+            sync_ledger_at_with_park(
+                &sync_ledger,
+                &sync_machine_id,
+                &thread_statuses,
+                Utc::now(),
+                move |ledger, machine_id, paths, source| {
+                    let ledger = ledger.to_path_buf();
+                    let machine_id = machine_id.to_string();
+                    park_runtime
+                        .block_on(park_writer.run_barrier(move || {
+                            park_conflict(&ledger, &machine_id, paths, source)
+                        }))
+                        .context("run ledger conflict writer barrier")
+                        .unwrap()
+                },
+                move |ledger, machine_id| {
+                    let ledger = ledger.to_path_buf();
+                    let machine_id = machine_id.to_string();
+                    // Hold the gate open only for the first abort; the tick's
+                    // in-tick abort reuses this closure ungated.
+                    let entered_tx = entered_tx.take();
+                    let release_rx = release_rx.take();
+                    abort_runtime
+                        .block_on(abort_writer.run_barrier(move || {
+                            if let (Some(entered_tx), Some(release_rx)) = (&entered_tx, &release_rx)
+                            {
+                                entered_tx.send(()).unwrap();
+                                release_rx.recv().unwrap();
+                            }
+                            abort_rebase_with_salvage(&ledger, &machine_id)
+                        }))
+                        .context("run ledger abort writer barrier")
+                        .unwrap()
+                },
+            )
+            .expect("the re-conflicted tick must park")
+        });
+        tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())
+            .await
+            .unwrap();
+
+        let mut entry = orgasmic_core::tx::TxEntry::new(
+            "tx-after-abort",
+            "manager.action",
+            "[2026-09-01 Tue 12:00:00]",
+            "test",
+            &machine_id,
+        );
+        entry
+            .extra
+            .push(("EVENT_ID".into(), uuid::Uuid::new_v4().to_string()));
+        let append = tokio::spawn({
+            let writer = writer.clone();
+            let tx_path = a.join(&tx_rel);
+            async move {
+                writer
+                    .append_tx(
+                        TxAppend {
+                            tx_path,
+                            entry,
+                            project_id: Some("project-a".into()),
+                            tx_id_policy: TxIdPolicy::Preserve,
+                            request_id: None,
+                        },
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while writer.status().queue_depth != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("writer append must queue behind the abort barrier");
+        release_tx.send(()).unwrap();
+
+        let conflict = sync.join().unwrap();
+        append.await.unwrap();
+        let SyncOutcome::Conflict {
+            parked_ref,
+            pending_salvage: Some(pending_salvage),
+            ..
+        } = &conflict
+        else {
+            panic!("unexpected outcome: {conflict:?}");
+        };
+
+        // The barrier snapshot predates the queued append and carries the
+        // outage writes; the abort's reset destroys them everywhere else.
+        assert_eq!(
+            git_optional(&a, &["show", &format!("{pending_salvage}:{tracked_path}")])
+                .unwrap()
+                .as_deref(),
+            Some("tracked during outage")
+        );
+        assert_eq!(
+            git_optional(&a, &["show", &format!("{pending_salvage}:{tx_rel}")])
+                .unwrap()
+                .as_deref(),
+            Some("tx base\ntx during outage")
+        );
+        // The append ran after the abort, so it survives — captured in the
+        // parked ref and pushed to the remote — instead of being reset away.
+        let parked_tx = git_optional(&a, &["show", &format!("{parked_ref}:{tx_rel}")])
+            .unwrap()
+            .unwrap();
+        assert!(
+            parked_tx.contains("tx-after-abort"),
+            "parked tx: {parked_tx}"
+        );
+        let remote_tx = git_optional(&remote, &["show", &format!("{parked_ref}:{tx_rel}")])
+            .unwrap()
+            .unwrap();
+        assert!(
+            remote_tx.contains("tx-after-abort"),
+            "remote parked tx: {remote_tx}"
+        );
+
+        let status = statuses.lock().unwrap()[&a].clone();
+        assert_eq!(status.outcome, "conflict");
+        assert!(status.error.as_deref().unwrap().contains(parked_ref));
+        assert!(status.error.as_deref().unwrap().contains(&format!(
+            "pending salvage from aborted rebase at {pending_salvage}"
+        )));
+
+        let event_writer = crate::writer::spawn(crate::events::EventBus::new());
+        record_sync_conflict(
+            &event_writer,
+            &a,
+            "project-a",
+            &machine_id,
+            Utc::now(),
+            &conflict,
+        )
+        .await
+        .unwrap();
+        let event_tx_path = a.join(format!(
+            ".orgasmic/machines/{machine_id}/tx/{}.org",
+            Utc::now().format("%Y-%m")
+        ));
+        let tx = orgasmic_core::tx::parse_tx_file(
+            &std::fs::read_to_string(&event_tx_path).unwrap(),
+            "machine conflict tx",
+        )
+        .unwrap();
+        let events: Vec<_> = tx
+            .iter()
+            .filter(|entry| entry.ty == "ledger.sync_conflict")
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(events[0]
+            .extra
+            .iter()
+            .any(|(key, value)| key == "PENDING_SALVAGE_REF" && value == pending_salvage));
+    }
+
+    /// The empty-unmerged entry abort mints a salvage ref no conflict outcome
+    /// would name; when the tick syncs on, the status must still name it
+    /// instead of orphaning the only copy of the outage writes.
+    #[test]
+    fn empty_unmerged_entry_abort_names_its_salvage_ref_when_the_tick_syncs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        let relative = ".orgasmic/tasks/T1/node.org";
+        let tracked_path = ".orgasmic/tasks/T2/node.org";
+        let tx_rel = format!(".orgasmic/machines/{machine_id}/tx/2026-09.org");
+        let (remote, a, b) = prepare_resolved_stopped_rebase(&tmp, tracked_path, &tx_rel);
+        // The remote restores the pre-conflict content, so the local edit
+        // replays cleanly and the tick ends synced with a pending salvage.
+        std::fs::write(b.join(relative), "base\n").unwrap();
+        run(&b, &["add", relative]);
+        run(
+            &b,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "remote restores base",
+            ],
+        );
+        run(&b, &["push", "origin", "orgasmic"]);
+
+        let statuses = LedgerSyncStatuses::default();
+        assert!(sync_ledger_at(&a, &machine_id, &statuses, Utc::now()).is_none());
+
+        let status = statuses.lock().unwrap()[&a].clone();
+        assert_eq!(status.outcome, "synced");
+        let salvage_refs = git_optional(
+            &a,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                &format!("refs/orgasmic/conflicts/{machine_id}/"),
+            ],
+        )
+        .unwrap()
+        .unwrap();
+        let references: Vec<_> = salvage_refs.lines().collect();
+        assert_eq!(references.len(), 1, "refs: {salvage_refs}");
+        let pending_salvage = references[0];
+        let error = status
+            .error
+            .expect("synced tick must name its pending salvage");
+        assert!(error.contains(&format!(
+            "pending salvage from aborted rebase at {pending_salvage}"
+        )));
+        assert_eq!(
+            git_optional(&a, &["show", &format!("{pending_salvage}:{tracked_path}")])
+                .unwrap()
+                .as_deref(),
+            Some("tracked during outage")
+        );
+        assert_eq!(
+            std::fs::read_to_string(a.join(tracked_path)).unwrap(),
+            "tracked base\n"
+        );
+        assert_eq!(
+            git_optional(&remote, &["show", &format!("orgasmic:{relative}")])
                 .unwrap()
                 .as_deref(),
             Some("local bytes")
@@ -1768,6 +2220,7 @@ mod tests {
                 )?;
                 Ok(outcome)
             },
+            abort_rebase_with_salvage,
         )
         .expect("conflict must still be reported when its ref push fails") else {
             panic!("conflict was not recovered");
@@ -1844,7 +2297,8 @@ mod tests {
                     &["stash", "push", "--include-untracked", "-m", "foreign"],
                 );
                 park_conflict(ledger, machine_id, paths, source)
-            }
+            },
+            abort_rebase_with_salvage,
         )
         .is_none());
 
