@@ -4538,3 +4538,17 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     d89f0e54-217b-4ca5-a4b0-0eb48d807d52
 :END:
+
+* TX 2026-09-01 Tue 16:21:24 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-b8a12f10-483d-4369-b378-ac6f45f4400b
+:TIME:         [2026-09-01 Tue 16:21:24]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     3c2fd542-cdd3-4950-8128-c6aa0bf64ee0
+:END:

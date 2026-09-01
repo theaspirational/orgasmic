@@ -664,6 +664,7 @@ Session pair: reviewer = stdio/claude-sdk claude-opus-5 --effort high; implement
 - Waiting on operator: TASK-KA934.2 (member comment routes), TASK-JWHXH.2 (views/ migration verb).
 
 Close recipe for a review: read the report, verify any HIGH yourself, close reviewer with verdict, close implementer, then task done or file <ID>.N. Full generation ids come from =orgasmic manager dispatch-status --task <ID>= (TX_ID=); shortened ids are refused. Manual close path per descriptor: in_progress → in_review → done; --property and --state cannot share one call.
+- UPDATE 8DWJP.1.1: reviewer running tx-20260901-orgasmic-6a92d428-ee35-4716-89d2-c69fbac1879b (watcher armed). Close order: reviewer (=--verdict … --reviewed-diff 59c351dc^1..59c351dc=), then implementer tx-20260901-orgasmic-63b71bf3-20f1-454a-a17f-dcdf2a1627c7 (=--merge-sha 59c351dc --worker-commit bcb516c9 --worktree-remove --branch-delete=). On approve/approve-with-follow-ups: 8DWJP.1.1 done, then 8DWJP.1 and 8DWJP done (both at in_progress → walk in_review → done). MEDIUM/HIGH residuals → TASK-8DWJP.1.2. Then chain step 2 is complete → report, ASK before pushing main (18 merges), draft the release note.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
