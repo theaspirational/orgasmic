@@ -76,3 +76,81 @@
 :TO_STATE: in_review
 :EVENT_ID: f2f60506-91d2-4e01-b88a-830972cac3ff
 :END:
+
+* tx-20260901-orgasmic-6834 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6834
+:TIME:    [2026-09-01 Tue 14:19:21]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:REASON: MEDIUM crates/orgasmic-core/src/views.rs:122 — write_if_changed names its temp file by PID only, so the new debounced drain (index.rs:854) and the synchronous claims arm (index.rs:959) can concurrently truncate and write the same .orgasmic/views/board.org.<pid>.tmp (3.0 MB on the live ledger) and rename a torn view into place.
+:EVENT_ID: 6dc98e83-312c-4d54-9fc8-3f1d1212133f
+:END:
+
+* tx-20260901-orgasmic-6835 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6835
+:TIME:    [2026-09-01 Tue 14:19:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:REASON: MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:33-36 — the ignore+untrack only runs for repos on branch orgasmic WITH an origin; existing ordinary project checkouts that carry .orgasmic/ in the tree (and any ledger with no remote) keep views/*.org tracked forever, because init_project skips an existing .gitignore (projects.rs:188) and project_migrate never touches it.
+:EVENT_ID: a5108ef1-23b8-4cbd-8765-e87017f0e9da
+:END:
+
+* tx-20260901-orgasmic-6836 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6836
+:TIME:    [2026-09-01 Tue 14:19:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:REASON: MEDIUM crates/orgasmic-daemon/src/ledger_sync.rs:129 — mixed-version fleet: a machine still on the pre-fix daemon commits MODIFICATIONS to the tracked views/*.org while a fixed machine commits their DELETION, so the old machine's pull --rebase hits a modify/delete conflict, sync_once bails, and its ledger sync stalls every tick until it is upgraded; unverified on real hardware, reasoned from the loop.
+:EVENT_ID: 0028ee08-e833-4b92-b8d5-1e27e045a00f
+:END:
+
+* tx-20260901-orgasmic-6837 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6837
+:TIME:    [2026-09-01 Tue 14:19:34]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:41 — the unconditional create_dir_all(.orgasmic) makes the guard at ledger_sync.rs:86 dead and lets the daemon create and commit a .orgasmic/.gitignore in a synced repo that had no .orgasmic/ at all.
+:EVENT_ID: 7c861fd3-dfc7-48b9-8311-7192d9cfbf7b
+:END:
+
+* tx-20260901-orgasmic-6838 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6838
+:TIME:    [2026-09-01 Tue 14:19:34]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:REASON: LOW crates/orgasmic-daemon/src/index.rs:1177 — schedule_view_rebuild fires at the tail of reload_node_dir for every collection including artifacts, but build_views only renders tasks/glossary/decisions, so an artifact write costs a full 977-node 3.0 MB rebuild that cannot change any view.
+:EVENT_ID: 322cc6f7-90a0-4c62-ac54-d3a12d664b90
+:END:
+
+* tx-20260901-orgasmic-6839 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6839
+:TIME:    [2026-09-01 Tue 14:19:34]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:REASON: LOW crates/orgasmic-daemon/src/index.rs:848 — the detached drain task holds no handle on the Index or the test TempDir, so every existing test that calls apply_written_path on a node dir now has a build_views firing 200 ms later that create_dir_all's .orgasmic/views inside a directory being torn down; warn noise and stray temp dirs, a new flake surface.
+:EVENT_ID: efefa6cd-60cf-4a77-94fe-970f9fa99949
+:END:
