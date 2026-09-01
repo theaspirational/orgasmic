@@ -201,3 +201,19 @@
 :TO_STATE: in_review
 :EVENT_ID: ab5b0fea-b4bf-47c7-92ef-6b9aa19805dd
 :END:
+
+* tx-20260901-orgasmic-6855 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6855
+:TIME:    [2026-09-01 Tue 14:34:59]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.1
+:TARGET: .orgasmic/tasks/TASK-JWHXH.1/node.org
+:REASON: Fix round 1b complete: c3d779af reviewed approve-with-follow-ups (tx-a4acf9f4); mechanical residuals landed in TASK-JWHXH.1.1 (22b9e615); non-synced-repo scope split to TASK-JWHXH.2; release note recorded in Notes.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 0dd0852b-ba5e-4fee-b743-9519c7f37a08
+:END:

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JWHXH.1.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-JWHXH.1.1 Fix round 2 for JWHXH.1: unique views tmp name, rebuild only for view collections, .orgasmic exists guard, drain vs test teardown :e01mc:chain-review:
+* DONE TASK-JWHXH.1.1 Fix round 2 for JWHXH.1: unique views tmp name, rebuild only for view collections, .orgasmic exists guard, drain vs test teardown :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-JWHXH.1.1
 :PRIORITY: P1
@@ -21,3 +21,5 @@ Source: review of TASK-JWHXH.1 (=c3d779af=, reviewer gen tx-20260901-orgasmic-a4
 - [ ] The ignore+untrack block in =sync_once_inner= runs only when =.orgasmic/= already exists (no fabrication); the :86 guard is no longer dead or is removed with the block moved under it.
 - [ ] Drain vs teardown: either gate the spawn behind the daemon shutdown watch / keep the JoinHandle on Index, or record in a comment that the flake surface is accepted knowingly and why. State which.
 - [ ] Gates: cargo test -p orgasmic-core --lib views; cargo test -p orgasmic-daemon --lib -- ledger_sync views; cargo clippy -p orgasmic-core -p orgasmic-daemon --all-targets -- -D warnings; cargo fmt --all --check.
+** Evidence
+Merged 22b9e615 (worker ccece697, codex gpt-5.6-sol; branch forked at c3d779af, 3-way merge kept EPG6H.1 intact — merge touches views.rs/index.rs/ledger_sync.rs only). Manager re-ran gates on merged main 2026-09-01: cargo test -p orgasmic-core --lib views → 2 passed (incl. concurrent_builds_publish_well_formed_views, 2 threads x 32 rounds); cargo test -p orgasmic-daemon --lib -- ledger_sync views → 9 passed (incl. synced_repo_without_dotorg_does_not_fabricate_it); clippy -D core+daemon clean; fmt clean. Manager read every line: TMP_COUNTER AtomicU64 in the scratch name; VIEWS made pub and reused by index.rs for the collection gate; drain skips roots whose .orgasmic is gone (commented); ignore+untrack+staging under the existing dotorg.exists() guard, create_dir_all removed. Review round waived (--fix-round-final): the four mechanical items from review tx-a4acf9f4, nothing else.

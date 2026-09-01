@@ -1836,3 +1836,55 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.1.1/dispatches/tx-20260901-orgasmic-16cd679c-d02c-489c-bfc0-5e0b96336857/report.md
 :EVENT_ID:     e1568426-4cc3-492c-9544-b833d432227a
 :END:
+
+* TX 2026-09-01 Tue 14:34:58 implementer.done TASK-JWHXH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-512d86d3-a180-4ac3-b0ee-95f082785c3b
+:TIME:         [2026-09-01 Tue 14:34:58]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.1.1
+:REASON:       Fix round 2 of JWHXH.1 is exactly the four mechanical items the opus-5 review named (unique tmp name + race test, VIEWS collection gate, dotorg exists guard, drain teardown skip); manager read every line and re-ran all gates green on merged main 22b9e615; review round and merge gate waived on that basis
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: ccece697d2015899a665cf5c2cad67f71f379e35
+:MERGE_SHA:    22b9e61573689dc2c5c28c0ab5fd7db6688e0e8a
+:BRANCH:       task-jwhxh.1.1-impl
+:NO_REVIEW_REQUIRED: true
+:FIX_ROUND_FINAL: true
+:CLOSED_TX:    tx-20260901-orgasmic-16cd679c-d02c-489c-bfc0-5e0b96336857
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.1.1/dispatches/tx-20260901-orgasmic-16cd679c-d02c-489c-bfc0-5e0b96336857/report.md
+:EVENT_ID:     0f26f23a-1c8f-4521-b711-c35a33a75c3c
+:END:
+
+* TX 2026-09-01 Tue 14:35:06 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-94f76216-8841-4973-9f62-c807c411ed36
+:TIME:         [2026-09-01 Tue 14:35:06]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     87c94202-9102-4f2b-9000-971ad7b6d145
+:END:
+
+* TX 2026-09-01 Tue 14:35:06 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-088ded4c-1c6d-4eae-88b8-3e607b4873f9
+:TIME:         [2026-09-01 Tue 14:35:06]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     3cf290dd-2430-408a-b480-f35a8706ea3b
+:END:
