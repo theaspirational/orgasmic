@@ -31,8 +31,10 @@ read-only scan, then brief the user and ask what they want now.
 1. `command -v orgasmic` — missing → offer
    [installing the runtime](recipes/install-update-runtime.md); stop.
 2. `orgasmic entry` — prints `PROJECT -` when the cwd is not inside an
-   orgasmic project → offer [adopting this repository](references/init.md);
-   stop. (`orgasmic board` lists the projects that do exist.)
+   orgasmic project → offer two doors and stop:
+   [adopt this directory](references/init.md) (works without git), or move
+   into one of the projects `orgasmic board` lists. Everything else below —
+   tasks and forums alike — runs inside a project.
 3. `orgasmic tasks list --stage in_review --stage in_progress --stage todo`
    — the open work, closest-to-done first.
 
