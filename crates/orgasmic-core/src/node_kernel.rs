@@ -446,35 +446,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
-
-#[cfg(test)]
-mod real_data {
-    use super::*;
-
-    /// Proof over a real migrated tree: `ORGASMIC_MIGRATED_DIR=<out of
-    /// scripts/ap971-migrate-proto.py> cargo test -p orgasmic-core real_data`.
-    #[test]
-    fn every_migrated_node_parses() {
-        let Ok(root) = std::env::var("ORGASMIC_MIGRATED_DIR") else {
-            return;
-        };
-        let mut n = 0;
-        for coll in std::fs::read_dir(&root).unwrap().flatten() {
-            for node in std::fs::read_dir(coll.path()).unwrap().flatten() {
-                let p = node.path().join(NODE_FILE);
-                let src = std::fs::read_to_string(&p).unwrap();
-                let parsed = parse_node(&src, &p.display().to_string()).unwrap();
-                assert_eq!(
-                    Some(parsed.id.as_str()),
-                    node.file_name().to_str(),
-                    "dir name = id"
-                );
-                let j = std::fs::read_to_string(node.path().join(JOURNAL_FILE)).unwrap();
-                assert!(parse_journal(&j, JOURNAL_FILE).unwrap().is_empty());
-                n += 1;
-            }
-        }
-        eprintln!("parsed {n} migrated nodes");
-        assert!(n > 800);
-    }
-}

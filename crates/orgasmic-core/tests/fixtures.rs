@@ -1,7 +1,7 @@
-//! Integration tests against the real `.orgasmic/*.org` and
-//! `shipped/**/*.org` fixtures committed to this repo. These tests prove the
-//! orgasmic profile parser handles the live corpus and that rewriting one
-//! heading does not perturb unrelated bytes.
+//! Integration tests against the `.orgasmic/*.org` corpus under
+//! `tests/fixtures/ledger` and the `shipped/**/*.org` fixtures. These tests
+//! prove the orgasmic profile parser handles real ledger data and that
+//! rewriting one heading does not perturb unrelated bytes.
 
 use std::path::PathBuf;
 use std::sync::{
@@ -28,20 +28,17 @@ fn repo_root() -> PathBuf {
     }
 }
 
-/// The live ledger left the tracked tree with TASK-LBRX7 (orphan `orgasmic`
-/// branch), so a fresh clone has no `.orgasmic/` next to `shipped/`. The
-/// live-corpus tests below only run where a ledger is present; elsewhere
-/// they skip rather than assert on files git no longer delivers.
-fn live_ledger_present() -> bool {
-    if repo_root().join(".orgasmic/project.org").is_file() {
-        return true;
-    }
-    eprintln!("skipping: no live .orgasmic ledger in this tree (post TASK-LBRX7 cutover)");
-    false
+fn fixture_ledger_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ledger")
 }
 
 fn read(rel: &str) -> String {
-    let path = repo_root().join(rel);
+    let root = if rel.starts_with(".orgasmic/") {
+        fixture_ledger_root()
+    } else {
+        repo_root()
+    };
+    let path = root.join(rel);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {rel}: {e}"))
 }
 
@@ -61,9 +58,6 @@ fn count_warnings(run: impl FnOnce()) -> usize {
 
 #[test]
 fn parses_real_done_tasks() {
-    if !live_ledger_present() {
-        return;
-    }
     let path = ".orgasmic/tasks/TASK-VWBDJ/node.org";
     let f = parse_or_panic(path);
     let task_003 = f
@@ -83,9 +77,10 @@ fn parses_real_done_tasks() {
     // accepts the live corpus, regardless of which task happens to be DONE).
     let mut parsed_tasks = 0usize;
     let mut any_done = false;
-    for node_path in collection_node_file_paths(&repo_root(), "tasks").unwrap() {
+    let root = fixture_ledger_root();
+    for node_path in collection_node_file_paths(&root, "tasks").unwrap() {
         let rel = node_path
-            .strip_prefix(repo_root())
+            .strip_prefix(&root)
             .unwrap()
             .to_string_lossy()
             .into_owned();
@@ -103,15 +98,13 @@ fn parses_real_done_tasks() {
 
 #[test]
 fn live_state_files_parse_without_retired_property_warnings() {
-    if !live_ledger_present() {
-        return;
-    }
     let mut parsed_tasks = 0;
-    let node_rels: Vec<String> = collection_node_file_paths(&repo_root(), "tasks")
+    let root = fixture_ledger_root();
+    let node_rels: Vec<String> = collection_node_file_paths(&root, "tasks")
         .unwrap()
         .into_iter()
         .map(|p| {
-            p.strip_prefix(repo_root())
+            p.strip_prefix(&root)
                 .unwrap()
                 .to_string_lossy()
                 .into_owned()
@@ -245,9 +238,6 @@ fn task_heading_empty_provider_model_effort_properties_are_dropped() {
 
 #[test]
 fn parses_real_decisions() {
-    if !live_ledger_present() {
-        return;
-    }
     let f = parse_or_panic(".orgasmic/decisions/dec_R75SW/node.org");
     assert!(!f.headings.is_empty());
     let dec_heading = f.find_by_id("dec_R75SW").expect("dec_R75SW present");
@@ -278,9 +268,6 @@ fn parses_real_decisions() {
 
 #[test]
 fn parses_real_glossary() {
-    if !live_ledger_present() {
-        return;
-    }
     let f = parse_or_panic(".orgasmic/glossary/term_YC32J/node.org");
     let tx_term = f.find_by_id("term_YC32J").expect("term term_YC32J present");
     let view =
@@ -291,9 +278,6 @@ fn parses_real_glossary() {
 
 #[test]
 fn parses_real_project() {
-    if !live_ledger_present() {
-        return;
-    }
     let f = parse_or_panic(".orgasmic/project.org");
     let view = ProjectFile::from_org(&f, ".orgasmic/project.org").unwrap();
     assert_eq!(view.id, "orgasmic");
@@ -302,16 +286,14 @@ fn parses_real_project() {
 
 #[test]
 fn parses_real_tx_file() {
-    if !live_ledger_present() {
-        return;
-    }
-    let tx_path = std::fs::read_dir(repo_root().join(".orgasmic/tx"))
+    let root = fixture_ledger_root();
+    let tx_path = std::fs::read_dir(root.join(".orgasmic/tx"))
         .unwrap()
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("org"))
         .expect("at least one live tx fixture");
-    let rel = tx_path.strip_prefix(repo_root()).unwrap().to_string_lossy();
+    let rel = tx_path.strip_prefix(&root).unwrap().to_string_lossy();
     let src = std::fs::read_to_string(&tx_path).unwrap_or_else(|e| panic!("read {rel}: {e}"));
     let entries = parse_tx_file(&src, &rel).unwrap();
     assert!(!entries.is_empty());
@@ -476,9 +458,6 @@ fn round_trip_rewrite_is_byte_stable_outside_touched_heading() {
 
 #[test]
 fn round_trip_through_section_body_rewrite() {
-    if !live_ledger_present() {
-        return;
-    }
     let path = ".orgasmic/tasks/TASK-VWBDJ/node.org";
     let original = read(path);
     let parsed = OrgFile::parse(original.clone(), path).unwrap();
