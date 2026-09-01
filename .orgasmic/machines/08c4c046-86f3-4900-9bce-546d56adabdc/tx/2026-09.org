@@ -4625,3 +4625,17 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-8DWJP.1.1/dispatches/tx-20260901-orgasmic-63b71bf3-20f1-454a-a17f-dcdf2a1627c7/report.md
 :EVENT_ID:     669a8e72-b5dd-4e55-8a30-4d4ed01dd70b
 :END:
+
+* TX 2026-09-01 Tue 16:29:54 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-3e3826e8-375b-4765-867a-f3f611d9dd3d
+:TIME:         [2026-09-01 Tue 16:29:54]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     edeb2943-a6a8-4b0e-a7b2-95079df4ef2d
+:END:
