@@ -29,3 +29,19 @@
 :FIX_SUBTASK: t
 :EVENT_ID: c660a3f3-5da5-47b7-acf4-bebbdae4db0a
 :END:
+
+* tx-20260901-orgasmic-6877 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6877
+:TIME:    [2026-09-01 Tue 14:57:10]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TP593.1
+:TARGET: .orgasmic/tasks/TASK-TP593.1/node.org
+:REASON: transition TASK-TP593.1 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 3764a85a-e4bf-45bb-8a6c-74c821c90732
+:END:
