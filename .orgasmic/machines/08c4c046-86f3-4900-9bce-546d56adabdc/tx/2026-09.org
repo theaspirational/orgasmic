@@ -3614,3 +3614,45 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EVENT_ID:     e313dcf6-6d53-416b-9c30-c90e34377871
 :END:
+
+* TX 2026-09-01 Tue 15:36:35 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-d3e99944-f874-4f6c-a88e-2b9cdbbddb1b
+:TIME:         [2026-09-01 Tue 15:36:35]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     368c48f3-4dc8-4649-a5e6-1d817597a5a6
+:END:
+
+* TX 2026-09-01 Tue 15:36:37 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-1801921f-3668-4d41-8247-0c45c1836574
+:TIME:         [2026-09-01 Tue 15:36:37]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     82db0e65-bbff-4cfc-9188-d3cd70b88870
+:END:
+
+* TX 2026-09-01 Tue 15:36:37 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260901-orgasmic-41881674-dae1-4bbb-a68c-b51b44ddabc7
+:TIME:         [2026-09-01 Tue 15:36:37]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     548be32c-18d3-401a-a245-06e008d696f6
+:END:

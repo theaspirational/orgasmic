@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         c56b0bbe
+:LIVENESS:         9909a41e
 :LIVENESS_AT:      [2026-09-01 Tue 16:10]
 :UPDATED_AT:       [2026-09-01 Tue 16:10]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
@@ -635,6 +635,7 @@ operator + agent sessions, no manager handoff write in between).
 - 2026-09-01 (session, cont.): TASK-8DWJP review (opus-5 high, tx-eb858d4c) REJECT — HIGH: conflict event path lacks tx/ (never indexed); HIGH: autostash-pop conflict exits 0 → reported synced, next tick commits+pushes conflict markers; MEDIUM: conflict_paths prose scrape ('tree.'); MEDIUM: salvage→reset window unfenced (WriterCommand::Barrier ~15 lines); 2 LOW. Design judged sound. Both generations closed; merge 200892f2 KEPT on local main; fix round TASK-8DWJP.1 (P1, FIX_SUBTASK, DEPENDS_ON MSYN4.2.1 — same file) filed with the reviewer's fix directions. TASK-AS0FS still folded (closes with 8DWJP).
 - 2026-09-01 (session, cont.): TASK-MSYN4.3 review (opus-5 high, tx-a9a7ba40) APPROVE WITH FOLLOW-UPS (3 LOW); both generations closed; task done. LOW 1 (same-second activity order) ACCEPTED — do NOT stamp %.6f: parse_org_timestamp is strict and the torn-close guards fail closed on any other format. LOW 3 (dropped .orgasmic-ancestor guard) accepted. LOW 2 → TASK-MSYN4.3.1 (P3, test-only, trivial close). Reviewer independently re-spotted 8DWJP HIGH 1 (event path lacks tx/).
 - 2026-09-01 (session, cont.): TASK-SRBGS.1 (chain-review L1-L5) reported (worker 79caf335, 9 gates PASS) and merged =c56b0bbe=; it ALSO fixed 8DWJP HIGH 1 (ledger.sync_conflict now under machines/<id>/tx/) — 8DWJP.1 brief trimmed accordingly. Manager gates running (=scratchpad/gates-SRBGS.1-*.log=); not trivial (writer apply-failure keying) → reviewer opus-5 high next, brief =scratchpad/brief-TASK-SRBGS.1-review.md=; implementer gen tx-20260901-orgasmic-2c75f6bd-619c-4c51-98c1-e3b77b538819 closes after the verdict with =--merge-sha c56b0bbe --worker-commit 79caf335=. TASK-KA934.1.1 implementer dispatched: tx-20260901-orgasmic-ec1c76ab-d18a-4ed9-ba85-464e97509af9 (watcher armed). Slots: MSYN4.2.1 + KA934.1.1.
+- 2026-09-01 (session, cont.): SRBGS.1 manager gates green; Evidence recorded; reviewer dispatched tx-20260901-orgasmic-1d1b2d9d-2e6c-4481-b6e6-f739bc4c8127. TASK-MSYN4.2.1 reported (worker be2f3868, 5 gates PASS) and merged =9909a41e=; manager gates running (=scratchpad/gates-MSYN4.2.1-*.log=); plan: close trivial (=--no-review-required --fix-round-final=, its hunk is reviewed inside the 8DWJP.1 review of the same file) then set MSYN4.2 done. TASK-8DWJP.1 implementer dispatched right after that merge: tx-20260901-orgasmic-6d10e68b-0b17-45ad-91c2-b44eb671217a (watcher armed).
 
 ** Next likely actions
 Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 DONE (chain landed, 0.0.23 certified). Step 2 half done:
@@ -680,6 +681,7 @@ Close recipe for a review: read =tmp/dispatch/<brief-dir>/*-last.txt=, verify an
 - TASK-SRBGS.1 implementer running: tx-20260901-orgasmic-2c75f6bd-619c-4c51-98c1-e3b77b538819 (watcher armed; brief L4 patched for the 8DWJP-added ledger.sync_conflict entry). Implementer slots: MSYN4.2.1 + SRBGS.1 (full). Next in queue: TASK-KA934.1.1 (brief ready).
 - UPDATE MSYN4.3: reviewer running tx-20260901-orgasmic-a9a7ba40-a96b-4f82-b7a5-c766e3b59903 (watcher armed). Close order: reviewer first (=--verdict … --reviewed-diff 568cb5be^1..568cb5be=), then implementer tx-…e5f0edf8 (=--merge-sha 568cb5be --worker-commit 2bbd467e --worktree-remove --branch-delete=), then task done or MSYN4.3.1 for residuals. Evidence recorded.
 - QUEUE (implementer slots MSYN4.2.1 + SRBGS.1 full): 1) TASK-8DWJP.1 P1 — dispatch ONLY after MSYN4.2.1 merges (same file); brief =scratchpad/brief-TASK-8DWJP.1.md=; not trivial → reviewer opus-5 high; on approve set 8DWJP done AND close TASK-AS0FS. 2) TASK-KA934.1.1 P2, brief ready. 3) TASK-MSYN4.3.1 P3 test-only (trivial close; brief not yet written — the task body is the brief). 8DWJP is back at in_progress; MSYN4.3 done.
+- STATE @ =9909a41e=: reviewers running — SRBGS.1 (tx-…1d1b2d9d; close with =--verdict … --reviewed-diff c56b0bbe^1..c56b0bbe=, then implementer tx-…2c75f6bd with =--merge-sha c56b0bbe --worker-commit 79caf335 --worktree-remove --branch-delete=). Implementers running — KA934.1.1 (tx-…ec1c76ab), 8DWJP.1 (tx-…6d10e68b; NOT trivial → reviewer opus-5 high; that review also covers the MSYN4.2.1 hunk in ledger_sync.rs; on approve: 8DWJP done + close TASK-AS0FS). MSYN4.2.1 gen tx-20260901-orgasmic-29227358-99ad-4a5b-9f56-f60e8dd7f316 closes after its gates with =--merge-sha 9909a41e --worker-commit be2f3868 --no-review-required --fix-round-final --worktree-remove --branch-delete=, then =task update TASK-MSYN4.2 --state done=. Queue: MSYN4.3.1 (P3, brief =scratchpad/brief-TASK-MSYN4.3.1.md=). 13 unpushed merges.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
