@@ -16,3 +16,5 @@ M1: =build_views= (crates/orgasmic-daemon/src/index.rs:2970) is reachable only f
 - [ ] Cutover/migrate (or daemon boot) ensures =views/= is ignored on an existing ledger: appends the rule and untracks the files once, idempotently.
 - [ ] =build_views= runs (debounced) at the tail of =reload_node_dir=; test: a node write without any claim churn refreshes views/board.org.
 - [ ] router.org claim is true after the change; clippy -D; fmt.
+** Evidence
+Merged c3d779af (worker 49de897f, codex gpt-5.6-sol). Manager re-ran gates on merged main 2026-09-01: cargo test -p orgasmic-daemon --lib -- ledger_sync views → 8 passed / 0 failed (incl. existing_ledger_views_are_ignored_untracked_and_idempotent, incremental_node_write_rebuilds_views_without_claim_churn); cargo clippy -p orgasmic-daemon --all-targets -D warnings clean; cargo fmt --all --check clean. Review round: claude-opus-5 high over c3d779af^1..c3d779af (verdict recorded on the reviewer close).
