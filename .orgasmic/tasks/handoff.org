@@ -5,8 +5,8 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         5033cce
-:LIVENESS_AT:      [2026-08-23 Sun]
+:LIVENESS:         1f7e642a
+:LIVENESS_AT:      [2026-09-01 Tue]
 :UPDATED_AT:       [2026-08-22 Sat]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
 :END:
@@ -609,44 +609,33 @@ operator + agent sessions, no manager handoff write in between).
   TFXR2 in_progress→in_review (landed =62dc3e8a=, no dispatch).
 
 ** Next likely actions
-*DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
+Goal =goal-20260826-finalise-the-e01mc-twcp9=: step 1 (chain landed, crates green for the 0.0.23 stable
+certification) is DONE. Step 2 — "one review over the whole chain and fix everything it finds" — has only a
+manager-inline pass (2026-08-27, five fixes + TASK-AS0FS). No independent reviewer has read the chain.
 
-1. *START THE dec_E01MC IMPLEMENTATION CHAIN* (filed 2026-08-22, all backlog, tags =e01mc=
-   =node_kernel=). Three roots have no deps and can run in parallel:
-   - TASK-GCXB7 shared dispatch fold in core + type-set guard (smallest; stands alone)
-   - TASK-TP593 node kernel in core + writer ops — start from
-     =crates/orgasmic-core/src/node_kernel.rs= on branch =ap971-prototype= (=41a1faf=)
-   - TASK-7A0H4 node type descriptors + descriptor-driven mint
-   Then, in dependency order: TASK-SRBGS migrator (← TP593 7A0H4; port
-   =scripts/ap971-migrate-proto.py= from the same branch — proven on this repo: 873 nodes, 0
-   anomalies, byte-for-byte round trip) → TASK-EPG6H tx split → TASK-8AV8B incremental
-   refresh; TASK-JWHXH views and TASK-AN992 CLI/shipped (← SRBGS); TASK-ARRV8 artifacts onto
-   the kernel (← TP593 7A0H4) → TASK-8DMQS regenerate; TASK-KA934 UI last (← 8AV8B 8DMQS).
-   Every design decision is in the AP971.x ticket Resolutions and the map's 'Decisions so
-   far' — workers should read their ticket's referenced Resolution before coding. Owner
-   stance: single user, NO v1 compatibility layer, version stamp is a label only.
-2. *LAND main ON origin.* Local main is ~40 commits ahead; =origin/main= is protected (PR +
-   =local/release-certified=). =orgasmic integrate --dry-run= shows the sequence; it needs a
-   valid =gh= token (=gh auth login -h github.com=). Until then the work exists only locally
-   and on =origin/fix/rundock-mobile=.
-3. Everything from the 08-18 list still stands: AJP4A ancestors to close, ZKZBF (todo),
-   BX5SR.2/.3 P1 residuals, the older P1s (YBCYQ worker-commits-to-main, 48SFW staged-home
-   kills dispatches, C7NVH --effort never reaches codex). A four-group reading of the 123-item
-   backlog exists in this session's scratch only; the P1s of group A are the real risk.
+1. *DISPATCH THE WHOLE-CHAIN REVIEW.* One read-only reviewer over =543782d7^..366c4b5b= (the chain merge through
+   its 08-27 fixes; =git log --first-parent= lists 17 integrations). Cross-family from the implementers (chain was
+   codex/claude mixed; fable-5 or gpt-5.6-sol both qualify). Operator picks model + effort at session start.
+   Brief must: name the AP971.x Resolutions as the spec, forbid bulk-reading =verify/*/injection.patch= (52NJS
+   content-filter kill), require =reviewer.finding= tx as findings appear, expect REJECT on some of it, and say what
+   is already established (8b092d27 fmt/clippy clean; 9acfba79 suite certified). Arm =manager dispatch-wait=.
+   Then fix rounds as TASK-<id>.N, then move the 19 in_review chain tasks to done with evidence — they are NOT done
+   until this review passes.
+2. *TASK-AS0FS* (P2, singleton ledger file ownership across machines) is a DECISION the chain review surfaced —
+   grill before implementing; two machines editing goal.org between syncs is a real rebase conflict today.
+3. *TASK-56NRX*: round 4 merged =fca620d4= after the r3 APPROVE; decide done vs another review, then move it.
+4. *Board debris decision*: cancel 02JJW/2XT9J/NMV4P/V6JW4 + their seven todo children, or explain why they stay.
+5. Older P1s still stand (08-18 list): BX5SR.2/.3 (writer idempotency + supervision), YBCYQ (worker commits to
+   main), 48SFW (staged home kills dispatches), C7NVH (--effort never reaches codex). vscode-orsl letter items:
+   XQCNA, ZMYEN (b)(c), XC9N4 remainder. AJP4A ancestors still in_progress-by-bookkeeping.
+6. Consider compacting this handoff: no cap exists, it is ~60 KB, and the durable lessons are the five preamble
+   rules + the Divergence blocks; the session narratives are in git.
 
-DONE SINCE LAST HANDOFF (do not re-propose): TASK-AP971.2/.3/.5/.6/.7/.8/.9/.10/.11 (map
-complete); RunDock mobile fixes (ui/, local main).
-
-0. *VSCODE-ORSL LETTER FOLLOW-UPS* (tag =vscode-orsl-letter=, filed 2026-08-23). Confirm the
-   runtime swap landed (=orgasmic daemon status= shows an =fds:= line; =install.json= version
-   0.0.22-dev.20260823) — if not, the watcher timed out: rerun it or do the memory recipe by hand
-   in a zero-live window. Then the cheapest high-value items: TASK-XQCNA (reason + evidence path on
-   dispatch-status; 500s carry =cause=), TASK-ZMYEN (b)(c) (partial -last.txt, ORGASMIC_REPORT_PATH),
-   TASK-XC9N4 remainder (refuse/warn at accept, simulated gating). TASK-TWCP9 is a DECISION — grill
-   before anything; fold it into the dec_E01MC per-node-dir layout thinking.
+DONE SINCE LAST HANDOFF (do not re-propose): E01MC/TWCP9 chain merges; ledger cutover; W97C8/.1; JHWNP/.1; forum
+suite (56NRX FBSZ2 FAS8R 295X1 9TGQS 82KKQ E1D35 DN1WK); runtime 0.0.23 stable publish; skill door audit.
 
 ** In flight
-NOTHING IN FLIGHT (2026-08-23 12:10): runtime 0.0.22-dev.20260823 installed and launchd-managed; the reinstall watcher has exited. vscode-orsl's manager dispatches on its own schedule — its runs are not this board's. Standing operator suspension on dispatch (tx-20260809-orgasmic-5543) still governs: ASK before dispatching.
+NOTHING IN FLIGHT (2026-09-01, manager reconciliation session). Every dispatch generation is closed — dispatch-status is empty for the first time since July (eight dead orphans + two verdict-less reviews closed today). No worker worktrees; the only extra worktree is a stale detached probe at scratchpad/probe-3a4c219f from session 94dc2a46. Runtime 0.0.23-dev.20260830i under launchd, pid 2682. vscode-orsl's manager dispatches on its own schedule — its runs are not this board's. Dispatching needs the operator's model/effort choice for this session (no project default).
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
