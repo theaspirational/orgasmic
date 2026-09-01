@@ -185,3 +185,19 @@
 :REASON: LOW crates/orgasmic-daemon/src/ledger_sync.rs:768 — the two-writer test calls record_sync_conflict directly with a literal project-a and re-derives the same tx path expression it is asserting, so it exercises neither the spawn loop's project_id resolution nor the routing of the event into machines/<id>/tx/, which is why the misrouted path in finding 1 passes green.
 :EVENT_ID: 5f6ffb22-f37b-45c5-90df-0753cb8f0b76
 :END:
+
+* tx-20260901-orgasmic-6913 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260901-orgasmic-6913
+:TIME:    [2026-09-01 Tue 15:23:28]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8DWJP
+:TARGET: .orgasmic/tasks/TASK-8DWJP/node.org
+:REASON: Review rejected; fix round TASK-8DWJP.1 pending (after MSYN4.2.1 merges — same file)
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: e8bb9046-bfe9-40c4-994d-b76e8402b94e
+:END:
