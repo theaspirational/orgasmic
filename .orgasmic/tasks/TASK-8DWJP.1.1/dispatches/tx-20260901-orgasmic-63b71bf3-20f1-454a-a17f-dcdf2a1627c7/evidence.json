@@ -1,0 +1,20 @@
+{
+  "event_count": 193,
+  "tool_call_count": 97,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-8DWJP.1.1-implementer-20260901T160439.jsonl",
+    "size_bytes": 444461
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/01/rollout-2026-09-01T19-04-41-01a05db7-2da1-74a1-84a8-5c2ee5c0d3bd.jsonl",
+    "session_id": "01a05db7-2da1-74a1-84a8-5c2ee5c0d3bd",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
