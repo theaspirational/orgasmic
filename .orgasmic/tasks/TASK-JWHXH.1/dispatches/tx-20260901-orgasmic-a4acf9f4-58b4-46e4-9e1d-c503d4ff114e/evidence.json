@@ -1,0 +1,23 @@
+{
+  "event_count": 431,
+  "tool_call_count": 36,
+  "unparsed_events": 5,
+  "bounded_events": 6,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-JWHXH.1-reviewer-20260901T141259.jsonl",
+    "size_bytes": 671016
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll review this diff. Let me start by reading the code."
+    }
+  ],
+  "narrative_truncated": false
+}
