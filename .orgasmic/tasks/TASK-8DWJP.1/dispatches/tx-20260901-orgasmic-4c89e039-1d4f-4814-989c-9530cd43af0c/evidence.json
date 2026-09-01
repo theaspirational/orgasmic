@@ -1,0 +1,23 @@
+{
+  "event_count": 444,
+  "tool_call_count": 33,
+  "unparsed_events": 4,
+  "bounded_events": 7,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-8DWJP.1-reviewer-20260901T155503.jsonl",
+    "size_bytes": 663342
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task record and the diffs.Findings confirmed with real probes. Recording them now."
+    }
+  ],
+  "narrative_truncated": false
+}
