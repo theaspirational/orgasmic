@@ -419,6 +419,8 @@ struct RefreshTestHooks {
     max_same_target_scans: std::sync::atomic::AtomicUsize,
     refresh_timeout_ms: AtomicU64,
     coordinator_timeout_ms: AtomicU64,
+    /// orgasmic:TASK-1MEW6 — overrides [`GIT_PROBE_TIMEOUT`] when non-zero.
+    git_probe_timeout_ms: AtomicU64,
 }
 
 #[cfg(test)]
@@ -432,6 +434,9 @@ pub(crate) struct TestRefreshGate {
 const REFRESH_COALESCE_WINDOW: Duration = Duration::from_millis(50);
 const REFRESH_COALESCE_MAX_WAIT: Duration = Duration::from_millis(200);
 const PROJECT_REFRESH_SCAN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bound on one `git config --get remote.origin.url` probe. When spent, the
+/// probe returns without writing and a later poll retries.
+const GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_PROJECT_REFRESH_SCAN_TIMEOUT: Duration = Duration::from_secs(300);
 const PROJECT_REFRESH_SCAN_TIMEOUT_ENV: &str = "ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS";
 const PROJECT_LOAD_FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
@@ -2035,6 +2040,20 @@ impl Index {
         }
     }
 
+    fn git_probe_timeout(&self) -> Duration {
+        #[cfg(test)]
+        {
+            let timeout_ms = self
+                .refresh_test_hooks
+                .git_probe_timeout_ms
+                .load(Ordering::SeqCst);
+            if timeout_ms > 0 {
+                return Duration::from_millis(timeout_ms);
+            }
+        }
+        GIT_PROBE_TIMEOUT
+    }
+
     fn refresh_scan_timeout(&self) -> Duration {
         #[cfg(test)]
         {
@@ -2641,6 +2660,14 @@ impl Index {
     }
 
     #[cfg(test)]
+    fn set_git_probe_timeout(&self, timeout: Duration) {
+        self.refresh_test_hooks.git_probe_timeout_ms.store(
+            timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+            Ordering::SeqCst,
+        );
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_coordinator_timeout(&self, timeout: Duration) {
         self.refresh_test_hooks.coordinator_timeout_ms.store(
             timeout.as_millis().min(u128::from(u64::MAX)) as u64,
@@ -2751,7 +2778,7 @@ impl Index {
         let repo_url = git_remote_origin_url_with_program(
             project_root,
             OsStr::new("git"),
-            Duration::from_secs(3),
+            self.git_probe_timeout(),
         )
         .await;
         let Some(repo_url) = repo_url else {
@@ -5442,27 +5469,23 @@ mod tests {
     ///
     /// `refresh_repo_url` bounds its Git probe and, when that bound is spent,
     /// returns without writing anything — a legitimate production outcome
-    /// that leaves the URL exactly as it was. A single awaited probe is
-    /// therefore a coin flip on a loaded machine, not a guarantee, and a test
-    /// that spends its one probe and then asserts the result is asserting that
-    /// Git won a race (TASK-5FEN5). Drive the probe until it lands instead;
-    /// what the probe does when its bound *is* spent is
+    /// that leaves the URL exactly as it was. A single production-bounded
+    /// probe is therefore a coin flip on a loaded machine, not a guarantee
+    /// (TASK-5FEN5), and retrying it under a wall-clock ceiling only moves the
+    /// coin flip to the ceiling (TASK-1MEW6: the 60s retry budget exhausted
+    /// under extreme starvation). Lift the bound instead: one probe, awaited
+    /// to Git's actual answer, so the only way this fails is Git itself
+    /// failing. What the probe does when its bound *is* spent is
     /// `blocking_git_origin_child_is_killed_and_reaped_on_timeout`'s subject,
     /// not this one's.
     async fn resolve_repo_url_live(index: &Index, project_id: &str, expected: &str) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-        loop {
-            index.refresh_repo_urls(true).await;
-            if index.snapshot().await.projects[project_id].repo_url == expected {
-                return;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "the live Git probe for {project_id} never resolved {expected}: \
-                 every attempt returned without writing a URL"
-            );
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        index.set_git_probe_timeout(Duration::MAX);
+        index.refresh_repo_urls(true).await;
+        assert_eq!(
+            index.snapshot().await.projects[project_id].repo_url,
+            expected,
+            "the live Git probe for {project_id} did not resolve {expected}"
+        );
     }
 
     #[tokio::test]
