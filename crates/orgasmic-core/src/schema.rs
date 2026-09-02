@@ -213,6 +213,7 @@ pub struct TaskHeading<'a> {
     pub depends_on: Vec<&'a str>,
     pub blocked_by: Vec<&'a str>,
     pub test_cmd: Option<&'a str>,
+    pub verify_artifact: Option<&'a str>,
     pub sandbox_permissions: Option<SandboxAllowlist>,
     pub description: Option<String>,
     pub acceptance: Option<String>,
@@ -276,6 +277,7 @@ impl<'a> TaskHeading<'a> {
             depends_on: tokenize(heading.property("DEPENDS_ON")),
             blocked_by: tokenize(heading.property("BLOCKED_BY")),
             test_cmd: heading.property("TEST_CMD"),
+            verify_artifact: normalize_optional_property(heading.property("VERIFY_ARTIFACT")),
             sandbox_permissions: heading
                 .property("SANDBOX_PERMISSIONS")
                 .map(SandboxAllowlist::from_csv)

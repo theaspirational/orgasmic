@@ -76,6 +76,8 @@ pub struct TaskSummary {
     pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_cmd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify_artifact: Option<String>,
     pub tags: Vec<String>,
     pub source_file: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4134,6 +4136,7 @@ fn parse_task(
         model: view.model.map(str::to_string),
         reasoning_effort: view.reasoning_effort.map(str::to_string),
         test_cmd: view.test_cmd.map(str::to_string),
+        verify_artifact: view.verify_artifact.map(str::to_string),
         tags: view.tags.to_vec(),
         source_file: source.to_path_buf(),
         sandbox_permissions: view.sandbox_permissions.clone(),

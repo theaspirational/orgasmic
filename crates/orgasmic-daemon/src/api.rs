@@ -17596,6 +17596,7 @@ const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
     "RELATES_TO",
     "SANDBOX_PERMISSIONS",
     "TEST_CMD",
+    "VERIFY_ARTIFACT",
     "WRITE_SCOPE",
 ];
 
@@ -22332,6 +22333,7 @@ pub(crate) mod tests {
             model: None,
             reasoning_effort: None,
             test_cmd: None,
+            verify_artifact: None,
             tags: Vec::new(),
             source_file: task_node_file_path(tmp.path(), "TASK-WT"),
             sandbox_permissions: None,
@@ -22509,6 +22511,7 @@ pub(crate) mod tests {
             model: None,
             reasoning_effort: None,
             test_cmd: None,
+            verify_artifact: None,
             tags: Vec::new(),
             source_file: task_node_file_path(tmp.path(), "TASK-FIX"),
             sandbox_permissions: None,
@@ -22628,6 +22631,7 @@ pub(crate) mod tests {
             model: None,
             reasoning_effort: None,
             test_cmd: None,
+            verify_artifact: None,
             tags: Vec::new(),
             source_file: task_node_file_path(tmp.path(), "TASK-FIX"),
             sandbox_permissions: None,
@@ -30981,6 +30985,7 @@ pub(crate) mod tests {
             model: None,
             reasoning_effort: None,
             test_cmd: None,
+            verify_artifact: None,
             tags: Vec::new(),
             source_file: task_node_file_path(&project_root, "TASK-NO-WORKERS"),
             sandbox_permissions: None,
@@ -31536,6 +31541,7 @@ pub(crate) mod tests {
             model: None,
             reasoning_effort: None,
             test_cmd: None,
+            verify_artifact: None,
             tags: Vec::new(),
             source_file: task_node_file_path(root, "TASK-DEFAULT"),
             sandbox_permissions: None,
@@ -31558,6 +31564,7 @@ pub(crate) mod tests {
             model: None,
             reasoning_effort: None,
             test_cmd: Some("cargo test --task-override".to_string()),
+            verify_artifact: None,
             tags: Vec::new(),
             source_file: task_node_file_path(root, "TASK-OVERRIDE"),
             sandbox_permissions: None,
@@ -33450,7 +33457,11 @@ pub(crate) mod tests {
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "title": "New task",
-                "properties": { "DEPENDS_ON": "TASK-PRE", "PRIORITY": "P1" }
+                "properties": {
+                    "DEPENDS_ON": "TASK-PRE",
+                    "PRIORITY": "P1",
+                    "VERIFY_ARTIFACT": "verify/TASK-CUSTOM"
+                }
             }))
             .send()
             .await
@@ -33477,6 +33488,21 @@ pub(crate) mod tests {
                 .any(|line| line.contains("PRIORITY") && line.contains("P1")),
             "{after}"
         );
+        assert!(
+            after.contains(":VERIFY_ARTIFACT: verify/TASK-CUSTOM"),
+            "{after}"
+        );
+
+        let task: Value = client
+            .get(format!("{base}/api/projects/orgasmic/tasks/{created_id}"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(task["verify_artifact"], "verify/TASK-CUSTOM");
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;

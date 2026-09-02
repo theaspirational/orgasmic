@@ -141,6 +141,15 @@ fn lifecycle_stage_parses_from_heading_todo_keyword() {
     assert_eq!(view.lifecycle_stage, LifecycleStage::InProgress);
 }
 
+#[test]
+fn task_heading_parses_verify_artifact() {
+    let source = "#+title: sprint\n\n* IN_PROGRESS TASK-042 Do it\n:PROPERTIES:\n:ID: TASK-042\n:VERIFY_ARTIFACT: verify/custom-proof\n:END:\n";
+    let file = OrgFile::parse(source, "inline.org").unwrap();
+    let heading = file.find_by_id("TASK-042").unwrap();
+    let view = TaskHeading::from_heading(&file, heading, "inline.org").unwrap();
+    assert_eq!(view.verify_artifact, Some("verify/custom-proof"));
+}
+
 struct WarningCounter {
     warnings: Arc<AtomicUsize>,
 }

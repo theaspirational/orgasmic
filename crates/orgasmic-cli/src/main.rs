@@ -583,7 +583,7 @@ enum TaskCmd {
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Additional drawer properties; repeatable. Keys are UPPERCASE org
-        /// drawer keys (`WRITE_SCOPE`, `READ_SCOPE`, `TEST_CMD`, `IMPLEMENTS`,
+        /// drawer keys (`WRITE_SCOPE`, `READ_SCOPE`, `TEST_CMD`, `VERIFY_ARTIFACT`, `IMPLEMENTS`,
         /// `DEPENDS_ON`, `PRODUCES`, …); a miscased or unwritable key is
         /// refused by name, never dropped.
         #[arg(long = "property", value_name = "KEY=VALUE")]
@@ -639,7 +639,7 @@ enum TaskCmd {
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Additional drawer properties; repeatable. Keys are UPPERCASE org
-        /// drawer keys (`WRITE_SCOPE`, `READ_SCOPE`, `TEST_CMD`, `IMPLEMENTS`,
+        /// drawer keys (`WRITE_SCOPE`, `READ_SCOPE`, `TEST_CMD`, `VERIFY_ARTIFACT`, `IMPLEMENTS`,
         /// `DEPENDS_ON`, `PRODUCES`, …); a miscased or unwritable key is
         /// refused by name, never dropped.
         #[arg(long = "property", value_name = "KEY=VALUE")]

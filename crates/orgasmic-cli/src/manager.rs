@@ -1346,6 +1346,12 @@ fn dispatch_close_inner(home: &Home, args: &mut DispatchCloseArgs, emit: bool) -
              VERDICT property on the reviewer.done tx that the default-branch review gate reads"
         );
     }
+    if args.status == DispatchCloseStatus::Done {
+        let repo = main_checkout().unwrap_or_else(|| project_root.clone());
+        for task in &tasks {
+            crate::verify::validate_claimed_task_artifact(&repo, &project_root, task)?;
+        }
+    }
     let verified_merge =
         if !args.report_only && matches!(tx_type, "implementer.done" | "architector.done") {
             merge_sha
