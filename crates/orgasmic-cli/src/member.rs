@@ -5,7 +5,8 @@
 //! and the daemon re-reads that file fresh on every request, so a write here is
 //! immediately effective — no daemon poke or restart. Member management is
 //! intentionally host-local (admin by virtue of filesystem access) and is not
-//! an HTTP route.
+//! an HTTP route. The one daemon consult is read-only and best-effort:
+//! `member add` refuses names colliding with the daemon actor (dec_Q78QN).
 
 use anyhow::{bail, Result};
 use clap::{Subcommand, ValueEnum};
@@ -75,6 +76,7 @@ pub fn cmd_member(home: &Home, cmd: MemberCmd) -> Result<()> {
 
 fn cmd_add(home: &Home, name: &str, role: Option<RoleArg>, grant: &[String]) -> Result<()> {
     let grants = build_grants(role, grant)?;
+    refuse_daemon_actor_collision(home, name)?;
     let token = orgasmic_core::add_member(home, name, &grants)?;
 
     println!("✓ minted member {name}");
@@ -85,6 +87,48 @@ fn cmd_add(home: &Home, name: &str, role: Option<RoleArg>, grant: &[String]) -> 
     println!("    {token}");
     println!();
     println!("  Give this token to {name}; they log in with it via the connect screen.");
+    Ok(())
+}
+
+// orgasmic:dec_Q78QN,TASK-KA934.3.2
+/// Inverse half of the `:ACTOR:` namespace guard. A member name is the raw
+/// string the daemon compares stored `:ACTOR:` values against to grant
+/// comment edit/delete rights, so a member named like the daemon's actor
+/// would block every admin journal comment write (the daemon refuses to
+/// stamp an actor that collides with a member). The CLI cannot know which
+/// actor a future daemon boot will use, so it refuses the boot default
+/// (`$USER`), the configured `manager.actor`, and — when a daemon is
+/// actually reachable — the actors its live status reports. Config and
+/// status reads are best-effort: a missing or unreadable config and a down
+/// daemon leave the `$USER` default guard in force.
+fn refuse_daemon_actor_collision(home: &Home, name: &str) -> Result<()> {
+    let mut candidates: Vec<(&'static str, String)> = vec![(
+        "the daemon default actor ($USER)",
+        std::env::var("USER").unwrap_or_else(|_| "unknown".into()),
+    )];
+    if let Ok(config) = orgasmic_daemon::config::DaemonConfig::load(home) {
+        if let Some(manager_actor) = config.manager_actor {
+            candidates.push(("manager.actor in config.yaml", manager_actor));
+        }
+    }
+    if let Some(status) = crate::doctor::live_daemon_status(home) {
+        if let Some(actor) = status.actor {
+            candidates.push(("the live daemon actor", actor));
+        }
+        if let Some(actor) = status.manager_actor {
+            candidates.push(("the live daemon manager_actor", actor));
+        }
+    }
+    for (source, actor) in &candidates {
+        if actor == name {
+            bail!(
+                "refusing member name `{name}`: it collides with {source} `{actor}` — the daemon \
+                 refuses journal writes stamping an `:ACTOR:` that matches a member, so admin \
+                 comment writes would 403. Pick another member name, or change the daemon actor \
+                 (`manager.actor` in config.yaml)."
+            );
+        }
+    }
     Ok(())
 }
 
@@ -162,6 +206,60 @@ fn format_grants(grants: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_home() -> (tempfile::TempDir, Home) {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        (tmp, home)
+    }
+
+    #[test]
+    fn member_add_refuses_name_matching_configured_manager_actor() {
+        let (_tmp, home) = temp_home();
+        std::fs::write(home.config(), "manager:\n  actor: alice\n").unwrap();
+
+        let err = cmd_add(&home, "alice", Some(RoleArg::Viewer), &[]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("alice"), "names the collision: {msg}");
+        assert!(msg.contains("collides"), "{msg}");
+        assert!(msg.contains("manager.actor"), "{msg}");
+        assert!(
+            msg.contains("Pick another member name"),
+            "offers a remedy: {msg}"
+        );
+        // Nothing was minted.
+        assert!(orgasmic_core::read_members(&home).unwrap().is_empty());
+    }
+
+    #[test]
+    fn member_add_refuses_daemon_default_actor_name() {
+        let (_tmp, home) = temp_home();
+        let default_actor = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
+        assert_ne!(default_actor, "unclaimed-name", "test precondition");
+
+        let err = cmd_add(&home, &default_actor, Some(RoleArg::Viewer), &[]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains(&default_actor), "names the collision: {msg}");
+        assert!(msg.contains("daemon default actor"), "{msg}");
+        assert!(orgasmic_core::read_members(&home).unwrap().is_empty());
+    }
+
+    #[test]
+    fn member_add_allows_name_disjoint_from_daemon_actors() {
+        let (_tmp, home) = temp_home();
+        std::fs::write(home.config(), "manager:\n  actor: alice\n").unwrap();
+        let default_actor = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
+        let name = ["carol", "carol-2", "carol-3"]
+            .into_iter()
+            .find(|candidate| *candidate != default_actor.as_str() && *candidate != "alice")
+            .unwrap();
+
+        cmd_add(&home, name, Some(RoleArg::Viewer), &[]).unwrap();
+        let members = orgasmic_core::read_members(&home).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].name, name);
+    }
 
     #[test]
     fn role_seeds_wildcard_grant() {

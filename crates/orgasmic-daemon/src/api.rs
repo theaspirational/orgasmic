@@ -2365,6 +2365,18 @@ fn ensure_actor_namespace_free(state: &ApiState, actor: &str) -> Result<(), ApiE
     Ok(())
 }
 
+/// dec_Q78QN — which journal-routed tx types stamp an `:ACTOR:` that grants
+/// a member rights. Only `comment` rows are editable by the named member
+/// (`require_comment_body` compares the raw stored `:ACTOR:` and refuses
+/// anything that is not an editable comment), so only those writes must keep
+/// the actor out of the member namespace. Every other journal producer passes
+/// `actor: None` and falls back to the daemon actor, which grants nothing —
+/// guarding them would just 403 all admin traffic whenever the daemon actor
+/// happens to share a name with a member (TASK-KA934.3.2).
+fn journal_actor_guard_applies(ty: &str) -> bool {
+    ty == "comment"
+}
+
 /// dec_Q78QN — resolve the actor stamped as `:EDITED_BY:`/`:DELETED_BY:` on a
 /// journal comment mutation. A member session stamps its own name; the admin
 /// path stamps the daemon actor, which must stay out of the member namespace.
@@ -3067,13 +3079,15 @@ async fn prepare_tx_append_request(
     };
     let time_str = tx_time_string_utc(&now);
     let actor = choose_actor(&req, project_entry.as_ref(), state);
-    // dec_Q78QN — a journal-routed tx stamps the effective actor as `:ACTOR:`,
+    // dec_Q78QN — a journal-routed `comment` tx stamps the effective actor as
+    // `:ACTOR:`, where that string grants the named member edit/delete rights,
     // so it must stay out of the member namespace. Every path into this
     // function is admin-only (`POST /tx` and `/runs/:id/release` are absent
     // from `MEMBER_ALLOWED_ROUTES`) or daemon-internal; member sessions reach
     // a journal only through the comment handlers, whose guards live in
-    // `prepare_api_tx` / `comment_mutation_actor`.
-    if event_routes_to_journal(&req.r#type) {
+    // `prepare_api_tx` / `comment_mutation_actor`. Other journal-routed types
+    // grant no member rights (`journal_actor_guard_applies`).
+    if journal_actor_guard_applies(&req.r#type) {
         ensure_actor_namespace_free(state, &actor)?;
     }
     let mut entry = TxEntry::new(&tx_id, &req.r#type, &time_str, actor, state.machine.clone());
@@ -8656,9 +8670,10 @@ async fn prepare_api_tx_as(
     // `prepare_tx_append_request`, on the same `choose_actor` chain. A member
     // session is exempt: its handler forces the session name as the actor,
     // which is the one legitimate producer of an actor naming a member;
-    // admin-supplied and daemon-fallback actors are refused on journal-routed
-    // types.
-    if identity.member_name().is_none() && event_routes_to_journal(&req.ty) {
+    // admin-supplied and daemon-fallback actors are refused on the
+    // comment-type journal writes where `:ACTOR:` grants rights
+    // (`journal_actor_guard_applies`).
+    if identity.member_name().is_none() && journal_actor_guard_applies(&req.ty) {
         ensure_actor_namespace_free(state, &actor)?;
     }
     let mut entry = TxEntry::new(tx_id, &req.ty, time_str, actor, state.machine.clone());
@@ -9040,6 +9055,11 @@ pub struct StatusResponse {
     pub bind_host: String,
     pub bind_port: u16,
     pub local_only: bool,
+    /// The actor this daemon stamps on journal writes when neither the
+    /// request nor `manager.actor` supplies one (TASK-KA934.3.2).
+    pub actor: String,
+    /// The configured `manager.actor` fallback, when set (TASK-KA934.3.2).
+    pub manager_actor: Option<String>,
     pub ui_asset_hash: String,
     /// Projects whose operational projection is ready.
     pub projects: usize,
@@ -9115,6 +9135,8 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
         local_only: state.bind_host == "127.0.0.1" || state.bind_host == "::1",
         bind_host: state.bind_host,
         bind_port: state.bind_port,
+        actor: state.actor.clone(),
+        manager_actor: state.manager_actor.clone(),
         ui_asset_hash: state.ui_asset_hash,
         projects: ready_projects.len(),
         registered_projects: snap.board.len(),
@@ -39040,10 +39062,13 @@ pub(crate) mod tests {
 
     /// TASK-KA934.3.1 — the raw `POST /tx` surface stamps the same journal
     /// `:ACTOR:` the comment handlers do (dec_Q78QN), so the guard hoisted
-    /// into `prepare_tx_append_request` must fire there: an admin tx on a
-    /// journal-routed type naming a member is refused with the collision
-    /// named, nothing is forged into the task journal, a non-colliding admin
-    /// tx still passes, and the member session comment path is untouched.
+    /// into `prepare_tx_append_request` must fire there: an admin tx on the
+    /// comment type naming a member is refused with the collision named,
+    /// nothing is forged into the task journal, a non-colliding admin tx
+    /// still passes, and the member session comment path is untouched.
+    /// TASK-KA934.3.2 — the guard is narrow: only the comment type stamps an
+    /// actor that grants member rights, so a member-named actor on another
+    /// journal-routed type (whose rows no member can edit) is allowed.
     #[tokio::test]
     async fn admin_post_tx_journal_actor_colliding_with_member_name_refused() {
         let tmp = tempfile::tempdir().unwrap();
@@ -39086,15 +39111,35 @@ pub(crate) mod tests {
         assert!(refused["error"].as_str().unwrap().contains("alice"));
 
         // The refusal happened before any write: no forged `:ACTOR: alice`
-        // entry in the task journal.
+        // entry in the task journal, and no journal at all — the comment
+        // create was the first write this test attempts.
         let journal = root_a.join(".orgasmic/tasks/TASK-001/journal.org");
-        if journal.exists() {
-            let contents = std::fs::read_to_string(&journal).unwrap();
-            assert!(
-                !contents.contains(":ACTOR: alice"),
-                "forged actor landed in the journal"
-            );
-        }
+        assert!(
+            !journal.exists(),
+            "forged `:ACTOR: alice` entry landed in the task journal"
+        );
+
+        // TASK-KA934.3.2 — the guard is narrow. A member-named actor on a
+        // journal-routed type that is NOT an editable comment grants the
+        // member nothing, so it passes.
+        let non_comment = client
+            .post(format!("{base}/tx"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "type": "task.property_updated",
+                "actor": "alice",
+                "project": "proj-a",
+                "task": "TASK-001",
+                "reason": "property update",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            non_comment.status(),
+            StatusCode::OK,
+            "non-comment journal tx with a member-named actor is not a forgery vector"
+        );
 
         // The same tx with a non-member actor passes the guard.
         let allowed = client

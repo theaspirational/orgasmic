@@ -115,7 +115,11 @@ pub fn diagnose(home: &Home) -> Vec<Finding> {
     push_cli_path_findings(&mut out, home);
     push_retired_content_findings(&mut out, home);
     push_tracked_views_findings(&mut out, home);
-    push_daemon_findings(&mut out, home);
+    // One status probe shared by the daemon findings and the member/actor
+    // collision check below — the probe is a blocking HTTP round trip.
+    let daemon_liveness = daemon_status(home);
+    push_daemon_findings(&mut out, home, &daemon_liveness);
+    push_member_actor_collision_findings(&mut out, home, &daemon_liveness);
     push_daemon_path_findings(&mut out);
 
     for finding in content_lifecycle::diagnose(home) {
@@ -143,12 +147,19 @@ const REQUIRED_SHIPPED: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct DaemonStatus {
+pub(crate) struct DaemonStatus {
     started_at: DateTime<Utc>,
     boot_id: String,
     pid: u32,
     #[serde(default)]
     ledger_sync: std::collections::BTreeMap<String, LedgerSyncStatus>,
+    /// The actor the running daemon stamps on journal writes; `None` when the
+    /// daemon predates the field (TASK-KA934.3.2).
+    #[serde(default)]
+    pub(crate) actor: Option<String>,
+    /// The daemon's configured `manager.actor` fallback (TASK-KA934.3.2).
+    #[serde(default)]
+    pub(crate) manager_actor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,6 +306,48 @@ fn is_git_work_tree(root: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// orgasmic:dec_Q78QN,TASK-KA934.3.2
+/// Inverse half of the `:ACTOR:` namespace guard. `member add` now refuses
+/// daemon-actor names, but a member added before that guard — or before the
+/// daemon's actor changed under it — poisons every admin journal comment
+/// write: the daemon refuses to stamp an actor that shares a member name, so
+/// comment moderation 403s. The finding names the colliding member and both
+/// remedies. Runs off the same status probe as `push_daemon_findings`; a
+/// daemon that predates the status fields reports no actor and is skipped.
+fn push_member_actor_collision_findings(
+    out: &mut Vec<Finding>,
+    home: &Home,
+    liveness: &DaemonLiveness,
+) {
+    let DaemonLiveness::Running(status) = liveness else {
+        return;
+    };
+    let members = match orgasmic_core::read_members(home) {
+        Ok(members) => members,
+        // A parse error already breaks login and the forward guard logs it;
+        // doctor has no remedy to offer that those paths do not.
+        Err(_) => return,
+    };
+    for member in members {
+        let collision = [
+            ("actor", status.actor.as_deref()),
+            ("manager_actor", status.manager_actor.as_deref()),
+        ]
+        .into_iter()
+        .find(|(_, actor)| *actor == Some(member.name.as_str()))
+        .and_then(|(label, actor)| actor.map(|actor| (label, actor)));
+        if let Some((label, actor)) = collision {
+            out.push(Finding::Warn(format!(
+                "members.org name `{}` collides with the live daemon {} (`{}`) — admin journal \
+                 comment writes stamping that actor are refused, so admin comment moderation 403s\n  \
+                 fix: revoke and re-add the member under another name, or change the daemon \
+                 actor (`manager.actor` in config.yaml) and run `orgasmic restart`",
+                member.name, label, actor
+            )));
+        }
+    }
+}
+
 fn push_daemon_path_findings(out: &mut Vec<Finding>) {
     out.extend(diagnose_daemon_path_binaries(
         &daemon_service::daemon_service_path(),
@@ -324,10 +377,10 @@ fn diagnose_daemon_path_binaries(path: &str) -> Vec<Finding> {
     out
 }
 
-fn push_daemon_findings(out: &mut Vec<Finding>, home: &Home) {
-    match daemon_status(home) {
+fn push_daemon_findings(out: &mut Vec<Finding>, home: &Home, liveness: &DaemonLiveness) {
+    match liveness {
         DaemonLiveness::Running(status) => {
-            if let Some(finding) = diagnose_daemon_staleness(home, &status) {
+            if let Some(finding) = diagnose_daemon_staleness(home, status) {
                 out.push(finding);
             }
             push_ledger_sync_findings(out, &status.ledger_sync);
@@ -391,6 +444,16 @@ pub fn check_daemon_for_status(home: &Home) -> Option<String> {
         return None;
     };
     check_daemon_for_status_with_status(home, &status)
+}
+
+/// The parsed daemon status when a daemon is up and authorized — for CLI verbs
+/// that need the live daemon identity without doctor's full finding list
+/// (the `member add` inverse guard, TASK-KA934.3.2).
+pub(crate) fn live_daemon_status(home: &Home) -> Option<DaemonStatus> {
+    match daemon_status(home) {
+        DaemonLiveness::Running(status) => Some(status),
+        _ => None,
+    }
 }
 
 fn daemon_status(home: &Home) -> DaemonLiveness {
@@ -695,6 +758,20 @@ mod tests {
             boot_id: "boot-test".to_string(),
             pid: 42,
             ledger_sync: Default::default(),
+            actor: None,
+            manager_actor: None,
+        }
+    }
+
+    fn status_with_actor(
+        started_at: DateTime<Utc>,
+        actor: &str,
+        manager_actor: Option<&str>,
+    ) -> DaemonStatus {
+        DaemonStatus {
+            actor: Some(actor.to_string()),
+            manager_actor: manager_actor.map(str::to_string),
+            ..status_started_at(started_at)
         }
     }
 
@@ -823,6 +900,111 @@ mod tests {
 
     fn assert_human_duration(secs: u64, expected: &str) {
         assert_eq!(human_duration(Duration::from_secs(secs)), expected);
+    }
+
+    fn running(status: DaemonStatus) -> DaemonLiveness {
+        DaemonLiveness::Running(status)
+    }
+
+    // orgasmic:dec_Q78QN,TASK-KA934.3.2
+    #[test]
+    fn doctor_warns_when_member_name_equals_live_daemon_actor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "viewer".to_string())],
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        push_member_actor_collision_findings(
+            &mut findings,
+            &home,
+            &running(status_with_actor(
+                utc("2026-09-02T00:00:00Z"),
+                "alice",
+                None,
+            )),
+        );
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        let Finding::Warn(message) = &findings[0] else {
+            panic!("expected warn, got {findings:?}")
+        };
+        assert!(message.contains("alice"), "{message}");
+        assert!(message.contains("collides"), "{message}");
+        assert!(message.contains("daemon actor"), "{message}");
+        assert!(message.contains("manager.actor"), "{message}");
+    }
+
+    #[test]
+    fn doctor_warns_when_member_name_equals_manager_actor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        orgasmic_core::add_member(&home, "bob", &[("*".to_string(), "editor".to_string())])
+            .unwrap();
+
+        let mut findings = Vec::new();
+        push_member_actor_collision_findings(
+            &mut findings,
+            &home,
+            &running(status_with_actor(
+                utc("2026-09-02T00:00:00Z"),
+                "carol",
+                Some("bob"),
+            )),
+        );
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        let Finding::Warn(message) = &findings[0] else {
+            panic!("expected warn, got {findings:?}")
+        };
+        assert!(message.contains("bob"), "{message}");
+        assert!(message.contains("manager_actor"), "{message}");
+    }
+
+    #[test]
+    fn doctor_member_actor_no_collision_stays_silent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "viewer".to_string())],
+        )
+        .unwrap();
+
+        // Live daemon actors name nobody on file…
+        let mut findings = Vec::new();
+        push_member_actor_collision_findings(
+            &mut findings,
+            &home,
+            &running(status_with_actor(
+                utc("2026-09-02T00:00:00Z"),
+                "daemon-admin",
+                None,
+            )),
+        );
+        assert!(findings.is_empty(), "{findings:?}");
+
+        // …and so does an old daemon that predates the status fields.
+        let mut findings = Vec::new();
+        push_member_actor_collision_findings(
+            &mut findings,
+            &home,
+            &running(status_started_at(utc("2026-09-02T00:00:00Z"))),
+        );
+        assert!(findings.is_empty(), "{findings:?}");
+
+        // A down daemon has no live actor to collide with.
+        let mut findings = Vec::new();
+        push_member_actor_collision_findings(&mut findings, &home, &DaemonLiveness::Unavailable);
+        assert!(findings.is_empty(), "{findings:?}");
     }
 
     #[test]
