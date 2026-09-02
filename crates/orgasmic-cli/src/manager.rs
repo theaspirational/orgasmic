@@ -83,7 +83,7 @@ pub struct DispatchArgs {
     pub kind: DispatchKind,
     /// PATH to a file holding the manager's handoff brief (not the brief text
     /// itself). Read at dispatch time and compiled into the worker prompt.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_brief_path)]
     pub brief: PathBuf,
     /// Transport mode from `orgasmic_drivers::SUPPORTED`.
     #[arg(long)]
@@ -10182,6 +10182,18 @@ fn read_active_goal_id(project_root: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
+// orgasmic:TASK-CS2TM
+/// `--brief` value parser: resolve a relative path against the cwd at parse
+/// time and refuse a missing file before any project/ledger work runs, naming
+/// the path that was actually looked at.
+fn parse_brief_path(raw: &str) -> std::result::Result<PathBuf, String> {
+    let path = absolutize(Path::new(raw)).map_err(|error| error.to_string())?;
+    if !path.is_file() {
+        return Err(format!("brief not found: {}", path.display()));
+    }
+    Ok(path)
+}
+
 fn canonical_existing_file(path: &Path) -> Result<PathBuf> {
     if !path.is_file() {
         bail!("brief must exist and be a file: {}", path.display());
@@ -11055,6 +11067,26 @@ fn path_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // orgasmic:TASK-CS2TM
+    #[test]
+    fn parse_brief_path_resolves_relative_against_cwd_and_names_missing_file() {
+        let cwd = std::env::current_dir().unwrap();
+        let err = parse_brief_path("no-such-dir/brief.md").unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "brief not found: {}",
+                cwd.join("no-such-dir/brief.md").display()
+            )
+        );
+        let existing = cwd.join("Cargo.toml");
+        assert_eq!(parse_brief_path("Cargo.toml").unwrap(), existing);
+        assert_eq!(
+            parse_brief_path(existing.to_str().unwrap()).unwrap(),
+            existing
+        );
+    }
 
     fn write_evidence_session(path: &Path, envelopes: Vec<SessionEnvelope>) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
