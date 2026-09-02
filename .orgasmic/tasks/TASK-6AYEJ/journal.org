@@ -1,2 +1,65 @@
 #+title: orgasmic journal TASK-6AYEJ
 #+orgasmic_version: 2
+
+* tx-20260902-orgasmic-8bda8934-5d1f-4dcb-9f31-1f6614743588 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-8bda8934-5d1f-4dcb-9f31-1f6614743588
+:TIME:    [2026-09-02 Wed 09:31:37]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-6AYEJ
+:TARGET: .orgasmic/tasks/TASK-6AYEJ/node.org
+:REASON: manager sprint 2026-09-02: verifying the premise against the live 0.0.24-dev.20260902 runtime
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: ecc99204-eafc-46d0-be30-39a15c3afa7f
+:END:
+
+* tx-20260902-orgasmic-a198c663-8052-4831-a020-bebf323d20f9 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-a198c663-8052-4831-a020-bebf323d20f9
+:TIME:    [2026-09-02 Wed 09:31:38]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-6AYEJ
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-6AYEJ/node.org
+:REASON: edited task node TASK-6AYEJ
+:NODE_ID: TASK-6AYEJ
+:EVENT_ID: b9a44e85-bced-419c-8596-bb21db4dde2f
+:END:
+
+* tx-20260902-orgasmic-535a08e8-7548-46c2-ae6f-ab6d3bfa4992 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-535a08e8-7548-46c2-ae6f-ab6d3bfa4992
+:TIME:    [2026-09-02 Wed 09:31:38]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-6AYEJ
+:TARGET: .orgasmic/tasks/TASK-6AYEJ/node.org
+:REASON: evidence recorded: premise fixed upstream
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 8d525dc5-2673-4d52-8a63-cf84399ff0d3
+:END:
+
+* tx-20260902-orgasmic-d6037727-28ef-4e63-b9fa-2c33485e4a1a task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-d6037727-28ef-4e63-b9fa-2c33485e4a1a
+:TIME:    [2026-09-02 Wed 09:31:38]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-6AYEJ
+:TARGET: .orgasmic/tasks/TASK-6AYEJ/node.org
+:REASON: already fixed: success-path dispatch-close verified live 2026-09-02
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: dc7fe774-3fa8-437e-b2f0-873dd462135e
+:END:

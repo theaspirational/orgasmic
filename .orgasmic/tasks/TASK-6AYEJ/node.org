@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-6AYEJ
 #+orgasmic_version: 2
 
-* TODO TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
+* DONE TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
 :PROPERTIES:
 :ID: TASK-6AYEJ
 :PRIORITY: P1
@@ -127,4 +127,6 @@ MANAGER FINDINGS:
    nothing. Accepted as written.
 
 Reviewer pass still owed on the merged diff.
+** Evidence
+Premise no longer holds (verified live 2026-09-02 on runtime 0.0.24-dev.20260902 = main 7c85f177): after a worker finalize/report the implementer generation stays OPEN in dispatch-status (e.g. TASK-KA934.3.2 tx-20260902-orgasmic-f91f14ea-… listed as reported until closed) and the success-path close ran: 'closed: TASK-KA934.3.2 implementer.done tx=…5af96074fb1e' with --merge-sha 7c85f177 --worktree-remove --branch-delete, worktree and branch removed. Same for TASK-JWHXH.3.2 and every close this session. scan_open_dispatches no longer treats the worker's own report as terminal (dec_3M7M0 lifecycle: manager close is the terminal tx). Closed as already fixed; no code change in this sprint.
 
