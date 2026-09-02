@@ -30,7 +30,9 @@ pub use catalog::{
     harness_runtime_options, runtime_options_by_harness, transport_profile, transport_profiles,
     HarnessRuntimeOptions, RuntimeOptionsSource, TransportInteraction, TransportProfile,
 };
-pub use modes::{StdioDriver, SubprocessStreamJsonDriver, TmuxDriver, WsDriver};
+pub use modes::{
+    tmux_effort_delivery, StdioDriver, SubprocessStreamJsonDriver, TmuxDriver, WsDriver,
+};
 pub use r#trait::{
     implementer_tool_is_allowed, AttachOutcome, Attached, DriverConfig, DriverContext,
     DriverControl, DriverError, DriverSession, HarnessControlOutcome, HarnessEventAdapter,

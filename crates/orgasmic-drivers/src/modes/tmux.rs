@@ -367,7 +367,10 @@ impl WorkerDriver for TmuxDriver {
                     "command": spawn_plan.command,
                     "args": spawn_plan.args,
                     "model": cfg.model,
-                    "effort": cfg.effort.or(cfg.reasoning_effort),
+                    "effort": tmux_effort_delivery(
+                        harness,
+                        cfg.effort.as_deref().or(cfg.reasoning_effort.as_deref()),
+                    ),
                 }),
             })
             .await;
@@ -1084,6 +1087,19 @@ fn is_claude_harness_command(
                     .is_some_and(|name| name == "claude")))
 }
 
+/// The effort a TUI harness is actually launched with: the requested value for
+/// harnesses `build_spawn_plan` can hand it to (claude `--effort`, codex
+/// `-c model_reasoning_effort=`), `unsupported` for the rest, `None` when
+/// nothing was requested. The daemon records this instead of the request so
+/// the dispatch tx never claims an effort the process never saw (TASK-C7NVH).
+pub fn tmux_effort_delivery(harness: &str, effort: Option<&str>) -> Option<String> {
+    match (harness, effort) {
+        (_, None) => None,
+        ("claude" | "codex", Some(effort)) => Some(effort.to_string()),
+        (_, Some(_)) => Some("unsupported".to_string()),
+    }
+}
+
 fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> TmuxSpawnPlan {
     let cwd = cfg
         .cwd
@@ -1151,6 +1167,20 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
             if !args.iter().any(|arg| arg == "--model" || arg == "-m") {
                 args.push("--model".to_string());
                 args.push(model.clone());
+            }
+        }
+    }
+    // orgasmic:TASK-C7NVH — codex takes reasoning effort only as a config
+    // override. cursor-agent and hermes have no launch-time effort knob, so
+    // nothing is pushed for them and `tmux_effort_delivery` says so.
+    if harness == "codex" {
+        if let Some(effort) = cfg.effort.as_ref().or(cfg.reasoning_effort.as_ref()) {
+            if !args
+                .iter()
+                .any(|arg| arg.starts_with("model_reasoning_effort="))
+            {
+                args.push("-c".to_string());
+                args.push(format!("model_reasoning_effort={effort}"));
             }
         }
     }
@@ -3740,6 +3770,78 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair == ["--effort", " XHIGH "]));
+    }
+
+    /// orgasmic:TASK-C7NVH — every TUI harness either receives the requested
+    /// effort in the shape it understands, or `tmux_effort_delivery` reports
+    /// `unsupported` so the record never carries a value the process lacked.
+    #[test]
+    fn tui_harness_effort_argv_matches_effort_delivery() {
+        for harness in ["claude", "codex", "cursor-agent", "hermes"] {
+            let cfg = TmuxTuiConfig {
+                harness: Some(harness.into()),
+                model: Some("m-1".into()),
+                effort: Some("high".into()),
+                ..TmuxTuiConfig::default()
+            };
+            let plan = build_spawn_plan(&cfg, &ctx("run-effort", RunKind::Worker), harness);
+            assert!(
+                plan.args.windows(2).any(|pair| pair == ["--model", "m-1"]),
+                "{harness}: --model must be pushed: {:?}",
+                plan.args
+            );
+            let delivered = tmux_effort_delivery(harness, Some("high"));
+            let pushed_effort = match harness {
+                "claude" => plan
+                    .args
+                    .windows(2)
+                    .any(|pair| pair == ["--effort", "high"]),
+                "codex" => plan
+                    .args
+                    .windows(2)
+                    .any(|pair| pair == ["-c", "model_reasoning_effort=high"]),
+                _ => plan.args.iter().any(|arg| arg.contains("effort")),
+            };
+            match harness {
+                "claude" | "codex" => {
+                    assert!(
+                        pushed_effort,
+                        "{harness}: effort not in argv {:?}",
+                        plan.args
+                    );
+                    assert_eq!(delivered.as_deref(), Some("high"), "{harness}");
+                }
+                _ => {
+                    assert!(
+                        !pushed_effort,
+                        "{harness}: pushed an effort {:?}",
+                        plan.args
+                    );
+                    assert_eq!(delivered.as_deref(), Some("unsupported"), "{harness}");
+                }
+            }
+            assert_eq!(tmux_effort_delivery(harness, None), None, "{harness}");
+        }
+    }
+
+    #[test]
+    fn codex_explicit_effort_override_in_harness_args_is_not_duplicated() {
+        let cfg = TmuxTuiConfig {
+            harness: Some("codex".into()),
+            effort: Some("high".into()),
+            harness_args: vec!["-c".into(), "model_reasoning_effort=low".into()],
+            ..TmuxTuiConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-effort-dup", RunKind::Worker), "codex");
+        assert_eq!(
+            plan.args
+                .iter()
+                .filter(|arg| arg.starts_with("model_reasoning_effort="))
+                .count(),
+            1,
+            "{:?}",
+            plan.args
+        );
     }
 
     #[test]

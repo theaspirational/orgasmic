@@ -3050,7 +3050,7 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
             })
             .collect::<Vec<_>>();
         println!(
-            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} {} {} {} {} CLAIM_HOLDER={} DOUBLE_CLAIM={}{}",
+            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} MODEL={} EFFORT={} {} {} {} {} CLAIM_HOLDER={} DOUBLE_CLAIM={}{}",
             record.tx_id,
             task_list_property(&record.tasks),
             record.kind,
@@ -3070,6 +3070,8 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
             record.worker_id.as_deref().unwrap_or("-"),
             record.driver.as_deref().unwrap_or("-"),
             record.harness.as_deref().unwrap_or("-"),
+            record.model.as_deref().unwrap_or("-"),
+            record.effort.as_deref().unwrap_or("-"),
             if health.worktree_exists {
                 "[exists]"
             } else {

@@ -1119,6 +1119,10 @@ struct RunRecord {
     manager_terminal_claim: Option<ManagerTerminalClaim>,
     transport: String,
     harness: Option<String>,
+    /// Model and effort as launched (see [`launched_model_effort`]), read back
+    /// out of the persisted `RunMeta.driver_config` on boot reattach.
+    model: Option<String>,
+    effort: Option<String>,
     project_id: Option<String>,
     /// The dispatched worktree root, when known (CLI dispatch acquire/reattach;
     /// `None` for manager/recovery/stage runs). Exposed on
@@ -1699,6 +1703,8 @@ impl Supervisor {
         };
         let transport = driver.transport().to_string();
         let harness = driver.harness().map(str::to_string);
+        let (model, effort) =
+            launched_model_effort(&transport, harness.as_deref(), &persisted_driver_config);
         let session = match driver.acquire(ctx, launch_driver_config).await {
             Ok(s) => s,
             Err(e) => return Err(SupervisorError::Driver(e)),
@@ -1816,6 +1822,8 @@ impl Supervisor {
                 manager_terminal_claim: None,
                 transport: transport.clone(),
                 harness: harness.clone(),
+                model: model.clone(),
+                effort: effort.clone(),
                 project_id: req.project_id.clone(),
                 worktree: req.worktree.clone(),
                 sub_state: initial_working_sub_state(&req.role),
@@ -2497,6 +2505,7 @@ impl Supervisor {
         let release_requested = Arc::new(tokio::sync::Notify::new());
         let release_drain_budget = self.release_drain_budget();
         let driver_release_timeout = self.driver_release_timeout();
+        let (model, effort) = launched_model_effort(&transport, harness.as_deref(), &driver_config);
         let record = RunRecord {
             task_id: task_id.clone(),
             kind,
@@ -2505,6 +2514,8 @@ impl Supervisor {
             manager_terminal_claim: restored_manager_terminal_claim,
             transport,
             harness,
+            model,
+            effort,
             project_id,
             worktree: worktree.clone(),
             sub_state: initial_working_sub_state(&role),
@@ -3181,6 +3192,8 @@ impl Supervisor {
                 role: rec.role.clone(),
                 driver: rec.transport.clone(),
                 harness: rec.harness.clone(),
+                model: rec.model.clone(),
+                effort: rec.effort.clone(),
                 project_id: rec.project_id.clone(),
                 worktree: rec.worktree.clone(),
                 sub_state: rec.sub_state.clone(),
@@ -4499,6 +4512,38 @@ fn process_probe_reports_exited(pid: libc::pid_t, result: Result<(), Option<i32>
     }
 }
 
+/// The effort a run is launched with, given the transport and harness that
+/// launch it: the request verbatim, except on tmux where the harness argv
+/// decides (see `orgasmic_drivers::tmux_effort_delivery`). Both the run
+/// record and the `manager.dispatch_started` tx take this so they agree.
+pub(crate) fn launched_effort(
+    transport: &str,
+    harness: Option<&str>,
+    requested: Option<&str>,
+) -> Option<String> {
+    match transport {
+        "tmux" => orgasmic_drivers::tmux_effort_delivery(harness.unwrap_or(""), requested),
+        _ => requested.map(str::to_string),
+    }
+}
+
+/// Model and effort out of a driver config, the effort passed through
+/// [`launched_effort`]. The config's own `harness` wins over the driver's
+/// default, the same way the tmux mode resolves it.
+fn launched_model_effort(
+    transport: &str,
+    harness: Option<&str>,
+    driver_config: &DriverConfig,
+) -> (Option<String>, Option<String>) {
+    let field = |key: &str| driver_config.0.get(key).and_then(serde_json::Value::as_str);
+    let harness = field("harness").or(harness);
+    let effort = field("reasoning_effort").or_else(|| field("effort"));
+    (
+        field("model").map(str::to_string),
+        launched_effort(transport, harness, effort),
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorSnapshot {
     pub acquisition_paused: bool,
@@ -4520,6 +4565,14 @@ pub struct RunSummary {
     pub role: String,
     pub driver: String,
     pub harness: Option<String>,
+    /// Model and effort the run was launched with (TASK-A55J7): the requested
+    /// values, except that a tmux harness with no launch-time effort knob
+    /// reports `unsupported` rather than the request it dropped (TASK-C7NVH).
+    /// `None` when nothing was requested and the harness default applied.
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
     pub project_id: Option<String>,
     /// The dispatched worktree root, when known. `orgasmic dispatch finalize
     /// --commit` cross-checks this against the resolved git toplevel before
@@ -8147,6 +8200,61 @@ mod tests {
             panic!("RunMeta written before this field existed must still parse");
         };
         assert_eq!(credential_mode, None);
+    }
+
+    /// orgasmic:TASK-A55J7 — the live run record answers "what model and
+    /// effort ran this" from the driver config it was launched with, and
+    /// orgasmic:TASK-C7NVH — on tmux the effort is what the harness argv
+    /// carries, never the request a harness without an effort knob dropped.
+    #[tokio::test]
+    async fn run_summary_persists_launched_model_and_effort_from_run_meta_config() {
+        let (sup, dir, _writer) = make_supervisor();
+        let mut req = impl_req("TASK-MODEL-EFFORT", dir.path());
+        req.driver_config = DriverConfig::from_value(json!({
+            "force_inert": true,
+            "harness": "hermes",
+            "model": " Hermes-4 ",
+            "reasoning_effort": "high",
+        }));
+        let resp = sup.acquire(&AlwaysAttachableDriver, req).await.unwrap();
+        let snapshot = sup.snapshot().await;
+        let run = snapshot
+            .runs
+            .iter()
+            .find(|run| run.run_id == resp.run_id)
+            .expect("live run listed");
+        assert_eq!(run.model.as_deref(), Some(" Hermes-4 "));
+        // A tmux transport whose config names hermes: no launch-time effort
+        // flag exists, so the record must not carry the dropped request.
+        assert_eq!(run.driver, "tmux");
+        assert_eq!(run.effort.as_deref(), Some("unsupported"));
+    }
+
+    #[test]
+    fn launched_effort_is_the_request_except_where_tmux_cannot_deliver_it() {
+        assert_eq!(
+            launched_effort("tmux", Some("codex"), Some("high")).as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            launched_effort("tmux", Some("claude"), Some(" XHIGH ")).as_deref(),
+            Some(" XHIGH ")
+        );
+        assert_eq!(
+            launched_effort("tmux", Some("hermes"), Some("high")).as_deref(),
+            Some("unsupported")
+        );
+        assert_eq!(
+            launched_effort("tmux", Some("cursor-agent"), Some("low")).as_deref(),
+            Some("unsupported")
+        );
+        assert_eq!(launched_effort("tmux", Some("hermes"), None), None);
+        // Non-pane transports hand the effort to the adapter as-is.
+        assert_eq!(
+            launched_effort("stdio", Some("hermes"), Some("high")).as_deref(),
+            Some("high")
+        );
+        assert_eq!(launched_effort("ws", Some("codex"), None), None);
     }
 
     // orgasmic:TASK-AK6EM
@@ -13310,6 +13418,8 @@ mod tests {
             manager_terminal_claim: None,
             transport: "subprocess".into(),
             harness: None,
+            model: None,
+            effort: None,
             project_id: None,
             worktree: None,
             sub_state: None,
