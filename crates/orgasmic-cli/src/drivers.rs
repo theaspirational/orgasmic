@@ -12,7 +12,9 @@
 //! any of it.
 
 use anyhow::Result;
+use chrono::{SecondsFormat, Utc};
 use clap::Args;
+use orgasmic_core::Home;
 use orgasmic_drivers::catalog::{
     health_by_harness, runtime_options_by_harness, transport_profiles, HarnessHealth,
     HarnessRuntimeOptions, RuntimeOptionsSource, TransportInteraction, TransportProfile,
@@ -39,7 +41,8 @@ pub struct DriversArgs {
     /// Instead of the matrix, run each harness's dispatch preflight and print
     /// `<harness> auth=<ok|missing|unknown> quota=<...>` — the same probe a
     /// dispatch runs, so a lockout shows here before a worker dies of it.
-    /// Quota is not probed by any adapter yet and reads `unknown (no probe)`.
+    /// Quota is a remembered provider lockout when known; otherwise it reads
+    /// `unknown (no probe)` because no adapter actively probes it.
     #[arg(long)]
     pub health: bool,
 }
@@ -51,10 +54,11 @@ struct DriversCatalog {
     runtime_options: Option<Vec<HarnessRuntimeOptions>>,
 }
 
-pub fn cmd_drivers(args: DriversArgs) -> Result<()> {
+pub fn cmd_drivers(home: &Home, args: DriversArgs) -> Result<()> {
     if args.health {
         let runtime = tokio::runtime::Runtime::new()?;
-        let health = runtime.block_on(health_by_harness());
+        let mut health = runtime.block_on(health_by_harness());
+        apply_remembered_lockouts(home, &mut health, Utc::now());
         if args.json {
             println!("{}", serde_json::to_string_pretty(&health)?);
         } else {
@@ -88,6 +92,27 @@ pub fn cmd_drivers(args: DriversArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn apply_remembered_lockouts(
+    home: &Home,
+    health: &mut [HarnessHealth],
+    now: chrono::DateTime<Utc>,
+) {
+    for entry in health {
+        match orgasmic_daemon::provider_quota::active(home, &entry.harness, now) {
+            Ok(Some(lockout)) => {
+                entry.quota = format!(
+                    "locked until {}",
+                    lockout
+                        .locked_until
+                        .to_rfc3339_opts(SecondsFormat::Secs, true)
+                );
+            }
+            Ok(None) => {}
+            Err(error) => entry.quota = format!("unknown (lockout memory unreadable: {error})"),
+        }
+    }
 }
 
 /// Render the human-facing listing. Split out so a test can assert the printed
@@ -373,6 +398,44 @@ mod tests {
             lines[1],
             "codex auth=missing quota=unknown (no probe)  (run `codex login`)"
         );
+    }
+
+    #[test]
+    fn health_listing_overlays_only_a_remembered_active_lockout() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path());
+        home.ensure().unwrap();
+        let now = Utc::now();
+        orgasmic_daemon::provider_quota::remember(
+            &home,
+            orgasmic_daemon::provider_quota::ProviderLockout {
+                provider: "codex".into(),
+                locked_until: now + chrono::Duration::minutes(5),
+                observed_at: now,
+                run_id: "run-quota".into(),
+                signal: "exit_reason.retry_after".into(),
+            },
+        )
+        .unwrap();
+        let mut health = vec![
+            HarnessHealth {
+                harness: "codex".into(),
+                auth: "ok".into(),
+                quota: "unknown (no probe)".into(),
+                detail: None,
+            },
+            HarnessHealth {
+                harness: "claude".into(),
+                auth: "ok".into(),
+                quota: "unknown (no probe)".into(),
+                detail: None,
+            },
+        ];
+
+        apply_remembered_lockouts(&home, &mut health, now);
+
+        assert!(health[0].quota.starts_with("locked until "));
+        assert_eq!(health[1].quota, "unknown (no probe)");
     }
 
     #[test]

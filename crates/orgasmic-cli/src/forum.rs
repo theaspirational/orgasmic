@@ -2877,6 +2877,7 @@ fn launch(
             require_clean: false,
             governance_json: None,
             allow_simulated: false,
+            force_preflight: false,
         },
     )?;
     eprintln!("launched {task}: {}", participant.identity());

@@ -6116,6 +6116,10 @@ struct DispatchRequest {
     /// binary) launch anyway; refused by name otherwise (TASK-XC9N4).
     #[serde(default)]
     pub allow_simulated: bool,
+    /// Deliberately override a remembered provider quota lockout. This does
+    /// not override the harness's own authentication preflight.
+    #[serde(default)]
+    pub force_preflight: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -6203,6 +6207,8 @@ struct SpawnWorkerRequest<'a> {
     task_sandbox_permissions: Option<SandboxAllowlist>,
     /// `false` refuses a driver that would run as an in-memory stub.
     allow_simulated: bool,
+    /// Admit despite a remembered provider quota lockout.
+    force_preflight: bool,
 }
 
 struct SpawnWorkerResult {
@@ -6258,6 +6264,30 @@ async fn spawn_worker_run(
         return Err(SpawnWorkerFailure {
             error: driver_validate_error(&worker.driver, &worker.harness, &error),
         });
+    }
+
+    if req.origin == "cli_dispatch" {
+        let provider = canonical_runtime_provider(&worker).unwrap_or(worker.harness.as_str());
+        match crate::provider_quota::active(&state.home, provider, Utc::now()) {
+            Ok(Some(lockout)) if !req.force_preflight => {
+                return Err(SpawnWorkerFailure {
+                    error: ApiError::bad_request(format!(
+                        "provider_quota: {provider} locked until {}",
+                        lockout
+                            .locked_until
+                            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                    )),
+                });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return Err(SpawnWorkerFailure {
+                    error: ApiError::internal(format!(
+                        "provider quota lockout memory unavailable: {error}"
+                    )),
+                });
+            }
+        }
     }
 
     // Last point at which rejecting is free. Everything below commits state the
@@ -6561,6 +6591,7 @@ async fn post_task_dispatch(
             dispatch_kind: Some(kind.as_str()),
             task_sandbox_permissions,
             allow_simulated: req.allow_simulated,
+            force_preflight: req.force_preflight,
         },
     )
     .await
@@ -6645,6 +6676,9 @@ async fn post_task_dispatch(
             project_id: project_id.clone(),
             task_id: task_id.clone(),
             run_id: acquire.run_id.clone(),
+            provider: canonical_runtime_provider(&worker)
+                .unwrap_or(worker.harness.as_str())
+                .to_string(),
             session_path: session_path.clone(),
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
@@ -7733,6 +7767,9 @@ async fn record_dispatch_started(
     if let Some(reason) = non_empty_field(record.req.reason.clone()) {
         extra.push(("REASON_INITIAL".to_string(), reason));
     }
+    if record.req.force_preflight {
+        extra.push(("FORCE_PREFLIGHT".to_string(), "true".to_string()));
+    }
     record_api_tx(
         state,
         ApiTxRequest {
@@ -7935,6 +7972,7 @@ struct DispatchCompletion {
     project_id: String,
     task_id: String,
     run_id: String,
+    provider: String,
     session_path: PathBuf,
     #[allow(dead_code)] // artifact paths; worker finalize writes directly
     last_path: PathBuf,
@@ -7948,8 +7986,9 @@ struct DispatchCompletion {
 /// bytes appended since the previous poll and parses only the complete lines
 /// among them, so following a run costs the transcript once, not once per
 /// poll. Only the envelopes the watcher's predicates consult are retained:
-/// lifecycle events and terminal driver events (`run_complete` / `run_fail` /
-/// `run_error`); transcript is parsed once and dropped.
+/// lifecycle events, terminal driver events (`run_complete` / `run_fail` /
+/// `run_error`), and the provider's passive quota signal; transcript is parsed
+/// once and dropped.
 ///
 /// Strictness: an unterminated final fragment is the live writer mid-append
 /// and is simply carried to the next poll. A malformed newline-TERMINATED line
@@ -8010,7 +8049,10 @@ impl SessionTail {
                     && matches!(
                         envelope.event.get("type").and_then(Value::as_str),
                         Some("run_complete" | "run_fail" | "run_error")
-                    ))
+                    )
+                    || (envelope.event.get("type").and_then(Value::as_str)
+                        == Some("provider_runtime")
+                        && envelope.event["event"]["type"] == "account.rate-limits.updated"))
         }));
         Ok(read)
     }
@@ -8058,6 +8100,14 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 continue;
             }
             let envelopes = &tail.envelopes;
+            if let Err(error) = remember_dispatch_quota_lockout(&state, &completion, envelopes) {
+                tracing::warn!(
+                    run_id = %completion.run_id,
+                    provider = %completion.provider,
+                    error = %error,
+                    "could not remember provider quota lockout"
+                );
+            }
             // dec_3M7M0 / TASK-AFE5Q: worker-declared finalize is the sole
             // success authority. If it landed, the worker already wrote
             // last.txt/stdout.log verbatim — never overwrite that report.
@@ -8108,6 +8158,128 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
             tokio::time::sleep(poll).await;
         }
     });
+}
+
+/// Persist a quota refusal only when the terminal classification and an exact
+/// expiry both came from provider evidence. A bare `provider_quota` with no
+/// retry signal remains unknown rather than becoming an invented lockout.
+fn remember_dispatch_quota_lockout(
+    state: &ApiState,
+    completion: &DispatchCompletion,
+    envelopes: &[SessionEnvelope],
+) -> anyhow::Result<()> {
+    let Some((locked_until, observed_at, signal)) = dispatch_quota_deadline(envelopes) else {
+        return Ok(());
+    };
+    crate::provider_quota::remember(
+        &state.home,
+        crate::provider_quota::ProviderLockout {
+            provider: completion.provider.clone(),
+            locked_until,
+            observed_at,
+            run_id: completion.run_id.clone(),
+            signal: signal.to_string(),
+        },
+    )
+}
+
+fn dispatch_quota_deadline(
+    envelopes: &[SessionEnvelope],
+) -> Option<(chrono::DateTime<Utc>, chrono::DateTime<Utc>, &'static str)> {
+    let (release_at, retry_after) = envelopes.iter().rev().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            return None;
+        }
+        match serde_json::from_value::<Lifecycle>(envelope.event.clone()).ok()? {
+            Lifecycle::Release {
+                exit: Some(orgasmic_core::ExitReason::ProviderQuota { retry_after }),
+                ..
+            } => Some((envelope.time, retry_after)),
+            _ => None,
+        }
+    })?;
+    if let Some(deadline) = retry_after
+        .as_deref()
+        .and_then(|value| crate::provider_quota::retry_deadline(value, release_at))
+    {
+        return Some((deadline, release_at, "exit_reason.retry_after"));
+    }
+
+    envelopes.iter().rev().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::DriverEvent
+            || envelope.event.get("type").and_then(Value::as_str) != Some("provider_runtime")
+            || envelope.event["event"]["type"] != "account.rate-limits.updated"
+        {
+            return None;
+        }
+        let payload = envelope.event["event"].get("payload")?;
+        unique_rate_limit_deadline(payload, envelope.time)
+            .map(|deadline| (deadline, envelope.time, "account.rate-limits.updated"))
+    })
+}
+
+/// Extract one unambiguous reset/retry deadline from a passive rate-limit
+/// event. Multiple different deadlines establish no single lockout expiry.
+fn unique_rate_limit_deadline(
+    value: &Value,
+    observed_at: chrono::DateTime<Utc>,
+) -> Option<chrono::DateTime<Utc>> {
+    fn visit(
+        value: &Value,
+        observed_at: chrono::DateTime<Utc>,
+        out: &mut Vec<chrono::DateTime<Utc>>,
+    ) {
+        match value {
+            Value::Object(object) => {
+                for (key, value) in object {
+                    let key = key.replace(['_', '-'], "").to_ascii_lowercase();
+                    let deadline = match key.as_str() {
+                        "resetat" | "resetsat" | "lockeduntil" => value
+                            .as_str()
+                            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                            .map(|value| value.with_timezone(&Utc))
+                            .or_else(|| {
+                                value.as_i64().and_then(|value| {
+                                    if value > 10_000_000_000 {
+                                        chrono::DateTime::from_timestamp_millis(value)
+                                    } else {
+                                        chrono::DateTime::from_timestamp(value, 0)
+                                    }
+                                })
+                            }),
+                        "retryafter" => value
+                            .as_str()
+                            .and_then(|value| {
+                                crate::provider_quota::retry_deadline(value, observed_at)
+                            })
+                            .or_else(|| {
+                                value.as_i64().and_then(|seconds| {
+                                    observed_at
+                                        .checked_add_signed(chrono::Duration::seconds(seconds))
+                                })
+                            }),
+                        _ => None,
+                    };
+                    if let Some(deadline) = deadline {
+                        out.push(deadline);
+                    }
+                    visit(value, observed_at, out);
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    visit(value, observed_at, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut deadlines = Vec::new();
+    visit(value, observed_at, &mut deadlines);
+    deadlines.sort();
+    deadlines.dedup();
+    (deadlines.len() == 1).then(|| deadlines[0])
 }
 
 /// Whether a non-finalized release should emit `manager.dispatch_orphaned`.
@@ -13127,6 +13299,14 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                                 project_id,
                                 task_id: c.task_id.clone(),
                                 run_id: c.run_id.clone(),
+                                provider: c.harness.as_deref().map_or_else(
+                                    || c.transport.clone(),
+                                    |harness| {
+                                        canonical_runtime_provider_address(&c.transport, harness)
+                                            .unwrap_or(harness)
+                                            .to_string()
+                                    },
+                                ),
                                 session_path: c.session_path.clone(),
                                 last_path,
                                 stdout_path,
@@ -20505,6 +20685,7 @@ async fn launch_artifact_generation(
             // Artifact generation kept its pre-TASK-XC9N4 behaviour; only the
             // manager dispatch surface gates simulated drivers.
             allow_simulated: true,
+            force_preflight: false,
         },
     )
     .await
@@ -20655,6 +20836,7 @@ async fn launch_node_regeneration(
             // Artifact generation kept its pre-TASK-XC9N4 behaviour; only the
             // manager dispatch surface gates simulated drivers.
             allow_simulated: true,
+            force_preflight: false,
         },
     )
     .await
@@ -28670,6 +28852,7 @@ pub(crate) mod tests {
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
                 allow_simulated: true,
+                force_preflight: false,
             },
         )
         .await
@@ -28795,6 +28978,7 @@ pub(crate) mod tests {
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
                 allow_simulated: true,
+                force_preflight: false,
             },
         )
         .await;
@@ -29708,6 +29892,112 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn quota_deadline_uses_classified_exit_and_provider_signal_without_guessing() {
+        let now = Utc::now();
+        let passive = SessionEnvelope {
+            seq: 0,
+            time: now,
+            run_id: "run-quota".into(),
+            runtime_id: "rt-quota".into(),
+            boot_id: "boot-quota".into(),
+            kind: SessionEventKind::DriverEvent,
+            event: json!({
+                "type": "provider_runtime",
+                "event": {
+                    "type": "account.rate-limits.updated",
+                    "payload": {"rateLimits": {"retryAfter": "5m"}}
+                }
+            }),
+        };
+        let quota_release = |retry_after: Option<&str>| SessionEnvelope {
+            seq: 1,
+            time: now,
+            run_id: "run-quota".into(),
+            runtime_id: "rt-quota".into(),
+            boot_id: "boot-quota".into(),
+            kind: SessionEventKind::Lifecycle,
+            event: serde_json::to_value(Lifecycle::Release {
+                reason: "provider rejected turn".into(),
+                outcome: ReleaseOutcome::Failed,
+                finalized_by_worker: false,
+                exit: Some(orgasmic_core::ExitReason::ProviderQuota {
+                    retry_after: retry_after.map(str::to_string),
+                }),
+            })
+            .unwrap(),
+        };
+
+        assert_eq!(
+            dispatch_quota_deadline(&[passive.clone(), quota_release(None)])
+                .unwrap()
+                .0,
+            now + chrono::Duration::minutes(5)
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("quota-session.jsonl");
+        append_raw(
+            &path,
+            session_tail_line(passive.seq, passive.kind, passive.event.clone()).as_bytes(),
+        );
+        let mut tail = SessionTail::default();
+        tail.poll(&path).unwrap();
+        assert_eq!(tail.envelopes.len(), 1, "passive quota signal retained");
+        assert_eq!(
+            dispatch_quota_deadline(&[passive, quota_release(Some("42s"))])
+                .unwrap()
+                .0,
+            now + chrono::Duration::seconds(42)
+        );
+        let mut not_quota = quota_release(None);
+        not_quota.event["exit"] = json!({"reason": "provider_auth"});
+        assert!(dispatch_quota_deadline(&[not_quota]).is_none());
+    }
+
+    #[tokio::test]
+    async fn quota_classified_dispatch_records_provider_lockout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let state = direct_stage_test_state(home.clone()).await;
+        let now = Utc::now();
+        let completion = DispatchCompletion {
+            project_id: "project".into(),
+            task_id: "TASK-QUOTA".into(),
+            run_id: "run-quota".into(),
+            provider: "codex".into(),
+            session_path: tmp.path().join("session.jsonl"),
+            last_path: tmp.path().join("last.txt"),
+            stdout_path: tmp.path().join("stdout.log"),
+            worktree_path: tmp.path().join("worktree"),
+        };
+        let envelopes = vec![SessionEnvelope {
+            seq: 0,
+            time: now,
+            run_id: completion.run_id.clone(),
+            runtime_id: "rt-quota".into(),
+            boot_id: "boot-quota".into(),
+            kind: SessionEventKind::Lifecycle,
+            event: serde_json::to_value(Lifecycle::Release {
+                reason: "provider rejected turn".into(),
+                outcome: ReleaseOutcome::Failed,
+                finalized_by_worker: false,
+                exit: Some(orgasmic_core::ExitReason::ProviderQuota {
+                    retry_after: Some("5m".into()),
+                }),
+            })
+            .unwrap(),
+        }];
+
+        remember_dispatch_quota_lockout(&state, &completion, &envelopes).unwrap();
+
+        let lockout = crate::provider_quota::active(&home, "codex", now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.run_id, "run-quota");
+        assert_eq!(lockout.locked_until, now + chrono::Duration::minutes(5));
+    }
+
     fn session_tail_line(seq: u64, kind: SessionEventKind, event: Value) -> String {
         let envelope = SessionEnvelope {
             seq,
@@ -29934,6 +30224,7 @@ pub(crate) mod tests {
             project_id: "proj-dispatch".into(),
             task_id: "TASK-072".into(),
             run_id: "run-test".into(),
+            provider: "claude".into(),
             session_path: session_path.clone(),
             last_path: last_path.clone(),
             stdout_path: stdout_path.clone(),
@@ -30009,6 +30300,7 @@ pub(crate) mod tests {
             project_id: "proj-dispatch".into(),
             task_id: "TASK-B05AM".into(),
             run_id: "run-test".into(),
+            provider: "claude".into(),
             session_path: session_path.clone(),
             last_path: last_path.clone(),
             stdout_path: stdout_path.clone(),
@@ -30100,6 +30392,7 @@ pub(crate) mod tests {
             project_id: "proj-dispatch".into(),
             task_id: "TASK-CANCEL".into(),
             run_id: identity.run_id.clone(),
+            provider: "claude".into(),
             session_path: session_path.clone(),
             last_path: last_path.clone(),
             stdout_path: stdout_path.clone(),
@@ -30188,6 +30481,7 @@ pub(crate) mod tests {
             project_id: "proj-dispatch".into(),
             task_id: "TASK-ORPHAN".into(),
             run_id: identity.run_id.clone(),
+            provider: "claude".into(),
             session_path: session_path.clone(),
             last_path: last_path.clone(),
             stdout_path: stdout_path.clone(),
@@ -31107,6 +31401,7 @@ pub(crate) mod tests {
             dispatch_kind: Some("implementer"),
             task_sandbox_permissions: None,
             allow_simulated,
+            force_preflight: false,
         };
 
         let refused = spawn_worker_run(&state, request(worker.clone(), false))
@@ -31185,6 +31480,7 @@ pub(crate) mod tests {
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
                 allow_simulated: true,
+                force_preflight: false,
             },
         )
         .await

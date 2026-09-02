@@ -26,6 +26,7 @@ pub mod logging;
 pub mod manager_registration;
 pub mod node_types;
 pub mod prompt_compiler;
+pub mod provider_quota;
 pub mod recovery_claim;
 pub mod run_catalog;
 pub mod run_history;

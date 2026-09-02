@@ -266,6 +266,7 @@ pub(crate) struct DispatchRequest {
     reviewed_dispatch_txs: Vec<String>,
     governance: Option<orgasmic_daemon::governance::GovernancePatch>,
     allow_simulated: bool,
+    force_preflight: bool,
 }
 
 pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
@@ -291,6 +292,7 @@ pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
         reviewed_dispatch_txs: plan.reviewed_dispatch_txs.clone(),
         governance: plan.governance.clone(),
         allow_simulated: plan.allow_simulated,
+        force_preflight: plan.force_preflight,
     }
 }
 
@@ -647,6 +649,7 @@ mod tests {
             dry_run: false,
             governance: None,
             allow_simulated: false,
+            force_preflight: false,
         }
     }
 
@@ -677,6 +680,14 @@ mod tests {
         );
         let wire = serde_json::to_value(&request).expect("serialize");
         assert_eq!(wire["reviewed_dispatch_txs"][0], "tx-start-implementer");
+    }
+
+    #[test]
+    fn dispatch_request_carries_force_preflight() {
+        let mut plan = sample_plan();
+        plan.force_preflight = true;
+        let wire = serde_json::to_value(build_dispatch_request(&plan)).unwrap();
+        assert_eq!(wire["force_preflight"], true);
     }
 
     /// `--credential-mode` is the operator's escape hatch when claude's

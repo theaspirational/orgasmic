@@ -1367,8 +1367,30 @@ fn retry_after(lower: &str) -> Option<String> {
         .iter()
         .find_map(|key| lower.split_once(key))
         .map(|(_, rest)| rest.trim_start_matches([':', '=', ' ']))
-        .and_then(|rest| rest.split_whitespace().next())
-        .map(|token| token.trim_end_matches([',', '.', ';', ')']).to_string())
+        .and_then(|rest| {
+            let mut words = rest.split_whitespace();
+            let amount = words.next()?.trim_end_matches([',', '.', ';', ')']);
+            let unit = words
+                .next()
+                .map(|word| word.trim_end_matches([',', '.', ';', ')']))
+                .filter(|word| {
+                    matches!(
+                        *word,
+                        "second"
+                            | "seconds"
+                            | "minute"
+                            | "minutes"
+                            | "hour"
+                            | "hours"
+                            | "day"
+                            | "days"
+                    )
+                });
+            Some(match unit {
+                Some(unit) => format!("{amount} {unit}"),
+                None => amount.to_string(),
+            })
+        })
         .filter(|token| !token.is_empty())
 }
 
@@ -1928,6 +1950,12 @@ mod exit_reason_tests {
             ExitReason::from_error_line("rate_limit_exceeded (Retry-After: 30)"),
             Some(ExitReason::ProviderQuota {
                 retry_after: Some("30".into())
+            })
+        );
+        assert_eq!(
+            ExitReason::from_error_line("quota exhausted; retry after 5 days"),
+            Some(ExitReason::ProviderQuota {
+                retry_after: Some("5 days".into())
             })
         );
         assert_eq!(ExitReason::from_error_line("segmentation fault"), None);

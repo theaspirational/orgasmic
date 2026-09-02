@@ -251,14 +251,16 @@ pub async fn harness_runtime_options(harness: &str) -> HarnessRuntimeOptions {
 ///
 /// `auth` is the dispatch preflight's own verdict — the same probe, the same
 /// budget, run the same way (TASK-40ZMJ). `quota` is not probed by any
-/// adapter today, so it is always `unknown (no probe)`: the whole point of
-/// this surface is to say what is known, never to guess.
+/// adapter today, so the probe returns `unknown (no probe)`; the CLI may
+/// replace that with a remembered terminal lockout. The whole point of this
+/// surface is to say what is known, never to guess.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HarnessHealth {
     pub harness: String,
     /// `ok`, `missing`, or `unknown (<why>)`.
     pub auth: String,
-    /// Always `unknown (no probe)` until an adapter learns to ask.
+    /// `unknown (no probe)` from the adapter; the CLI overlays remembered
+    /// terminal lockouts.
     pub quota: String,
     /// The probe's operator-facing reason when it refused (`auth=missing`).
     #[serde(skip_serializing_if = "Option::is_none")]
