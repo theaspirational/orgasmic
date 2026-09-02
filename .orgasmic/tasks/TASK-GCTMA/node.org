@@ -51,4 +51,6 @@ section.
 - A reviewer dispatch is treated at least as strictly as an implementer one.
 - The guard does not fire on paths the worker legitimately does not need.
 - A regression proves both the fire and the no-fire case.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 653a860f on sprint/DIRTY, merged onto local sprint-20260902 as 3ec20e11. manager dispatch warns on stderr 'main checkout has N uncommitted changes the worker will not see: <≤3 paths>' (git toplevel of cwd, .orgasmic/ excluded via the existing verify.rs dirty_paths helper, now shared); --require-clean refuses (exit 1) with the same message. Tests: 2 unit + tests/dispatch.rs dispatch_require_clean_refuses_dirty_main_checkout. Gates: cli filtered 8 passed, integration 2 passed (serial; parallel run hit the known 30s load timeout), clippy rc=0, fmt rc=0. Default is warn for both kinds; reviewer not stricter.
 
