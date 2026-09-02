@@ -67,52 +67,123 @@ signature -> revert patch -> assert tree byte-identical -> run cmd -> assert
 GREEN. Any deviation, including a red run whose output does not match the
 pinned signature, exits nonzero.
 
+--all replays every directory under <repo>/verify/ and prints one line per
+artifact plus `N/M pass`, exiting nonzero when any artifact fails. --json
+emits one object per artifact and, with --all, a final `{total, ok, failed}`
+line.
+
 Examples:
   orgasmic verify TASK-R74E8
   orgasmic verify TASK-R74E8 --json
-  orgasmic verify TASK-R74E8 --artifact /tmp/candidate-artifact";
+  orgasmic verify TASK-R74E8 --artifact /tmp/candidate-artifact
+  orgasmic verify --all --json";
 
 #[derive(Args, Debug)]
 pub struct VerifyArgs {
     /// Task id whose injection proof to replay (e.g. TASK-R74E8).
-    pub task: String,
+    #[arg(required_unless_present = "all")]
+    pub task: Option<String>,
     /// Artifact directory; defaults to `<repo>/verify/<TASK-ID>`.
     #[arg(long)]
     pub artifact: Option<PathBuf>,
     /// Emit a machine-readable result instead of narrating.
     #[arg(long)]
     pub json: bool,
+    /// Every artifact under `<repo>/verify/`, one line each, nonzero if any fails.
+    #[arg(long, conflicts_with_all = ["task", "artifact"])]
+    pub all: bool,
 }
 
 pub fn cmd_verify(args: VerifyArgs) -> Result<()> {
     let cwd = std::env::current_dir().context("resolve current directory")?;
     let repo = git_toplevel(&cwd)?;
-    let dir = match args.artifact {
-        Some(dir) => dir,
-        None => repo.join("verify").join(&args.task),
+    let targets = if args.all {
+        artifacts_under(&repo.join("verify"))?
+    } else {
+        let task = args.task.expect("clap requires a task without --all");
+        let dir = args
+            .artifact
+            .unwrap_or_else(|| repo.join("verify").join(&task));
+        vec![(task, dir)]
     };
-    let result = replay(&repo, &args.task, &dir, args.json);
-    match &result {
-        Ok(report) => {
-            if args.json {
-                println!("{}", report.to_json(&args.task, &dir));
+    run_targets(&repo, &targets, args.json, args.all)
+}
+
+/// Every `<verify>/<id>/` directory, sorted. Files (README, registry) are not
+/// artifacts; a directory without an injection.patch is one that fails.
+fn artifacts_under(verify: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let mut out: Vec<(String, PathBuf)> = std::fs::read_dir(verify)
+        .with_context(|| format!("read {}", verify.display()))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| {
+            (
+                entry.file_name().to_string_lossy().to_string(),
+                entry.path(),
+            )
+        })
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
+/// Replay every target; one line per artifact when sweeping, the full
+/// narration for a single replay. Nonzero when any target fails.
+fn run_targets(
+    repo: &Path,
+    targets: &[(String, PathBuf)],
+    json: bool,
+    summary: bool,
+) -> Result<()> {
+    let mut ok = 0;
+    for (task, dir) in targets {
+        match replay(repo, task, dir, json || summary) {
+            Ok(report) => {
+                ok += 1;
+                if json {
+                    println!("{}", report.to_json(task, dir));
+                } else if summary {
+                    println!("{task} pass");
+                }
             }
-        }
-        Err(err) => {
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "task": args.task,
-                        "artifact": dir.display().to_string(),
-                        "result": "fail",
-                        "reason": format!("{err:#}"),
-                    })
-                );
+            Err(err) => {
+                let reason = format!("{err:#}");
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "task": task,
+                            "artifact": dir.display().to_string(),
+                            "result": "fail",
+                            "reason": reason,
+                        })
+                    );
+                } else if summary {
+                    println!("{task} FAIL ({})", reason.lines().next().unwrap_or(""));
+                } else {
+                    return Err(err);
+                }
             }
         }
     }
-    result.map(|_| ())
+    let total = targets.len();
+    if summary {
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({ "total": total, "ok": ok, "failed": total - ok })
+            );
+        } else {
+            println!("{ok}/{total} pass");
+        }
+    }
+    if ok < total {
+        bail!(
+            "{} of {total} verify artifact(s) failed to replay",
+            total - ok
+        );
+    }
+    Ok(())
 }
 
 /// One replay phase's observed result.
@@ -743,6 +814,29 @@ mod tests {
             std::fs::write(self.artifact.join(name), body).unwrap();
         }
 
+        /// A fake `verify/`: one good artifact, one whose patch no longer
+        /// applies, one directory with no patch at all, and the README that
+        /// must be ignored. Outside the repo so it does not dirty the tree.
+        fn verify_dir(&self) -> PathBuf {
+            let verify = self._tmp.path().join("verify");
+            for id in ["TASK-GOOD", "TASK-STALE"] {
+                let dir = verify.join(id);
+                std::fs::create_dir_all(&dir).unwrap();
+                for name in ["injection.patch", "cmd", "expect-red"] {
+                    std::fs::copy(self.artifact.join(name), dir.join(name)).unwrap();
+                }
+            }
+            std::fs::write(
+                verify.join("TASK-STALE/injection.patch"),
+                "diff --git a/src.txt b/src.txt\n--- a/src.txt\n+++ b/src.txt\n@@ -1 +1 @@\n-A LINE THAT MOVED AWAY\n+BROKEN\n",
+            )
+            .unwrap();
+            std::fs::create_dir_all(verify.join("TASK-NOPATCH")).unwrap();
+            std::fs::write(verify.join("TASK-NOPATCH/README.md"), "a runbook\n").unwrap();
+            std::fs::write(verify.join("README.md"), "not an artifact\n").unwrap();
+            verify
+        }
+
         fn replay(&self) -> Result<Report> {
             super::replay(&self.repo, "TASK-FIXTURE", &self.artifact, true)
         }
@@ -758,6 +852,37 @@ mod tests {
                 "FIXED\n"
             );
         }
+    }
+
+    #[test]
+    fn sweep_enumerates_only_directories_in_sorted_order() {
+        let fixture = Fixture::new();
+        let ids: Vec<String> = artifacts_under(&fixture.verify_dir())
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, ["TASK-GOOD", "TASK-NOPATCH", "TASK-STALE"]);
+    }
+
+    /// The full sweep replays each artifact in turn and is red if any is.
+    #[test]
+    fn all_replays_every_artifact_and_fails_when_one_does() {
+        let fixture = Fixture::new();
+        let targets = artifacts_under(&fixture.verify_dir()).unwrap();
+        let err = run_targets(&fixture.repo, &targets, true, true).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("2 of 3 verify artifact(s) failed to replay"),
+            "{err:#}"
+        );
+        fixture.assert_tree_restored();
+
+        let good: Vec<_> = targets
+            .into_iter()
+            .filter(|(id, _)| id == "TASK-GOOD")
+            .collect();
+        run_targets(&fixture.repo, &good, false, true).expect("all green");
+        fixture.assert_tree_restored();
     }
 
     #[test]
