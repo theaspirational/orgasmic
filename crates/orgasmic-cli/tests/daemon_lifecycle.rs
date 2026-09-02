@@ -23,8 +23,8 @@ impl Drop for ChildGuard {
 }
 
 /// Block until `orgasmic serve` has printed its last startup line, which it
-/// does immediately before awaiting SIGTERM/Ctrl+C, then keep draining its
-/// stdout so the daemon's log mirror cannot fill the pipe and block.
+/// does only after arming its SIGINT and SIGTERM handlers, then keep draining
+/// its stdout so the daemon's log mirror cannot fill the pipe and block.
 #[cfg(unix)]
 fn wait_until_serve_awaits_signals(child: &mut Child) {
     use std::io::{BufRead, BufReader};
@@ -252,11 +252,25 @@ fn autostart_survives_a_predecessor_holding_the_lock_past_the_old_start_literal(
 /// uses.
 ///
 /// The discriminator is the exit status itself. Default disposition means the
-/// process is *signalled*; a handled SIGTERM means it *exits*, which it can only
+/// process is *signalled*; a handled signal means it *exits*, which it can only
 /// do after `running.join` — i.e. after the drain.
 #[test]
 #[cfg(unix)]
 fn sigterm_exits_through_graceful_shutdown_rather_than_default_disposition() {
+    serve_exits_through_graceful_shutdown_on(libc::SIGTERM);
+}
+
+/// orgasmic:TASK-GGWW2 TASK-4PPPE — `daemon stop` sends SIGINT, and Ctrl+C used
+/// to be armed lazily inside the signal wait, i.e. after the readiness line
+/// this test keys off. Same window, other signal.
+#[test]
+#[cfg(unix)]
+fn sigint_exits_through_graceful_shutdown_rather_than_default_disposition() {
+    serve_exits_through_graceful_shutdown_on(libc::SIGINT);
+}
+
+#[cfg(unix)]
+fn serve_exits_through_graceful_shutdown_on(signal: libc::c_int) {
     use std::os::unix::process::ExitStatusExt as _;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -284,16 +298,17 @@ fn sigterm_exits_through_graceful_shutdown_rather_than_default_disposition() {
     }
     let mut child = command.spawn().expect("spawn serve");
     // orgasmic:TASK-Q07Y5 — wait for the daemon to reach its signal wait, not
-    // merely for the port to answer. `serve` installs the SIGTERM handler
-    // before printing this marker, so the marker closes the former
-    // default-disposition race instead of merely making it smaller.
+    // merely for the port to answer. `serve` arms both handlers before printing
+    // this marker, so the marker closes the former default-disposition race
+    // instead of merely making it smaller. Signal immediately: the window,
+    // when it exists, is lost to whoever reads the marker first.
     wait_until_serve_awaits_signals(&mut child);
 
     unsafe {
         assert_eq!(
-            libc::kill(child.id() as libc::pid_t, libc::SIGTERM),
+            libc::kill(child.id() as libc::pid_t, signal),
             0,
-            "SIGTERM failed: {}",
+            "signal {signal} failed: {}",
             std::io::Error::last_os_error()
         );
     }
@@ -311,7 +326,7 @@ fn sigterm_exits_through_graceful_shutdown_rather_than_default_disposition() {
             None => {
                 assert!(
                     Instant::now() < deadline,
-                    "serve did not exit within {shutdown_deadline:?} of SIGTERM"
+                    "serve did not exit within {shutdown_deadline:?} of signal {signal}"
                 );
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -321,8 +336,8 @@ fn sigterm_exits_through_graceful_shutdown_rather_than_default_disposition() {
     assert_eq!(
         status.signal(),
         None,
-        "serve died on SIGTERM's default disposition, so the graceful shutdown \
-         (release-finalization drain, writer shutdown) never ran"
+        "serve died on signal {signal}'s default disposition, so the graceful \
+         shutdown (release-finalization drain, writer shutdown) never ran"
     );
     assert_eq!(
         status.code(),

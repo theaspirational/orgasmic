@@ -2463,37 +2463,46 @@ fn cmd_serve(
                 return Err(error);
             }
         };
-        // Register SIGTERM before announcing readiness. The announcement is a
-        // synchronization point for service managers and tests; printing it
-        // first left a small default-disposition window where a prompt stop
-        // killed the daemon without running its drains.
-        #[cfg(unix)]
-        let terminate = install_sigterm_handler();
-        // Best-effort stdout: `println!` panics on EPIPE and would half-kill the
-        // daemon after `serve | head` closes the pipe (TASK-FZF2D).
-        let _ = writeln!(
-            io::stdout(),
-            "✓ orgasmic daemon listening on http://{} (boot_id={})",
-            running.addr,
-            running.boot_id
-        );
-        let _ = writeln!(
-            io::stdout(),
-            "  token file: {}",
-            home.auth_token().display()
-        );
-        let _ = writeln!(io::stdout(), "  press Ctrl+C to stop");
-        #[cfg(unix)]
-        wait_for_shutdown_signal(terminate).await;
-        #[cfg(not(unix))]
-        wait_for_shutdown_signal().await;
+        // orgasmic:TASK-GGWW2 TASK-4PPPE — arm every shutdown signal BEFORE
+        // announcing readiness. The announcement is the synchronization point
+        // for service managers, scripts/soak.sh and the lifecycle tests; the
+        // moment it is written, the reader wins the CPU, and a stop sent on
+        // its strength lands before the next statement here runs. Measured:
+        // announcing first fails the SIGTERM lifecycle test 10/10. Ctrl+C had
+        // the same window because `tokio::signal::ctrl_c()` registers lazily
+        // on first poll, i.e. after the announcement — and `daemon stop` sends
+        // SIGINT. `announce_ready` borrows the armed handles so the order is
+        // checked by the compiler, not by a comment.
+        let signals = arm_shutdown_signals();
+        announce_ready(&signals, &running, home);
+        wait_for_shutdown_signal(signals).await;
         let _ = running.shutdown.send(());
         let _ = running.join.await;
         Ok::<(), anyhow::Error>(())
     })
 }
 
-/// Wait for either interactive interrupt or a service manager's stop.
+/// Print the readiness banner. Takes the armed shutdown signals so the banner
+/// cannot be written before they exist (see `cmd_serve`).
+///
+/// Best-effort stdout: `println!` panics on EPIPE and would half-kill the
+/// daemon after `serve | head` closes the pipe (TASK-FZF2D).
+fn announce_ready(_armed: &ShutdownSignals, running: &orgasmic_daemon::RunningDaemon, home: &Home) {
+    let _ = writeln!(
+        io::stdout(),
+        "✓ orgasmic daemon listening on http://{} (boot_id={})",
+        running.addr,
+        running.boot_id
+    );
+    let _ = writeln!(
+        io::stdout(),
+        "  token file: {}",
+        home.auth_token().display()
+    );
+    let _ = writeln!(io::stdout(), "  press Ctrl+C to stop");
+}
+
+/// Both ways a daemon is asked to stop, registered eagerly.
 ///
 /// orgasmic:TASK-WGXKD.2 finding 2 — this used to await `ctrl_c()` and nothing
 /// else. `launchctl kickstart -k` (the runtime-rebuild step) and every
@@ -2503,41 +2512,67 @@ fn cmd_serve(
 /// shutdown TASK-WGXKD.1 built was unreachable on the only shutdown path this
 /// machine actually uses. Both signals now route through the same handle.
 #[cfg(unix)]
-fn install_sigterm_handler() -> Option<tokio::signal::unix::Signal> {
+struct ShutdownSignals {
+    interrupt: Option<tokio::signal::unix::Signal>,
+    terminate: Option<tokio::signal::unix::Signal>,
+}
+
+#[cfg(unix)]
+fn arm_shutdown_signals() -> ShutdownSignals {
     use tokio::signal::unix::{signal, SignalKind};
 
-    match signal(SignalKind::terminate()) {
-        Ok(terminate) => Some(terminate),
+    let arm = |kind: SignalKind, name: &str| match signal(kind) {
+        Ok(armed) => Some(armed),
         Err(error) => {
             // Registration can only fail on a broken runtime; losing the
             // graceful drain silently is worse than saying so.
             eprintln!(
-                "[warn] SIGTERM handler unavailable ({error}); \
-                 a service stop will not run the shutdown drain"
+                "[warn] {name} handler unavailable ({error}); \
+                 a stop via {name} will not run the shutdown drain"
             );
             None
         }
+    };
+    ShutdownSignals {
+        interrupt: arm(SignalKind::interrupt(), "SIGINT"),
+        terminate: arm(SignalKind::terminate(), "SIGTERM"),
     }
 }
 
 #[cfg(unix)]
-async fn wait_for_shutdown_signal(mut terminate: Option<tokio::signal::unix::Signal>) {
-    match terminate.as_mut() {
-        Some(terminate) => {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
-                _ = terminate.recv() => {}
+async fn wait_for_shutdown_signal(mut signals: ShutdownSignals) {
+    async fn recv(signal: Option<&mut tokio::signal::unix::Signal>) {
+        match signal {
+            Some(signal) => {
+                signal.recv().await;
             }
+            // An unarmed signal is a way the daemon cannot be stopped, not a
+            // reason to stop it now.
+            None => std::future::pending().await,
         }
-        None => {
-            tokio::signal::ctrl_c().await.ok();
-        }
+    }
+    tokio::select! {
+        _ = recv(signals.interrupt.as_mut()) => {}
+        _ = recv(signals.terminate.as_mut()) => {}
     }
 }
 
 #[cfg(not(unix))]
-async fn wait_for_shutdown_signal() {
-    tokio::signal::ctrl_c().await.ok();
+struct ShutdownSignals(Option<tokio::signal::windows::CtrlC>);
+
+#[cfg(not(unix))]
+fn arm_shutdown_signals() -> ShutdownSignals {
+    ShutdownSignals(tokio::signal::windows::ctrl_c().ok())
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal(signals: ShutdownSignals) {
+    match signals.0 {
+        Some(mut ctrl_c) => {
+            ctrl_c.recv().await;
+        }
+        None => std::future::pending().await,
+    }
 }
 
 fn cmd_status(home: &Home) -> Result<()> {
