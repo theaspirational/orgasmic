@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-SJNNA
 #+orgasmic_version: 2
 
-* BACKLOG TASK-SJNNA Daemon should scrub TMUX from its environment before spawning tmux (latent: $TMUX selects the socket)
+* IN_PROGRESS TASK-SJNNA Daemon should scrub TMUX from its environment before spawning tmux (latent: $TMUX selects the socket)
 :PROPERTIES:
 :ID: TASK-SJNNA
 :PRIORITY: P2

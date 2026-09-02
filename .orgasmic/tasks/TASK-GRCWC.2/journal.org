@@ -1,2 +1,18 @@
 #+title: orgasmic journal TASK-GRCWC.2
 #+orgasmic_version: 2
+
+* tx-20260902-orgasmic-b77a59a3-b67c-4e07-b367-8207d57745ce task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-b77a59a3-b67c-4e07-b367-8207d57745ce
+:TIME:    [2026-09-02 Wed 08:57:52]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-GRCWC.2
+:TARGET: .orgasmic/tasks/TASK-GRCWC.2/node.org
+:REASON: manager sprint 2026-09-02: implemented directly by the manager session (subagent), no dispatch; review/test after the sprint
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 065a4cdf-9342-43bb-bd58-ee9ce8a3254a
+:END:
