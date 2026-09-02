@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KA934.3.2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-KA934.3.2 Inverse :ACTOR: guard: member add refuses the daemon actor name; doctor warns; narrow the guard to comment writes :e01mc:chain-review:
+* IN_REVIEW TASK-KA934.3.2 Inverse :ACTOR: guard: member add refuses the daemon actor name; doctor warns; narrow the guard to comment writes :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-KA934.3.2
 :IMPLEMENTS: dec_Q78QN
@@ -15,3 +15,5 @@ Fix round for the KA934.3.1 review (opus-5, tx-160c6cc2; merged 2be9f0a0). MEDIU
 ** Acceptance
 - [ ] member add <daemon-actor-name> is refused with a message naming the collision; doctor warns on an existing collision; guard fires only for comment-type journal writes (tests).
 - [ ] Dead assertion fixed. cargo test -p orgasmic-daemon --lib -- comment member identity authz post_tx; cargo test -p orgasmic-cli --bin orgasmic -- member doctor; clippy -D; fmt.
+** Evidence
+Worker commit 50fe2f8c (opencode zai-coding-plan/glm-5.3-flash variant max) merged to main as 7c85f177 (--no-ff, on top of 82ed5a9d). Manager gates on merged main 2026-09-02: cargo test -p orgasmic-daemon --lib -- comment member identity authz post_tx status = 68 passed (/private/tmp/claude-501/-Users-aspirational-Documents-code-tools-orgasmic/25219e20-4403-4221-9eb2-cd596e21be27/scratchpad/gates-KA934.3.2-daemon.log); cargo test -p orgasmic-cli --bin orgasmic -- member doctor migrate = 46 passed (/private/tmp/claude-501/-Users-aspirational-Documents-code-tools-orgasmic/25219e20-4403-4221-9eb2-cd596e21be27/scratchpad/gates-KA934.3.2-cli.log); clippy daemon+cli+core -D warnings rc=0; fmt rc=0. Worker gates matched. Manager pre-check: journal_actor_guard_applies = ty==comment at both choke points; member add checks USER, config manager.actor, live status; doctor shares one probe, serde(default) for old daemons.

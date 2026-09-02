@@ -159,3 +159,19 @@
 :TO_STATE: done
 :EVENT_ID: 37848222-f459-4c0e-9059-721e37ba8cdb
 :END:
+
+* tx-20260902-orgasmic-7080 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7080
+:TIME:    [2026-09-02 Wed 07:54:53]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.2
+:TARGET: .orgasmic/tasks/TASK-JWHXH.3.2/node.org
+:REASON: re-set after the late implementer close re-staged it; review approve-with-follow-ups LOW-only
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 2abc8837-5439-4adf-8ef0-5c46e5f96f6c
+:END:
