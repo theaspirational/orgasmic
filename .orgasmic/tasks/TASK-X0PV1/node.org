@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-X0PV1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-X0PV1 own the four TASK-STWVB daemon-parallelism flake-registry entries :testing:daemon:flake:
+* IN_REVIEW TASK-X0PV1 own the four TASK-STWVB daemon-parallelism flake-registry entries :testing:daemon:flake:
 :PROPERTIES:
 :ID: TASK-X0PV1
 :PRIORITY: P2
@@ -66,4 +66,8 @@ state, not chasing three independent bugs.
 ** Evidence
 Manager sprint 2026-09-02 (no dispatch): subagent commit cfd1e83b on sprint/FLAKES, merged onto local sprint-20260902 as 9aca7c0d. The four daemon entries, measured 60/60 (20x each, two concurrent copies, load 30-56): (1) 'tmux test session should start' DELETED — TASK-0RCRY's per-pid -L server retired the drain race; (2) 'left: interrupted' FIXED in test — attach-probe deadline miss (RECOVERY_ATTACH_PROBE_BUDGET 1s) now tolerated only when timed_out>0 AND classification==interrupted AND reason names the deadline; entry DELETED; (3) 'recover: 500' DELETED on evidence (catch-all 500 never carried the cause; 20/20 now); (4) poll_direct_child_pid 'did not start children' KEPT — host-wide fork stall (41s vs 0.3s norm) within the 30s deadline, registry block re-evidenced. TASK STAYS OPEN: two orgasmic-cli tests/dispatch.rs entries are still owned by X0PV1; closing it would trip run-tests.sh --check. Gates: daemon filtered 4 passed, clippy rc=0, fmt rc=0, --check OK.
 - 2026-09-02: deliberately NOT closed with the rest of the sprint. It still owns the two orgasmic-cli tests/dispatch.rs flake-registry entries, and the registry guard refuses an entry whose owner is done, so closing it would turn 'run-tests.sh --check' red for the wrong reason. Confirmed green with this task open by the sprint review: 'registry: OK, every owner open'.
+- 2026-09-02 dispatch (stdio/codex-chat, gpt-5.6-sol, effort high, started_tx tx-20260902-orgasmic-8003ebd3): worker commit e589a39d, merged as 49f5f76f, close tx tx-20260902-orgasmic-a48d459e. The two orgasmic-cli tests/dispatch.rs entries are RETIRED on fresh measurement at 512fcb08: 20 concurrent rounds of each exact test under 20 CPU hogs, 20/20 each, load average 10.45 -> 78.17; durable logs in /tmp/TASK-X0PV1-measure-512fcb08/. Registry now holds 1 entry and "run-tests.sh --check" reports "registry: OK, every owner open".
+- LIMITATION, recorded honestly: the original evidence for both entries was full-workspace parallelism, i.e. shared-daemon and tmux contention with OTHER test binaries. The retirement sample applied CPU pressure to these two tests only, which is NOT the same trigger, so this is weaker than a same-trigger reproduction. Accepted because deletion is the fail-LOUD direction: either mode recurring is now reported REAL rather than silently excused.
+- The worker CORRECTED the manager's brief: the brief said two entries remained, but three were owned. The third, supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling, was re-evidenced earlier today and still stands. TASK STAYS OPEN - closing it would trip the owner-lifecycle guard.
+- Manager gate (not the worker's own): rebuilt orgasmic-cli --test dispatch in a fresh private target dir (1.4G, binary timestamped 18:18, so a real compile) and ran both named tests green; tomllib parse confirms 1 entry.
 
