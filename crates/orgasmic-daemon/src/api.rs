@@ -16179,10 +16179,28 @@ fn descriptor_for_layer(
 
 /// Pick the layer that owns a node: an explicit `kind` selector when present,
 /// otherwise inferred from the id prefix.
+///
+/// orgasmic:TASK-CS2TM — an explicit kind that contradicts a distinctive id
+/// prefix (`TASK-`, `dec_`, `goal-`, `handoff-current`) is refused rather than
+/// aimed at the wrong file: `--kind project` on a task id used to be resolved
+/// against project.org. Glossary is the prefix-less fallback, so an id that
+/// infers glossary accepts any explicit kind (that is how `project` is named).
 fn resolve_node_layer(kind: Option<&str>, id: &str) -> Result<NodeLayer, ApiError> {
     match kind {
-        Some(kind) => NodeLayer::from_kind(kind)
-            .ok_or_else(|| ApiError::bad_request(format!("unknown node kind {kind}"))),
+        Some(kind) => {
+            let layer = NodeLayer::from_kind(kind)
+                .ok_or_else(|| ApiError::bad_request(format!("unknown node kind {kind}")))?;
+            match NodeLayer::for_id(id) {
+                Some(inferred) if inferred != layer && inferred != NodeLayer::Glossary => {
+                    Err(ApiError::bad_request(format!(
+                        "node {id} is a {} node by its id, not {kind}; drop --kind or pass --kind {}",
+                        inferred.layer_name(),
+                        inferred.layer_name()
+                    )))
+                }
+                _ => Ok(layer),
+            }
+        }
         None => NodeLayer::for_id(id)
             .ok_or_else(|| ApiError::bad_request("architecture node layer is retired")),
     }
@@ -30529,6 +30547,35 @@ pub(crate) mod tests {
         hydrate_dispatch_task_slots(&mut values, &project, "TASK-OVERRIDE").unwrap();
         assert_eq!(values["task.write_scope"], "crates/override");
         assert_eq!(values["task.test_cmd"], "cargo test --task-override");
+    }
+
+    // orgasmic:TASK-CS2TM
+    #[test]
+    fn resolve_node_layer_infers_from_id_and_refuses_contradicting_kind() {
+        assert_eq!(resolve_node_layer(None, "TASK-1").unwrap(), NodeLayer::Task);
+        assert_eq!(
+            resolve_node_layer(None, "dec_1").unwrap(),
+            NodeLayer::Decision
+        );
+        // Matching explicit kind is fine.
+        assert_eq!(
+            resolve_node_layer(Some("task"), "TASK-1").unwrap(),
+            NodeLayer::Task
+        );
+        // Prefix-less ids accept any explicit kind (project lives here).
+        assert_eq!(
+            resolve_node_layer(Some("project"), "orgasmic").unwrap(),
+            NodeLayer::Project
+        );
+        // Contradicting kind is refused, naming the inferred kind.
+        let err = resolve_node_layer(Some("project"), "TASK-1").unwrap_err();
+        let message = format!("{err:?}");
+        assert!(message.contains("task node"), "{message}");
+        assert!(message.contains("--kind task"), "{message}");
+        assert!(
+            resolve_node_layer(Some("glossary"), "dec_1").is_err(),
+            "decision id with glossary kind"
+        );
     }
 
     #[test]
