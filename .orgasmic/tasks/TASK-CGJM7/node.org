@@ -65,4 +65,6 @@ leaving it UNDECLARED would not have been.
   fail while opens succeed) rather than only asserting non-propagation, which is
   all the existing =rotation_failure_does_not_propagate_and_counts_a_drop= and
   =failed_intermediate_rename_counts_a_drop= do today.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): implemented by a manager subagent on branch sprint/LOGGING, commit df89c2b9 (logging.rs only), merged --no-ff onto local branch sprint-20260902 as 5672f9ed. Agent gates: cargo test -p orgasmic-daemon --lib -- logging 21 passed; clippy -D warnings rc=0; fmt rc=0. Tests: persistent_rotation_rename_failure_bounds_attempts_not_per_line; failed_durable_write_falls_back_to_stdout_and_recovers_on_reopen. Awaiting operator review/test after the sprint (not on main, not pushed).
 
