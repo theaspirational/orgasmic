@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8Q92K
 #+orgasmic_version: 2
 
-* BACKLOG TASK-8Q92K 17 of 90 verify artifacts cannot replay, and nothing surfaces it    :testing:verify:
+* IN_PROGRESS TASK-8Q92K 17 of 90 verify artifacts cannot replay, and nothing surfaces it :testing:verify:
 :PROPERTIES:
 :ID: TASK-8Q92K
 :PRIORITY: P2
