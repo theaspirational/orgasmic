@@ -1687,7 +1687,10 @@ fn reject_journal_prose(body: &str) -> Result<()> {
 /// the member-session name. Rename semantics: a member renamed in
 /// `members.org` immediately loses edit/delete rights on comments made
 /// under the old name — the stored `:ACTOR:` no longer matches, and no
-/// migration rewrites journals on rename. Accepted behavior.
+/// migration rewrites journals on rename. The inverse rename case cuts the
+/// other way: a member re-added or renamed INTO a retired member's name
+/// inherits edit/delete on that member's old comments (raw `:ACTOR:`
+/// equality; accepted).
 fn require_comment_body(
     current: &str,
     entry_id: &str,
