@@ -927,6 +927,11 @@ fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<
     if plan.brief_content.is_empty() {
         bail!("brief is empty: {}", plan.brief_path.display());
     }
+    if let Some(model) = plan.model_override.as_deref() {
+        if let Some(warning) = unvalidated_model_warning(&plan, model)? {
+            eprintln!("{warning}");
+        }
+    }
     // Each dispatch kind owns a distinct default worktree suffix; reject any
     // accidental reuse of another kind's default path for the same task.
     for other_kind in [DispatchKind::Implementer, DispatchKind::Reviewer] {
@@ -1115,6 +1120,52 @@ fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<
         );
     }
     Ok(Some(response.dispatch_tx_id))
+}
+
+// orgasmic:TASK-XC9N4
+/// `--model` is passed to the harness verbatim (dec_WDR5K item 9). Say so
+/// out loud when nothing could have checked it: the harness that will run —
+/// the canonical chat provider when the address is re-addressed onto one —
+/// is asked for its offline catalog, and any answer short of "this model is
+/// listed" becomes one stderr line.
+fn unvalidated_model_warning(plan: &DispatchPlan, model: &str) -> Result<Option<String>> {
+    let harness = orgasmic_daemon::addressing::dispatch_chat_provider(
+        &plan.mode,
+        &plan.harness,
+        &plan.harness_args,
+    )
+    .unwrap_or(plan.harness.as_str());
+    let options = tokio::runtime::Runtime::new()
+        .context("create tokio runtime")?
+        .block_on(orgasmic_drivers::catalog::harness_runtime_options(harness));
+    Ok(model_catalog_warning(model, &options))
+}
+
+fn model_catalog_warning(
+    model: &str,
+    options: &orgasmic_drivers::catalog::HarnessRuntimeOptions,
+) -> Option<String> {
+    use orgasmic_drivers::catalog::RuntimeOptionsSource as Source;
+    let unavailable = |why: &str| {
+        format!(
+            "model catalog unavailable; --model {model} passed through unvalidated ({}: {why})",
+            options.harness
+        )
+    };
+    match &options.source {
+        Source::Offline { models, .. } if models.iter().any(|m| m == model.trim()) => None,
+        Source::Offline { models, .. } if models.is_empty() => {
+            Some(unavailable("catalog lists no models"))
+        }
+        Source::Offline { source, .. } => Some(format!(
+            "model {model} is not in the {source} catalog; --model {model} passed through \
+             unvalidated"
+        )),
+        Source::ProtocolRpc { method } => Some(unavailable(&format!(
+            "models are listed only by {method} inside a live session"
+        ))),
+        Source::Unavailable { reason } => Some(unavailable(reason)),
+    }
 }
 
 // orgasmic:TASK-XC9N4
@@ -11091,6 +11142,50 @@ fn path_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // orgasmic:TASK-XC9N4
+    #[test]
+    fn model_catalog_warning_says_unvalidated_unless_the_model_is_listed() {
+        use orgasmic_drivers::catalog::{HarnessRuntimeOptions, RuntimeOptionsSource};
+        let options = |source| HarnessRuntimeOptions {
+            harness: "claude".into(),
+            source,
+        };
+        let unavailable = options(RuntimeOptionsSource::Unavailable {
+            reason: "no catalog surface".into(),
+        });
+        assert_eq!(
+            model_catalog_warning("opus-x", &unavailable).as_deref(),
+            Some(
+                "model catalog unavailable; --model opus-x passed through unvalidated \
+                 (claude: no catalog surface)"
+            )
+        );
+        let rpc = options(RuntimeOptionsSource::ProtocolRpc {
+            method: "model/list".into(),
+        });
+        assert!(model_catalog_warning("gpt-x", &rpc)
+            .unwrap()
+            .starts_with("model catalog unavailable; --model gpt-x passed through unvalidated"));
+        let offline = options(RuntimeOptionsSource::Offline {
+            source: "fixture".into(),
+            models: vec!["listed".into()],
+            efforts: Vec::new(),
+        });
+        assert_eq!(model_catalog_warning("listed", &offline), None);
+        assert_eq!(
+            model_catalog_warning("other", &offline).as_deref(),
+            Some("model other is not in the fixture catalog; --model other passed through unvalidated")
+        );
+        let empty = options(RuntimeOptionsSource::Offline {
+            source: "fixture".into(),
+            models: Vec::new(),
+            efforts: vec!["high".into()],
+        });
+        assert!(model_catalog_warning("any", &empty)
+            .unwrap()
+            .starts_with("model catalog unavailable; --model any passed through unvalidated"));
+    }
 
     // orgasmic:TASK-XC9N4
     #[test]
