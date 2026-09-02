@@ -130,3 +130,19 @@
 :NODE_ID: TASK-KA934.3.1
 :EVENT_ID: e4d142dd-ec36-4d25-9cdf-92f03bf9641c
 :END:
+
+* tx-20260902-orgasmic-7087 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7087
+:TIME:    [2026-09-02 Wed 08:02:17]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.1
+:TARGET: .orgasmic/tasks/TASK-KA934.3.1/node.org
+:REASON: KA934.3.x line complete: routes opened, :ACTOR: guard narrowed to comments, inverse guard in member add, doctor warning; reviews approve/approve-with-follow-ups LOW-only
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: dce0df40-10fe-4536-9c94-aa97c42a274e
+:END:

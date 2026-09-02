@@ -115,3 +115,19 @@
 :REASON: LOW crates/orgasmic-cli/src/member.rs:111 — member add now builds a tokio runtime and makes a blocking HTTP /daemon/status call with a 10s timeout (doctor.rs:466), so a hung-but-listening daemon stalls a purely local, filesystem-only command for 10 seconds.
 :EVENT_ID: 3d0cb0d8-1594-4827-861c-187ed2af6176
 :END:
+
+* tx-20260902-orgasmic-7086 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7086
+:TIME:    [2026-09-02 Wed 08:02:17]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.2
+:TARGET: .orgasmic/tasks/TASK-KA934.3.2/node.org
+:REASON: KA934.3.x line complete: routes opened, :ACTOR: guard narrowed to comments, inverse guard in member add, doctor warning; reviews approve/approve-with-follow-ups LOW-only
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: e52f060b-8b9c-4734-a8c1-ef9bd3486ca7
+:END:

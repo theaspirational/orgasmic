@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KA934.3.2
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-KA934.3.2 Inverse :ACTOR: guard: member add refuses the daemon actor name; doctor warns; narrow the guard to comment writes :e01mc:chain-review:
+* DONE TASK-KA934.3.2 Inverse :ACTOR: guard: member add refuses the daemon actor name; doctor warns; narrow the guard to comment writes :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-KA934.3.2
 :IMPLEMENTS: dec_Q78QN
