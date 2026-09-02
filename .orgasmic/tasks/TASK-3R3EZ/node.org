@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-3R3EZ
 #+orgasmic_version: 2
 
-* BACKLOG TASK-3R3EZ Quarantine missing project/worktree records, warn once, and add project remove    :daemon:project:recovery:
+* IN_PROGRESS TASK-3R3EZ Quarantine missing project/worktree records, warn once, and add project remove :daemon:project:recovery:
 :PROPERTIES:
 :DEPENDS_ON: TASK-FZB6T
 :ID: TASK-3R3EZ
