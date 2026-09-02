@@ -457,6 +457,21 @@ fn daemon_http_error_message(status: StatusCode, body: &str) -> String {
             }
         }
     }
+    // TASK-XQCNA: a 500 that names its inner cause prints it, and the next
+    // command, ahead of the raw body.
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+        if let (Some(error), Some(cause)) = (
+            value.get("error").and_then(|value| value.as_str()),
+            value.get("cause").and_then(|value| value.as_str()),
+        ) {
+            let next = value
+                .get("next")
+                .and_then(|value| value.as_str())
+                .map(|next| format!(" (next: `{next}`)"))
+                .unwrap_or_default();
+            return format!("daemon returned {status}: {error}: {cause}{next}");
+        }
+    }
     format!("daemon returned {status}: {body}")
 }
 
@@ -664,6 +679,27 @@ mod tests {
         assert!(message.contains("mutation committed as tx-42"), "{message}");
         assert!(message.contains("re-read the exact state"), "{message}");
         assert!(message.contains("do not blindly retry"), "{message}");
+    }
+
+    #[test]
+    fn a_500_with_a_cause_prints_the_cause_and_the_next_command() {
+        let message = daemon_http_error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"error":"failed to acquire worker run","cause":"spawn: Too many open files (os error 24)","next":"orgasmic daemon status"}"#,
+        );
+        assert_eq!(
+            message,
+            "daemon returned 500 Internal Server Error: failed to acquire worker run: spawn: Too \
+             many open files (os error 24) (next: `orgasmic daemon status`)"
+        );
+        let plain = daemon_http_error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"error":"failed to release run"}"#,
+        );
+        assert_eq!(
+            plain,
+            r#"daemon returned 500 Internal Server Error: {"error":"failed to release run"}"#
+        );
     }
 
     #[test]
