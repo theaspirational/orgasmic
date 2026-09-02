@@ -31,3 +31,18 @@
 :NODE_ID: TASK-EXN3N
 :EVENT_ID: b8f9a8b4-5a8c-4490-b07e-51c253e3c895
 :END:
+
+* tx-20260902-orgasmic-a44f5bdf-02bc-4e55-9900-f6650c6356be task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-a44f5bdf-02bc-4e55-9900-f6650c6356be
+:TIME:    [2026-09-02 Wed 09:53:36]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EXN3N
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-EXN3N/node.org
+:REASON: edited task node TASK-EXN3N
+:NODE_ID: TASK-EXN3N
+:EVENT_ID: b175aea2-7bc9-4031-b0ee-9dabdd9dc40d
+:END:
