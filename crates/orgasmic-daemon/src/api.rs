@@ -2344,9 +2344,18 @@ fn ensure_actor_namespace_free(state: &ApiState, actor: &str) -> Result<(), ApiE
     if actor.is_empty() {
         return Ok(());
     }
-    let collides = orgasmic_core::read_members(&state.home)
-        .map(|members| members.iter().any(|member| member.name == actor))
-        .unwrap_or(false);
+    let collides = match orgasmic_core::read_members(&state.home) {
+        Ok(members) => members.iter().any(|member| member.name == actor),
+        // Fail open (TASK-KA934.3.1): members.org is admin-owned and a parse
+        // error already breaks login, but the skip must not be silent.
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "members.org unreadable; :ACTOR: namespace guard skipped"
+            );
+            false
+        }
+    };
     if collides {
         return Err(ApiError::forbidden(format!(
             "actor `{actor}` collides with a members.org member name; \
@@ -2354,6 +2363,27 @@ fn ensure_actor_namespace_free(state: &ApiState, actor: &str) -> Result<(), ApiE
         )));
     }
     Ok(())
+}
+
+/// dec_Q78QN — resolve the actor stamped as `:EDITED_BY:`/`:DELETED_BY:` on a
+/// journal comment mutation. A member session stamps its own name; the admin
+/// path stamps the daemon actor, which must stay out of the member namespace.
+/// One guard here instead of a copy in every comment handler.
+fn comment_mutation_actor(
+    state: &ApiState,
+    identity: &Identity,
+) -> Result<crate::writer::CommentMutationActor, ApiError> {
+    match identity.member_name() {
+        Some(name) => Ok(crate::writer::CommentMutationActor::Member(
+            name.to_string(),
+        )),
+        None => {
+            ensure_actor_namespace_free(state, &state.actor)?;
+            Ok(crate::writer::CommentMutationActor::Admin(
+                state.actor.clone(),
+            ))
+        }
+    }
 }
 
 async fn post_task_comment(
@@ -2377,19 +2407,11 @@ async fn post_task_comment(
     // Mirror artifact comments: member attribution comes from the authenticated
     // session and cannot be spoofed by a request body. Admin scripts may still
     // provide an explicit actor; omitting it falls back to the daemon actor.
-    // Either way the effective admin actor must stay out of the member
-    // namespace (dec_Q78QN) — `choose_actor` applies the same fallback chain.
+    // Either way the effective admin actor is namespace-guarded in
+    // `prepare_api_tx` (dec_Q78QN) — no local guard copy here.
     let actor = match identity.member_name() {
         Some(name) => Some(name.to_string()),
-        None => {
-            let requested = req.actor.filter(|value| !value.trim().is_empty());
-            let effective = requested
-                .as_deref()
-                .or(state.manager_actor.as_deref())
-                .unwrap_or(&state.actor);
-            ensure_actor_namespace_free(&state, effective)?;
-            requested
-        }
+        None => req.actor.filter(|value| !value.trim().is_empty()),
     };
     let mut extra = vec![("BODY".to_string(), escape_property_value(&req.body))];
     if let Some(run_id) = req.run_id.filter(|value| !value.trim().is_empty()) {
@@ -2401,8 +2423,9 @@ async fn post_task_comment(
     if let Some(in_reply_to) = req.in_reply_to.filter(|value| !value.trim().is_empty()) {
         extra.push(("IN_REPLY_TO".to_string(), in_reply_to));
     }
-    let tx_id = record_api_tx(
+    let tx_id = record_api_tx_as(
         &state,
+        &identity,
         ApiTxRequest {
             ty: "comment".to_string(),
             actor,
@@ -2442,15 +2465,7 @@ async fn post_task_comment_edit(
 ) -> Result<Json<TaskCommentMutationResponse>, ApiError> {
     let (project_id, journal) =
         task_comment_journal(&state, &identity, &task_id, q.project.as_deref()).await?;
-    let actor = match identity.member_name() {
-        Some(name) => crate::writer::CommentMutationActor::Member(name.to_string()),
-        None => {
-            // dec_Q78QN — the daemon actor is about to become `:EDITED_BY:`;
-            // refuse when it collides with a member name.
-            ensure_actor_namespace_free(&state, &state.actor)?;
-            crate::writer::CommentMutationActor::Admin(state.actor.clone())
-        }
-    };
+    let actor = comment_mutation_actor(&state, &identity)?;
     state
         .writer
         .edit_journal_comment(
@@ -2487,15 +2502,7 @@ async fn post_task_comment_delete(
 ) -> Result<Json<TaskCommentMutationResponse>, ApiError> {
     let (project_id, journal) =
         task_comment_journal(&state, &identity, &task_id, q.project.as_deref()).await?;
-    let actor = match identity.member_name() {
-        Some(name) => crate::writer::CommentMutationActor::Member(name.to_string()),
-        None => {
-            // dec_Q78QN — the daemon actor is about to become `:DELETED_BY:`;
-            // refuse when it collides with a member name.
-            ensure_actor_namespace_free(&state, &state.actor)?;
-            crate::writer::CommentMutationActor::Admin(state.actor.clone())
-        }
-    };
+    let actor = comment_mutation_actor(&state, &identity)?;
     state
         .writer
         .tombstone_journal_comment(
@@ -3059,13 +3066,17 @@ async fn prepare_tx_append_request(
         TxIdPolicy::ProjectSequence { .. } => "pending-project-sequence".to_string(),
     };
     let time_str = tx_time_string_utc(&now);
-    let mut entry = TxEntry::new(
-        &tx_id,
-        &req.r#type,
-        &time_str,
-        choose_actor(&req, project_entry.as_ref(), state),
-        state.machine.clone(),
-    );
+    let actor = choose_actor(&req, project_entry.as_ref(), state);
+    // dec_Q78QN — a journal-routed tx stamps the effective actor as `:ACTOR:`,
+    // so it must stay out of the member namespace. Every path into this
+    // function is admin-only (`POST /tx` and `/runs/:id/release` are absent
+    // from `MEMBER_ALLOWED_ROUTES`) or daemon-internal; member sessions reach
+    // a journal only through the comment handlers, whose guards live in
+    // `prepare_api_tx` / `comment_mutation_actor`.
+    if event_routes_to_journal(&req.r#type) {
+        ensure_actor_namespace_free(state, &actor)?;
+    }
+    let mut entry = TxEntry::new(&tx_id, &req.r#type, &time_str, actor, state.machine.clone());
     entry.project = req.project.clone();
     entry.task = req.task;
     entry.target = req.target;
@@ -8525,12 +8536,34 @@ async fn record_api_tx(state: &ApiState, req: ApiTxRequest) -> Result<String, Ap
     record_api_tx_after_project_mutation(state, req, None).await
 }
 
+/// dec_Q78QN — identity-aware variant of [`record_api_tx`]: `identity`
+/// decides whether the effective actor is admin-supplied (the member-namespace
+/// guard applies in `prepare_api_tx`) or a member session's own name (the one
+/// legitimate producer of an actor naming a member). Only producers reachable
+/// by a member session need this.
+async fn record_api_tx_as(
+    state: &ApiState,
+    identity: &Identity,
+    req: ApiTxRequest,
+) -> Result<String, ApiError> {
+    record_api_tx_after_project_mutation_as(state, identity, req, None).await
+}
+
 async fn record_api_tx_after_project_mutation(
     state: &ApiState,
     req: ApiTxRequest,
     mutation_project_id: Option<&str>,
 ) -> Result<String, ApiError> {
-    let prepared = prepare_api_tx(state, req).await?;
+    record_api_tx_after_project_mutation_as(state, &Identity::Admin, req, mutation_project_id).await
+}
+
+async fn record_api_tx_after_project_mutation_as(
+    state: &ApiState,
+    identity: &Identity,
+    req: ApiTxRequest,
+    mutation_project_id: Option<&str>,
+) -> Result<String, ApiError> {
+    let prepared = prepare_api_tx_as(state, identity, req).await?;
     let terminal_entry = prepared.tx.entry.clone();
     let res = state
         .writer
@@ -8559,6 +8592,18 @@ struct PreparedApiTx {
 }
 
 async fn prepare_api_tx(state: &ApiState, req: ApiTxRequest) -> Result<PreparedApiTx, ApiError> {
+    prepare_api_tx_as(state, &Identity::Admin, req).await
+}
+
+/// dec_Q78QN — identity-aware variant of [`prepare_api_tx`]: `identity`
+/// decides whether the effective actor is admin-supplied (the member-namespace
+/// guard applies) or a member session's own name (exempt — its handler forces
+/// the session name).
+async fn prepare_api_tx_as(
+    state: &ApiState,
+    identity: &Identity,
+    req: ApiTxRequest,
+) -> Result<PreparedApiTx, ApiError> {
     let now = Utc::now();
     if let Some(project_id) = req.project.as_deref() {
         let registered = state
@@ -8606,13 +8651,17 @@ async fn prepare_api_tx(state: &ApiState, req: ApiTxRequest) -> Result<PreparedA
         TxIdPolicy::ProjectSequence { .. } => "pending-project-sequence".to_string(),
     };
     let time_str = tx_time_string_utc(&now);
-    let mut entry = TxEntry::new(
-        tx_id,
-        &req.ty,
-        time_str,
-        choose_actor(&pseudo_req, project_entry.as_ref(), state),
-        state.machine.clone(),
-    );
+    let actor = choose_actor(&pseudo_req, project_entry.as_ref(), state);
+    // dec_Q78QN — same journal `:ACTOR:` namespace guard as
+    // `prepare_tx_append_request`, on the same `choose_actor` chain. A member
+    // session is exempt: its handler forces the session name as the actor,
+    // which is the one legitimate producer of an actor naming a member;
+    // admin-supplied and daemon-fallback actors are refused on journal-routed
+    // types.
+    if identity.member_name().is_none() && event_routes_to_journal(&req.ty) {
+        ensure_actor_namespace_free(state, &actor)?;
+    }
+    let mut entry = TxEntry::new(tx_id, &req.ty, time_str, actor, state.machine.clone());
     entry.project = pseudo_req.project;
     entry.task = pseudo_req.task;
     entry.target = pseudo_req.target;
@@ -38984,6 +39033,94 @@ pub(crate) mod tests {
             let refusal: Value = refusal.json().await.unwrap();
             assert!(refusal["error"].as_str().unwrap().contains("alice"));
         }
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// TASK-KA934.3.1 — the raw `POST /tx` surface stamps the same journal
+    /// `:ACTOR:` the comment handlers do (dec_Q78QN), so the guard hoisted
+    /// into `prepare_tx_append_request` must fire there: an admin tx on a
+    /// journal-routed type naming a member is refused with the collision
+    /// named, nothing is forged into the task journal, a non-colliding admin
+    /// tx still passes, and the member session comment path is untouched.
+    #[tokio::test]
+    async fn admin_post_tx_journal_actor_colliding_with_member_name_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root_a = tmp.path().join("proj-a");
+        let root_b = tmp.path().join("proj-b");
+        seed_two_projects(&home, &root_a, &root_b);
+        let alice_token = orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "viewer".to_string())],
+        )
+        .unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let alice_cookie = member_session_cookie(running.addr, &alice_token).await;
+        let client = reqwest::Client::new();
+        let base = format!("http://{}/api", running.addr);
+
+        // Admin POST /tx, journal-routed type, actor == member name: refused.
+        let refused = client
+            .post(format!("{base}/tx"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "type": "comment",
+                "actor": "alice",
+                "project": "proj-a",
+                "task": "TASK-001",
+                "reason": "comment",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        let refused: Value = refused.json().await.unwrap();
+        assert!(refused["error"].as_str().unwrap().contains("alice"));
+
+        // The refusal happened before any write: no forged `:ACTOR: alice`
+        // entry in the task journal.
+        let journal = root_a.join(".orgasmic/tasks/TASK-001/journal.org");
+        if journal.exists() {
+            let contents = std::fs::read_to_string(&journal).unwrap();
+            assert!(
+                !contents.contains(":ACTOR: alice"),
+                "forged actor landed in the journal"
+            );
+        }
+
+        // The same tx with a non-member actor passes the guard.
+        let allowed = client
+            .post(format!("{base}/tx"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "type": "comment",
+                "actor": "daemon-admin",
+                "project": "proj-a",
+                "task": "TASK-001",
+                "reason": "comment",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(allowed.status(), StatusCode::OK);
+
+        // The member session comment path is unaffected by the guard.
+        let member_comment = client
+            .post(format!("{base}/tasks/TASK-001/comments?project=proj-a"))
+            .header("cookie", &alice_cookie)
+            .json(&serde_json::json!({ "body": "member attribution is fine" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(member_comment.status(), StatusCode::OK);
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
