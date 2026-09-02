@@ -1390,6 +1390,59 @@ else
     PASSED=$((PASSED + 1))
 fi
 
+# orgasmic:TASK-STWVB.1.1.1.1.1.1
+# F-6: the rerun line is the one parser dependency whose breakage fails GREEN.
+# Reword it (as a cargo upgrade could) while cargo's independent `error: N
+# target(s) failed:` summary still counts one: before the cross-check this
+# read `GREEN modulo 1 registered flake`, exit 0, over a log this script could
+# no longer parse. The control below is the same log with the rerun line
+# intact, so the summary line alone is proven not to redden a run.
+start "F-6: rerun line reworded, cargo summary counts 1 -> RED parser drift, exit 1"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
+sed 's/^error: test failed, to rerun pass `/error: test failed; rerun with `/' \
+    "$TMP/suite.log" > "$TMP/suite.log.reworded" && mv "$TMP/suite.log.reworded" "$TMP/suite.log"
+printf 'error: 1 target failed:\n    `-p orgasmic-daemon --lib`\n' >> "$TMP/suite.log"
+run --classify "$TMP/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "targets  : cargo counts 1 failing target(s), this script parsed 0 rerun line(s) — PARSER DRIFT" \
+    "verdict: RED — cargo counts 1 failing target(s) but this script parsed 0 rerun line(s)."
+
+start "F-6 control: rerun line intact, cargo summary counts 1 -> agree, GREEN modulo 1"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
+printf 'error: 1 target failed:\n    `-p orgasmic-daemon --lib`\n' >> "$TMP/suite.log"
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "crashed  : none" \
+    "verdict: GREEN modulo 1 registered flake"
+if grep -qF 'PARSER DRIFT' "$TMP/out.txt"; then
+    fail_case "agreeing counts were reported as parser drift"
+fi
+
+# F-7: a cargo-shaped rerun line INSIDE a test's captured panic block used to be
+# read as a real failing target. The phantom then claimed the reporting binary,
+# so the target that DID report its failures was printed as crashed and
+# `--bin phantom` appeared nowhere. Both awks now honour the capture region.
+PHANTOM_PANIC="$LOAD_PANIC"$'\n''error: test failed, to rerun pass `--bin phantom`'
+start "F-7: cargo-shaped rerun line inside a captured panic block mints no target"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$PHANTOM_PANIC"
+printf 'error: 1 target failed:\n    `-p orgasmic-daemon --lib`\n' >> "$TMP/suite.log"
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "crashed  : none" \
+    "FLAKE (1)" \
+    "verdict: GREEN modulo 1 registered flake"
+start "F-7: the phantom target is named nowhere and nothing reads as crashed"
+if grep -qF -- '--bin phantom' "$TMP/out.txt" || grep -qF 'CRASHED (' "$TMP/out.txt"; then
+    fail_case "a rerun line inside a captured panic block minted a target"
+    printf -- '---- output ----\n'; cat "$TMP/out.txt"; printf -- '----------------\n'
+else
+    printf 'ok   %s\n' "$CASE"
+    PASSED=$((PASSED + 1))
+fi
+
 # ---------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$PASSED" "$FAILED"
