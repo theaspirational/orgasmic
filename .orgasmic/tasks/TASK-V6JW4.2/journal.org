@@ -30,3 +30,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: c259711d-c21e-4fe2-906a-b020ece8904f
 :END:
+
+* tx-20260902-orgasmic-967c1c0e-1e54-4549-a7bc-ed68e91861cb task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-967c1c0e-1e54-4549-a7bc-ed68e91861cb
+:TIME:    [2026-09-02 Wed 15:04:59]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-V6JW4.2
+:TARGET: .orgasmic/tasks/TASK-V6JW4.2/node.org
+:REASON: parent extraction cancelled as a duplicate 2026-09-02
+:FROM_STATE: todo
+:TO_STATE: cancelled
+:EVENT_ID: 0aa05d37-8d70-4f74-acf9-22f84894c759
+:END:

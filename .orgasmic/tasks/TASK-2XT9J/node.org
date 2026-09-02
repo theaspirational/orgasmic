@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-2XT9J
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-2XT9J Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
+* CANCELLED TASK-2XT9J Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-2XT9J
 :READ_SCOPE: named promoted dispatch reports

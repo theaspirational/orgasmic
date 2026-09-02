@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-NMV4P
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
+* CANCELLED TASK-NMV4P Multi-model extraction: When should a local-first developer tool prefer append-only event records over in-place mutable stat
 :PROPERTIES:
 :ID: TASK-NMV4P
 :READ_SCOPE: named promoted dispatch reports

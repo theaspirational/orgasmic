@@ -30,3 +30,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 92f91f8d-8e22-42e4-950c-776b4a9ed5f6
 :END:
+
+* tx-20260902-orgasmic-06723521-50d8-4e39-bb73-1dc4e5779b20 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-06723521-50d8-4e39-bb73-1dc4e5779b20
+:TIME:    [2026-09-02 Wed 15:04:57]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-02JJW
+:TARGET: .orgasmic/tasks/TASK-02JJW/node.org
+:REASON: 2026-09-02 operator decision: all four extraction parents ask the identical question (duplicate experiments); cancelled rather than spending 8 billed dispatches to paid outside models. Refile one if the answer is still wanted.
+:FROM_STATE: in_progress
+:TO_STATE: cancelled
+:EVENT_ID: fd4a6a92-40ff-42fa-97fc-95bb81aff3ed
+:END:

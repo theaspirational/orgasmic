@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-NMV4P.1
 #+orgasmic_version: 2
 
-* TODO TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
+* CANCELLED TASK-NMV4P.1 Extract — hermes · openai · gpt-5.6-luna · effort low
 :PROPERTIES:
 :ID: TASK-NMV4P.1
 :READ_SCOPE: question in dispatch brief; public or repository sources as needed
