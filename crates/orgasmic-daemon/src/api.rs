@@ -32410,6 +32410,67 @@ pub(crate) mod tests {
         let _ = running.join.await;
     }
 
+    // orgasmic:TASK-CS2TM
+    /// A body carrying `**` / `***` sub-headings is legitimate nested org and
+    /// must land under the task heading as-is: one level-1 heading, nested
+    /// sections readable back through the node read model.
+    #[tokio::test]
+    async fn task_create_stores_nested_heading_body_as_valid_org() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let body_text = "Intro prose with **bold** and ${not_a_shell_var}.\n\n\
+            ** Sub\nsub prose\n*** Subsub\nsubsub prose\n** Second\nmore";
+        let resp = client
+            .post(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "title": "Nested body", "body": body_text }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(status.is_success(), "nested-heading body: {status} {body}");
+        let created_id = body["id"].as_str().unwrap().to_string();
+
+        let after =
+            std::fs::read_to_string(task_node_file_path(&project_root, &created_id)).unwrap();
+        let level1 = after.lines().filter(|line| line.starts_with("* ")).count();
+        assert_eq!(level1, 1, "exactly one task heading:\n{after}");
+        assert!(after.contains("\n** Sub\n"), "{after}");
+        assert!(after.contains("\n*** Subsub\n"), "{after}");
+
+        let resp = client
+            .get(format!(
+                "{base}/api/org/node?project=orgasmic&id={created_id}"
+            ))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert!(resp.status().is_success(), "{}", resp.status());
+        let doc: Value = resp.json().await.unwrap();
+        let sections = doc["sections"].as_array().unwrap();
+        let titles: Vec<&str> = sections
+            .iter()
+            .filter_map(|section| section["title"].as_str())
+            .collect();
+        assert_eq!(titles, vec!["Sub", "Second"], "{doc}");
+        assert_eq!(sections[0]["sections"][0]["title"], "Subsub", "{doc}");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
     #[tokio::test]
     async fn org_node_read_and_edit_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
