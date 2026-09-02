@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use orgasmic_core::{DriverEvent, TextStream};
 
 use crate::modes::tmux::claude_session_path;
-use crate::preflight::{classify_api_key, read_status_output};
+use crate::preflight::{classify_api_key, read_status_output, Unasked};
 use crate::r#trait::{
     DriverConfig, DriverContext, DriverError, HarnessControlOutcome, HarnessEventAdapter,
     HarnessRequest, NativeRuntimeMeta, Preflight, PreflightOutcome, RunKind, StdioSpawn,
@@ -425,7 +425,7 @@ impl HarnessEventAdapter for ClaudeAdapter {
             .stdio_spawn()
             .map(|spawn| spawn.command)
             .unwrap_or_else(|| "claude".to_string());
-        let probe = ClaudeAuthProbe::observe(&command).await;
+        let (probe, unasked) = ClaudeAuthProbe::observe(&command).await;
         // A misconfigured `api_key_env` is already `validate`'s rejection and
         // reaches the operator as a config error, not a readiness one.
         let Ok(plan) = resolve_credentials(&cfg, &probe) else {
@@ -454,12 +454,16 @@ impl HarnessEventAdapter for ClaudeAdapter {
         );
         // Pin it. Whatever this verdict was reached on is what the launch gets,
         // even if a second `auth status` would now answer differently.
-        match serde_json::to_value(&plan) {
+        let mut outcome = match serde_json::to_value(&plan) {
             Ok(plan) => PreflightOutcome::verdict(verdict).with_plan(json!({
                 "credential_plan": plan,
             })),
             Err(_) => PreflightOutcome::verdict(verdict),
-        }
+        };
+        // Why the status command could not answer, if it could not, so the
+        // run's own record says so (TASK-AP298). Only read on `Unsupported`.
+        outcome.unchecked = unasked.map(Unasked::as_str);
+        outcome
     }
 
     fn compose_request(
@@ -815,16 +819,20 @@ impl ClaudeAuthProbe {
         }
     }
 
-    /// The async path, for the preflight.
-    async fn observe(command: &str) -> Self {
-        let evidence = match read_status_output(command, &["auth", "status"]).await {
-            Some(status) => native_login_evidence(&status.stdout),
-            None => NativeLoginEvidence::Unknown,
+    /// The async path, for the preflight. The second half says why the status
+    /// command could not be asked, when it could not.
+    async fn observe(command: &str) -> (Self, Option<Unasked>) {
+        let (evidence, unasked) = match read_status_output(command, &["auth", "status"]).await {
+            Ok(status) => (native_login_evidence(&status.stdout), None),
+            Err(why) => (NativeLoginEvidence::Unknown, Some(why)),
         };
-        Self {
-            native_login: evidence,
-            ..Self::ambient(api_key_helper_from_settings_file())
-        }
+        (
+            Self {
+                native_login: evidence,
+                ..Self::ambient(api_key_helper_from_settings_file())
+            },
+            unasked,
+        )
     }
 
     /// Everything that can be read without asking the harness anything.

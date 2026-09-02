@@ -196,18 +196,18 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             .stdio_spawn()
             .map(|spawn| spawn.command)
             .unwrap_or_else(|| "cursor-agent".to_string());
+        // Nothing to pin: which credential a cursor run presents is decided by
+        // `api_key_env` in the config, not by an observation that could change.
         match read_status_output(&command, &["status"]).await {
-            Some(status) => classify_prose_login(
+            Ok(status) => classify_prose_login(
                 &status.combined,
                 &CURSOR_LOGIN_PHRASES,
                 "cursor-agent is not logged in on this machine, so this worker cannot start. \
                  Run `cursor-agent login` and try the dispatch again.",
-            ),
-            None => Preflight::Unsupported,
+            )
+            .into(),
+            Err(why) => PreflightOutcome::unasked(why),
         }
-        // Nothing to pin: which credential a cursor run presents is decided by
-        // `api_key_env` in the config, not by an observation that could change.
-        .into()
     }
 
     fn stdio_spawn(&self) -> Option<StdioSpawn> {

@@ -14,8 +14,8 @@
 use anyhow::Result;
 use clap::Args;
 use orgasmic_drivers::catalog::{
-    runtime_options_by_harness, transport_profiles, HarnessRuntimeOptions, RuntimeOptionsSource,
-    TransportInteraction, TransportProfile,
+    health_by_harness, runtime_options_by_harness, transport_profiles, HarnessHealth,
+    HarnessRuntimeOptions, RuntimeOptionsSource, TransportInteraction, TransportProfile,
 };
 use serde::Serialize;
 
@@ -24,7 +24,8 @@ use serde::Serialize;
 Examples:
   orgasmic manager drivers
   orgasmic manager drivers --json
-  orgasmic manager drivers --unattended-only")]
+  orgasmic manager drivers --unattended-only
+  orgasmic manager drivers --health")]
 pub struct DriversArgs {
     /// Emit the full catalog as JSON.
     #[arg(long)]
@@ -35,6 +36,12 @@ pub struct DriversArgs {
     /// Skip the per-harness model/effort section (it probes harness adapters).
     #[arg(long = "no-runtime-options")]
     pub no_runtime_options: bool,
+    /// Instead of the matrix, run each harness's dispatch preflight and print
+    /// `<harness> auth=<ok|missing|unknown> quota=<...>` — the same probe a
+    /// dispatch runs, so a lockout shows here before a worker dies of it.
+    /// Quota is not probed by any adapter yet and reads `unknown (no probe)`.
+    #[arg(long)]
+    pub health: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +52,16 @@ struct DriversCatalog {
 }
 
 pub fn cmd_drivers(args: DriversArgs) -> Result<()> {
+    if args.health {
+        let runtime = tokio::runtime::Runtime::new()?;
+        let health = runtime.block_on(health_by_harness());
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&health)?);
+        } else {
+            print!("{}", render_health(&health));
+        }
+        return Ok(());
+    }
     let mut transports = transport_profiles();
     if args.unattended_only {
         transports.retain(|profile| profile.interaction.is_unattended());
@@ -147,6 +164,23 @@ fn render(
         );
     }
 
+    out
+}
+
+/// One line per harness; the refusal reason, when there is one, follows on
+/// the same line so the operator reads the remedy where they read the verdict.
+fn render_health(health: &[HarnessHealth]) -> String {
+    let mut out = String::new();
+    for entry in health {
+        out.push_str(&format!(
+            "{} auth={} quota={}",
+            entry.harness, entry.auth, entry.quota
+        ));
+        if let Some(detail) = entry.detail.as_deref() {
+            out.push_str(&format!("  ({detail})"));
+        }
+        out.push('\n');
+    }
     out
 }
 
@@ -311,6 +345,34 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("efforts low, high"), "{text}");
+    }
+
+    /// `--health` is one line per harness, and the quota column never claims
+    /// more than the adapters know (TASK-40ZMJ).
+    #[test]
+    fn health_listing_is_one_line_per_harness_and_never_invents_quota() {
+        let health = vec![
+            HarnessHealth {
+                harness: "claude".into(),
+                auth: "ok".into(),
+                quota: "unknown (no probe)".into(),
+                detail: None,
+            },
+            HarnessHealth {
+                harness: "codex".into(),
+                auth: "missing".into(),
+                quota: "unknown (no probe)".into(),
+                detail: Some("run `codex login`".into()),
+            },
+        ];
+        let text = render_health(&health);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert_eq!(lines[0], "claude auth=ok quota=unknown (no probe)");
+        assert_eq!(
+            lines[1],
+            "codex auth=missing quota=unknown (no probe)  (run `codex login`)"
+        );
     }
 
     #[test]

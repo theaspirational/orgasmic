@@ -800,6 +800,9 @@ struct DispatchRecord {
     branch: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    /// `PREFLIGHT` on `manager.dispatch_started`: `ok`, or `unchecked:<why>`
+    /// for a dispatch admitted without a credential check (TASK-AP298).
+    preflight: Option<String>,
     brief_path: Option<PathBuf>,
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
@@ -3229,7 +3232,7 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
             })
             .collect::<Vec<_>>();
         println!(
-            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} MODEL={} EFFORT={} {} {} {} {} CLAIM_HOLDER={} DOUBLE_CLAIM={}{}",
+            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} MODEL={} EFFORT={} {} {} {} {} CLAIM_HOLDER={} DOUBLE_CLAIM={}{}{}",
             record.tx_id,
             task_list_property(&record.tasks),
             record.kind,
@@ -3280,6 +3283,11 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 double_claims.join(";")
             },
             partial_closed
+                .map(|annotation| format!(" {annotation}"))
+                .unwrap_or_default(),
+            // Only when there is something to say: an admitted-but-unchecked
+            // dispatch is the one a post-mortem needs flagged (TASK-AP298).
+            unchecked_preflight_annotation(&record)
                 .map(|annotation| format!(" {annotation}"))
                 .unwrap_or_default()
         );
@@ -11093,6 +11101,7 @@ fn dispatch_record_from_fold(dispatch: DispatchFold, entries: &[TxEntry]) -> Dis
         branch: extra(started, "BRANCH").map(str::to_string),
         model: extra_compat(started, "MODEL", "CODEX_MODEL").map(str::to_string),
         effort: extra_compat(started, "EFFORT", "CODEX_EFFORT").map(str::to_string),
+        preflight: extra(started, "PREFLIGHT").map(str::to_string),
         brief_path: extra_compat(started, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
         last_path: run_extra("LAST_PATH").map(PathBuf::from),
         stdout_path: run_extra("STDOUT_PATH").map(PathBuf::from),
@@ -11116,6 +11125,16 @@ fn dispatch_record_from_fold(dispatch: DispatchFold, entries: &[TxEntry]) -> Dis
         reported: dispatch.reported,
         closed: dispatch.closed,
     }
+}
+
+/// `PREFLIGHT=<value>` for a dispatch whose preflight did not answer `ok`;
+/// nothing for `ok` and for records written before the property existed.
+fn unchecked_preflight_annotation(record: &DispatchRecord) -> Option<String> {
+    record
+        .preflight
+        .as_deref()
+        .filter(|verdict| *verdict != "ok")
+        .map(|verdict| format!("PREFLIGHT={verdict}"))
 }
 
 fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
@@ -11777,6 +11796,22 @@ mod tests {
         assert!(parse_wait_duration("30").is_err());
     }
 
+    /// `dispatch-status` flags the one case a post-mortem needs (TASK-AP298):
+    /// a dispatch admitted without a credential check. `ok` and records
+    /// written before the property existed print nothing extra.
+    #[test]
+    fn dispatch_status_flags_only_an_unchecked_preflight() {
+        let mut record = architector_record();
+        assert_eq!(unchecked_preflight_annotation(&record), None);
+        record.preflight = Some("ok".to_string());
+        assert_eq!(unchecked_preflight_annotation(&record), None);
+        record.preflight = Some("unchecked:spawn_failed".to_string());
+        assert_eq!(
+            unchecked_preflight_annotation(&record).as_deref(),
+            Some("PREFLIGHT=unchecked:spawn_failed")
+        );
+    }
+
     #[test]
     fn unknown_pid_prints_no_flag_and_zero_counts_as_unknown() {
         let mut record = architector_record();
@@ -11800,6 +11835,7 @@ mod tests {
             branch: None,
             model: None,
             effort: None,
+            preflight: None,
             brief_path: None,
             last_path: None,
             stdout_path: None,

@@ -18,8 +18,10 @@
 //! machine-readable catalog, the honest answer is
 //! [`RuntimeOptionsSource::Unavailable`] carrying the adapter's own reason.
 
+use orgasmic_core::RuntimeIdentity;
 use serde::Serialize;
 
+use crate::r#trait::{DriverConfig, DriverContext, Preflight, PreflightOutcome, RunKind};
 use crate::runtime_options::dedupe_non_empty;
 use crate::{adapter_for_pair, driver_for_mode_harness, SUPPORTED};
 
@@ -245,6 +247,83 @@ pub async fn harness_runtime_options(harness: &str) -> HarnessRuntimeOptions {
     }
 }
 
+/// One harness's readiness, as `manager drivers --health` reports it.
+///
+/// `auth` is the dispatch preflight's own verdict — the same probe, the same
+/// budget, run the same way (TASK-40ZMJ). `quota` is not probed by any
+/// adapter today, so it is always `unknown (no probe)`: the whole point of
+/// this surface is to say what is known, never to guess.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HarnessHealth {
+    pub harness: String,
+    /// `ok`, `missing`, or `unknown (<why>)`.
+    pub auth: String,
+    /// Always `unknown (no probe)` until an adapter learns to ask.
+    pub quota: String,
+    /// The probe's operator-facing reason when it refused (`auth=missing`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl HarnessHealth {
+    /// Word a preflight verdict for the operator. `None` is a harness no
+    /// adapter answers for at all.
+    fn from_outcome(harness: &str, outcome: Option<&PreflightOutcome>) -> Self {
+        let (auth, detail) = match outcome.map(|outcome| &outcome.verdict) {
+            None => ("unknown (no probe)".to_string(), None),
+            Some(Preflight::Ready) => ("ok".to_string(), None),
+            Some(Preflight::Fatal { reason }) => ("missing".to_string(), Some(reason.clone())),
+            Some(Preflight::Unsupported) => (
+                format!(
+                    "unknown ({})",
+                    outcome
+                        .and_then(|outcome| outcome.unchecked)
+                        .unwrap_or("no verdict")
+                ),
+                None,
+            ),
+        };
+        Self {
+            harness: harness.to_string(),
+            auth,
+            quota: "unknown (no probe)".to_string(),
+            detail,
+        }
+    }
+}
+
+/// Readiness of every harness in the matrix, from the dispatch preflight.
+pub async fn health_by_harness() -> Vec<HarnessHealth> {
+    let mut out = Vec::new();
+    for harness in supported_harnesses() {
+        out.push(harness_health(harness).await);
+    }
+    out
+}
+
+/// Run one harness's dispatch preflight with no dispatch behind it.
+///
+/// The context is empty on purpose: a probe must not depend on a run it is
+/// not creating (see `api::spawn_worker_run`), and an empty driver config is
+/// what a dispatch with no overrides hands the same probe.
+pub async fn harness_health(harness: &str) -> HarnessHealth {
+    let outcome = match adapter_for_harness(harness) {
+        None => None,
+        Some(mut adapter) => {
+            let ctx = DriverContext {
+                identity: RuntimeIdentity::default(),
+                run_kind: RunKind::Worker,
+                task_id: String::new(),
+                worker_id: String::new(),
+                project_id: None,
+                worktree: None,
+            };
+            Some(adapter.preflight(&ctx, &DriverConfig::empty()).await)
+        }
+    };
+    HarnessHealth::from_outcome(harness, outcome.as_ref())
+}
+
 /// The adapter a supported pair would build for this harness. Falls back to the
 /// plain harness adapter for a harness outside the matrix.
 fn adapter_for_harness(harness: &str) -> Option<Box<dyn crate::HarnessEventAdapter>> {
@@ -409,5 +488,42 @@ mod tests {
             "claude has no catalog surface; it must say so: {:?}",
             claude.source
         );
+    }
+
+    /// `--health` words the dispatch preflight and invents nothing: a refused
+    /// probe is `missing`, an inconclusive one says why it could not answer,
+    /// and quota is `unknown (no probe)` because no adapter asks (TASK-40ZMJ).
+    #[test]
+    fn health_words_each_preflight_outcome_and_never_invents_quota() {
+        let ready = HarnessHealth::from_outcome(
+            "claude",
+            Some(&PreflightOutcome::verdict(Preflight::Ready)),
+        );
+        assert_eq!(ready.auth, "ok");
+        assert_eq!(ready.quota, "unknown (no probe)");
+
+        let refused = HarnessHealth::from_outcome(
+            "codex",
+            Some(&PreflightOutcome::verdict(Preflight::fatal(
+                "run `codex login`",
+            ))),
+        );
+        assert_eq!(refused.auth, "missing");
+        assert_eq!(refused.detail.as_deref(), Some("run `codex login`"));
+
+        let timed_out = HarnessHealth::from_outcome(
+            "cursor-agent",
+            Some(&PreflightOutcome::unasked(
+                crate::preflight::Unasked::Timeout,
+            )),
+        );
+        assert_eq!(timed_out.auth, "unknown (timeout)");
+
+        let no_verdict = HarnessHealth::from_outcome("hermes", Some(&PreflightOutcome::default()));
+        assert_eq!(no_verdict.auth, "unknown (no verdict)");
+
+        let no_adapter = HarnessHealth::from_outcome("nothing", None);
+        assert_eq!(no_adapter.auth, "unknown (no probe)");
+        assert_eq!(no_adapter.quota, "unknown (no probe)");
     }
 }

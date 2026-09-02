@@ -6044,6 +6044,9 @@ struct SpawnWorkerResult {
     worker: StageWorker,
     session_path: PathBuf,
     pid: u32,
+    /// The preflight verdict this run was admitted on, as
+    /// [`PreflightOutcome::label`] words it, for the dispatch tx (TASK-AP298).
+    preflight: String,
 }
 
 struct SpawnWorkerFailure {
@@ -6137,7 +6140,19 @@ async fn spawn_worker_run(
     // lease was held (TASK-KKBTP). The plan is non-secret and rides into RunMeta
     // with the rest of the driver config, so a failed run says what it was
     // admitted on.
-    let driver_config = preflight.pin_into(&driver_config);
+    let mut driver_config = preflight.pin_into(&driver_config);
+    // The verdict itself, one word, travels the same way: the supervisor lifts
+    // it into RunMeta and the run summary, so a run that dies at startup says
+    // from its own record whether it was admitted checked or unchecked
+    // (TASK-AP298). Admission is unchanged — dec_7P79C still lets an
+    // inconclusive probe through.
+    let preflight_label = preflight.label();
+    if let Some(object) = driver_config.0.as_object_mut() {
+        object.insert(
+            "preflight".into(),
+            serde_json::Value::String(preflight_label.clone()),
+        );
+    }
 
     let now = Utc::now();
     let fragment = safe_session_fragment(req.task_id);
@@ -6290,6 +6305,7 @@ async fn spawn_worker_run(
         acquire,
         worker,
         session_path,
+        preflight: preflight_label,
     })
 }
 
@@ -6387,6 +6403,7 @@ async fn post_task_dispatch(
         worker,
         session_path,
         pid,
+        preflight,
     } = spawn;
 
     if let Err(error) = append_task_claim_event(
@@ -6425,6 +6442,7 @@ async fn post_task_dispatch(
                 Some(&worker.harness),
                 verbatim_optional(req.effort_override.clone()).as_deref(),
             ),
+            preflight: &preflight,
         },
     )
     .await?;
@@ -7439,6 +7457,8 @@ struct DispatchStartedRecord<'a> {
     /// passed through `supervisor::launched_effort` for the resolved
     /// driver/harness — so `:EFFORT:` says what ran (TASK-A55J7/TASK-C7NVH).
     effort: Option<String>,
+    /// `PREFLIGHT` on the tx: `ok`, or `unchecked:<why>` (TASK-AP298).
+    preflight: &'a str,
 }
 
 fn dispatch_expected_next(kind: DispatchEndpointKind) -> &'static str {
@@ -7499,6 +7519,7 @@ async fn record_dispatch_started(
             "NEXT".to_string(),
             dispatch_expected_next(record.kind).to_string(),
         ),
+        ("PREFLIGHT".to_string(), record.preflight.to_string()),
     ];
     if let Some(runtime) = non_empty_field(record.req.runtime.clone()) {
         extra.push(("RUNTIME".to_string(), runtime));
@@ -12408,6 +12429,8 @@ fn boot_reattach_candidate(
                 // Read back by the operator from the session JSONL; not input
                 // to the reattach call. Bound, never tested.
                 credential_mode: _,
+                // Likewise: the supervisor re-lifts it from `driver_config`.
+                preflight: _,
                 driver_config,
             }) => {
                 meta = Some((
@@ -22630,6 +22653,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     // orgasmic:task_K4G1D — the tmux arm completes an existing
                     // rule (derive the transport from the protocol) rather than
                     // adding a parallel seeding path beside it.
@@ -25750,6 +25774,7 @@ pub(crate) mod tests {
         push(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),
                 project_id: Some(project_id.into()),
@@ -26702,6 +26727,7 @@ pub(crate) mod tests {
         let meta = env(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),
                 project_id: Some("orgasmic".into()),
@@ -26746,6 +26772,7 @@ pub(crate) mod tests {
         let invalid_argv_meta = env(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),
                 project_id: Some("orgasmic".into()),
@@ -26820,6 +26847,7 @@ pub(crate) mod tests {
         // reattach: the mode is recorded evidence, not an input to `reattach`.
         for credential_mode in [None, Some("native_login"), Some("bare_api_key")] {
             let meta = env(serde_json::to_value(Lifecycle::RunMeta {
+                preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),
                 project_id: Some("orgasmic".into()),
@@ -26900,6 +26928,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     // orgasmic:task_3NJ9K — the transport is the stub because a
                     // test build may not hold an `stdio` one. What this run
                     // is a candidate *for* is `credential_mode: Some(_)`, which
@@ -27091,6 +27120,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: STUB_MODE.into(),
                     harness: Some(STUB_HARNESS.into()),
                     project_id: Some("orgasmic".into()),
@@ -27251,6 +27281,7 @@ pub(crate) mod tests {
                     .append(
                         SessionEventKind::Lifecycle,
                         serde_json::to_value(Lifecycle::RunMeta {
+                            preflight: None,
                             transport: transport.into(),
                             harness: Some(transport.into()),
                             project_id: Some("proj".into()),
@@ -27426,6 +27457,7 @@ pub(crate) mod tests {
         push(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                preflight: None,
                 transport: transport.into(),
                 harness: Some("claude".into()),
                 project_id: Some("proj".into()),
@@ -27575,6 +27607,7 @@ pub(crate) mod tests {
             env(
                 "rt-first",
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
                     project_id: Some("proj".into()),
@@ -28901,6 +28934,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     // orgasmic:task_3NJ9K — stub transport: what the manager
                     // recovery path is asked about is the session record, not
                     // the transport, and a test build may not hold a real one.
@@ -34827,6 +34861,7 @@ pub(crate) mod tests {
                 .append(
                     SessionEventKind::Lifecycle,
                     serde_json::to_value(Lifecycle::RunMeta {
+                        preflight: None,
                         transport: historical.into(),
                         harness: Some("claude".into()),
                         project_id: Some("orgasmic".into()),
@@ -35222,6 +35257,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
                     project_id: Some(project_id),
@@ -42098,6 +42134,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: mode.id().into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),
@@ -42523,6 +42560,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: mode.id().into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),
@@ -42704,6 +42742,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: mode.id().into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),

@@ -1143,6 +1143,9 @@ struct RunRecord {
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
     dispatch_attempt_token: Option<String>,
+    /// The dispatch preflight's one-word verdict (see `Lifecycle::RunMeta`).
+    /// `None` for runs that were not dispatched through a probe.
+    preflight: Option<String>,
     /// When true, this run must end with an explicit worker-declared terminal
     /// call writing the finalize tombstone (`finalized_by_worker` + reason).
     /// Protocol-end alone must not count as success (dec_WDR5K item 6 /
@@ -1677,6 +1680,10 @@ impl Supervisor {
         if let Some(object) = persisted_driver_config.0.as_object_mut() {
             object.remove("manager_terminal_capability");
         }
+        // The dispatch path writes its preflight verdict onto the config it
+        // hands over (`api::spawn_worker_run`); lift it into the run's own
+        // record so RunMeta and `/api/runs` say it without parsing the config.
+        let preflight = preflight_from_driver_config(&persisted_driver_config);
         let mut launch_driver_config = persisted_driver_config.clone();
         if req.role == "terminal" {
             if let Some(project_id) = req.project_id.as_deref() {
@@ -1757,6 +1764,7 @@ impl Supervisor {
                 .native_runtime
                 .as_ref()
                 .and_then(|native| native.credential_mode.clone()),
+            preflight.clone(),
             persisted_driver_config.clone(),
         )
         .await?;
@@ -1832,6 +1840,7 @@ impl Supervisor {
                 last_path: req.last_path.clone(),
                 stdout_path: req.stdout_path.clone(),
                 dispatch_attempt_token: req.dispatch_attempt_token.clone(),
+                preflight,
                 requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
                 terminal_round: 0,
                 terminal_declaration: None,
@@ -2155,6 +2164,7 @@ impl Supervisor {
                 native_runtime
                     .as_ref()
                     .and_then(|native| native.credential_mode.clone()),
+                preflight_from_driver_config(&driver_config),
                 driver_config,
             )
             .await?;
@@ -2223,6 +2233,7 @@ impl Supervisor {
         role: String,
         requires_worker_finalize: bool,
         credential_mode: Option<String>,
+        preflight: Option<String>,
         driver_config: DriverConfig,
     ) -> Result<(), SupervisorError> {
         let evt = Lifecycle::RunMeta {
@@ -2236,6 +2247,7 @@ impl Supervisor {
             role: Some(role),
             requires_worker_finalize: Some(requires_worker_finalize),
             credential_mode,
+            preflight,
             driver_config: driver_config.0,
         };
         self.writer
@@ -2524,6 +2536,7 @@ impl Supervisor {
             last_path: recovery_last_path,
             stdout_path: recovery_stdout_path,
             dispatch_attempt_token: None,
+            preflight: preflight_from_driver_config(&driver_config),
             requires_worker_finalize,
             terminal_round: 0,
             terminal_declaration: None,
@@ -3203,6 +3216,7 @@ impl Supervisor {
                 last_path: rec.last_path.clone(),
                 stdout_path: rec.stdout_path.clone(),
                 dispatch_attempt_token: rec.dispatch_attempt_token.clone(),
+                preflight: rec.preflight.clone(),
                 claimed_manager: rec.manager_terminal_claim.is_some(),
             })
             .collect();
@@ -4595,10 +4609,24 @@ pub struct RunSummary {
     pub stdout_path: Option<PathBuf>,
     #[serde(default)]
     pub dispatch_attempt_token: Option<String>,
+    /// The dispatch preflight's one-word verdict (`ok`, `unchecked:<why>`),
+    /// `None` when the run was not admitted through a probe (TASK-AP298).
+    #[serde(default)]
+    pub preflight: Option<String>,
     /// True exactly when this live run is a custom terminal promoted into the
     /// project's manager lease. The capability and provider stay private.
     #[serde(default)]
     pub claimed_manager: bool,
+}
+
+/// The preflight verdict the dispatch path wrote onto the driver config
+/// (`api::spawn_worker_run`), if this run came through one.
+fn preflight_from_driver_config(config: &DriverConfig) -> Option<String> {
+    config
+        .0
+        .get("preflight")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 fn into_anyhow(e: serde_json::Error) -> anyhow::Error {
@@ -8255,6 +8283,56 @@ mod tests {
             Some("high")
         );
         assert_eq!(launched_effort("ws", Some("codex"), None), None);
+    }
+
+    /// An admitted-but-unchecked preflight must be readable from the run's own
+    /// evidence (TASK-AP298): the dispatch path writes the verdict onto the
+    /// driver config, and the supervisor lifts it into `RunMeta` and the run
+    /// summary. A run that dies at startup then says "admitted without a
+    /// credential check" itself, with no daemon-log correlation.
+    #[tokio::test]
+    async fn the_preflight_verdict_round_trips_through_run_meta_and_the_run_summary() {
+        let (sup, dir, _writer) = make_supervisor();
+        let mut req = impl_req("TASK-PREFLIGHT-UNCHECKED", dir.path());
+        req.driver_config
+            .0
+            .as_object_mut()
+            .unwrap()
+            .insert("preflight".into(), json!("unchecked:timeout"));
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&CredentialModeDriver, req).await.unwrap();
+
+        let live = sup
+            .snapshot()
+            .await
+            .runs
+            .into_iter()
+            .find(|run| run.run_id == resp.run_id)
+            .expect("the run is live");
+        assert_eq!(live.preflight.as_deref(), Some("unchecked:timeout"));
+
+        let recorded = session_events(&session_path)
+            .into_iter()
+            .filter(|envelope| envelope.kind == SessionEventKind::Lifecycle)
+            .find_map(|envelope| match serde_json::from_value(envelope.event) {
+                Ok(Lifecycle::RunMeta { preflight, .. }) => Some(preflight),
+                _ => None,
+            })
+            .expect("acquire must write a RunMeta event");
+        assert_eq!(recorded.as_deref(), Some("unchecked:timeout"));
+
+        // A run that came through no probe, and JSONL written before the
+        // field existed, report nothing rather than failing to parse.
+        let legacy = json!({
+            "phase": "run_meta",
+            "transport": "stdio",
+            "driver_config": {},
+        });
+        let Ok(Lifecycle::RunMeta { preflight, .. }) = serde_json::from_value::<Lifecycle>(legacy)
+        else {
+            panic!("RunMeta written before this field existed must still parse");
+        };
+        assert_eq!(preflight, None);
     }
 
     // orgasmic:TASK-AK6EM
@@ -13428,6 +13506,7 @@ mod tests {
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
+            preflight: None,
             requires_worker_finalize: true,
             terminal_round: 0,
             terminal_declaration: None,

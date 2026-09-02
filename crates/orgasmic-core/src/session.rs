@@ -1095,6 +1095,14 @@ pub enum Lifecycle {
         /// (TASK-S0QRM).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         credential_mode: Option<String>,
+        /// The dispatch preflight's verdict, one word — `ok`, or
+        /// `unchecked:<timeout|spawn_failed|inconclusive>` for a run admitted
+        /// per dec_7P79C without a credential check. A run that dies at
+        /// startup can then say so from its own record instead of the operator
+        /// correlating daemon-log timestamps (TASK-AP298). `None` for
+        /// non-dispatch runs and for session JSONL written before this field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preflight: Option<String>,
         driver_config: Value,
     },
     /// The stage (`grill` / `plan` / `architect`) this run was launched as,
