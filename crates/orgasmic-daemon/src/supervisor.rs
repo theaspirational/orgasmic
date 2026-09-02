@@ -3380,10 +3380,11 @@ impl Supervisor {
                             pid: rec.early_exit_watcher_pid,
                         },
                         rec.last_progress_at,
+                        rec.session_path.clone(),
                     )
                 })
             };
-            let Some((target, progress_before_probe)) = observed else {
+            let Some((target, progress_before_probe, session_path)) = observed else {
                 return;
             };
             let probed_identity = target.identity.clone();
@@ -3421,7 +3422,27 @@ impl Supervisor {
                     );
                     return;
                 }
-                WorkEvidence::Idle { detail } => (revalidated, Some(detail)),
+                WorkEvidence::Idle { detail, pane } => {
+                    // orgasmic:TASK-8VBXR — the kill is decided; save the frame
+                    // it was decided on BEFORE the release tears down the pane.
+                    // A failed write is named in the reason and never blocks
+                    // the kill.
+                    let detail = match pane {
+                        Some(pane) => match persist_stall_pane(&session_path, &pane) {
+                            Ok(path) => format!("{detail}; evidence={}", path.display()),
+                            Err(e) => {
+                                warn!(
+                                    run_id = %revalidated.run_id,
+                                    error = %e,
+                                    "stall pane evidence not written"
+                                );
+                                format!("{detail}; evidence unwritable: {e}")
+                            }
+                        },
+                        None => detail,
+                    };
+                    (revalidated, Some(detail))
+                }
                 WorkEvidence::Unknown => (revalidated, None),
             }
         } else {
@@ -4784,7 +4805,14 @@ pub(crate) enum WorkEvidence {
     Working { detail: String },
     /// The daemon looked and found none. The stall stands, and `detail` says
     /// what was looked at so the operator can tell a wedge from a quiet worker.
-    Idle { detail: String },
+    /// `pane` is the captured pane frame the verdict was read from, when there
+    /// was one — orgasmic:TASK-8VBXR: it is persisted before the kill tears
+    /// down the session that held it, because it is the only artifact that can
+    /// explain the death.
+    Idle {
+        detail: String,
+        pane: Option<String>,
+    },
     /// The daemon could not look: no probe target, no mux binary, no session,
     /// `ps` unavailable, or the probe outran [`WORK_PROBE_TIMEOUT`]. The stall
     /// stands on today's bare reason — a probe that cannot run must not be able
@@ -4866,6 +4894,7 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
         let Some((processes, cpu_percent)) = subtree_cpu_percent(&table, root) else {
             return WorkEvidence::Idle {
                 detail: format!("no live process under pid {root}"),
+                pane: None,
             };
         };
         let cpu_detail = format!(
@@ -4897,18 +4926,50 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
                             detail: format!(
                                 "{cpu_detail}; no open-turn statusline in pane capture"
                             ),
+                            pane: Some(pane),
                         };
                     }
                 },
                 None => {
                     return WorkEvidence::Idle {
                         detail: format!("{cpu_detail}; pane capture unavailable"),
+                        pane: None,
                     };
                 }
             }
         }
-        WorkEvidence::Idle { detail: cpu_detail }
+        WorkEvidence::Idle {
+            detail: cpu_detail,
+            pane: None,
+        }
     }
+}
+
+/// Cap on the pane evidence written at a stall kill: the TAIL of the capture,
+/// which is where the harness's last frame sits.
+const STALL_PANE_EVIDENCE_MAX_BYTES: usize = 64 * 1024;
+
+/// Where a stall kill leaves the pane frame it judged: beside the run's
+/// session file, `<session stem>-stall-pane.txt`. The session file is the one
+/// path the supervisor already owns at release time, and the reason names the
+/// full path, so the operator does not have to derive it.
+// orgasmic:TASK-8VBXR
+fn stall_pane_evidence_path(session_path: &Path) -> PathBuf {
+    let stem = session_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("session");
+    session_path.with_file_name(format!("{stem}-stall-pane.txt"))
+}
+
+fn persist_stall_pane(session_path: &Path, pane: &str) -> std::io::Result<PathBuf> {
+    let path = stall_pane_evidence_path(session_path);
+    let mut start = pane.len().saturating_sub(STALL_PANE_EVIDENCE_MAX_BYTES);
+    while !pane.is_char_boundary(start) {
+        start += 1;
+    }
+    std::fs::write(&path, &pane[start..])?;
+    Ok(path)
 }
 
 /// The process to walk down from. A subprocess transport hands us its wrapper
@@ -7948,6 +8009,7 @@ mod tests {
                 .recv_timeout(Duration::from_secs(10));
             WorkEvidence::Idle {
                 detail: "held probe found nothing".into(),
+                pane: None,
             }
         }
     }
@@ -10082,6 +10144,7 @@ mod tests {
         // from being `stall_timeout_secs: Some(0)` by another name.
         sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Idle {
             detail: "1 process(es) under pid 4242 at 0.2% cpu (work threshold 5.0%)".into(),
+            pane: None,
         })));
         age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
         sup.release_first_timed_out_run().await;
@@ -10101,6 +10164,7 @@ mod tests {
         let (sup, dir, _w) = make_unmonitored_supervisor();
         sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Idle {
             detail: "1 process(es) under pid 4242 at 0.2% cpu (work threshold 5.0%)".into(),
+            pane: None,
         })));
         let driver = TmuxPaneDriver::new();
         let req = manual_req("TASK-STALL-REASON", dir.path(), Some(1), None);
@@ -10144,6 +10208,91 @@ mod tests {
 
         assert!(!run_is_live(&sup, &resp.run_id).await);
         assert_release_reason(&session_path, "stall_timeout_exceeded");
+    }
+
+    /// TASK-8VBXR — the killer read a pane to decide; that frame must survive
+    /// the session it kills, beside the session file, and the reason must say
+    /// where. The frame is the measured 2026-08-08 death: a provider refusal
+    /// and the harness parked at its idle input placeholder.
+    #[tokio::test]
+    async fn a_stall_kill_saves_the_pane_it_judged_and_names_it_in_the_reason() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        let frame = "ⓘ This content can't be shown\n  We take extra caution with \
+                     cybersecurity requests.\n\n› Implement {feature}\n";
+        sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Idle {
+            detail: "7 process(es) under pid 11873 at 0.0% cpu (work threshold 5.0%); \
+                     no open-turn statusline in pane capture"
+                .into(),
+            pane: Some(frame.to_string()),
+        })));
+        let driver = TmuxPaneDriver::new();
+        let req = manual_req("TASK-STALL-PANE-EVIDENCE", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        age_run(&sup, &resp.run_id, Some(Duration::from_secs(600)), None).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        let evidence = stall_pane_evidence_path(&session_path);
+        assert_eq!(
+            std::fs::read_to_string(&evidence).expect("pane evidence file beside the session"),
+            frame,
+            "the file must hold the frame the killer scanned"
+        );
+        let reason = release_reason(&session_path).expect("release tombstone");
+        assert_eq!(reason.split(':').next(), Some("stall_timeout_exceeded"));
+        assert!(
+            reason.contains(&format!("evidence={}", evidence.display())),
+            "the reason must name the evidence path: {reason}"
+        );
+    }
+
+    /// TASK-8VBXR — a pane that cannot be written must not save the run. The
+    /// evidence path is pre-occupied by a directory so the write fails while
+    /// the session file beside it stays writable; the kill lands and the reason
+    /// says why there is no file.
+    #[tokio::test]
+    async fn a_stall_kill_whose_pane_evidence_cannot_be_written_still_kills() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Idle {
+            detail: "1 process(es) under pid 4242 at 0.0% cpu (work threshold 5.0%); \
+                     no open-turn statusline in pane capture"
+                .into(),
+            pane: Some("› Implement {feature}\n".into()),
+        })));
+        let driver = TmuxPaneDriver::new();
+        let req = manual_req("TASK-STALL-PANE-UNWRITABLE", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        std::fs::create_dir_all(stall_pane_evidence_path(&session_path)).unwrap();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        age_run(&sup, &resp.run_id, Some(Duration::from_secs(600)), None).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        let reason = release_reason(&session_path).expect("release tombstone");
+        assert_eq!(reason.split(':').next(), Some("stall_timeout_exceeded"));
+        assert!(
+            reason.contains("evidence unwritable"),
+            "the reason must say the evidence could not be written: {reason}"
+        );
+    }
+
+    /// TASK-8VBXR — the evidence is the TAIL of an oversized capture, cut on a
+    /// char boundary.
+    #[test]
+    fn stall_pane_evidence_keeps_the_tail_within_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_path = dir.path().join("run.jsonl");
+        let pane = "é".repeat(STALL_PANE_EVIDENCE_MAX_BYTES) + "\n› idle prompt";
+        let path = persist_stall_pane(&session_path, &pane).unwrap();
+        assert_eq!(path, dir.path().join("run-stall-pane.txt"));
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.len() <= STALL_PANE_EVIDENCE_MAX_BYTES);
+        assert!(written.ends_with("\n› idle prompt"));
     }
 
     /// The classification itself, event by event, with the reason each one is
@@ -14195,6 +14344,17 @@ mod tests {
         assert!(
             reason.contains("no open-turn statusline in pane capture"),
             "the reason must say the pane was consulted and came up empty: {reason}"
+        );
+        // TASK-8VBXR — the frame the verdict was read from outlives the pane.
+        let evidence = stall_pane_evidence_path(&session_path);
+        assert!(
+            reason.contains(&format!("evidence={}", evidence.display())),
+            "the reason must name the saved pane: {reason}"
+        );
+        assert!(
+            evidence.is_file(),
+            "the judged pane must be on disk at {}",
+            evidence.display()
         );
 
         kill_tmux_probe_pane_stub(&session);
