@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-JWHXH.3.2
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-JWHXH.3.2 project migrate on a non-git root: views cleanup only; refuse the v1->v2 rewrite and --to-branch up front :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-JWHXH.3.2
+:IMPLEMENTS: dec_XH2XY
+:PRIORITY: P2
+:RELATES_TO: TASK-JWHXH.3.1
+:FIX_SUBTASK: t
+:END:
+
+Fix round for the JWHXH.3.1 review (opus-5, tx-21182657; merged e290d7fb). MEDIUM: the non-git early return in refuse_dirty_tree lets run_at fall through to apply_with_recovery (destructive v1->v2 rewrite) on a non-git root, where the partial-apply recovery hint prints inert git commands; --to-branch dies late inside create_orphan_branch after views were already deleted. Fix in run_at: detect the work tree once; on a non-git root run only the views cleanup, then refuse the v1->v2 rewrite and --to-branch up front with a plain message (no VCS to recover from; init git or back up first). Keep the summary helper; cover the println path once in the real-apply test if cheap.
+
+** Acceptance
+- [ ] Non-git v1 fixture: migrate deletes views, refuses the rewrite with the plain message, leaves the v1 files untouched; non-git --to-branch refused before any git call (tests).
+- [ ] Git fixtures unchanged. cargo test -p orgasmic-cli --bin orgasmic -- migrate doctor; clippy -D; fmt.

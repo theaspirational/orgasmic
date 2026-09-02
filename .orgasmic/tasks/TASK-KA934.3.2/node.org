@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-KA934.3.2
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-KA934.3.2 Inverse :ACTOR: guard: member add refuses the daemon actor name; doctor warns; narrow the guard to comment writes :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-KA934.3.2
+:IMPLEMENTS: dec_Q78QN
+:PRIORITY: P2
+:RELATES_TO: TASK-KA934.3.1
+:FIX_SUBTASK: t
+:END:
+
+Fix round for the KA934.3.1 review (opus-5, tx-160c6cc2; merged 2be9f0a0). MEDIUM: the guard now covers every journal-routed admin tx, so `orgasmic member add <daemon actor name>` ($USER by default, lib.rs:~268; or manager_actor) 403s every task write. Three moves: (1) narrow the guard back to journal writes where :ACTOR: grants rights (type comment) - the wider scope buys nothing; (2) inverse guard: orgasmic member add refuses a name equal to the daemon actor default ($USER) and to the configured manager_actor / --actor if discoverable from the daemon config or a reachable daemon status; (3) doctor warns when any members.org name equals the live daemon actor or manager_actor. Also fix the dead assertion in admin_post_tx_journal_actor_colliding_with_member_name_refused (assert the journal does not exist).
+
+** Acceptance
+- [ ] member add <daemon-actor-name> is refused with a message naming the collision; doctor warns on an existing collision; guard fires only for comment-type journal writes (tests).
+- [ ] Dead assertion fixed. cargo test -p orgasmic-daemon --lib -- comment member identity authz post_tx; cargo test -p orgasmic-cli --bin orgasmic -- member doctor; clippy -D; fmt.
