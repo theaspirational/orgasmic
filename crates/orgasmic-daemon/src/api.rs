@@ -7711,14 +7711,92 @@ struct DispatchCompletion {
     worktree_path: PathBuf,
 }
 
+/// Incremental reader over one growing session JSONL, for the completion
+/// watcher (orgasmic:TASK-EKF7T). Each [`SessionTail::poll`] reads only the
+/// bytes appended since the previous poll and parses only the complete lines
+/// among them, so following a run costs the transcript once, not once per
+/// poll. Only the envelopes the watcher's predicates consult are retained:
+/// lifecycle events and terminal driver events (`run_complete` / `run_fail` /
+/// `run_error`); transcript is parsed once and dropped.
+///
+/// Strictness: an unterminated final fragment is the live writer mid-append
+/// and is simply carried to the next poll. A malformed newline-TERMINATED line
+/// is complete persisted content and makes the file unreadable, as
+/// [`read_session_file`] did — the state is left untouched so the caller's
+/// retry sees the same error until its grace elapses. A file shorter than the
+/// last offset (truncation/rotation) restarts from byte 0.
+#[derive(Default)]
+struct SessionTail {
+    offset: u64,
+    partial: Vec<u8>,
+    envelopes: Vec<SessionEnvelope>,
+}
+
+impl SessionTail {
+    /// Read and parse whatever was appended since the last poll. Returns the
+    /// number of bytes read from disk.
+    fn poll(&mut self, path: &FsPath) -> Result<u64, orgasmic_core::SessionError> {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+
+        let mut file = std::fs::File::open(path)?;
+        let len = file.metadata()?.len();
+        if len < self.offset {
+            *self = Self::default();
+        }
+        if len == self.offset {
+            return Ok(0);
+        }
+        file.seek(SeekFrom::Start(self.offset))?;
+        let mut buf = std::mem::take(&mut self.partial);
+        let carried = buf.len();
+        file.read_to_end(&mut buf)?;
+        let read = (buf.len() - carried) as u64;
+        let complete = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        let mut parsed = Vec::new();
+        for line in buf[..complete].split(|b| *b == b'\n') {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            match serde_json::from_slice::<SessionEnvelope>(line) {
+                Ok(envelope) => parsed.push(envelope),
+                Err(err) => {
+                    // Leave offset/partial where they were: the next poll
+                    // re-reads and fails the same way, matching whole-file
+                    // strictness instead of skipping past persisted junk.
+                    self.partial = buf;
+                    self.partial.truncate(carried);
+                    return Err(err.into());
+                }
+            }
+        }
+        self.offset += read;
+        self.partial = buf.split_off(complete);
+        self.envelopes.extend(parsed.into_iter().filter(|envelope| {
+            envelope.kind == SessionEventKind::Lifecycle
+                || (envelope.kind == SessionEventKind::DriverEvent
+                    && matches!(
+                        envelope.event.get("type").and_then(Value::as_str),
+                        Some("run_complete" | "run_fail" | "run_error")
+                    ))
+        }));
+        Ok(read)
+    }
+}
+
 /// Follow the run while the supervisor holds it live, then classify its
 /// persisted release. Worker finalize owns all success artifacts; this watcher
 /// only records failed/orphaned termination and never scrapes a report.
+///
+/// The supervisor snapshot is the cheap lifecycle fact and is consulted first;
+/// the session file is touched only after release, and then incrementally
+/// through [`SessionTail`] (orgasmic:TASK-EKF7T).
 fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchCompletion) {
     tokio::spawn(async move {
         let grace = state.dispatch_watcher_grace;
         let poll = std::time::Duration::from_millis(250);
         let mut finalize_deadline: Option<std::time::Instant> = None;
+        let mut tail = SessionTail::default();
         loop {
             let live = state
                 .supervisor
@@ -7735,7 +7813,7 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
             let deadline =
                 *finalize_deadline.get_or_insert_with(|| std::time::Instant::now() + grace);
             let grace_elapsed = std::time::Instant::now() >= deadline;
-            let Ok(envelopes) = read_session_file(&completion.session_path) else {
+            if tail.poll(&completion.session_path).is_err() {
                 if grace_elapsed {
                     tracing::warn!(
                         run_id = %completion.run_id,
@@ -7746,11 +7824,12 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 }
                 tokio::time::sleep(poll).await;
                 continue;
-            };
+            }
+            let envelopes = &tail.envelopes;
             // dec_3M7M0 / TASK-AFE5Q: worker-declared finalize is the sole
             // success authority. If it landed, the worker already wrote
             // last.txt/stdout.log verbatim — never overwrite that report.
-            if dispatch_release_finalized_by_worker(&envelopes) {
+            if dispatch_release_finalized_by_worker(envelopes) {
                 tracing::info!(
                     run_id = %completion.run_id,
                     "dispatch completion watcher: worker finalized via `orgasmic dispatch finalize`, skipping scrape"
@@ -7760,26 +7839,26 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
             // dec_3M7M0 / TASK-ZB90M: only worker finalize may author
             // completion artifacts. Any tombstone with finalized_by_worker=false
             // is orphan — never synthesize last.txt/stdout.log from driver events.
-            if dispatch_release_without_worker_finalize(&envelopes) {
-                if dispatch_release_requires_orphan_signal(&envelopes) {
+            if dispatch_release_without_worker_finalize(envelopes) {
+                if dispatch_release_requires_orphan_signal(envelopes) {
                     tracing::warn!(
                         run_id = %completion.run_id,
-                        reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
+                        reason = dispatch_release_reason(envelopes).as_deref().unwrap_or(""),
                         "dispatch completion watcher: release without worker finalize, flagging orphan"
                     );
                     record_dispatch_orphaned(&state, &completion).await;
                 } else {
                     tracing::info!(
                         run_id = %completion.run_id,
-                        reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
+                        reason = dispatch_release_reason(envelopes).as_deref().unwrap_or(""),
                         "dispatch completion watcher: cancelled release without worker finalize, no orphan"
                     );
                 }
                 return;
             }
             if grace_elapsed {
-                if dispatch_terminal_reached(&envelopes)
-                    && dispatch_release_requires_orphan_signal(&envelopes)
+                if dispatch_terminal_reached(envelopes)
+                    && dispatch_release_requires_orphan_signal(envelopes)
                 {
                     tracing::warn!(
                         run_id = %completion.run_id,
@@ -8254,6 +8333,10 @@ fn spawn_stage_completion_watcher(state: ApiState, completion: StageCompletion) 
 }
 
 pub(crate) fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
+    // orgasmic:TASK-EKF7T — deliberately still a whole-file read: one read at
+    // terminal time, and the ordering rules below consume `driver_error`
+    // events and the finalize-admission note, both of which the lifecycle
+    // scanner drops as transcript.
     let envelopes = match read_session_file(session_path) {
         Ok(envelopes) => envelopes,
         Err(e) => {
@@ -28994,6 +29077,165 @@ pub(crate) mod tests {
             !dispatch_terminal_reached(&envelopes),
             "Interrupted lifecycle alone must not satisfy dispatch terminal gate"
         );
+    }
+
+    fn session_tail_line(seq: u64, kind: SessionEventKind, event: Value) -> String {
+        let envelope = SessionEnvelope {
+            seq,
+            time: chrono::Utc::now(),
+            run_id: "run-tail".into(),
+            runtime_id: "rt-tail".into(),
+            boot_id: "boot-tail".into(),
+            kind,
+            event,
+        };
+        let mut line = serde_json::to_string(&envelope).unwrap();
+        line.push('\n');
+        line
+    }
+
+    fn append_raw(path: &FsPath, bytes: &[u8]) {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        file.write_all(bytes).unwrap();
+    }
+
+    /// orgasmic:TASK-EKF7T — the completion watcher's incremental reader parses
+    /// each appended line exactly once and reads only the new bytes per poll.
+    #[test]
+    fn session_tail_incremental_reads_each_line_once_and_only_new_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("session.jsonl");
+        // A bulky transcript head: parsed once, retained never.
+        let head = session_tail_line(
+            0,
+            SessionEventKind::DriverEvent,
+            json!({"type": "text_chunk", "stream": "assistant", "chunk": "x".repeat(64 * 1024), "seq": 0}),
+        );
+        append_raw(&path, head.as_bytes());
+        let mut tail = SessionTail::default();
+        let first = tail.poll(&path).unwrap();
+        assert_eq!(first, head.len() as u64);
+        assert!(
+            tail.envelopes.is_empty(),
+            "transcript is parsed but not retained"
+        );
+        assert_eq!(tail.poll(&path).unwrap(), 0, "no growth, no bytes read");
+
+        let mut appended_bytes = 0_u64;
+        let mut total_read = 0_u64;
+        let n = 40;
+        for i in 1..=n {
+            let line = session_tail_line(
+                i,
+                SessionEventKind::Lifecycle,
+                json!({"phase": "note", "text": format!("poll {i}")}),
+            );
+            append_raw(&path, line.as_bytes());
+            appended_bytes += line.len() as u64;
+            let read = tail.poll(&path).unwrap();
+            assert_eq!(read, line.len() as u64, "poll {i} read only the new line");
+            total_read += read;
+            assert_eq!(
+                tail.envelopes.len(),
+                i as usize,
+                "poll {i} parsed each line once"
+            );
+            assert_eq!(tail.envelopes.last().unwrap().seq, i);
+        }
+        assert_eq!(total_read, appended_bytes);
+        let seqs: Vec<u64> = tail.envelopes.iter().map(|e| e.seq).collect();
+        assert_eq!(seqs, (1..=n).collect::<Vec<_>>(), "no duplicates, no gaps");
+
+        // A torn final line is carried across polls and parsed exactly once.
+        let release = session_tail_line(
+            n + 1,
+            SessionEventKind::Lifecycle,
+            serde_json::to_value(Lifecycle::Release {
+                reason: "worker finalize".into(),
+                outcome: ReleaseOutcome::Completed,
+                finalized_by_worker: true,
+            })
+            .unwrap(),
+        );
+        let (a, b) = release.as_bytes().split_at(release.len() / 2);
+        append_raw(&path, a);
+        assert_eq!(tail.poll(&path).unwrap(), a.len() as u64);
+        assert_eq!(
+            tail.envelopes.len(),
+            n as usize,
+            "half a line is not an envelope"
+        );
+        assert!(!dispatch_release_finalized_by_worker(&tail.envelopes));
+        append_raw(&path, b);
+        assert_eq!(tail.poll(&path).unwrap(), b.len() as u64);
+        assert_eq!(tail.envelopes.len(), n as usize + 1);
+        assert!(dispatch_release_finalized_by_worker(&tail.envelopes));
+        assert!(tail.partial.is_empty());
+    }
+
+    /// orgasmic:TASK-EKF7T — a file that shrinks below the last offset
+    /// (truncation/rotation) restarts from byte 0 instead of seeking past EOF.
+    #[test]
+    fn session_tail_restarts_from_zero_on_truncation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("session.jsonl");
+        let mut tail = SessionTail::default();
+        for i in 0..5 {
+            let line = session_tail_line(
+                i,
+                SessionEventKind::Lifecycle,
+                json!({"phase": "note", "text": "before"}),
+            );
+            append_raw(&path, line.as_bytes());
+        }
+        tail.poll(&path).unwrap();
+        assert_eq!(tail.envelopes.len(), 5);
+
+        std::fs::write(&path, b"").unwrap();
+        let line = session_tail_line(
+            0,
+            SessionEventKind::Lifecycle,
+            json!({"phase": "note", "text": "after"}),
+        );
+        append_raw(&path, line.as_bytes());
+        assert_eq!(tail.poll(&path).unwrap(), line.len() as u64);
+        assert_eq!(tail.envelopes.len(), 1, "rotated file is re-read from 0");
+        assert_eq!(tail.offset, line.len() as u64);
+        assert_eq!(
+            tail.envelopes[0].event.get("text").and_then(Value::as_str),
+            Some("after")
+        );
+    }
+
+    /// orgasmic:TASK-EKF7T — a malformed newline-terminated line keeps the
+    /// whole-file strictness: the poll errors and leaves its state untouched, so
+    /// the watcher's retry-until-grace path sees the same error each time.
+    #[test]
+    fn session_tail_malformed_terminated_line_errors_without_advancing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("session.jsonl");
+        let good = session_tail_line(
+            0,
+            SessionEventKind::Lifecycle,
+            json!({"phase": "note", "text": "ok"}),
+        );
+        append_raw(&path, good.as_bytes());
+        let mut tail = SessionTail::default();
+        tail.poll(&path).unwrap();
+        append_raw(&path, b"{not json\n");
+        assert!(tail.poll(&path).is_err());
+        assert_eq!(
+            tail.offset,
+            good.len() as u64,
+            "offset did not move past the junk"
+        );
+        assert!(tail.poll(&path).is_err(), "same error on retry");
+        assert_eq!(tail.envelopes.len(), 1);
     }
 
     #[tokio::test]
