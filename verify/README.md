@@ -36,3 +36,6 @@ no longer looks like the one that was pinned, the replay itself fails loudly
 
 An artifact that no longer applies is a **failure**, not a skip: the proof has
 gone stale and has to be re-authored against a defect that reproduces.
+`orgasmic verify --all --check` lists every artifact's state in under a second
+without running anything, and `scripts/run-tests.sh --check` runs the same
+sweep beside the registry check; `orgasmic verify --all` is the full replay.

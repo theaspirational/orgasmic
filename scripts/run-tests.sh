@@ -21,13 +21,14 @@
 # Usage:
 #   scripts/run-tests.sh                          whole workspace
 #   scripts/run-tests.sh -p orgasmic-daemon --lib scoped, same classification
-#   scripts/run-tests.sh --check                  registry hygiene only
+#   scripts/run-tests.sh --check                  registry hygiene + verify artifact sweep
 #   scripts/run-tests.sh --classify <log>         re-read an existing cargo log
 #   scripts/run-tests.sh --registry <path> ...    use a different registry
+#   scripts/run-tests.sh --verify-dir <path> ...  sweep a different verify/ (self-test)
 #   scripts/run-tests.sh --help
 #
-# Exit codes: 0 clean or all-flake · 1 REAL failure present · 2 registry
-# rejected · 3 wrapper misuse · 4 INCONCLUSIVE (host degraded — re-run when calm).
+# Exit codes: 0 clean or all-flake · 1 REAL failure present · 2 registry or
+# verify artifacts rejected · 3 wrapper misuse · 4 INCONCLUSIVE (host degraded — re-run when calm).
 #
 # Host state (TASK-STWVB / TASK-STWVB.1 / TASK-STWVB.1.1):
 #   On a live suite run: load is sampled BEFORE the suite, and syspolicyd
@@ -162,6 +163,7 @@ REPO=$(git rev-parse --show-toplevel 2>/dev/null) ||
 cd "$REPO" || die "cannot cd to $REPO"
 
 REGISTRY="$REPO/verify/flake-registry.toml"
+VERIFY_DIR="$REPO/verify"
 CLASSIFY_LOG=""
 CHECK_ONLY=0
 WORK=""
@@ -179,6 +181,11 @@ while [ $# -gt 0 ]; do
         --registry)
             [ $# -ge 2 ] || die "--registry needs a path"
             REGISTRY="$2"
+            shift 2
+            ;;
+        --verify-dir)
+            [ $# -ge 2 ] || die "--verify-dir needs a path"
+            VERIFY_DIR="$2"
             shift 2
             ;;
         --classify)
@@ -387,6 +394,27 @@ registry_check() {
     return $ok
 }
 
+# orgasmic:TASK-8Q92K
+# The other artifact under verify/: every <TASK>/injection.patch must still
+# apply, or the proof it holds is a stale failure nobody is looking at (17 of
+# 90 were, unnoticed, on 2026-08-07). `git apply --check` only — no build, no
+# test, under a second for a hundred artifacts. Same sweep as
+# `orgasmic verify --all --check`, in bash so --check needs no built binary.
+artifact_check() {
+    local dir total=0 stale=0 err
+    for dir in "$VERIFY_DIR"/*/; do
+        [ -d "$dir" ] || continue
+        total=$((total + 1))
+        if err=$(git apply --check --whitespace=nowarn "${dir}injection.patch" 2>&1 >/dev/null); then
+            continue
+        fi
+        stale=$((stale + 1))
+        printf '%s STALE (%s)\n' "$(basename "$dir")" "${err%%$'\n'*}"
+    done
+    printf 'artifacts: %s/%s replayable\n' "$((total - stale))" "$total"
+    [ "$stale" -eq 0 ]
+}
+
 # --sample-host skips registry work; everything else needs a clean registry.
 if [ "$SAMPLE_HOST_ONLY" -eq 0 ]; then
     if ! registry_check; then
@@ -397,6 +425,10 @@ if [ "$SAMPLE_HOST_ONLY" -eq 0 ]; then
     if [ "$CHECK_ONLY" -eq 1 ]; then
         printf 'registry: OK — %s entries in %s, every owner open\n' \
             "$REGISTRY_COUNT" "${REGISTRY#$REPO/}"
+        artifact_check || {
+            printf 'artifacts: REJECTED — a stale injection.patch is a failed proof, not a skip (verify/README.md)\n' >&2
+            exit "$EXIT_REGISTRY"
+        }
         exit 0
     fi
 fi

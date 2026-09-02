@@ -178,9 +178,12 @@ stamp_host_load_only_high() {
 # Default --classify cases leave host state to the stamp (or unknown). The
 # ORGASMIC_HOST_STATE_SAMPLE injector is for the live path only and is ignored
 # under --classify.
+# A fixture verify/ so the real repo's artifact state cannot colour these cases.
+mkdir -p "$TMP/verify"
+
 run() {
-    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" "$@" \
-        > "$TMP/out.txt" 2>&1
+    "$RUNNER" --registry "$TMP/registry.toml" --verify-dir "$TMP/verify" \
+        --work-dir "$TMP/work" "$@" > "$TMP/out.txt" 2>&1
     RUN_EXIT=$?
     rm -rf "$TMP/work"
 }
@@ -371,7 +374,17 @@ check 2 "$RUN_EXIT" "$TMP/out.txt" "unknown key \`reason\`" "registry: REJECTED"
 start "a healthy registry passes --check"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
 run --check
-check 0 "$RUN_EXIT" "$TMP/out.txt" "registry: OK" "every owner open"
+check 0 "$RUN_EXIT" "$TMP/out.txt" "registry: OK" "every owner open" "artifacts: 0/0 replayable"
+
+# orgasmic:TASK-8Q92K
+start "a verify artifact whose patch no longer applies fails --check, exit 2"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+mkdir -p "$TMP/verify/TASK-STALE"
+printf 'diff --git a/nope.txt b/nope.txt\n--- a/nope.txt\n+++ b/nope.txt\n@@ -1 +1 @@\n-never\n+there\n' \
+    > "$TMP/verify/TASK-STALE/injection.patch"
+run --check
+rm -rf "$TMP/verify/TASK-STALE"
+check 2 "$RUN_EXIT" "$TMP/out.txt" "TASK-STALE STALE (error:" "artifacts: 0/1 replayable" "artifacts: REJECTED"
 
 # -- the billed test --------------------------------------------------------
 
