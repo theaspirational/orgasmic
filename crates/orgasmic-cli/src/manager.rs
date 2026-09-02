@@ -4399,7 +4399,7 @@ fn walk_worktree(root: &std::fs::File) -> Result<WorktreeWalk> {
 }
 
 /// Compact size for a `KEY=value` field, so it carries no space.
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = bytes as f64;
     let mut unit = 0;
