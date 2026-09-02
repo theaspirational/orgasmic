@@ -25,4 +25,11 @@ The guard cannot currently express 'verb V is denied' vs 'input class C is excep
 
 ** Acceptance
 - A doc that excepts a capability the CLI HAS fails the guard.
-- 'retitle via  (goal titles excepted)' still passes while goal retitles are genuinely refused.
+- "retitle via `orgasmic node title set` (goal titles excepted)" still passes while goal retitles are genuinely refused.
+** Why the obvious widening does not work
+Adding "excepted" to NEGATIVE_PHRASES was tried and REVERTED, not assumed. The guard's model is: a negative phrase whose NEAREST resolving code span is a real verb = failure. But "excepted" also appears in legitimate SCOPE notes where both halves are true: "retitle via `orgasmic node title set` (goal titles excepted)" - the verb resolves AND goal titles really are refused.
+
+Measured: with "excepted" added, cli_parity shipped_prose_does_not_deny_a_verb_that_resolves FAILED with
+  ledger.md:37: "retitle via `orgasmic node title set` (goal titles excepted" - but `orgasmic node title set` resolves
+
+A real fix needs the guard to express "verb V is denied" versus "input class C is excepted FOR verb V". Either teach it that distinction (look for a noun phrase between the negative phrase and the span), or accept "excepted" as a phrase and require every legitimate scope note to carry the existing "parity: allow-negative" marker - the second is cheaper but weakens that marker, which today means "deliberate historical note".

@@ -14,3 +14,33 @@
 :REASON: created task TASK-1V9Z3
 :EVENT_ID: 02158504-9638-40e0-b5bf-f0a8dd9db6ca
 :END:
+
+* tx-20260902-orgasmic-7f45d069-7d52-4fe8-aefa-543ab0c57549 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7f45d069-7d52-4fe8-aefa-543ab0c57549
+:TIME:    [2026-09-02 Wed 14:01:47]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-1V9Z3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-1V9Z3/node.org
+:REASON: edited task node TASK-1V9Z3
+:NODE_ID: TASK-1V9Z3
+:EVENT_ID: 8da3702d-803d-4ee9-bac6-4014bf0e0256
+:END:
+
+* tx-20260902-orgasmic-3c5c1c98-9bcf-4d33-a94e-42f65bb5b7c2 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-3c5c1c98-9bcf-4d33-a94e-42f65bb5b7c2
+:TIME:    [2026-09-02 Wed 14:01:47]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-1V9Z3
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-1V9Z3/node.org
+:REASON: edited task node TASK-1V9Z3
+:NODE_ID: TASK-1V9Z3
+:EVENT_ID: b93ddf3d-52f9-47db-ae11-a3cc1a59eb6c
+:END:
