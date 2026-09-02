@@ -456,3 +456,285 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+// orgasmic:TASK-P0Q5C
+/// `node title set` is the one title surface for every title-capable kind.
+/// Each supported kind round-trips through the same guard `task update
+/// --title` uses; goal and project are refused by name before any request
+/// is sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node_title_set_round_trips_every_supported_kind_and_refuses_goal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    seed_source(&home);
+    let running = boot(home.clone()).await;
+
+    let project_root = tmp.path().join("repo");
+    init_git_repo(&project_root);
+    let project_id = "node-title-set";
+    run_cli(
+        &home,
+        &running,
+        &project_root,
+        &[
+            "project",
+            "init",
+            "--path",
+            project_root.to_str().unwrap(),
+            "--name",
+            project_id,
+        ],
+    );
+    run_git(&project_root, &["add", "."]);
+    run_git(&project_root, &["commit", "-m", "scaffold .orgasmic"]);
+    wait_for_project_loaded(&home, &running, &project_root, project_id);
+
+    let task = run_cli_json(
+        &home,
+        &running,
+        &project_root,
+        &[
+            "task",
+            "create",
+            "--project",
+            project_id,
+            "--title",
+            "Task before",
+            "--tag",
+            "daemon",
+            "--body",
+            "** Description\nPlaceholder.\n",
+        ],
+    );
+    let task_id = task["id"].as_str().expect("minted id").to_string();
+    let decision = run_cli_json(
+        &home,
+        &running,
+        &project_root,
+        &[
+            "decision",
+            "create",
+            "--project",
+            project_id,
+            "--title",
+            "Decision before",
+            "--body",
+            "Prose.",
+        ],
+    );
+    let decision_id = decision["id"].as_str().expect("minted id").to_string();
+    let term = run_cli_json(
+        &home,
+        &running,
+        &project_root,
+        &[
+            "glossary",
+            "create",
+            "--project",
+            project_id,
+            "--title",
+            "Term before",
+            "--definition",
+            "A definition.",
+        ],
+    );
+    let term_id = term["id"].as_str().expect("minted id").to_string();
+
+    let orgasmic = project_root.join(".orgasmic");
+    // (kind, id, node file, title to write)
+    let cases: [(&str, &str, PathBuf, &str); 4] = [
+        (
+            "task",
+            task_id.as_str(),
+            orgasmic.join("tasks").join(&task_id).join("node.org"),
+            "Task after",
+        ),
+        (
+            "decision",
+            decision_id.as_str(),
+            orgasmic
+                .join("decisions")
+                .join(&decision_id)
+                .join("node.org"),
+            "Decision after",
+        ),
+        (
+            "glossary",
+            term_id.as_str(),
+            orgasmic.join("glossary").join(&term_id).join("node.org"),
+            "Term after",
+        ),
+        (
+            "handoff",
+            "handoff-current",
+            orgasmic.join("tasks").join("handoff.org"),
+            "Handoff after",
+        ),
+    ];
+
+    for (kind, id, path, new_title) in &cases {
+        let before = std::fs::read_to_string(path).unwrap();
+        let before_line = before
+            .lines()
+            .find(|line| line.starts_with("* "))
+            .unwrap_or_else(|| panic!("{kind}: no heading in {}", path.display()))
+            .to_string();
+        let updated = run_cli_json(
+            &home,
+            &running,
+            &project_root,
+            &[
+                "node",
+                "title",
+                "set",
+                id,
+                "--project",
+                project_id,
+                "--kind",
+                kind,
+                "--title",
+                new_title,
+            ],
+        );
+        assert!(
+            updated["tx_id"].as_str().is_some_and(|id| !id.is_empty()),
+            "{kind}: a title edit must record a tx: {updated}"
+        );
+        assert_eq!(updated["changed"]["title"], *new_title, "{kind}: {updated}");
+
+        let after = std::fs::read_to_string(path).unwrap();
+        let after_line = after
+            .lines()
+            .find(|line| line.starts_with("* "))
+            .unwrap()
+            .to_string();
+        eprintln!("{kind}\n  before: {before_line}\n  after:  {after_line}");
+        assert!(
+            after_line.contains(new_title),
+            "{kind}: heading must carry the new title: {after_line}"
+        );
+        assert!(
+            after_line.contains(id),
+            "{kind}: heading must keep its id token: {after_line}"
+        );
+        // The heading line is the only line that changed.
+        let before_rest: Vec<&str> = before.lines().filter(|l| *l != before_line).collect();
+        let after_rest: Vec<&str> = after.lines().filter(|l| *l != after_line).collect();
+        assert_eq!(
+            before_rest, after_rest,
+            "{kind}: drawer and body must survive a title edit"
+        );
+
+        // Read back through the daemon: the full document reports the new title.
+        let doc = run_cli_json(
+            &home,
+            &running,
+            &project_root,
+            &[
+                "node",
+                "title",
+                "set",
+                id,
+                "--project",
+                project_id,
+                "--kind",
+                kind,
+                "--title",
+                new_title,
+                "--json",
+            ],
+        );
+        assert_eq!(doc["title"], *new_title, "{kind}: read-back title: {doc}");
+    }
+
+    // The task heading keeps its keyword and tags, byte-exact.
+    assert_eq!(
+        heading_line(&project_root, &task_id),
+        format!("* BACKLOG {task_id} Task after    :daemon:"),
+    );
+
+    // Same guard, same refusal as `task update --title`.
+    let stderr = run_cli_failure(
+        &home,
+        &running,
+        &project_root,
+        &[
+            "node",
+            "title",
+            "set",
+            &decision_id,
+            "--project",
+            project_id,
+            "--title",
+            "correct it :retracted:",
+        ],
+    );
+    assert!(
+        stderr.contains("title") && stderr.contains("does not read back as written"),
+        "{stderr}"
+    );
+
+    // Goal: refused before any request, pointing at the follow-up task.
+    for args in [
+        vec![
+            "node",
+            "title",
+            "set",
+            "goal-bootstrap",
+            "--project",
+            project_id,
+            "--title",
+            "x",
+        ],
+        vec![
+            "node",
+            "title",
+            "set",
+            "goal-bootstrap",
+            "--project",
+            project_id,
+            "--kind",
+            "goal",
+            "--title",
+            "x",
+        ],
+    ] {
+        let stderr = run_cli_failure(&home, &running, &project_root, &args);
+        assert!(
+            stderr.contains("TASK-V460X") && stderr.contains("goal"),
+            "goal refusal must point at TASK-V460X: {stderr}"
+        );
+    }
+    let goal = std::fs::read_to_string(orgasmic.join("tasks").join("goal.org")).unwrap();
+    assert!(goal.contains("* GOAL Bootstrap project state"), "{goal}");
+
+    // Project: refused, because the daemon's set_title would turn
+    // `* PROJECT <id>` into `* <id> <title>` and project.org is located by
+    // that heading word (`ProjectFile::from_org`); the file stays untouched.
+    let stderr = run_cli_failure(
+        &home,
+        &running,
+        &project_root,
+        &[
+            "node",
+            "title",
+            "set",
+            project_id,
+            "--project",
+            project_id,
+            "--kind",
+            "project",
+            "--title",
+            "x",
+        ],
+    );
+    assert!(stderr.contains("PROJECT"), "{stderr}");
+    let project_org = std::fs::read_to_string(orgasmic.join("project.org")).unwrap();
+    assert!(
+        project_org.contains(&format!("* PROJECT {project_id}")),
+        "{project_org}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}

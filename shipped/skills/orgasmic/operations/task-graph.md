@@ -30,6 +30,7 @@ aliases:
 - orgasmic graph edges
 - orgasmic node body
 - orgasmic node prop
+- orgasmic node title
 - orgasmic node submit
 - orgasmic node regenerate
 - orgasmic node delete
@@ -42,6 +43,7 @@ aliases:
 - orgasmic gotcha list
 - orgasmic node prop set
 - orgasmic node prop unset
+- orgasmic node title set
 sources:
 - cli-help/tasks.txt
 - cli-help/task.txt
@@ -119,6 +121,7 @@ Canonical commands in this family:
 - `orgasmic graph edges`
 - `orgasmic node body`
 - `orgasmic node prop`
+- `orgasmic node title`
 - `orgasmic node submit`
 - `orgasmic node regenerate`
 - `orgasmic node delete`
@@ -131,6 +134,7 @@ Canonical commands in this family:
 - `orgasmic gotcha list`
 - `orgasmic node prop set`
 - `orgasmic node prop unset`
+- `orgasmic node title set`
 
 ## Parameters
 
