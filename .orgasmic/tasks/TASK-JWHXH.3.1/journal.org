@@ -130,3 +130,19 @@
 :NODE_ID: TASK-JWHXH.3.1
 :EVENT_ID: 7f0fdce6-2933-48d8-b74b-91a42520cdfe
 :END:
+
+* tx-20260902-orgasmic-7078 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7078
+:TIME:    [2026-09-02 Wed 07:54:01]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.1
+:TARGET: .orgasmic/tasks/TASK-JWHXH.3.1/node.org
+:REASON: views line closed: dec_XH2XY shipped across ad642ca7 + e290d7fb + 82ed5a9d; final review approve-with-follow-ups LOW-only; residual LOWs recorded in TASK-JWHXH.3.2 Notes
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 7019bd91-9046-49b7-a461-e1a4e22e34f4
+:END:
