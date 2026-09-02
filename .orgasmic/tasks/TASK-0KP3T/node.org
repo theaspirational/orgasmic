@@ -50,4 +50,5 @@ landed").
   existing test does.
 ** Evidence
 Manager sprint 2026-09-02 (no dispatch): implemented by a manager subagent on branch sprint/LOGGING, commit df89c2b9 (logging.rs only), merged --no-ff onto local branch sprint-20260902 as 5672f9ed. Agent gates: cargo test -p orgasmic-daemon --lib -- logging 21 passed; clippy -D warnings rc=0; fmt rc=0. Tests: persistent_rotation_rename_failure_bounds_attempts_not_per_line; failed_durable_write_falls_back_to_stdout_and_recovers_on_reopen. Awaiting operator review/test after the sprint (not on main, not pushed).
+- 2026-09-02 sprint review (daemon reviewer): CONFIRMED correct and well tested (rotation backoff, write-failure fallback; the mode-555 reproducer and EBADF-handle tests pass). One PRE-EXISTING quirk noted, not a regression of this change: a partial rename cascade can still overwrite one rotated generation.
 

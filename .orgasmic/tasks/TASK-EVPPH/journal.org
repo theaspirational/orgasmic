@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-EVPPH
+#+orgasmic_version: 2
+
+* tx-20260902-orgasmic-b1185863-aaa6-4feb-bfd2-e044460a74c2 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-b1185863-aaa6-4feb-bfd2-e044460a74c2
+:TIME:    [2026-09-02 Wed 13:54:21]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-EVPPH
+:TARGET: .orgasmic/tasks/TASK-EVPPH/node.org
+:REASON: created task TASK-EVPPH
+:EVENT_ID: 7987b78e-a051-4c05-9afe-2b84cdf6ad63
+:END:

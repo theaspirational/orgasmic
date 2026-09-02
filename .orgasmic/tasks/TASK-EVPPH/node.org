@@ -1,0 +1,28 @@
+#+title: orgasmic task TASK-EVPPH
+#+orgasmic_version: 2
+
+* BACKLOG TASK-EVPPH writer catch_unwind keeps torn handles and leaked leases after a panicking command    :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-EVPPH
+:PRIORITY: P2
+:RELATES_TO: TASK-BX5SR
+:END:
+
+Found 2026-09-02 by the manager sprint review of 7c85f177..b1c6ca5f (daemon reviewer, MEDIUM, SUSPECTED - traced, not reproduced).
+
+TASK-BX5SR made the writer loop wrap each command in AssertUnwindSafe(..).catch_unwind() so one panicking command no longer kills the writer task. The panic arm returns the error but does NOT reset the state the panicking command was holding.
+
+The block mutably borrows tx_handles, session_handles and leased (crates/orgasmic-daemon/src/writer.rs ~2096-2560).
+
+Two consequences:
+1. A panic mid session/tx append leaves the open handle cached with a possibly TORN, partially written line. The writer keeps appending through that same handle, so the next line lands after the fragment. The result is a malformed JSONL line that SessionTail and read_session_file then refuse forever.
+2. A panic inside LeaseSessions after inserting some paths leaks those leases permanently. Every later append to those session files defers until daemon shutdown.
+
+Latent, not live: the only realistic panic sources today are injected mutate transforms.
+
+** Fix
+In the Err(panic) arm: clear tx_handles and session_handles (both reopen lazily) and drop any leases the panicked command took.
+
+** Acceptance
+- A test that panics mid-append and then asserts the next append produces a well-formed JSONL file that read_session_file accepts.
+- A test that panics inside LeaseSessions and asserts the lease is not held afterwards.

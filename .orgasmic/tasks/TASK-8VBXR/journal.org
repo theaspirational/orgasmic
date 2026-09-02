@@ -62,3 +62,18 @@
 :TO_STATE: in_review
 :EVENT_ID: 60ae22b9-9e4e-4fab-9f97-3124a3802ae6
 :END:
+
+* tx-20260902-orgasmic-dfe631b8-6267-4bc8-9e37-ca8dd33d8b0e task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-dfe631b8-6267-4bc8-9e37-ca8dd33d8b0e
+:TIME:    [2026-09-02 Wed 13:54:42]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8VBXR
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-8VBXR/node.org
+:REASON: edited task node TASK-8VBXR
+:NODE_ID: TASK-8VBXR
+:EVENT_ID: 2007ff15-2067-4dac-a006-d57c694f7cbe
+:END:

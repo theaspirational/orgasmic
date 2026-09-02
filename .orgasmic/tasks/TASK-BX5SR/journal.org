@@ -47,3 +47,18 @@
 :TO_STATE: in_review
 :EVENT_ID: bb352874-b9cd-4993-8f19-fd6aa79ccba9
 :END:
+
+* tx-20260902-orgasmic-51a8c41a-6e51-483f-a12b-ed9bbf9994db task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-51a8c41a-6e51-483f-a12b-ed9bbf9994db
+:TIME:    [2026-09-02 Wed 13:54:41]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-BX5SR
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-BX5SR/node.org
+:REASON: edited task node TASK-BX5SR
+:NODE_ID: TASK-BX5SR
+:EVENT_ID: 011b034e-f848-4af0-9721-9c866183979a
+:END:
