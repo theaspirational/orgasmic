@@ -61,4 +61,6 @@ the argument for building it.
 - Reconstructing the TASK-M47E5.1 situation surfaces it.
 - A task legitimately awaiting a reviewer dispatched moments ago does NOT
   surface.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): implemented by a manager subagent on branch sprint/TASK-3HR8R, commit 2c954fb4 (manager.rs +214/-14, manager-dispatch.org one bullet), merged --no-ff onto local branch sprint-20260902 as 09c7edae. dispatch-status now prints PARKED lines for in_review/in_progress tasks with no open generation, AWAITING_MERGE for reported implementer worktrees, and every printed dispatch-close command parses against the real clap tree (4 new tests). Agent gates: cli 4 passed (filtered), clippy rc=0, fmt rc=0; tests/dispatch.rs integration NOT run. Awaiting operator review/test after the sprint (not on main, not pushed).
 

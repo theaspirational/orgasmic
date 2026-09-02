@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-GCTMA
 #+orgasmic_version: 2
 
-* BACKLOG TASK-GCTMA manager dispatch should refuse or loudly flag a dirty worktree the worker will not see    :dispatch:cli:workflow:
+* IN_PROGRESS TASK-GCTMA manager dispatch should refuse or loudly flag a dirty worktree the worker will not see :dispatch:cli:workflow:
 :PROPERTIES:
 :ID: TASK-GCTMA
 :IMPLEMENTS: TASK-TW3N3
