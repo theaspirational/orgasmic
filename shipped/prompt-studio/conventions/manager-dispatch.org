@@ -491,8 +491,12 @@ your nose. So the leak is reported for you and reclaimed only when you say so
 
 - *Detection is automatic.* Every =orgasmic manager dispatch-status= ends with
   a =RECLAIMABLE_WORKTREE= line per reclaimable tree — path, bytes, and WHY —
-  plus a =RECLAIMABLE_TOTAL=, and a =HELD_WORKTREE= line for each one it will
-  not touch.
+  plus a =RECLAIMABLE_TOTAL=, a =HELD_WORKTREE= line for each one it will
+  not touch, and an =AWAITING_MERGE= line for a worktree whose dispatch has
+  reported and waits on its review round — that one prints the =done= close
+  to run after the merge, not orphan advice (TASK-SJA9W). It also ends with a
+  =PARKED= line per task sitting =in_review= or =in_progress= with no open
+  dispatch at all (TASK-3HR8R).
 - *Reclamation is an explicit verb.* =orgasmic manager worktree-prune=
   ( =--dry-run= to measure only, =--task TASK-NNN= to narrow). It salvages a
   dirty tree to =refs/orgasmic/salvage/<sha>= first and then removes it through

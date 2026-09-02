@@ -2999,26 +2999,38 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
         return Ok(());
     }
 
-    let live_runs = match DaemonClient::from_home_autostart(home) {
+    // TASK-3HR8R: the task list rides on the same client, best effort like
+    // the live runs — a daemon that cannot be reached prints no PARKED lines
+    // rather than failing the inventory. Only the full inventory looks for
+    // parked tasks; `--task` asks about one dispatch.
+    let (live_runs, tasks) = match DaemonClient::from_home_autostart(home) {
         Ok(client) => {
             let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-            runtime
-                .block_on(fetch_live_runs(&client))
-                .unwrap_or_default()
+            runtime.block_on(async {
+                let live_runs = fetch_live_runs(&client).await.unwrap_or_default();
+                let tasks = match project_id.as_deref() {
+                    Some(project_id) if args.task.is_none() => client
+                        .get::<Vec<TaskStageRow>>(&format!("/projects/{project_id}/tasks"))
+                        .await
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                (live_runs, tasks)
+            })
         }
-        Err(_) => Vec::new(),
+        Err(_) => (Vec::new(), Vec::new()),
     };
     let mut open = scan_open_dispatches(&project_root)?;
     let claims = read_claims(&project_root).context("read task claims for dispatch-status")?;
     if let Some(task) = args.task.as_deref() {
         open.retain(|record| record.tasks.iter().any(|got| got == task));
     }
-    for record in open {
-        let health = dispatch_health(&record, &live_runs);
+    for record in &open {
+        let health = dispatch_health(record, &live_runs);
         if args.orphans_only && health.worktree_exists && (health.pid_alive || health.run_alive) {
             continue;
         }
-        let partial_closed = partial_closed_annotation(&record);
+        let partial_closed = partial_closed_annotation(record);
         if args.partial_closed && partial_closed.is_none() {
             continue;
         }
@@ -3097,7 +3109,64 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
     if let Some(project_id) = project_id.as_deref() {
         report_managed_worktrees(home, &project_root, project_id, &live_runs);
     }
+    // TASK-3HR8R: the absence of a dispatch. A task at an active stage with no
+    // open generation is invisible to the inventory above, and `in_review`
+    // looks like patience — so name it. Quiet when nothing is parked.
+    for task in parked_tasks(&tasks, &open) {
+        println!(
+            "PARKED TASK={} STATE={} SINCE={} — no open dispatch; dispatch {} or move the task",
+            task.id,
+            task.lifecycle_stage,
+            parked_since(&project_root, &task.id).unwrap_or_else(|| "-".to_string()),
+            if task.lifecycle_stage == LifecycleStage::InReview {
+                "a reviewer"
+            } else {
+                "an implementer"
+            }
+        );
+    }
     Ok(())
+}
+
+/// One row of the daemon's `/projects/<id>/tasks` list — the same list
+/// `tasks list --stage` filters — reduced to what dispatch-status reads.
+#[derive(Debug, Deserialize)]
+struct TaskStageRow {
+    id: String,
+    lifecycle_stage: LifecycleStage,
+}
+
+/// Tasks at an active stage that no open dispatch generation still names
+/// (TASK-3HR8R). A task already closed out of a partially-closed multi-task
+/// generation counts as having no dispatch.
+fn parked_tasks<'a>(tasks: &'a [TaskStageRow], open: &[DispatchRecord]) -> Vec<&'a TaskStageRow> {
+    tasks
+        .iter()
+        .filter(|task| {
+            matches!(
+                task.lifecycle_stage,
+                LifecycleStage::InProgress | LifecycleStage::InReview
+            ) && !open.iter().any(|record| {
+                record.tasks.contains(&task.id) && !record.closed_tasks.contains(&task.id)
+            })
+        })
+        .collect()
+}
+
+/// When the parked task last changed stage, from its own journal: the newest
+/// `task.state_transitioned` time, or nothing when the journal has none.
+fn parked_since(project_root: &Path, task_id: &str) -> Option<String> {
+    let journal_path = task_node_file_path(project_root, task_id)
+        .with_file_name(orgasmic_core::node_kernel::JOURNAL_FILE);
+    let source = std::fs::read_to_string(&journal_path).ok()?;
+    let entries =
+        orgasmic_core::node_kernel::parse_journal(&source, journal_path.to_string_lossy().as_ref())
+            .ok()?;
+    entries
+        .iter()
+        .rev()
+        .find(|entry| entry.ty == "task.state_transitioned")
+        .map(|entry| entry.time.clone())
 }
 
 /// Block until every named dispatch generation reports, dies, or reaches its
@@ -3943,6 +4012,10 @@ enum WorktreeDisposition {
     /// which is also the only surface that knows the recorded branch a salvage
     /// commit must be parented on.
     Held { detail: String },
+    /// Held by an open dispatch that has REPORTED and now waits on its review
+    /// round and merge (TASK-SJA9W). The same refusal as `Held`, named apart
+    /// so the report does not call a normal waypoint an orphan.
+    AwaitingMerge { detail: String },
     /// The worktree could not be classified — an I/O failure that is not
     /// absence. NEVER reclaimed (TASK-M47E5.2 finding 3): an unreadable `.git`
     /// used to fall through to `RepoGone`, the one disposition that skips
@@ -3969,7 +4042,8 @@ impl ManagedWorktree {
             WorktreeDisposition::RepoGone { detail } => {
                 format!("repo gone ({detail}); removable but NOT salvageable")
             }
-            WorktreeDisposition::Held { detail } => detail.clone(),
+            WorktreeDisposition::Held { detail }
+            | WorktreeDisposition::AwaitingMerge { detail } => detail.clone(),
             WorktreeDisposition::Undetermined { detail } => {
                 format!("repository state undetermined ({detail}); kept until it can be proven")
             }
@@ -4066,8 +4140,11 @@ fn scan_managed_worktrees(
             .iter()
             .find(|record| claims(record.worktree.as_deref()))
         {
-            WorktreeDisposition::Held {
-                detail: held_by_dispatch_detail(record, live_runs),
+            let detail = held_by_dispatch_detail(record, live_runs);
+            if record.reported {
+                WorktreeDisposition::AwaitingMerge { detail }
+            } else {
+                WorktreeDisposition::Held { detail }
             }
         } else if let Some(run) = live_runs.iter().find(|run| {
             run.project_id.as_deref().is_none_or(|id| id == project_id)
@@ -4181,9 +4258,37 @@ fn live_run_holds_detail(run: &RunSummary) -> String {
 /// gone — which verb releases it. An abandoned dispatch is still a dispatch:
 /// prune refuses it and points at the close, rather than growing a second way
 /// to end a dispatch.
+///
+/// TASK-SJA9W: a REPORTED dispatch is a normal waypoint (the review round runs
+/// with the branch unmerged), not an orphan, so it gets the close that records
+/// the truth. Every command printed here must parse as printed — the tests
+/// shell each one through the real clap tree.
 fn held_by_dispatch_detail(record: &DispatchRecord, live_runs: &[RunSummary]) -> String {
     let health = dispatch_health(record, live_runs);
     let tasks = task_list_property(&record.tasks);
+    let task_flags = record
+        .tasks
+        .iter()
+        .map(|task| format!("--task {task}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if record.reported {
+        return if record.kind == DispatchKind::Reviewer.as_str() {
+            format!(
+                "dispatch {} is open for {tasks} and reported; close it with its verdict (approve \
+                 | approve-with-follow-ups | reject): orgasmic manager dispatch-close {task_flags} \
+                 --started-tx {} --status done --verdict approve --worktree-remove",
+                record.tx_id, record.tx_id
+            )
+        } else {
+            format!(
+                "dispatch {} is open for {tasks} and reported; merge then close with: orgasmic \
+                 manager dispatch-close {task_flags} --started-tx {} --status done --merge-sha \
+                 <merge> --worker-commit <commit> --worktree-remove --branch-delete",
+                record.tx_id, record.tx_id
+            )
+        };
+    }
     if health.run_alive || health.pid_alive {
         format!(
             "dispatch {} is open for {tasks} and its worker is alive [{}{}]",
@@ -4201,9 +4306,10 @@ fn held_by_dispatch_detail(record: &DispatchRecord, live_runs: &[RunSummary]) ->
         )
     } else {
         format!(
-            "dispatch {} is open for {tasks} but its run is gone [run-gone pid-gone] — close it \
-             first (`orgasmic manager dispatch-close --task {tasks} --started-tx {}` or \
-             `orgasmic manager dispatch-status --cleanup-failed`), then prune",
+            "dispatch {} is open for {tasks} but its run is gone and never reported [run-gone \
+             pid-gone] — close it first (`orgasmic manager dispatch-close {task_flags} \
+             --started-tx {} --status aborted --reason <why>` or `orgasmic manager \
+             dispatch-status --cleanup-failed`), then prune",
             record.tx_id, record.tx_id
         )
     }
@@ -4461,6 +4567,7 @@ fn report_managed_worktrees(
             let line = match worktree.disposition {
                 WorktreeDisposition::Undetermined { .. }
                 | WorktreeDisposition::UnsafeTraversal { .. } => "KEPT_WORKTREE",
+                WorktreeDisposition::AwaitingMerge { .. } => "AWAITING_MERGE",
                 _ => "HELD_WORKTREE",
             };
             println!(
@@ -11410,6 +11517,101 @@ mod tests {
             reported: false,
             closed: false,
         }
+    }
+
+    /// The close command a WHY= line prints, taken exactly as an operator
+    /// would copy it and parsed through the real clap tree (TASK-SJA9W
+    /// acceptance 2: a printed command must run as printed).
+    fn parse_printed_close(detail: &str) -> DispatchCloseArgs {
+        use clap::Parser;
+        let start = detail
+            .find("orgasmic manager dispatch-close")
+            .unwrap_or_else(|| panic!("no close command printed in: {detail}"));
+        let rest = &detail[start..];
+        let end = rest.find('`').unwrap_or(rest.len());
+        let argv = rest[..end].split_whitespace();
+        match crate::Cli::try_parse_from(argv).unwrap().cmd {
+            crate::Cmd::Manager {
+                cmd: crate::ManagerCmd::DispatchClose(args),
+            } => args,
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reported_dispatch_advice_prints_a_runnable_done_close() {
+        let mut record = architector_record();
+        record.kind = "implementer".to_string();
+        record.tasks = vec!["TASK-A".to_string(), "TASK-B".to_string()];
+        record.reported = true;
+        let detail = held_by_dispatch_detail(&record, &[]);
+        assert!(
+            detail.contains("reported; merge then close with:"),
+            "{detail}"
+        );
+        assert!(!detail.contains("run is gone"), "{detail}");
+        let args = parse_printed_close(&detail);
+        assert_eq!(args.task, vec!["TASK-A", "TASK-B"]);
+        assert_eq!(args.started_tx.as_deref(), Some("tx-arch"));
+        assert_eq!(args.status, DispatchCloseStatus::Done);
+        assert_eq!(args.merge_sha.as_deref(), Some("<merge>"));
+        assert_eq!(args.worker_commit.as_deref(), Some("<commit>"));
+        assert!(args.branch_delete);
+    }
+
+    #[test]
+    fn reported_reviewer_advice_prints_a_runnable_verdict_close() {
+        let mut record = architector_record();
+        record.kind = "reviewer".to_string();
+        record.reported = true;
+        let detail = held_by_dispatch_detail(&record, &[]);
+        let args = parse_printed_close(&detail);
+        assert_eq!(args.status, DispatchCloseStatus::Done);
+        assert_eq!(args.verdict, Some(ReviewVerdict::Approve));
+        assert!(args.merge_sha.is_none());
+    }
+
+    #[test]
+    fn unreported_run_gone_advice_prints_a_runnable_abort_close() {
+        // No worktree, no pid, no run: the orphan the advice was written for.
+        let record = architector_record();
+        let detail = held_by_dispatch_detail(&record, &[]);
+        assert!(detail.contains("never reported"), "{detail}");
+        let args = parse_printed_close(&detail);
+        assert_eq!(args.task, vec!["TASK-086"]);
+        assert_eq!(args.started_tx.as_deref(), Some("tx-arch"));
+        assert_eq!(args.status, DispatchCloseStatus::Aborted);
+        assert_eq!(args.reason.as_deref(), Some("<why>"));
+    }
+
+    #[test]
+    fn parked_tasks_are_active_stage_tasks_no_open_generation_names() {
+        let row = |id: &str, stage| TaskStageRow {
+            id: id.to_string(),
+            lifecycle_stage: stage,
+        };
+        let tasks = vec![
+            row("TASK-REVIEW", LifecycleStage::InReview),
+            row("TASK-PROGRESS", LifecycleStage::InProgress),
+            row("TASK-DISPATCHED", LifecycleStage::InReview),
+            row("TASK-PARTIAL", LifecycleStage::InReview),
+            row("TASK-TODO", LifecycleStage::Todo),
+            row("TASK-DONE", LifecycleStage::Done),
+        ];
+        // A reviewer dispatched moments ago: not parked.
+        let mut reviewer = architector_record();
+        reviewer.kind = "reviewer".to_string();
+        reviewer.tasks = vec!["TASK-DISPATCHED".to_string()];
+        // Already closed out of a multi-task generation: nothing names it.
+        let mut partial = architector_record();
+        partial.tasks = vec!["TASK-PARTIAL".to_string(), "TASK-OTHER".to_string()];
+        partial.closed_tasks = BTreeSet::from(["TASK-PARTIAL".to_string()]);
+        let parked = parked_tasks(&tasks, &[reviewer, partial])
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(parked, vec!["TASK-REVIEW", "TASK-PROGRESS", "TASK-PARTIAL"]);
+        assert!(parked_tasks(&[], &[]).is_empty());
     }
 
     #[test]
