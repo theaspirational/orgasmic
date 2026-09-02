@@ -163,6 +163,15 @@ pub(crate) struct DaemonStatus {
     /// The daemon's configured `manager.actor` fallback (TASK-KA934.3.2).
     #[serde(default)]
     pub(crate) manager_actor: Option<String>,
+    /// The daemon's single writer task; `None` when the daemon predates the
+    /// field (TASK-BX5SR).
+    #[serde(default)]
+    writer: Option<DaemonWriterStatus>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct DaemonWriterStatus {
+    liveness: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -385,6 +394,19 @@ fn push_daemon_findings(out: &mut Vec<Finding>, home: &Home, liveness: &DaemonLi
         DaemonLiveness::Running(status) => {
             if let Some(finding) = diagnose_daemon_staleness(home, status) {
                 out.push(finding);
+            }
+            // orgasmic:TASK-BX5SR — reads stay healthy while every write fails
+            // with `writer task is gone`, so the dead writer must be loud here.
+            if status
+                .writer
+                .as_ref()
+                .is_some_and(|writer| !writer.liveness)
+            {
+                out.push(Finding::Fail(
+                    "daemon writer task is dead: every write fails with `writer task is gone` \
+                     while reads still answer\n  fix: orgasmic restart"
+                        .to_string(),
+                ));
             }
             push_ledger_sync_findings(out, &status.ledger_sync);
         }
@@ -967,6 +989,7 @@ mod tests {
             ledger_sync: Default::default(),
             actor: None,
             manager_actor: None,
+            writer: None,
         }
     }
 
@@ -1111,6 +1134,46 @@ mod tests {
 
     fn running(status: DaemonStatus) -> DaemonLiveness {
         DaemonLiveness::Running(status)
+    }
+
+    // orgasmic:TASK-BX5SR
+    #[test]
+    fn doctor_fails_when_the_daemon_writer_is_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let dead: DaemonStatus = serde_json::from_value(serde_json::json!({
+            "started_at": "2026-09-02T00:00:00Z",
+            "boot_id": "boot-test",
+            "pid": 42,
+            "writer": { "liveness": false, "queue_depth": 0 }
+        }))
+        .unwrap();
+        let alive = DaemonStatus {
+            writer: Some(DaemonWriterStatus { liveness: true }),
+            ..status_started_at(utc("2026-09-02T00:00:00Z"))
+        };
+
+        let mut findings = Vec::new();
+        push_daemon_findings(&mut findings, &home, &running(dead));
+        let fails: Vec<_> = findings.iter().filter(|f| f.is_fail()).collect();
+        assert_eq!(fails.len(), 1, "{findings:?}");
+        let Finding::Fail(message) = fails[0] else {
+            unreachable!()
+        };
+        assert!(message.contains("writer task is dead"), "{message}");
+        assert!(message.contains("orgasmic restart"), "{message}");
+
+        let mut findings = Vec::new();
+        push_daemon_findings(&mut findings, &home, &running(alive));
+        assert!(findings.iter().all(|f| !f.is_fail()), "{findings:?}");
+        let mut findings = Vec::new();
+        push_daemon_findings(
+            &mut findings,
+            &home,
+            &running(status_started_at(utc("2026-09-02T00:00:00Z"))),
+        );
+        assert!(findings.iter().all(|f| !f.is_fail()), "{findings:?}");
     }
 
     // orgasmic:dec_Q78QN,TASK-KA934.3.2

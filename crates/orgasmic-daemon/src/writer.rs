@@ -25,12 +25,13 @@ use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
 use fs2::FileExt;
+use futures::FutureExt;
 use orgasmic_core::session::{RuntimeIdentity, SessionEventKind, SessionWriter};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxWriter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tracing::warn;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::events::{EventBus, EventPayload, Topic};
@@ -2054,434 +2055,467 @@ async fn writer_loop(
     let mut deferred: Vec<DeferredSessionAppend> = Vec::new();
     let mut cmd = rx.recv().await;
     while let Some(current) = cmd.take() {
-        // orgasmic:TASK-Q07Y5 — publish the head-of-line write before running
-        // it. A shutdown that gives up on its budget reads this to say which
-        // write it gave up on; without it the report is a bare count.
-        let command_started = Instant::now();
-        let pending = describe_command(&current);
-        let mut command_failed = false;
-        let mut record_current = true;
-        {
-            let stall = injected_write_stall(&pending);
-            *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = Some(pending.clone());
-            *metrics
-                .in_flight_started
-                .lock()
-                .unwrap_or_else(|error| error.into_inner()) = Some(command_started);
-            if let Some(stall) = stall {
-                std::thread::sleep(stall);
+        // orgasmic:TASK-BX5SR — one command must not take the writer with it.
+        // A panic inside a command drops that command's reply (the caller sees
+        // "writer reply dropped") and the loop keeps serving; without this
+        // guard every later write failed with "writer task is gone" until a
+        // daemon restart. The block yields `true` only for a clean shutdown.
+        let step = std::panic::AssertUnwindSafe(async {
+            // orgasmic:TASK-Q07Y5 — publish the head-of-line write before running
+            // it. A shutdown that gives up on its budget reads this to say which
+            // write it gave up on; without it the report is a bare count.
+            let command_started = Instant::now();
+            let pending = describe_command(&current);
+            let mut command_failed = false;
+            let mut record_current = true;
+            {
+                let stall = injected_write_stall(&pending);
+                *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = Some(pending.clone());
+                *metrics
+                    .in_flight_started
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = Some(command_started);
+                if let Some(stall) = stall {
+                    std::thread::sleep(stall);
+                }
             }
-        }
-        match current {
-            WriterCommand::Tx { req, reply } => {
-                let mut batch = vec![(req, reply)];
-                while let Ok(next) = rx.try_recv() {
-                    match next {
-                        WriterCommand::Tx { req, reply } => batch.push((req, reply)),
-                        other => {
-                            cmd = Some(other);
-                            break;
+            match current {
+                WriterCommand::Tx { req, reply } => {
+                    let mut batch = vec![(req, reply)];
+                    while let Ok(next) = rx.try_recv() {
+                        match next {
+                            WriterCommand::Tx { req, reply } => batch.push((req, reply)),
+                            other => {
+                                cmd = Some(other);
+                                break;
+                            }
                         }
                     }
-                }
-                let outcomes = process_tx_batch(&mut tx_handles, batch);
-                for (req, result, reply) in outcomes {
-                    command_failed |= result.is_err();
-                    if let Ok(ref ok) = result {
-                        events.publish(
-                            Topic::Daemon,
-                            EventPayload::TxAppended {
-                                project_id: req.project_id.clone(),
-                                tx_id: ok.tx_id.clone(),
-                                ty: req.entry.ty.clone(),
-                            },
-                        );
+                    let outcomes = process_tx_batch(&mut tx_handles, batch);
+                    for (req, result, reply) in outcomes {
+                        command_failed |= result.is_err();
+                        if let Ok(ref ok) = result {
+                            events.publish(
+                                Topic::Daemon,
+                                EventPayload::TxAppended {
+                                    project_id: req.project_id.clone(),
+                                    tx_id: ok.tx_id.clone(),
+                                    ty: req.entry.ty.clone(),
+                                },
+                            );
+                        }
+                        let _ = reply.send(result);
                     }
+                }
+                WriterCommand::Session {
+                    req,
+                    reply,
+                    #[cfg(test)]
+                    injected_failure,
+                } => {
+                    // orgasmic:TASK-FZB6T.3 finding 1 — the check is here, BEFORE
+                    // anything is opened. A held path's append waits for the
+                    // transaction that holds it and then lands in whatever file the
+                    // path holds, instead of racing a rename onto an inode the
+                    // rename is about to orphan.
+                    if leased.contains(&req.session_path) {
+                        deferred.push(DeferredSessionAppend {
+                            req,
+                            reply,
+                            #[cfg(test)]
+                            injected_failure,
+                        });
+                        deferred_appends.store(deferred.len(), Ordering::SeqCst);
+                        // This command is still pending: it has moved from the
+                        // channel into the lease-owned deferred queue, not
+                        // completed. Its eventual execution records exactly one
+                        // outcome below.
+                        record_current = false;
+                    } else {
+                        command_failed = run_session_append(
+                            &mut session_handles,
+                            &events,
+                            catalog.as_ref(),
+                            req,
+                            reply,
+                            #[cfg(test)]
+                            injected_failure,
+                        );
+                        metrics
+                            .open_session_handles
+                            .store(session_handles.len(), Ordering::Relaxed);
+                    }
+                }
+                WriterCommand::Rewrite { req, reply } => {
+                    let result = rewrite_file_inner(&req);
+                    command_failed = result.is_err();
                     let _ = reply.send(result);
                 }
-            }
-            WriterCommand::Session {
-                req,
-                reply,
-                #[cfg(test)]
-                injected_failure,
-            } => {
-                // orgasmic:TASK-FZB6T.3 finding 1 — the check is here, BEFORE
-                // anything is opened. A held path's append waits for the
-                // transaction that holds it and then lands in whatever file the
-                // path holds, instead of racing a rename onto an inode the
-                // rename is about to orphan.
-                if leased.contains(&req.session_path) {
-                    deferred.push(DeferredSessionAppend {
-                        req,
-                        reply,
-                        #[cfg(test)]
-                        injected_failure,
-                    });
-                    deferred_appends.store(deferred.len(), Ordering::SeqCst);
-                    // This command is still pending: it has moved from the
-                    // channel into the lease-owned deferred queue, not
-                    // completed. Its eventual execution records exactly one
-                    // outcome below.
-                    record_current = false;
-                } else {
-                    command_failed = run_session_append(
-                        &mut session_handles,
-                        &events,
-                        catalog.as_ref(),
-                        req,
-                        reply,
-                        #[cfg(test)]
-                        injected_failure,
-                    );
-                    metrics
-                        .open_session_handles
-                        .store(session_handles.len(), Ordering::Relaxed);
-                }
-            }
-            WriterCommand::Rewrite { req, reply } => {
-                let result = rewrite_file_inner(&req);
-                command_failed = result.is_err();
-                let _ = reply.send(result);
-            }
-            WriterCommand::Mutate { req, reply } => {
-                let result = mutate_file_inner(req);
-                command_failed = result.is_err();
-                let _ = reply.send(result);
-            }
-            WriterCommand::Transaction { req, reply } => {
-                let cached = {
-                    let cache = idempotency.lock().await;
-                    match req.mutation.as_ref() {
-                        Some(mutation) => {
-                            cached_mutation_from_map(&cache, &req.request_id, mutation).map(
-                                |cached| {
-                                    cached.map(|cached| TxAppendResult {
-                                        tx_id: cached.tx_id,
-                                        tx_path: req.tx.tx_path.clone(),
-                                    })
-                                },
-                            )
-                        }
-                        None => Err(anyhow!("writer transaction lacks a mutation identity")),
-                    }
-                };
-                let mut reply = Some(reply);
-                let execute = match cached {
-                    Ok(Some(result)) => {
-                        let _ = reply
-                            .take()
-                            .expect("writer reply available")
-                            .send(Ok(result));
-                        false
-                    }
-                    Err(error) => {
-                        command_failed = true;
-                        let _ = reply
-                            .take()
-                            .expect("writer reply available")
-                            .send(Err(error));
-                        false
-                    }
-                    Ok(None) => true,
-                };
-                if execute {
-                    let result = transaction_inner(
-                        &mut tx_handles,
-                        &req.rewrites,
-                        req.tx.clone(),
-                        &req.request_id,
-                        || Ok(()),
-                    );
+                WriterCommand::Mutate { req, reply } => {
+                    let result = mutate_file_inner(req);
                     command_failed = result.is_err();
-                    if let Ok(ref ok) = result {
-                        let mut cache = idempotency.lock().await;
-                        cache.insert(
-                            req.request_id.clone(),
-                            CachedResponse::Tx {
-                                result: ok.clone(),
-                                mutation: req.mutation.clone(),
-                                mutation_id: req.mutation_id.clone(),
-                            },
-                        );
-                        drop(cache);
-                        events.publish(
-                            Topic::Daemon,
-                            EventPayload::TxAppended {
-                                project_id: req.tx.project_id.clone(),
-                                tx_id: ok.tx_id.clone(),
-                                ty: req.tx.entry.ty.clone(),
-                            },
-                        );
-                    }
-                    let _ = reply.take().expect("writer reply available").send(result);
+                    let _ = reply.send(result);
                 }
-            }
-            WriterCommand::TransactionMulti { req, reply } => {
-                let cache_key = multi_cache_key(&req.request_id);
-                let cached = {
-                    let cache = idempotency.lock().await;
-                    match cached_multi_from_map(&cache, &cache_key, &req.request_id, &req.mutation)
-                    {
-                        Ok(Some(cached)) => Ok(Some(cached)),
-                        Err(error) => Err(error),
-                        Ok(None) => {
-                            let collision = req.txs.iter().find_map(|tx| {
-                                tx.request_id
-                                    .as_ref()
-                                    .filter(|request_id| cache.contains_key(*request_id))
-                            });
-                            match collision {
+                WriterCommand::Transaction { req, reply } => {
+                    let cached = {
+                        let cache = idempotency.lock().await;
+                        match req.mutation.as_ref() {
+                            Some(mutation) => {
+                                cached_mutation_from_map(&cache, &req.request_id, mutation).map(
+                                    |cached| {
+                                        cached.map(|cached| TxAppendResult {
+                                            tx_id: cached.tx_id,
+                                            tx_path: req.tx.tx_path.clone(),
+                                        })
+                                    },
+                                )
+                            }
+                            None => Err(anyhow!("writer transaction lacks a mutation identity")),
+                        }
+                    };
+                    let mut reply = Some(reply);
+                    let execute = match cached {
+                        Ok(Some(result)) => {
+                            let _ = reply
+                                .take()
+                                .expect("writer reply available")
+                                .send(Ok(result));
+                            false
+                        }
+                        Err(error) => {
+                            command_failed = true;
+                            let _ = reply
+                                .take()
+                                .expect("writer reply available")
+                                .send(Err(error));
+                            false
+                        }
+                        Ok(None) => true,
+                    };
+                    if execute {
+                        let result = transaction_inner(
+                            &mut tx_handles,
+                            &req.rewrites,
+                            req.tx.clone(),
+                            &req.request_id,
+                            || Ok(()),
+                        );
+                        command_failed = result.is_err();
+                        if let Ok(ref ok) = result {
+                            let mut cache = idempotency.lock().await;
+                            cache.insert(
+                                req.request_id.clone(),
+                                CachedResponse::Tx {
+                                    result: ok.clone(),
+                                    mutation: req.mutation.clone(),
+                                    mutation_id: req.mutation_id.clone(),
+                                },
+                            );
+                            drop(cache);
+                            events.publish(
+                                Topic::Daemon,
+                                EventPayload::TxAppended {
+                                    project_id: req.tx.project_id.clone(),
+                                    tx_id: ok.tx_id.clone(),
+                                    ty: req.tx.entry.ty.clone(),
+                                },
+                            );
+                        }
+                        let _ = reply.take().expect("writer reply available").send(result);
+                    }
+                }
+                WriterCommand::TransactionMulti { req, reply } => {
+                    let cache_key = multi_cache_key(&req.request_id);
+                    let cached = {
+                        let cache = idempotency.lock().await;
+                        match cached_multi_from_map(
+                            &cache,
+                            &cache_key,
+                            &req.request_id,
+                            &req.mutation,
+                        ) {
+                            Ok(Some(cached)) => Ok(Some(cached)),
+                            Err(error) => Err(error),
+                            Ok(None) => {
+                                let collision = req.txs.iter().find_map(|tx| {
+                                    tx.request_id
+                                        .as_ref()
+                                        .filter(|request_id| cache.contains_key(*request_id))
+                                });
+                                match collision {
                                 Some(request_id) => Err(anyhow!(
                                     "request_id `{request_id}` was already used outside this multi transaction"
                                 )),
                                 None => Ok(None),
                             }
-                        }
-                    }
-                };
-                match cached {
-                    Ok(Some((results, MultiDurability::Durable))) => {
-                        let _ = reply.send(Ok(results));
-                    }
-                    Ok(Some((results, MultiDurability::SyncUncertain))) => {
-                        let sync = results
-                            .first()
-                            .ok_or_else(|| anyhow!("cached multi transaction has no results"))
-                            .and_then(|result| sync_tx_writer(&tx_handles, &result.tx_path));
-                        match sync {
-                            Ok(()) => {
-                                cache_durable_multi(&idempotency, &cache_key, &req, &results).await;
-                                publish_multi_events(&events, &req.txs, &results);
-                                let _ = reply.send(Ok(results));
-                            }
-                            Err(error) => {
-                                command_failed = true;
-                                let _ = reply
-                                    .send(Err(anyhow!(CommittedSyncUncertainError::retry(error))));
                             }
                         }
+                    };
+                    match cached {
+                        Ok(Some((results, MultiDurability::Durable))) => {
+                            let _ = reply.send(Ok(results));
+                        }
+                        Ok(Some((results, MultiDurability::SyncUncertain))) => {
+                            let sync = results
+                                .first()
+                                .ok_or_else(|| anyhow!("cached multi transaction has no results"))
+                                .and_then(|result| sync_tx_writer(&tx_handles, &result.tx_path));
+                            match sync {
+                                Ok(()) => {
+                                    cache_durable_multi(&idempotency, &cache_key, &req, &results)
+                                        .await;
+                                    publish_multi_events(&events, &req.txs, &results);
+                                    let _ = reply.send(Ok(results));
+                                }
+                                Err(error) => {
+                                    command_failed = true;
+                                    let _ = reply.send(Err(anyhow!(
+                                        CommittedSyncUncertainError::retry(error)
+                                    )));
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            command_failed = true;
+                            let _ = reply.send(Err(error));
+                        }
+                        Ok(None) => {
+                            let result = transaction_multi_inner(
+                                &mut tx_handles,
+                                &req.rewrites,
+                                &req.txs,
+                                &req.request_id,
+                                true,
+                                test_hooks::before_multi_commit,
+                            );
+                            match result {
+                                Ok(MultiTransactionCommit::Durable(results)) => {
+                                    cache_durable_multi(&idempotency, &cache_key, &req, &results)
+                                        .await;
+                                    publish_multi_events(&events, &req.txs, &results);
+                                    let _ = reply.send(Ok(results));
+                                }
+                                Ok(MultiTransactionCommit::SyncUncertain { results, error }) => {
+                                    command_failed = true;
+                                    let mut cache = idempotency.lock().await;
+                                    cache.insert(
+                                        cache_key,
+                                        CachedResponse::Multi {
+                                            results,
+                                            mutation: req.mutation.clone(),
+                                            durability: MultiDurability::SyncUncertain,
+                                        },
+                                    );
+                                    drop(cache);
+                                    let _ = reply.send(Err(anyhow!(
+                                        CommittedSyncUncertainError::initial(error)
+                                    )));
+                                }
+                                Err(error) => {
+                                    command_failed = true;
+                                    let _ = reply.send(Err(error));
+                                }
+                            }
+                        }
                     }
-                    Err(error) => {
-                        command_failed = true;
-                        let _ = reply.send(Err(error));
-                    }
-                    Ok(None) => {
-                        let result = transaction_multi_inner(
+                }
+                WriterCommand::TransactionMutate { req, reply } => {
+                    let cached = {
+                        let cache = idempotency.lock().await;
+                        cached_transaction_from_map(&cache, &req.request_id, &req.mutation)
+                    };
+                    let mut reply = Some(reply);
+                    let execute = match cached {
+                        Ok(Some(result)) => {
+                            let _ = reply
+                                .take()
+                                .expect("writer reply available")
+                                .send(Ok(result));
+                            false
+                        }
+                        Err(error) => {
+                            command_failed = true;
+                            let _ = reply
+                                .take()
+                                .expect("writer reply available")
+                                .send(Err(error));
+                            false
+                        }
+                        Ok(None) => true,
+                    };
+                    if execute {
+                        let result = transaction_mutate_file_inner(
                             &mut tx_handles,
-                            &req.rewrites,
-                            &req.txs,
+                            req.file,
+                            req.tx.clone(),
                             &req.request_id,
-                            true,
-                            test_hooks::before_multi_commit,
                         );
-                        match result {
-                            Ok(MultiTransactionCommit::Durable(results)) => {
-                                cache_durable_multi(&idempotency, &cache_key, &req, &results).await;
-                                publish_multi_events(&events, &req.txs, &results);
-                                let _ = reply.send(Ok(results));
+                        command_failed = result.is_err();
+                        if let Ok(ref ok) = result {
+                            let mut cache = idempotency.lock().await;
+                            cache.insert(
+                                req.request_id.clone(),
+                                CachedResponse::Tx {
+                                    result: ok.clone(),
+                                    mutation: Some(req.mutation.clone()),
+                                    mutation_id: req.mutation_id.clone(),
+                                },
+                            );
+                            drop(cache);
+                            events.publish(
+                                Topic::Daemon,
+                                EventPayload::TxAppended {
+                                    project_id: req.tx.project_id.clone(),
+                                    tx_id: ok.tx_id.clone(),
+                                    ty: req.tx.entry.ty.clone(),
+                                },
+                            );
+                        }
+                        let _ = reply.take().expect("writer reply available").send(result);
+                    }
+                }
+                WriterCommand::LeaseSessions { paths, reply } => {
+                    // Two transactions holding the same path would each believe it
+                    // had exclusion. Refuse rather than share.
+                    let held = paths.iter().find(|path| leased.contains(*path)).cloned();
+                    match held {
+                        Some(path) => {
+                            command_failed = true;
+                            let _ = reply.send(Err(anyhow!(
+                                "session {} is already held by a maintenance lease",
+                                path.display()
+                            )));
+                        }
+                        None => {
+                            for path in paths {
+                                session_handles.retain(|_, writer| writer.path() != path);
+                                leased.insert(path);
                             }
-                            Ok(MultiTransactionCommit::SyncUncertain { results, error }) => {
-                                command_failed = true;
-                                let mut cache = idempotency.lock().await;
-                                cache.insert(
-                                    cache_key,
-                                    CachedResponse::Multi {
-                                        results,
-                                        mutation: req.mutation.clone(),
-                                        durability: MultiDurability::SyncUncertain,
-                                    },
-                                );
-                                drop(cache);
-                                let _ = reply.send(Err(anyhow!(
-                                    CommittedSyncUncertainError::initial(error)
-                                )));
-                            }
-                            Err(error) => {
-                                command_failed = true;
-                                let _ = reply.send(Err(error));
-                            }
+                            metrics
+                                .open_session_handles
+                                .store(session_handles.len(), Ordering::Relaxed);
+                            let _ = reply.send(Ok(()));
                         }
                     }
                 }
-            }
-            WriterCommand::TransactionMutate { req, reply } => {
-                let cached = {
-                    let cache = idempotency.lock().await;
-                    cached_transaction_from_map(&cache, &req.request_id, &req.mutation)
-                };
-                let mut reply = Some(reply);
-                let execute = match cached {
-                    Ok(Some(result)) => {
-                        let _ = reply
-                            .take()
-                            .expect("writer reply available")
-                            .send(Ok(result));
-                        false
+                WriterCommand::ReleaseSessions { paths, reply } => {
+                    for path in &paths {
+                        leased.remove(path);
                     }
-                    Err(error) => {
-                        command_failed = true;
-                        let _ = reply
-                            .take()
-                            .expect("writer reply available")
-                            .send(Err(error));
-                        false
-                    }
-                    Ok(None) => true,
-                };
-                if execute {
-                    let result = transaction_mutate_file_inner(
-                        &mut tx_handles,
-                        req.file,
-                        req.tx.clone(),
-                        &req.request_id,
-                    );
-                    command_failed = result.is_err();
-                    if let Ok(ref ok) = result {
-                        let mut cache = idempotency.lock().await;
-                        cache.insert(
-                            req.request_id.clone(),
-                            CachedResponse::Tx {
-                                result: ok.clone(),
-                                mutation: Some(req.mutation.clone()),
-                                mutation_id: req.mutation_id.clone(),
-                            },
-                        );
-                        drop(cache);
-                        events.publish(
-                            Topic::Daemon,
-                            EventPayload::TxAppended {
-                                project_id: req.tx.project_id.clone(),
-                                tx_id: ok.tx_id.clone(),
-                                ty: req.tx.entry.ty.clone(),
-                            },
-                        );
-                    }
-                    let _ = reply.take().expect("writer reply available").send(result);
-                }
-            }
-            WriterCommand::LeaseSessions { paths, reply } => {
-                // Two transactions holding the same path would each believe it
-                // had exclusion. Refuse rather than share.
-                let held = paths.iter().find(|path| leased.contains(*path)).cloned();
-                match held {
-                    Some(path) => {
-                        command_failed = true;
-                        let _ = reply.send(Err(anyhow!(
-                            "session {} is already held by a maintenance lease",
-                            path.display()
-                        )));
-                    }
-                    None => {
-                        for path in paths {
-                            session_handles.retain(|_, writer| writer.path() != path);
-                            leased.insert(path);
+                    // Arrival order, so a run's lifecycle lines stay in the order
+                    // the supervisor wrote them.
+                    let mut still_held = Vec::new();
+                    let mut ready = Vec::new();
+                    for entry in deferred.drain(..) {
+                        if leased.contains(&entry.req.session_path) {
+                            still_held.push(entry);
+                        } else {
+                            ready.push(entry);
                         }
+                    }
+                    deferred = still_held;
+                    deferred_appends.store(deferred.len(), Ordering::SeqCst);
+                    let _ = reply.send(());
+                    let ready_count = ready.len();
+                    for (offset, entry) in ready.into_iter().enumerate() {
+                        let deferred_pending = describe_session_append(&entry.req);
+                        let deferred_started = Instant::now();
+                        *in_flight.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(deferred_pending.clone());
+                        *metrics
+                            .in_flight_started
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner()) = Some(deferred_started);
+                        let failed = run_session_append(
+                            &mut session_handles,
+                            &events,
+                            catalog.as_ref(),
+                            entry.req,
+                            entry.reply,
+                            #[cfg(test)]
+                            entry.injected_failure,
+                        );
                         metrics
                             .open_session_handles
                             .store(session_handles.len(), Ordering::Relaxed);
-                        let _ = reply.send(Ok(()));
+                        record_writer_command(
+                            &metrics,
+                            deferred_started.elapsed(),
+                            failed,
+                            &deferred_pending,
+                            rx.len()
+                                .saturating_add(deferred.len())
+                                .saturating_add(ready_count.saturating_sub(offset + 1)),
+                        );
                     }
                 }
-            }
-            WriterCommand::ReleaseSessions { paths, reply } => {
-                for path in &paths {
-                    leased.remove(path);
+                WriterCommand::Barrier { run, reply } => {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+                    let _ = reply.send(());
                 }
-                // Arrival order, so a run's lifecycle lines stay in the order
-                // the supervisor wrote them.
-                let mut still_held = Vec::new();
-                let mut ready = Vec::new();
-                for entry in deferred.drain(..) {
-                    if leased.contains(&entry.req.session_path) {
-                        still_held.push(entry);
-                    } else {
-                        ready.push(entry);
+                WriterCommand::Shutdown { reply } => {
+                    tx_handles.clear();
+                    session_handles.clear();
+                    metrics.open_session_handles.store(0, Ordering::Relaxed);
+                    // A deferred append is not written on the way out: the file it
+                    // names may be mid-transaction, and reporting the loss is more
+                    // honest than appending to whatever inode happens to be there.
+                    for entry in deferred.drain(..) {
+                        let _ = entry.reply.send(Err(anyhow!(
+                            "writer shut down while a maintenance lease held {}",
+                            entry.req.session_path.display()
+                        )));
                     }
-                }
-                deferred = still_held;
-                deferred_appends.store(deferred.len(), Ordering::SeqCst);
-                let _ = reply.send(());
-                let ready_count = ready.len();
-                for (offset, entry) in ready.into_iter().enumerate() {
-                    let deferred_pending = describe_session_append(&entry.req);
-                    let deferred_started = Instant::now();
-                    *in_flight.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some(deferred_pending.clone());
+                    deferred_appends.store(0, Ordering::SeqCst);
+                    *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
                     *metrics
                         .in_flight_started
                         .lock()
-                        .unwrap_or_else(|error| error.into_inner()) = Some(deferred_started);
-                    let failed = run_session_append(
-                        &mut session_handles,
-                        &events,
-                        catalog.as_ref(),
-                        entry.req,
-                        entry.reply,
-                        #[cfg(test)]
-                        entry.injected_failure,
-                    );
-                    metrics
-                        .open_session_handles
-                        .store(session_handles.len(), Ordering::Relaxed);
+                        .unwrap_or_else(|error| error.into_inner()) = None;
                     record_writer_command(
                         &metrics,
-                        deferred_started.elapsed(),
-                        failed,
-                        &deferred_pending,
-                        rx.len()
-                            .saturating_add(deferred.len())
-                            .saturating_add(ready_count.saturating_sub(offset + 1)),
+                        command_started.elapsed(),
+                        false,
+                        &pending,
+                        rx.len(),
                     );
+                    let _ = reply.send(());
+                    return true;
                 }
             }
-            WriterCommand::Barrier { run, reply } => {
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
-                let _ = reply.send(());
+            *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *metrics
+                .in_flight_started
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = None;
+            if record_current {
+                record_writer_command(
+                    &metrics,
+                    command_started.elapsed(),
+                    command_failed,
+                    &pending,
+                    rx.len().saturating_add(deferred.len()),
+                );
             }
-            WriterCommand::Shutdown { reply } => {
-                tx_handles.clear();
-                session_handles.clear();
-                metrics.open_session_handles.store(0, Ordering::Relaxed);
-                // A deferred append is not written on the way out: the file it
-                // names may be mid-transaction, and reporting the loss is more
-                // honest than appending to whatever inode happens to be there.
-                for entry in deferred.drain(..) {
-                    let _ = entry.reply.send(Err(anyhow!(
-                        "writer shut down while a maintenance lease held {}",
-                        entry.req.session_path.display()
-                    )));
-                }
-                deferred_appends.store(0, Ordering::SeqCst);
+            false
+        });
+        match step.catch_unwind().await {
+            Ok(true) => break,
+            Ok(false) => {}
+            Err(panic) => {
+                let cause = panic
+                    .downcast_ref::<&str>()
+                    .map(|cause| cause.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "non-string panic payload".to_string());
+                error!(cause, "writer command panicked; the writer keeps serving");
                 *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 *metrics
                     .in_flight_started
                     .lock()
                     .unwrap_or_else(|error| error.into_inner()) = None;
-                record_writer_command(
-                    &metrics,
-                    command_started.elapsed(),
-                    false,
-                    &pending,
-                    rx.len(),
-                );
-                let _ = reply.send(());
-                break;
+                metrics.failed_total.fetch_add(1, Ordering::Relaxed);
             }
-        }
-        *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        *metrics
-            .in_flight_started
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = None;
-        if record_current {
-            record_writer_command(
-                &metrics,
-                command_started.elapsed(),
-                command_failed,
-                &pending,
-                rx.len().saturating_add(deferred.len()),
-            );
         }
         if cmd.is_none() {
             cmd = rx.recv().await;
@@ -4565,5 +4599,54 @@ mod tests {
         assert!(error.to_string().contains("claimed by machine machine-b"));
         assert_eq!(std::fs::read_to_string(node).unwrap(), "old");
         writer.shutdown().await;
+    }
+
+    // orgasmic:TASK-BX5SR
+    #[tokio::test]
+    async fn panicking_mutation_fails_its_request_and_leaves_the_writer_serving() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("panic.org");
+        let handle = spawn(EventBus::new());
+
+        let error = handle
+            .mutate_file(FileMutate {
+                path: target.clone(),
+                transform: Box::new(|_| panic!("injected mutation panic")),
+            })
+            .await
+            .expect_err("a panicking mutation must fail its own request");
+        assert!(
+            error.to_string().contains("writer reply dropped"),
+            "{error}"
+        );
+
+        // The next, independent write lands: the loop survived the panic.
+        handle
+            .mutate_file(FileMutate {
+                path: target.clone(),
+                transform: Box::new(|_| Ok(b"* survived\n".to_vec())),
+            })
+            .await
+            .expect("the write after a panicking mutation must succeed");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "* survived\n");
+        let status = handle.status();
+        assert!(status.liveness, "status must report the writer alive");
+        assert_eq!(
+            status.failed_total, 1,
+            "the panic counts as one failed command"
+        );
+
+        // And the liveness field goes false once the task is really gone.
+        assert_eq!(
+            handle
+                .shutdown_within(std::time::Duration::from_secs(5))
+                .await,
+            WriterShutdownOutcome::Clean
+        );
+        tokio::task::yield_now().await;
+        assert!(
+            !handle.status().liveness,
+            "status must report a dead writer"
+        );
     }
 }
