@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-RRVX0
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-RRVX0 TASK-35TK4 fix: eliminate CLI lock-probe acquisition race :fix:daemon:
+* DONE TASK-RRVX0 TASK-35TK4 fix: eliminate CLI lock-probe acquisition race :fix:daemon:
 :PROPERTIES:
 :ID: TASK-RRVX0
 :PRIORITY: high

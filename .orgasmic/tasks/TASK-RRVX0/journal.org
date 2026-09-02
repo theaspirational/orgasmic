@@ -31,3 +31,35 @@
 :TO_STATE: in_progress
 :EVENT_ID: 6b6f2ffd-e31f-4f46-b889-2e8554b88a84
 :END:
+
+* tx-20260902-orgasmic-5e27c87f-39af-4a17-ad19-743d5e272310 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-5e27c87f-39af-4a17-ad19-743d5e272310
+:TIME:    [2026-09-02 Wed 10:35:37]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-RRVX0
+:TARGET: .orgasmic/tasks/TASK-RRVX0/node.org
+:REASON: sprint triage: fix verified in main
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 511708b8-923c-4f35-9ad5-55a931eae601
+:END:
+
+* tx-20260902-orgasmic-c52748fa-f3a5-40a6-969b-788239531890 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-c52748fa-f3a5-40a6-969b-788239531890
+:TIME:    [2026-09-02 Wed 10:35:37]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-RRVX0
+:TARGET: .orgasmic/tasks/TASK-RRVX0/node.org
+:REASON: fix already in main (verified ancestor of 7c85f177); stale record closed
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 1e694ea9-2148-41d0-849e-e3bee622d630
+:END:
