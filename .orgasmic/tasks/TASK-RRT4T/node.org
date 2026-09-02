@@ -175,4 +175,6 @@ FINDINGS FOR THE REVIEWER PASS
 3. Suite wall time went from ~106 s to 152 s on the same machine. Some of that is
    variance — 140 s was observed earlier today — but it should be measured
    deliberately rather than assumed.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): premise already fixed on main by f894a7a — rmux_available_for_test and the silent 'skipping … rmux binary not found' return no longer exist (0 hits); every tooling skip routes through orgasmic_drivers::test_tooling::skip_test_if_missing (51 sites), each of 7 test binaries has a required_test_tooling_is_present sentinel that panics when a gating tool is absent, and ORGASMIC_ALLOW_MISSING_TOOLS=<tool> is the single opt-out. Sentinel demo on the built daemon binary: PATH without tmux -> exit 101 'required test tooling is missing: tmux (gates 17 tests)'; with the opt-out -> exit 0 + warning. Subagent commit d60fd4cb on sprint/TASK-RRT4T adds the missing unit test test_tooling::tests::missing_tool_panics_unless_explicitly_allowed; merged onto local sprint-20260902 as 7c3d2f01. Gates (private target): drivers 1 passed, clippy rc=0, fmt rc=0.
 
