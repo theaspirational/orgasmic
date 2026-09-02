@@ -791,6 +791,9 @@ fn tmux_socket_args() -> Vec<String> {
 pub fn tmux_command() -> StdCommand {
     let mut command = StdCommand::new("tmux");
     command.args(tmux_socket_args());
+    for var in TMUX_SCRUBBED_ENV {
+        command.env_remove(var);
+    }
     command
 }
 
@@ -799,8 +802,23 @@ pub fn tmux_command() -> StdCommand {
 fn tmux_async_command() -> tokio::process::Command {
     let mut command = tokio::process::Command::new("tmux");
     command.args(tmux_socket_args());
+    for var in TMUX_SCRUBBED_ENV {
+        command.env_remove(var);
+    }
     command
 }
+
+// orgasmic:TASK-SJNNA
+/// Inherited tmux client state scrubbed from every spawned tmux command.
+///
+/// `$TMUX` is not merely a nesting marker: when neither `-L` nor `-S` is
+/// given, tmux takes its socket path from it (up to the first comma). A
+/// daemon launched from inside a tmux — or rmux — session would otherwise aim
+/// every unpinned call at the enclosing server, which for rmux does not speak
+/// tmux's protocol and fails with `server exited unexpectedly`. Scrubbing
+/// rather than pinning keeps the [`TMUX_SOCKET_ENV`] property: an unpinned
+/// operator client still reaches the sessions the daemon creates.
+const TMUX_SCRUBBED_ENV: [&str; 2] = ["TMUX", "TMUX_PANE"];
 
 // orgasmic:TASK-0RCRY
 /// Pin this process to a tmux server it owns, and hold that server open for as
@@ -5065,6 +5083,35 @@ mod tests {
             tmux_socket_args_for(None).is_empty(),
             "production pins nothing: the daemon must reach the same server an \
              operator's own tmux client reaches"
+        );
+    }
+
+    // orgasmic:TASK-SJNNA
+    /// Every tmux command the driver builds drops the inherited `TMUX` and
+    /// `TMUX_PANE`, so a daemon started inside a tmux/rmux session behaves like
+    /// one started outside it. Asserted on the built `Command`, not by
+    /// spawning: `get_envs` reports a removal as `(name, None)`.
+    ///
+    /// Injection: drop the `env_remove` loop from `tmux_command` /
+    /// `tmux_async_command` and the matching assertion goes red.
+    #[test]
+    fn tmux_commands_scrub_inherited_tmux_env() {
+        let assert_scrubbed = |envs: std::process::CommandEnvs<'_>, which: &str| {
+            let removed: Vec<&str> = envs
+                .filter(|(_, value)| value.is_none())
+                .map(|(name, _)| name.to_str().unwrap())
+                .collect();
+            for var in TMUX_SCRUBBED_ENV {
+                assert!(
+                    removed.contains(&var),
+                    "{which} must remove {var} from the child environment; removals seen: {removed:?}"
+                );
+            }
+        };
+        assert_scrubbed(tmux_command().get_envs(), "tmux_command");
+        assert_scrubbed(
+            tmux_async_command().as_std().get_envs(),
+            "tmux_async_command",
         );
     }
 

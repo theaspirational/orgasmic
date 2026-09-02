@@ -940,15 +940,25 @@ async fn probe_local_async(home: &Home) -> Result<LocalDaemonState> {
 /// budget it was waiting on, so a legitimate drain looked like a failure and
 /// the service was stopped underneath it. Derived from what the endpoint can
 /// legitimately spend:
-/// - release-finalization drain: `RELEASE_FINALIZATION_DRAIN_TIMEOUT` = 20s,
-/// - writer drain barrier: `RESTART_WRITER_DRAIN_TIMEOUT` = 5s,
-/// - the rest of the handler (acquisition pause, two supervisor snapshots) plus
-///   connect/transport: 15s of slack.
+/// - release-finalization drain: `RELEASE_FINALIZATION_DRAIN_TIMEOUT`,
+/// - writer drain barrier: `RESTART_WRITER_DRAIN_TIMEOUT`,
+/// - the rest of the handler: [`RESTART_DRAIN_SLACK`].
 ///
-/// 40s, and it is a ceiling, not a cost: a healthy daemon answers in
-/// milliseconds. Only a daemon that is genuinely still writing a terminal tx
-/// makes the operator wait, which is the correct trade against losing it.
-const RESTART_DRAIN_TIMEOUT: Duration = Duration::from_secs(40);
+/// A ceiling, not a cost: a healthy daemon answers in milliseconds. Only a
+/// daemon that is genuinely still writing a terminal tx makes the operator
+/// wait, which is the correct trade against losing it.
+// orgasmic:TASK-A2YEM — composed from the endpoint's own named budgets rather
+// than a literal that silently encoded them.
+const RESTART_DRAIN_TIMEOUT: Duration = orgasmic_daemon::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT
+    .saturating_add(orgasmic_daemon::api::RESTART_WRITER_DRAIN_TIMEOUT)
+    .saturating_add(RESTART_DRAIN_SLACK);
+
+/// What the restart handler spends outside its two drain budgets: the
+/// acquisition pause, two supervisor snapshots, plus connect/transport.
+const RESTART_DRAIN_SLACK: Duration = Duration::from_secs(15);
+
+// Behaviour-preserving refactor: the composed fuse is the 40s it always was.
+const _: () = assert!(RESTART_DRAIN_TIMEOUT.as_secs() == 40);
 
 /// What the pre-stop drain reported, when it could be asked at all.
 #[derive(Debug)]
@@ -1753,6 +1763,14 @@ mod tests {
             RESTART_DRAIN_TIMEOUT > server_budget,
             "CLI restart-drain timeout {RESTART_DRAIN_TIMEOUT:?} must exceed the \
              endpoint's release-finalization plus writer-drain budget {server_budget:?}"
+        );
+        // orgasmic:TASK-A2YEM — the fuse IS the endpoint budgets plus a named
+        // slack, so a change to either budget moves the fuse with it.
+        assert_eq!(
+            RESTART_DRAIN_TIMEOUT,
+            server_budget + RESTART_DRAIN_SLACK,
+            "the restart-drain fuse must be composed from the endpoint budgets plus \
+             RESTART_DRAIN_SLACK, not a literal that encodes them"
         );
         // orgasmic:TASK-Q07Y5 — the old assertion compared the CLI fuse against
         // ONE phase of the daemon's shutdown (the release drain). The writer
