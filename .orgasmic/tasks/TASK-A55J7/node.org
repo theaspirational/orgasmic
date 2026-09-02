@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-A55J7
 #+orgasmic_version: 2
 
-* BACKLOG TASK-A55J7 Persist model and effort on the run record and the dispatch tx    :dispatch:runtime:observability:
+* IN_PROGRESS TASK-A55J7 Persist model and effort on the run record and the dispatch tx :dispatch:runtime:observability:
 :PROPERTIES:
 :ID: TASK-A55J7
 :PRIORITY: P1

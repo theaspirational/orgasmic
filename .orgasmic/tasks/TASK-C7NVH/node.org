@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-C7NVH
 #+orgasmic_version: 2
 
-* BACKLOG TASK-C7NVH tmux dispatches silently drop --effort for codex, cursor-agent and hermes, so the tx records an effort the process never ran    :drivers:dispatch:
+* IN_PROGRESS TASK-C7NVH tmux dispatches silently drop --effort for codex, cursor-agent and hermes, so the tx records an effort the process never ran :drivers:dispatch:
 :PROPERTIES:
 :DEPENDS_ON: TASK-A55J7
 :ID: TASK-C7NVH

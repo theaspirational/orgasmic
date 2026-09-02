@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-YBCYQ
 #+orgasmic_version: 2
 
-* BACKLOG TASK-YBCYQ the compiled worker prompt names the main repo as 'the Project' and never names the worktree, so a worker commits to main    :dispatch:daemon:
+* IN_PROGRESS TASK-YBCYQ the compiled worker prompt names the main repo as 'the Project' and never names the worktree, so a worker commits to main :dispatch:daemon:
 :PROPERTIES:
 :ID: TASK-YBCYQ
 :PRIORITY: P1
