@@ -94,7 +94,8 @@ use crate::supervisor::{
 };
 use crate::writer::{
     CommittedSyncUncertainError, FileMutate, FileRewrite, MutationIdentity,
-    MutationIdentityConflict, TxAppend, TxIdPolicy, WriterHandle, DAEMON_OWNED_SURFACES,
+    MutationIdentityConflict, RequestIdReuseConflict, TxAppend, TxIdPolicy, WriterHandle,
+    DAEMON_OWNED_SURFACES,
 };
 use crate::ws;
 
@@ -1871,6 +1872,10 @@ fn writer_transaction_error(error: anyhow::Error) -> ApiError {
     // 409 with the colliding id, and the next independent write is unaffected.
     if let Some(conflict) = error.downcast_ref::<MutationIdentityConflict>() {
         tracing::warn!(error = %conflict, "writer request id collided across APIs");
+        return ApiError::conflict(conflict.to_string());
+    }
+    if let Some(conflict) = error.downcast_ref::<RequestIdReuseConflict>() {
+        tracing::warn!(error = %conflict, "writer request id reused with a different identity");
         return ApiError::conflict(conflict.to_string());
     }
     tracing::error!(error = %error, "writer transaction failed");
@@ -23570,6 +23575,18 @@ pub(crate) mod tests {
         assert!(conflict.message.contains("mint a new request id"));
         let other = writer_transaction_error(anyhow::anyhow!("disk full"));
         assert_eq!(other.status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // orgasmic:TASK-BX5SR.2 — the same key replayed with a different payload
+    // is the sibling collision: 409 naming the key, never a 500.
+    #[test]
+    fn writer_request_id_reused_with_different_payload_is_a_409_not_a_500() {
+        let conflict = writer_transaction_error(anyhow::anyhow!(RequestIdReuseConflict {
+            request_id: "abc/tx".into(),
+        }));
+        assert_eq!(conflict.status, StatusCode::CONFLICT);
+        assert!(conflict.message.contains("abc/tx"));
+        assert!(conflict.message.contains("mint a new request id"));
     }
 
     // orgasmic:TASK-BX5SR.2 — dispatch-close cannot reach the cross-API
