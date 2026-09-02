@@ -279,6 +279,7 @@ pub fn harness_label(harness: &str) -> &str {
         "codex" => "Codex",
         "cursor-agent" => "Cursor",
         "hermes" => "Hermes",
+        "opencode" => "OpenCode",
         "custom" => "Custom",
         other => other,
     }
@@ -373,14 +374,15 @@ mod tests {
     /// Harnesses without a machine-readable catalog must say so rather than
     /// disappear from the listing (dec_WDR5K item 9).
     ///
-    /// `hermes` is probed by the command but not here: its adapter builds its
-    /// catalog by running a Python inventory API, so asserting on it would make
-    /// this suite depend on a machine's hermes install and pay that subprocess
-    /// on every run. The four harnesses below answer from the adapter alone.
+    /// `hermes` and `opencode` are probed by the command but not here: hermes
+    /// builds its catalog by running a Python inventory API and opencode by
+    /// running the SDK provider host, so asserting on them would make this
+    /// suite depend on a machine's installs and pay those subprocesses on
+    /// every run. The four harnesses below answer from the adapter alone.
     #[tokio::test]
     async fn every_harness_reports_a_runtime_options_answer() {
         for harness in supported_harnesses() {
-            if harness == "hermes" {
+            if matches!(harness, "hermes" | "opencode") {
                 continue;
             }
             let answer = harness_runtime_options(harness).await;

@@ -87,7 +87,14 @@ pub const RESERVED_MODES: &[&str] = &["acp", "acp-stdio", "acp-ws"];
 
 /// First-class harness ids. `custom` is the pseudo-harness for a bare PTY
 /// terminal session (no agent CLI — the operator runs any tool by hand).
-pub const HARNESSES: &[&str] = &["codex", "claude", "cursor-agent", "hermes", "custom"];
+pub const HARNESSES: &[&str] = &[
+    "codex",
+    "claude",
+    "cursor-agent",
+    "hermes",
+    "opencode",
+    "custom",
+];
 
 // orgasmic:TASK-3NJ9K
 /// Will a mux launch of `harness` exec an agent CLI on its own?
@@ -139,6 +146,10 @@ pub const SUPPORTED: &[(&str, &str)] = &[
     ("stdio", "codex"),
     ("stdio", "cursor-agent"),
     ("stdio", "hermes"),
+    // orgasmic:TASK-XC9N4 — the OpenCode SDK host, under the mode it actually
+    // runs as. Before this entry the only way to reach it was `tmux`/`custom`
+    // with `opencode` as the argv, which the daemon silently re-addressed here.
+    ("stdio", "opencode"),
     ("ws", "codex"),
     ("ws", "hermes"),
     ("subprocess-stream-json", "cursor-agent"),
@@ -245,6 +256,7 @@ pub fn adapter_for(harness: &str) -> Option<Box<dyn HarnessEventAdapter>> {
         "claude" => Some(Box::new(ClaudeAdapter::new())),
         "cursor-agent" => Some(Box::new(CursorAdapter::new())),
         "hermes" => Some(Box::new(HermesAdapter::new())),
+        "opencode" => Some(Box::new(ChatSdkAdapter::new(ChatSdkProvider::OpenCode))),
         "custom" => Some(Box::new(ShellAdapter::new())),
         _ => None,
     }

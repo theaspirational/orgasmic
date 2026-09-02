@@ -59,6 +59,8 @@ pub fn dispatch_chat_provider(
     match harness.trim().to_ascii_lowercase().as_str() {
         "codex" => Some("codex"),
         "claude" => Some("claude"),
+        // orgasmic:TASK-XC9N4 — first-class `stdio`/`opencode` runs as requested.
+        "opencode" => Some("opencode"),
         "custom"
             if harness_args.first().is_some_and(|argument| {
                 Path::new(argument)
@@ -148,6 +150,22 @@ mod tests {
         assert_eq!(
             dispatch_chat_provider("tmux", "claude", &[]),
             Some("claude")
+        );
+    }
+
+    // orgasmic:TASK-XC9N4
+    /// `--mode stdio --harness opencode` is accepted directly and is not
+    /// re-addressed: the canonical pair is the requested pair.
+    #[test]
+    fn stdio_opencode_is_supported_and_runs_as_requested() {
+        validate_supported_pair("stdio", "opencode").unwrap();
+        assert_eq!(
+            canonical_chat_address("stdio", "opencode", &[]),
+            Some(("stdio", "opencode"))
+        );
+        assert_eq!(
+            canonical_chat_address("tmux", "custom", &["opencode".into()]),
+            Some(("stdio", "opencode"))
         );
     }
 

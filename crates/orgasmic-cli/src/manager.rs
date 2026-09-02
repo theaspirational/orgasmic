@@ -70,8 +70,7 @@ Examples:
     --brief /path/to/brief.md --mode stdio --harness cursor-agent
 
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
-    --brief /path/to/brief.md --mode tmux --harness custom \\
-    --harness-arg opencode --harness-arg --print-logs --dry-run")]
+    --brief /path/to/brief.md --mode stdio --harness opencode --dry-run")]
 pub struct DispatchArgs {
     /// Task id to dispatch, e.g. `TASK-XXXXX`; repeatable to send one worker
     /// at several tasks. The task must be in BACKLOG or TODO — a dispatch from
