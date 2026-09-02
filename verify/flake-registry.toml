@@ -35,43 +35,52 @@
 # TASK-X0PV1 — daemon tests that fail under full-suite parallelism, pass alone
 # (owned by TASK-STWVB until 2026-08-07; transferred when that round closed with
 # these modes still unfixed, rather than deleting live entries to green --check)
+#
+# Re-evaluated 2026-09-02 at 7c85f177 (worktree FLAKES), each of the three
+# tests run 20 times as two concurrent copies of one daemon --lib binary under
+# 8 cpu hogs (load average 30-56): 60/60 green. Three of the four entries that
+# stood here are gone on that measurement plus a named mechanism:
+#
+#   recovery_reattaches_tmux_session_when_handle_exists /
+#   "tmux test session should start" — the measured daemon error was `tmux
+#   new-session failed (exit 1): server exited unexpectedly`, the shared-server
+#   drain race. TASK-0RCRY (2026-07-29, the day AFTER the 2026-07-28
+#   measurement) put every tmux-gated test on a per-process `-L` server held
+#   open by a keepalive session, whose doc comment names this exact error as
+#   the window it closes. The entry outlived its defect by a month.
+#
+#   recovery_reattaches_tmux_session_when_handle_exists / left: "interrupted"
+#   — the inventory resolves attach probes against RECOVERY_ATTACH_PROBE_BUDGET
+#   (1s); a `tmux has-session` that misses it classifies `interrupted` with
+#   "attach proof exceeded inventory deadline" and bumps
+#   attach_probes_timed_out. Same mechanism as TASK-QCG6J. The test now treats
+#   exactly that shape as "liveness not decided" and returns without a verdict
+#   instead of asserting a probe that never ran; a probe that ran and answered
+#   "not live" still fails.
+#
+#   production_resume_native_fork_uses_pinned_claude_not_path_shim /
+#   "resume_native_fork recover: 500" — the 500 is `supervisor_recover_error`'s
+#   catch-all ("failed to recover run"), so the panic never carried the cause;
+#   it is in the daemon's tracing log only. It was measured once, pre-0RCRY,
+#   on a tmux-spawning path, and did not recur in 20 loaded runs here. Deleted
+#   on that evidence: the next 500 must be read as REAL and its daemon log
+#   read, not excused against a mechanism nobody recorded.
+#
+# The one below stays, re-evidenced, because its mechanism is the host and not
+# the test: in the same 2026-09-02 measurement both concurrent copies of it
+# stalled from 12:48:46 to 12:49:28 (41.5s and 43.4s wall for a test that
+# otherwise takes 0.3s) and were released in the same second, while staying
+# inside the 30s `ready` deadline — a machine-wide process-spawn stall of the
+# kind the run-tests.sh host-state stamp exists to label. The registered mode
+# is that stall landing on the first phase. Raising the deadline moves the
+# threshold and proves nothing; the interlock is the answer.
 # --------------------------------------------------------------------------
 
 [[flake]]
 test = "supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling"
 owner = "TASK-X0PV1"
 signature = "fake cursor-agent did not start children"
-evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, full daemon --lib: 528 passed / 5 failed, this among them. Assertion is crates/orgasmic-daemon/src/supervisor.rs:10321. Green alone here 2026-07-28 (1 passed, 548 filtered out); NOT reproduced in 6 runs in this worktree, including 3 under induced load."
-filed = "2026-07-28"
-
-[[flake]]
-test = "api::tests::recovery_reattaches_tmux_session_when_handle_exists"
-owner = "TASK-X0PV1"
-signature = "tmux test session should start"
-evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, and identically inside the TASK-1T3FZ dispatched worker, where the daemon error was 'tmux new-session failed (exit 1): server exited unexpectedly'. Assertion is crates/orgasmic-daemon/src/api.rs:23885. Green alone here 2026-07-28; NOT reproduced in 6 runs in this worktree."
-filed = "2026-07-28"
-
-# Two failure modes, one name. The env-race mode belonged to TASK-5HBST and is
-# FIXED — registering it would re-excuse a defect that no longer exists and
-# would file the next failure against a closed task, which is the exact mistake
-# this registry was built to make impossible. Only mode 2 is registered.
-# The second mode of the same test, and the first thing this registry caught.
-# The full-suite run below failed on the registered NAME with an unregistered
-# panic, so the runner reported it REAL rather than waving it through as the
-# tmux-startup flake — which is what a human classifying from memory would have
-# done. Registered afterwards, with the panic it actually produced.
-[[flake]]
-test = "api::tests::recovery_reattaches_tmux_session_when_handle_exists"
-owner = "TASK-X0PV1"
-signature = "left: \"interrupted\""
-evidence = "Measured here 2026-07-28: full cargo test --workspace under 10 cpu hogs, 1 failure in the whole workspace, crates/orgasmic-daemon/src/api.rs:23908 assertion left == right, left 'interrupted' right 'reattached'. Green alone on the same tree. TASK-STWVB's own body records this mode: 'it is tmux session REATTACH, and it lands on interrupted rather than reattached', pointing at cross-test contention over shared tmux state."
-filed = "2026-07-28"
-
-[[flake]]
-test = "api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim"
-owner = "TASK-X0PV1"
-signature = "resume_native_fork recover: 500"
-evidence = "Manager measurement 2026-07-28 on the merged TASK-5HBST tree at load ~10: still failed, with mode 2 (recovery 500) and not the env race. Assertion is crates/orgasmic-daemon/src/api.rs:25580. Green alone here 2026-07-28; NOT reproduced in 6 runs in this worktree."
+evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, full daemon --lib: 528 passed / 5 failed, this among them. Assertion is crates/orgasmic-daemon/src/supervisor.rs (the 30s `ready` deadline). Green alone 2026-07-28; NOT reproduced in 6 runs then. Re-measured 2026-09-02 at 7c85f177: 20/20 green as two concurrent copies under 8 cpu hogs, but two concurrent runs each took ~42s wall (12:48:46-12:49:28, same release second) against a 0.3s norm — a host-wide spawn stall, the same class as the registered mode."
 filed = "2026-07-28"
 
 # --------------------------------------------------------------------------
