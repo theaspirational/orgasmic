@@ -23,7 +23,7 @@ Complete the assigned work for {{task.id}}.
   them.
 
 ** Inputs
-- Project: {{project.name}} at {{project.path}}.
+{{dispatch.workdir}}
 - Worker: {{worker.id}} (kind {{worker.kind}}).
 
 - Task: {{task.id}}, {{task.title}}.

@@ -491,6 +491,13 @@ fn compile_values(view: &PromptSpecView, req: &PromptCompileRequest) -> SlotValu
     values
         .entry("dispatch.brief".to_string())
         .or_insert_with(|| "not set".to_string());
+    let no_worktree_workdir = format!(
+        "- Project: {} at {}.",
+        values["project.name"], values["project.path"]
+    );
+    values
+        .entry("dispatch.workdir".to_string())
+        .or_insert(no_worktree_workdir);
     values.entry("run.id".to_string()).or_default();
     values.entry("run.iteration_count".to_string()).or_default();
     values.entry("run.previous_state".to_string()).or_default();

@@ -25,6 +25,7 @@
 
 *** dispatch.*
 - dispatch.brief         (manager handoff content supplied with a dispatch; non-dispatch compiles use "not set")
+- dispatch.workdir       (Inputs lines naming where the worker works: its git worktree + branch first, then the main checkout marked READ-ONLY; without a worktree, "- Project: <name> at <path>.")
 
 *** project.*
 - project.id, project.name, project.path
