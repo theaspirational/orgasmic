@@ -110,3 +110,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: 23496efb-aa5c-4597-adc4-dd803fa285f7
 :END:
+
+* tx-20260902-orgasmic-4fc430d1-87c7-4f58-b25a-a421c2b245de task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-4fc430d1-87c7-4f58-b25a-a421c2b245de
+:TIME:    [2026-09-02 Wed 15:24:58]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-DTCBP
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-DTCBP/node.org
+:REASON: edited task node TASK-DTCBP
+:NODE_ID: TASK-DTCBP
+:EVENT_ID: 8a773bdd-ca7c-4a41-b8c4-8098bb0440fa
+:END:
+
+* tx-20260902-orgasmic-9534c1a0-b9fd-4a65-a937-bab3e44fc676 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-9534c1a0-b9fd-4a65-a937-bab3e44fc676
+:TIME:    [2026-09-02 Wed 15:24:58]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-DTCBP
+:TARGET: .orgasmic/tasks/TASK-DTCBP/node.org
+:REASON: all three items resolved: verify --all (ad8cf634), gating decision recorded, and the :VERIFY_ARTIFACT: property (merge 335a5b48); manager-gated
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: cf466737-6872-4a2a-949c-47d33761e139
+:END:

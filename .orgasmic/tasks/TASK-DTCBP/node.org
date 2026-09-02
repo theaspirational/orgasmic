@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DTCBP
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-DTCBP orgasmic verify: --all, the verify_artifact drawer property, and the dispatch-close gating decision :cli:verification:mechanism:
+* DONE TASK-DTCBP orgasmic verify: --all, the verify_artifact drawer property, and the dispatch-close gating decision :cli:verification:mechanism:
 :PROPERTIES:
 :ID: TASK-DTCBP
 :PRIORITY: P2
@@ -48,4 +48,9 @@ NIGHTLY REPLAY [2026-07-29, deferred from TASK-S2KM0]: the per-PR CI lane delibe
 ** Evidence
 Manager sprint 2026-09-02 (no dispatch): item 1 done — subagent commit af0d15a5 on sprint/VERIFY, merged onto local sprint-20260902 as ad8cf634. 'orgasmic verify --all' enumerates every verify/<id> dir (sorted), runs the existing single replay per artifact, prints '<id> pass|FAIL (<reason>)' + 'N/M pass', non-zero on any failure; --json emits one object per artifact + a {total,ok,failed} summary. Test all_replays_every_artifact_and_fails_when_one_does is a REAL replay over a fake verify/ dir on the ms-fast fixture repo. Known-good replay gate: verify TASK-STWVB.1.1.1.1 PASS (51s). Items 2 (:VERIFY_ARTIFACT: drawer property; needs a core schema field + dispatch-close validation) and 3 (gating decision) NOT done — TASK STAYS OPEN. Full --all replay across all 102 not run this session.
 - 2026-09-02 14:28 item 3 DECIDED by the manager: do NOT gate 'manager dispatch-close --status done' on a passing replay yet. Measured reason: 'orgasmic verify --all --check' on main shows 29/102 artifacts stale (git apply --check fails) and 70/102 replayable, so a default gate would block most closes on artifacts the closing task never touched. Decision: keep replay opt-in ('orgasmic verify <id>' / '--all --check' in run-tests.sh, which already exits 2 on stale artifacts), and revisit gating once the stale set is repaired or item 2 (:VERIFY_ARTIFACT: drawer property) lets a close validate only its OWN artifact. Item 2 remains the only open item on this task.
+- 2026-09-02 dispatch (stdio/codex-chat, gpt-5.6-sol, effort high, started_tx tx-20260902-orgasmic-4bded295): ITEM 2 DONE. Worker commit 2c742479, merged as 335a5b48, close tx tx-20260902-orgasmic-9a72d101. Adds TaskHeading.verify_artifact for :VERIFY_ARTIFACT:, projects it through task GET JSON, and makes single-task "orgasmic verify" prefer the property over the verify/<TASK-ID> convention (explicit --artifact still wins; an absent property keeps the convention). A successful "dispatch-close --status done" now loads each closing task's claimed artifact before recording merge evidence and refuses a missing or malformed one by name.
+- The guard respects the item 3 decision: validate_claimed_task_artifact returns Ok(()) early when the task claims nothing (and when the task file is absent), so a close validates only its OWN artifact, never the corpus. Manager verified this in the source, not from the report.
+- Manager gate (independent of the worker's own): fresh private target dir with a real "Compiling orgasmic-cli" from the worker worktree; orgasmic-cli verify:: 21 passed (property preference, convention fallback, missing/unloadable refusals), orgasmic-core fixtures verify_artifact 1 passed, clippy cli+core+daemon -D warnings rc=0, fmt rc=0.
+- Blast-radius check before merging: NO task in the ledger sets :VERIFY_ARTIFACT: as a drawer property today (the only two textual matches are prose in handoff.org and this task's own description), so the new refusal changes no existing close.
+- All three items now resolved: item 1 shipped as ad8cf634, item 3 decided 2026-09-02 (no default gate), item 2 here.
 
