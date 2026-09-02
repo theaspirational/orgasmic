@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-GGWW2
 #+orgasmic_version: 2
 
-* BACKLOG TASK-GGWW2 serve's SIGTERM handler races Daemon::run's return, so the graceful-shutdown test flakes    :daemon:flake:
+* IN_PROGRESS TASK-GGWW2 serve's SIGTERM handler races Daemon::run's return, so the graceful-shutdown test flakes :daemon:flake:
 :PROPERTIES:
 :ID: TASK-GGWW2
 :PRIORITY: P2

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-Y9BY6
 #+orgasmic_version: 2
 
-* BACKLOG TASK-Y9BY6 live_rmux_exit_139_emits_a_fatal_terminal_event times out on every run    :testing:drivers:flake:
+* IN_PROGRESS TASK-Y9BY6 live_rmux_exit_139_emits_a_fatal_terminal_event times out on every run :testing:drivers:flake:
 :PROPERTIES:
 :ID: TASK-Y9BY6
 :PRIORITY: P2
