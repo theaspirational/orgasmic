@@ -1137,6 +1137,11 @@ pub enum Lifecycle {
         /// parseable.
         #[serde(default)]
         finalized_by_worker: bool,
+        /// Why the run ended, classified from facts the daemon already held
+        /// at release time (TASK-XQCNA). `None` on session JSONL written
+        /// before this field existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit: Option<ExitReason>,
     },
     /// Historical auto-continuation envelope. No production path emits this
     /// after TASK-QPKCD; kept so older session JSONL still deserializes.
@@ -1215,6 +1220,156 @@ pub enum ReleaseOutcome {
     Failed,
     Interrupted,
     Cancelled,
+}
+
+/// Classified terminal exit reason on the `Release` tombstone (TASK-XQCNA).
+///
+/// Four failures used to look identical (`[run-gone] [unreported]`, empty
+/// last.txt) while the truth sat in the session JSONL. Every class here is
+/// backed by a string or code path the daemon already produced; anything
+/// unmatched is `Unknown` with the first error line attached rather than a
+/// guess.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum ExitReason {
+    /// The worker declared completion itself (`finalized_by_worker`).
+    Reported,
+    /// Provider quota / rate limit (`429`, `rate limit`, `quota`, `usage limit`).
+    ProviderQuota {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after: Option<String>,
+    },
+    /// Provider refused the credential (`Not logged in`, `/login`, `401`,
+    /// `unauthorized`, `invalid api key`, `authentication`).
+    ProviderAuth,
+    /// A fatal transport-level `DriverError` no other class claimed.
+    TransportError,
+    /// The supervisor's stall detector released the run
+    /// (`stall_timeout_exceeded`).
+    StallKilled,
+    /// The harness process never started (`<binary> spawn: <os error>`).
+    SpawnFailed { os_error: String },
+    /// Reserved: worktree setup happens in the CLI before any run exists, so
+    /// no daemon path produces this yet.
+    WorktreeSetupFailed,
+    /// Cancelled by an operator or manager (`ReleaseOutcome::Cancelled`).
+    OperatorAborted,
+    Unknown {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+}
+
+impl ExitReason {
+    /// Classify a release from what the daemon knows: the release reason,
+    /// the frozen outcome, whether the worker finalized, and the first error
+    /// line the driver produced (`Some((transport_level, line))`).
+    pub fn classify(
+        reason: &str,
+        outcome: ReleaseOutcome,
+        finalized_by_worker: bool,
+        first_error: Option<(bool, &str)>,
+    ) -> Self {
+        if finalized_by_worker {
+            return Self::Reported;
+        }
+        if reason.starts_with("stall_timeout_exceeded") {
+            return Self::StallKilled;
+        }
+        if outcome == ReleaseOutcome::Cancelled {
+            return Self::OperatorAborted;
+        }
+        match first_error {
+            Some((transport, line)) => Self::from_error_line(line).unwrap_or(if transport {
+                Self::TransportError
+            } else {
+                Self::Unknown {
+                    detail: Some(line.to_string()),
+                }
+            }),
+            None => Self::Unknown {
+                detail: Some(reason.to_string()),
+            },
+        }
+    }
+
+    /// The provider/spawn classes an error line alone can prove.
+    pub fn from_error_line(line: &str) -> Option<Self> {
+        let lower = line.to_ascii_lowercase();
+        if let Some((_, os_error)) = line.split_once("spawn: ") {
+            if os_error.contains("(os error ") {
+                return Some(Self::SpawnFailed {
+                    os_error: os_error.trim().to_string(),
+                });
+            }
+        }
+        const AUTH: &[&str] = &[
+            "not logged in",
+            "/login",
+            "unauthorized",
+            "401",
+            "invalid api key",
+            "authentication",
+        ];
+        if AUTH.iter().any(|needle| lower.contains(needle)) {
+            return Some(Self::ProviderAuth);
+        }
+        const QUOTA: &[&str] = &[
+            "429",
+            "rate limit",
+            "rate_limit",
+            "quota",
+            "usage limit",
+            "usage_limit",
+            "too many requests",
+        ];
+        if QUOTA.iter().any(|needle| lower.contains(needle)) {
+            return Some(Self::ProviderQuota {
+                retry_after: retry_after(&lower),
+            });
+        }
+        None
+    }
+
+    /// One-word label, the serde tag.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Reported => "reported",
+            Self::ProviderQuota { .. } => "provider_quota",
+            Self::ProviderAuth => "provider_auth",
+            Self::TransportError => "transport_error",
+            Self::StallKilled => "stall_killed",
+            Self::SpawnFailed { .. } => "spawn_failed",
+            Self::WorktreeSetupFailed => "worktree_setup_failed",
+            Self::OperatorAborted => "operator_aborted",
+            Self::Unknown { .. } => "unknown",
+        }
+    }
+
+    /// The bracketed detail `dispatch-status` prints after the label.
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            Self::ProviderQuota {
+                retry_after: Some(after),
+            } => Some(after),
+            Self::SpawnFailed { os_error } => Some(os_error),
+            Self::Unknown {
+                detail: Some(detail),
+            } => Some(detail),
+            _ => None,
+        }
+    }
+}
+
+/// The token after `retry-after` / `retry_after` / `retry after`, if any.
+fn retry_after(lower: &str) -> Option<String> {
+    ["retry-after", "retry_after", "retry after"]
+        .iter()
+        .find_map(|key| lower.split_once(key))
+        .map(|(_, rest)| rest.trim_start_matches([':', '=', ' ']))
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(|token| token.trim_end_matches([',', '.', ';', ')']).to_string())
+        .filter(|token| !token.is_empty())
 }
 
 /// Worker-callable tools on implementer runs (arch_004).
@@ -1676,6 +1831,127 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
     // event, exactly as a truncated tail window does.
     scan.final_envelope_retained = final_line_retained && !torn_final_fragment;
     Ok(scan)
+}
+
+#[cfg(test)]
+mod exit_reason_tests {
+    use super::{ExitReason, ReleaseOutcome};
+
+    fn classify(reason: &str, outcome: ReleaseOutcome, first: Option<(bool, &str)>) -> ExitReason {
+        ExitReason::classify(reason, outcome, false, first)
+    }
+
+    #[test]
+    fn exit_reason_classifies_each_terminal_path() {
+        assert_eq!(
+            ExitReason::classify("worker finalize", ReleaseOutcome::Completed, true, None),
+            ExitReason::Reported
+        );
+        assert_eq!(
+            classify(
+                "stall_timeout_exceeded: no work evidence for 900s; no pane bytes",
+                ReleaseOutcome::Failed,
+                None
+            ),
+            ExitReason::StallKilled
+        );
+        assert_eq!(
+            classify("manager cancel", ReleaseOutcome::Cancelled, None),
+            ExitReason::OperatorAborted
+        );
+        // A fatal transport-level error nothing else claims.
+        assert_eq!(
+            classify(
+                "driver stream closed",
+                ReleaseOutcome::Failed,
+                Some((true, "hermes acp: connection reset by peer"))
+            ),
+            ExitReason::TransportError
+        );
+        // A provider verdict nothing matches keeps its first line as detail.
+        assert_eq!(
+            classify(
+                "protocol_end_without_finalize",
+                ReleaseOutcome::Failed,
+                Some((false, "claude_result_error: the worker's own turn failed"))
+            ),
+            ExitReason::Unknown {
+                detail: Some("claude_result_error: the worker's own turn failed".into())
+            }
+        );
+        // No error at all: the release reason is the only fact left.
+        assert_eq!(
+            classify("driver stream closed", ReleaseOutcome::Interrupted, None),
+            ExitReason::Unknown {
+                detail: Some("driver stream closed".into())
+            }
+        );
+    }
+
+    /// The exact strings the drivers and harnesses already produce.
+    #[test]
+    fn exit_reason_classifies_provider_and_spawn_error_lines() {
+        // `DriverError::Transport(format!("{binary} spawn: {e}"))`, stdio.rs.
+        assert_eq!(
+            ExitReason::from_error_line(
+                "driver transport unavailable: claude spawn: Too many open files (os error 24)"
+            ),
+            Some(ExitReason::SpawnFailed {
+                os_error: "Too many open files (os error 24)".into()
+            })
+        );
+        // Claude's own logged-out banner and the adapter's fatal message.
+        for line in [
+            "Not logged in \u{b7} Please run /login",
+            "claude authentication_failed",
+            "codex is not logged in on this machine, so this worker cannot start.",
+            "HTTP 401 Unauthorized",
+            "Invalid API key",
+        ] {
+            assert_eq!(
+                ExitReason::from_error_line(line),
+                Some(ExitReason::ProviderAuth),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            ExitReason::from_error_line("429 Too Many Requests; retry after 42s"),
+            Some(ExitReason::ProviderQuota {
+                retry_after: Some("42s".into())
+            })
+        );
+        assert_eq!(
+            ExitReason::from_error_line("usage_limit_reached: You've hit your usage limit"),
+            Some(ExitReason::ProviderQuota { retry_after: None })
+        );
+        assert_eq!(
+            ExitReason::from_error_line("rate_limit_exceeded (Retry-After: 30)"),
+            Some(ExitReason::ProviderQuota {
+                retry_after: Some("30".into())
+            })
+        );
+        assert_eq!(ExitReason::from_error_line("segmentation fault"), None);
+    }
+
+    #[test]
+    fn exit_reason_serde_tags_and_labels_agree() {
+        let quota = ExitReason::ProviderQuota {
+            retry_after: Some("42s".into()),
+        };
+        let json = serde_json::to_value(&quota).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"reason": "provider_quota", "retry_after": "42s"})
+        );
+        assert_eq!(json["reason"], quota.label());
+        assert_eq!(quota.detail(), Some("42s"));
+        let back: ExitReason = serde_json::from_value(json).unwrap();
+        assert_eq!(back, quota);
+        assert_eq!(
+            serde_json::to_value(ExitReason::Unknown { detail: None }).unwrap(),
+            serde_json::json!({"reason": "unknown"})
+        );
+    }
 }
 
 #[cfg(test)]

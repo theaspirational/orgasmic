@@ -119,6 +119,7 @@ fn seed_home_and_project(root: &Path) -> (Home, PathBuf) {
                 reason: "protocol_end_without_finalize".into(),
                 outcome: ReleaseOutcome::Failed,
                 finalized_by_worker: false,
+                exit: None,
             })
             .unwrap(),
         )

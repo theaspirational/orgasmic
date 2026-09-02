@@ -25924,6 +25924,7 @@ pub(crate) mod tests {
                     reason: "done".into(),
                     outcome,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
                 &mut out,
@@ -26860,6 +26861,7 @@ pub(crate) mod tests {
                 reason: "done".into(),
                 outcome: ReleaseOutcome::Completed,
                 finalized_by_worker: false,
+                exit: None,
             })
             .unwrap(),
         );
@@ -27417,6 +27419,7 @@ pub(crate) mod tests {
                                 reason: "external manager deregistered".into(),
                                 outcome: ReleaseOutcome::Cancelled,
                                 finalized_by_worker: false,
+                                exit: None,
                             })
                             .unwrap(),
                         )
@@ -27607,6 +27610,7 @@ pub(crate) mod tests {
                     reason: "done".into(),
                     outcome: ReleaseOutcome::Completed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
                 &mut out,
@@ -28970,6 +28974,7 @@ pub(crate) mod tests {
                     reason: "stall_timeout_exceeded".into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             ),
@@ -29005,6 +29010,7 @@ pub(crate) mod tests {
                     reason: "driver terminal event".into(),
                     outcome: ReleaseOutcome::Completed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             ),
@@ -29340,6 +29346,7 @@ pub(crate) mod tests {
                 reason: "worker finalize".into(),
                 outcome: ReleaseOutcome::Completed,
                 finalized_by_worker: true,
+                exit: None,
             })
             .unwrap(),
         );
@@ -29537,6 +29544,7 @@ pub(crate) mod tests {
                 reason: "worker finalize for TASK-B05AM".into(),
                 outcome: ReleaseOutcome::Completed,
                 finalized_by_worker: true,
+                exit: None,
             })
             .unwrap(),
         }];
@@ -29639,6 +29647,7 @@ pub(crate) mod tests {
                     reason: release_reason.into(),
                     outcome: ReleaseOutcome::Cancelled,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -29726,6 +29735,7 @@ pub(crate) mod tests {
                     reason: release_reason.into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -29852,6 +29862,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-GRILL".into(),
                     outcome: ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -29891,6 +29902,7 @@ pub(crate) mod tests {
                     reason: "protocol_end_without_finalize".into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -29931,6 +29943,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-STAGE-ARCH".into(),
                     outcome: ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -29970,6 +29983,7 @@ pub(crate) mod tests {
                     reason: "driver_failed".into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -30001,6 +30015,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-STAGE-ARCH".into(),
                     outcome: ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -30066,6 +30081,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-STAGE-ARCH".into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -30113,6 +30129,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-STAGE-ARCH".into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -30157,6 +30174,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-STAGE-ARCH".into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -30202,6 +30220,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-STAGE-ARCH".into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -34644,6 +34663,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-036-COMPLETE".into(),
                     outcome: ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -34709,6 +34729,7 @@ pub(crate) mod tests {
                     reason: "worker finalize for TASK-PLAN-STAGE".into(),
                     outcome: ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -34854,6 +34875,7 @@ pub(crate) mod tests {
                     reason: "early-exit subprocess with no work envelopes".into(),
                     outcome: ReleaseOutcome::Interrupted,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -35413,6 +35435,7 @@ pub(crate) mod tests {
                     reason: release_reason.into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -43135,6 +43158,7 @@ pub(crate) mod tests {
                         reason: "driver error".into(),
                         outcome: ReleaseOutcome::Failed,
                         finalized_by_worker: false,
+                        exit: None,
                     })
                     .unwrap(),
                 )

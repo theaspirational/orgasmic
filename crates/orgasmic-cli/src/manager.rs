@@ -12518,6 +12518,7 @@ mod tests {
                     reason: "protocol_end_without_finalize".into(),
                     outcome: orgasmic_core::ReleaseOutcome::Failed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -12536,6 +12537,7 @@ mod tests {
                     reason: "worker finalize for TASK-X".into(),
                     outcome: orgasmic_core::ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -12564,6 +12566,7 @@ mod tests {
                     reason: "artifact_submitted".into(),
                     outcome: orgasmic_core::ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -12593,6 +12596,7 @@ mod tests {
                     reason: "manager_released".into(),
                     outcome: orgasmic_core::ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )

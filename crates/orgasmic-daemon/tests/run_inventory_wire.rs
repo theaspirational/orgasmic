@@ -192,6 +192,7 @@ impl SessionFixture {
                     reason: "inventory fixture".into(),
                     outcome,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
                 &mut out,
