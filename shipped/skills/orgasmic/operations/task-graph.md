@@ -38,6 +38,8 @@ aliases:
 - orgasmic node body set
 - orgasmic node body append
 - orgasmic node body unset
+- orgasmic gotcha add
+- orgasmic gotcha list
 - orgasmic node prop set
 - orgasmic node prop unset
 sources:
@@ -125,6 +127,8 @@ Canonical commands in this family:
 - `orgasmic node body set`
 - `orgasmic node body append`
 - `orgasmic node body unset`
+- `orgasmic gotcha add`
+- `orgasmic gotcha list`
 - `orgasmic node prop set`
 - `orgasmic node prop unset`
 
