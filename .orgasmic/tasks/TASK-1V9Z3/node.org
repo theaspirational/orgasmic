@@ -1,0 +1,28 @@
+#+title: orgasmic task TASK-1V9Z3
+#+orgasmic_version: 2
+
+* BACKLOG TASK-1V9Z3 the negative-claim guard misses a doc that EXCEPTS a capability the CLI has gained    :testing:docs:
+:PROPERTIES:
+:ID: TASK-1V9Z3
+:PRIORITY: P3
+:RELATES_TO: TASK-TKR0H
+:END:
+
+Found 2026-09-02 by the manager sprint review of 7c85f177..b1c6ca5f (drivers/docs reviewer, MEDIUM).
+
+TASK-TKR0H added a guard so shipped prose cannot DENY a verb the CLI resolves. It matches NEGATIVE_PHRASES: 'not exist', 'never existed', 'no such verb|command|subcommand'.
+
+It does not match 'excepted'. So when merge b1b0635f (TASK-0MSK7) taught 'node title set' about project nodes, shipped/skills/orgasmic/references/ledger.md:37 kept saying '(goal and project titles excepted)' and the guard stayed GREEN over a false denial. The doc itself is fixed at 0188eeb4.
+
+** Why the obvious widening does not work (measured, not assumed)
+Adding 'excepted' to NEGATIVE_PHRASES was tried and REVERTED. The guard's model is: a negative phrase whose NEAREST resolving code span is a real verb = failure. 'excepted' also appears in legitimate SCOPE notes, where both halves are true: 'retitle via  (goal titles excepted)' - the verb resolves AND goal titles really are refused. The widened guard failed on exactly that sentence.
+
+Measured: cli_parity shipped_prose_does_not_deny_a_verb_that_resolves FAILED with
+  ledger.md:37: "retitle via `orgasmic node title set` (goal titles excepted" - but `orgasmic node title set` resolves
+
+** What a real fix needs
+The guard cannot currently express 'verb V is denied' vs 'input class C is excepted FOR verb V'. Either teach it that distinction (look for a noun phrase between the phrase and the span), or accept 'excepted' as a phrase and require every legitimate scope note to carry the existing 'parity: allow-negative' marker - the second is cheaper but weakens the marker's meaning (it currently means 'deliberate historical note').
+
+** Acceptance
+- A doc that excepts a capability the CLI HAS fails the guard.
+- 'retitle via  (goal titles excepted)' still passes while goal retitles are genuinely refused.
