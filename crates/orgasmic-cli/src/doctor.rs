@@ -244,26 +244,30 @@ pub fn remove_retired_content(home: &Home) -> anyhow::Result<Vec<PathBuf>> {
 
 // orgasmic:dec_AF61D,dec_XH2XY
 /// Derived views are rendered on demand and never written to disk anymore, so
-/// a registered git-repo project that still carries `.orgasmic/views/` —
-/// tracked or merely present — is a straggler from the old regime. The daemon
-/// never mutates the index of a repo it only observes, so the remedy is the
-/// explicit operator verb, and the warning carries it.
+/// a registered project that still carries `.orgasmic/views/` — tracked or
+/// merely present — is a straggler from the old regime. The daemon never
+/// mutates the index of a repo it only observes, so the remedy is the explicit
+/// operator verb, and the warning carries it. The git tracking probe only runs
+/// inside a work tree; every registered project is still checked for a
+/// leftover directory.
 pub(crate) fn push_tracked_views_findings(out: &mut Vec<Finding>, home: &Home) {
     for entry in orgasmic_core::projects::read_board(home).unwrap_or_default() {
         let root = entry.path;
-        if !is_git_work_tree(&root) {
-            continue;
-        }
-        let tracked = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(["ls-files", "--", ".orgasmic/views"])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .unwrap_or_default();
-        if tracked.is_empty() && !root.join(".orgasmic/views").is_dir() {
+        let dir_present = root.join(".orgasmic/views").is_dir();
+        let tracked = if is_git_work_tree(&root) {
+            Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["ls-files", "--", ".orgasmic/views"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if tracked.is_empty() && !dir_present {
             continue;
         }
         let state = if tracked.is_empty() {
