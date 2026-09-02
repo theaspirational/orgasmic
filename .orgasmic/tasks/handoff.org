@@ -693,6 +693,7 @@ SPRINT 13:15: sprint-20260902 = main + 20 --no-ff merges (LOGGING, 3HR8R, HARDEN
 
 ** In flight
 - Nothing in flight. main = origin/main = b1c6ca5f; installed runtime = b1c6ca5f (0.0.24-dev.20260902b, pid 64646). Sprint tasks stay in_progress with Evidence pending operator review/testing. Open follow-ups: X0PV1 (2 cli dispatch.rs flake entries need a full-load measurement), 40ZMJ (quota lockout), DTCBP item 2 (:VERIFY_ARTIFACT: drawer property; item 3 decided: no default gate), CS2TM item 4 (dispatch-status --json), D6N77.1 (large), 39/109 stale verify artifacts. NOT published to the stable channel: other machines still run the old runtime. Operator's scripts/install.sh edit still uncommitted.
+- 15:25 REVIEW ROUND (operator-requested, own subagents, not orgasmic dispatches): 41 sprint tasks moved in_progress -> in_review. Four reviewers on main b1c6ca5f: ui-smoke (browser, live UI at 127.0.0.1:4848 via 'orgasmic ui --print-url' — NO ui/ files changed in the sprint, so it is an API-regression smoke), rev-daemon (orgasmic-daemon + core diff), rev-cli (orgasmic-cli diff), rev-rest (drivers, scripts, shipped docs, verify). All read-only: no edits, no commits, no daemon restarts. Findings will be recorded per task; nothing reopens automatically.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
