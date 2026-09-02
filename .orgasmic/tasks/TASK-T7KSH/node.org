@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-T7KSH
 #+orgasmic_version: 2
 
-* BACKLOG TASK-T7KSH inspect_rmux_binary execs an unbounded child on the daemon's probe path, defeating the JQ8AV.1 child deadline    :drivers:rmux:hardening:
+* DONE TASK-T7KSH inspect_rmux_binary execs an unbounded child on the daemon's probe path, defeating the JQ8AV.1 child deadline :drivers:rmux:hardening:
 :PROPERTIES:
 :ID: TASK-T7KSH
 :IMPLEMENTS: TASK-JQ8AV
@@ -48,20 +48,7 @@ One probe subprocess escapes that funnel, and it is on the production rmux path.
 it through =pane_probe_command= -> =probe_rmux_binary=.
 
 ** Evidence
-
-Measured by the JQ8AV.1 implementer while building the hung-mux regression, not
-inferred. With a shim that wedged on EVERY invocation rather than only on the
-server-contacting verb:
-
-- the supervisor sweep took *5.012s* — the outer =WORK_PROBE_TIMEOUT=, NOT the
-  2s child deadline, proving the child was outside the funnel;
-- the test binary then took *120s to exit*, i.e. the tokio runtime was waiting on
-  a blocking task stuck in a child the funnel never saw.
-
-The shipped test was then deliberately weakened to answer =-V= normally, which
-keeps =inspect_rmux_binary= out of its timed section. That is realistic — =rmux -V=
-is answered locally and never contacts a server, so a wedged rmux SERVER does not
-hang it — but it means *the shipped regression cannot catch this*.
+Obsolete (verified 2026-09-02, manager sprint): inspect_rmux_binary has no references anywhere under crates/ on main 7c85f177; the rmux driver mode was deleted in 010a32bc 'refactor: simplify runtime to tmux-only operation' (2026-08-13). The unbounded probe child no longer exists. Closed without code change.
 
 ** Why it matters
 
