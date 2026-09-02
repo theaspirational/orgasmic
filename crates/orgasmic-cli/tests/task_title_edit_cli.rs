@@ -460,8 +460,8 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
 // orgasmic:TASK-P0Q5C
 /// `node title set` is the one title surface for every title-capable kind.
 /// Each supported kind round-trips through the same guard `task update
-/// --title` uses; goal and project are refused by name before any request
-/// is sent.
+/// --title` uses, project included (TASK-0MSK7); goal is refused by name
+/// before any request is sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn node_title_set_round_trips_every_supported_kind_and_refuses_goal() {
     let tmp = tempfile::tempdir().unwrap();
@@ -708,10 +708,18 @@ async fn node_title_set_round_trips_every_supported_kind_and_refuses_goal() {
     let goal = std::fs::read_to_string(orgasmic.join("tasks").join("goal.org")).unwrap();
     assert!(goal.contains("* GOAL Bootstrap project state"), "{goal}");
 
-    // Project: refused, because the daemon's set_title would turn
-    // `* PROJECT <id>` into `* <id> <title>` and project.org is located by
-    // that heading word (`ProjectFile::from_org`); the file stays untouched.
-    let stderr = run_cli_failure(
+    // orgasmic:TASK-0MSK7
+    // Project: the scaffold writes `* PROJECT <name>` with the id in the
+    // drawer, and project.org is located by that heading word
+    // (`ProjectFile::from_org`). A retitle must keep the word, or every CLI
+    // command that omits --project stops resolving the cwd project.
+    let project_org_path = orgasmic.join("project.org");
+    let project_before = std::fs::read_to_string(&project_org_path).unwrap();
+    assert!(
+        project_before.contains(&format!("* PROJECT {project_id}")),
+        "{project_before}"
+    );
+    let updated = run_cli_json(
         &home,
         &running,
         &project_root,
@@ -725,14 +733,63 @@ async fn node_title_set_round_trips_every_supported_kind_and_refuses_goal() {
             "--kind",
             "project",
             "--title",
-            "x",
+            "Project after",
         ],
     );
-    assert!(stderr.contains("PROJECT"), "{stderr}");
-    let project_org = std::fs::read_to_string(orgasmic.join("project.org")).unwrap();
     assert!(
-        project_org.contains(&format!("* PROJECT {project_id}")),
-        "{project_org}"
+        updated["tx_id"].as_str().is_some_and(|id| !id.is_empty()),
+        "project: a title edit must record a tx: {updated}"
+    );
+    assert_eq!(updated["changed"]["title"], "Project after", "{updated}");
+    // Read back through the daemon: the PROJECT word is not part of the title.
+    let doc = run_cli_json(
+        &home,
+        &running,
+        &project_root,
+        &[
+            "node",
+            "title",
+            "set",
+            project_id,
+            "--project",
+            project_id,
+            "--kind",
+            "project",
+            "--title",
+            "Project after",
+            "--json",
+        ],
+    );
+    assert_eq!(doc["title"], "Project after", "project read-back: {doc}");
+    let project_after = std::fs::read_to_string(&project_org_path).unwrap();
+    let project_line = project_after
+        .lines()
+        .find(|line| line.starts_with("* "))
+        .unwrap()
+        .to_string();
+    eprintln!("project\n  before: * PROJECT {project_id}\n  after:  {project_line}");
+    assert_eq!(project_line, "* PROJECT Project after");
+    assert_eq!(
+        project_before
+            .lines()
+            .filter(|l| !l.starts_with("* "))
+            .collect::<Vec<_>>(),
+        project_after
+            .lines()
+            .filter(|l| !l.starts_with("* "))
+            .collect::<Vec<_>>(),
+        "project: drawer and body must survive a title edit"
+    );
+    // The parser project resolution rests on still finds the heading and id…
+    let parsed = orgasmic_core::OrgFile::parse(project_after.clone(), "project.org").unwrap();
+    let project_file = orgasmic_core::ProjectFile::from_org(&parsed, "project.org")
+        .expect("project.org must still resolve after a retitle");
+    assert_eq!(project_file.id, project_id);
+    // …and so does the CLI's cwd resolution: no --project, run from the repo.
+    let doc = run_cli_json(&home, &running, &project_root, &["task", "get", &task_id]);
+    assert_eq!(
+        doc["id"], task_id,
+        "cwd project resolution after retitle: {doc}"
     );
 
     let _ = running.shutdown.send(());
