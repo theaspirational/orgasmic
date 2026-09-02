@@ -6280,12 +6280,20 @@ async fn spawn_worker_run(
                 });
             }
             Ok(_) => {}
+            // The lockout store is a MEMORY, not an authority. Its own
+            // missing-file path already reads as "no lockout", and an
+            // unreadable file is the same epistemic state: we do not know of a
+            // lockout. Refusing here instead turned one corrupt cache byte
+            // into a total dispatch outage for every provider on the machine,
+            // so the failure is loud in the log and the dispatch proceeds. The
+            // worst case is one dispatch that dies on quota, which is visible
+            // and recoverable; the alternative was an unrecoverable block.
             Err(error) => {
-                return Err(SpawnWorkerFailure {
-                    error: ApiError::internal(format!(
-                        "provider quota lockout memory unavailable: {error}"
-                    )),
-                });
+                tracing::warn!(
+                    provider = %provider,
+                    error = %error,
+                    "provider quota lockout memory unreadable; dispatching without it"
+                );
             }
         }
     }
