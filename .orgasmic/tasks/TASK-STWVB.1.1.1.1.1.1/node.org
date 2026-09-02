@@ -117,4 +117,6 @@ the test bodies retires it either way.
 - =open_owner()= is kept; the =FAIL_COUNT= guard is not dropped; 101 stays exempt.
 - Every existing selftest case still passes and the derived case count still
   agrees.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit d3dcbd4c on sprint/FLAKES, merged onto local sprint-20260902 as 9aca7c0d. scripts/run-tests.sh crash awk parses cargo's own 'error: N target(s) failed:' count and compares with TARGETS_FAILED — disagreement prints 'targets : … PARSER DRIFT' and takes a new RED arm above the crash arm (logs without the summary line unchanged); the '---- name ----' capture region is shared with the failure parser so a rerun/summary line inside test stdout mints nothing. run-tests-selftest.sh: 4 new cases, 65/65 pass. Registry byte-unchanged in this commit. Operator review/test after the sprint.
 
