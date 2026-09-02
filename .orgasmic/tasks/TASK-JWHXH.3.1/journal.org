@@ -115,3 +115,18 @@
 :REASON: LOW test crates/orgasmic-cli/src/project_migrate.rs:836 — the 'migrate summary correct on a real apply' acceptance is proven only by a pure unit test of views_summary_lines; non_git_project_views_doctor_warns_migrate_deletes_then_doctor_quiet calls run_at but never captures stdout, so no test exercises the real println path.
 :EVENT_ID: 35154112-9a4a-47ef-8511-7c330f2941b0
 :END:
+
+* tx-20260902-orgasmic-7059 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7059
+:TIME:    [2026-09-02 Wed 05:14:25]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-JWHXH.3.1/node.org
+:REASON: edited task node TASK-JWHXH.3.1
+:NODE_ID: TASK-JWHXH.3.1
+:EVENT_ID: 7f0fdce6-2933-48d8-b74b-91a42520cdfe
+:END:

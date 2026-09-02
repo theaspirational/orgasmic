@@ -6391,3 +6391,62 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.3.1/dispatches/tx-20260902-orgasmic-21182657-3bec-4220-9ab8-aa64484ee021/report.md
 :EVENT_ID:     5539aa68-d3aa-4f6a-8b94-d9d730ea17ea
 :END:
+
+* TX 2026-09-02 Wed 05:14:22 reviewer.done TASK-JWHXH.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-f9369912-a541-4e5c-981b-8114caf35dd5
+:TIME:         [2026-09-02 Wed 05:14:22]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.3.1
+:REASON:       opus-5 review of e290d7fb: APPROVE WITH FOLLOW-UPS - all 4 items correct (doctor dir_present, summary mapping sound, string live, tx.org parses); 1 MEDIUM (refuse_dirty_tree non-git early return newly lets the destructive v1->v2 rewrite run on non-git roots with an inert git recovery hint), 2 LOW (--to-branch on non-git dies late with a misleading context; summary println path untested)
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: e290d7fb^1..e290d7fb
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260902-orgasmic-21182657-3bec-4220-9ab8-aa64484ee021
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.3.1/dispatches/tx-20260902-orgasmic-21182657-3bec-4220-9ab8-aa64484ee021/report.md
+:EVENT_ID:     4e13610e-7fc5-471b-a99c-979a60b74eb0
+:END:
+
+* TX 2026-09-02 Wed 05:14:25 implementer.done TASK-JWHXH.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-d19b9c83-5b00-451f-b34c-f9b4cd18295a
+:TIME:         [2026-09-02 Wed 05:14:25]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.3.1
+:REASON:       merged e290d7fb; gates green; reviewer verdict approve-with-follow-ups
+:MODEL:        zai-coding-plan/glm-5.3-flash
+:EFFORT:       max
+:WORKER_COMMIT: c60bb97b836ffe3fd75bbecbfe048a1a9f090fba
+:MERGE_SHA:    e290d7fb53e748c31312620e82a69f24dcc6d4b9
+:BRANCH:       task-jwhxh.3.1-impl
+:CLOSED_TX:    tx-20260902-orgasmic-1e881b31-7897-4d85-877a-62264705fad8
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.3.1/dispatches/tx-20260902-orgasmic-1e881b31-7897-4d85-877a-62264705fad8/report.md
+:EVENT_ID:     fc824b2b-d630-4dca-a65c-a5b1bb5d5d2a
+:END:
+
+* TX 2026-09-02 Wed 05:14:25 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-ddefd2bc-9856-4db9-8ea2-ea40e9096adb
+:TIME:         [2026-09-02 Wed 05:14:25]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     e545ee2d-1f6f-4f77-8e41-def8f090a3d3
+:END:
