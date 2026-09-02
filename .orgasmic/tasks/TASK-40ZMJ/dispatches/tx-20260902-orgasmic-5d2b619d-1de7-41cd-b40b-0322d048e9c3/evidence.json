@@ -1,0 +1,25 @@
+{
+  "event_count": 462,
+  "tool_call_count": 210,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-40ZMJ-implementer-20260902T150733.jsonl",
+    "size_bytes": 829408
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/02/rollout-2026-09-02T18-07-33-01a062a9-3c4b-7a51-9b66-fdd8eda1dd33.jsonl",
+    "session_id": "01a062a9-3c4b-7a51-9b66-fdd8eda1dd33",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I’ll trace the shipped health path and the new terminal-reason path first, then make the smallest shared-path change and run only targeted non-billed gates.The production dispatch endpoint now passes the synthesized lockout test: it returns `400 provider_quota: hermes locked until …`, creates no session, and admits `--force-preflight` with `FORCE_PREFLIGHT=true` on the tx. I’m running the required lint/format gates next."
+    }
+  ],
+  "narrative_truncated": false
+}
