@@ -12,4 +12,6 @@ Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches
 ** Expected
 - Reviewer run pinned to its worktree (cwd fixed; main checkout not writable from the worker process — sandbox profile), or at minimum a post-run `git status` diff on main reported in dispatch-status as `main_checkout_dirty: <files>`.
 Related: orphaned-acp-reverts-tx memory (same class: workers touching main).
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 80ea02aa on sprint/DIRTY, merged onto local sprint-20260902 as 3ec20e11. Verified from code: the reviewer ALREADY runs in its <slug>-review worktree (worktree_stem(task, Reviewer); daemon stage_driver_config sets cwd=worktree for every kind) — pinned by daemon test reviewer_dispatch_cwd_is_its_review_worktree_not_the_project_root and a CLI stem test. dispatch-status now prints 'main_checkout_dirty=N CHECKOUT=<path> PATHS=<≤3>' as the first line while any dispatch is open (asserted 0 -> 1 in the stub-codex integration test). No sandboxing of main for the reviewer process (the 'at minimum' branch shipped). Gates: clippy rc=0, fmt rc=0, tests as on GCTMA.
 
