@@ -8,7 +8,9 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 use chrono::{DateTime, SecondsFormat, Utc};
-use orgasmic_core::retired;
+use orgasmic_core::paths::project_sessions_dir;
+use orgasmic_core::{retired, Lifecycle, SessionEventKind, SessionScanBudget};
+use orgasmic_drivers::TranscriptRoots;
 use reqwest::StatusCode;
 use serde::Deserialize;
 
@@ -121,6 +123,7 @@ pub fn diagnose(home: &Home) -> Vec<Finding> {
     push_daemon_findings(&mut out, home, &daemon_liveness);
     push_member_actor_collision_findings(&mut out, home, &daemon_liveness);
     push_daemon_path_findings(&mut out);
+    push_vendor_transcript_findings(&mut out, home);
 
     for finding in content_lifecycle::diagnose(home) {
         match finding {
@@ -703,6 +706,210 @@ fn human_duration(duration: Duration) -> String {
     } else {
         format!("{minutes}m")
     }
+}
+
+// orgasmic:TASK-E3K1B, dec_Y5MPK items 5 and 6
+/// Per-harness vendor transcript inventory. Report only: orgasmic never
+/// prunes a vendor store, so the operator who owns retention gets the numbers.
+///
+/// A transcript is orgasmic-attributed exactly when its native session id
+/// appears in a recorded `NativeRuntime` lifecycle event (item 6). Today only
+/// claude mints its own id; the other harnesses are honestly "not computable"
+/// rather than a misleading 0/N until their session-id follow-ups land.
+fn push_vendor_transcript_findings(out: &mut Vec<Finding>, home: &Home) {
+    let Some(roots) = TranscriptRoots::from_env_home() else {
+        return;
+    };
+    // Recorded events live per project (`.orgasmic/tmp/sessions`) plus the
+    // legacy home-level dir that boot migration may have left behind.
+    let mut session_dirs = vec![home.sessions()];
+    session_dirs.extend(
+        orgasmic_core::projects::read_board(home)
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| project_sessions_dir(&entry.path)),
+    );
+    out.extend(vendor_transcript_findings(
+        &roots,
+        &session_dirs,
+        SystemTime::now(),
+    ));
+}
+
+struct VendorFile {
+    path: PathBuf,
+    bytes: u64,
+    modified: Option<SystemTime>,
+}
+
+fn vendor_transcript_findings(
+    roots: &TranscriptRoots,
+    session_dirs: &[PathBuf],
+    now: SystemTime,
+) -> Vec<Finding> {
+    let recorded = recorded_native_session_ids(session_dirs);
+    // (harness, root, follow-up that blocks attribution)
+    let harnesses = [
+        ("claude", roots.claude_projects.clone(), None),
+        (
+            "codex",
+            roots.codex_home.join("sessions"),
+            Some("TASK-F9VEZ"),
+        ),
+        (
+            "cursor-agent",
+            roots.cursor_projects.clone(),
+            Some("TASK-B6D8W"),
+        ),
+        ("hermes", roots.hermes_sessions.clone(), Some("TASK-2B215")),
+    ];
+    let mut out = Vec::new();
+    for (harness, root, blocker) in harnesses {
+        if !root.exists() {
+            continue;
+        }
+        let mut files = Vec::new();
+        if let Err(e) = collect_jsonl(&root, &mut files) {
+            out.push(Finding::Warn(format!(
+                "vendor transcripts {harness}: unreadable root {}: {e}",
+                root.display()
+            )));
+            continue;
+        }
+        let split = match blocker {
+            Some(task) => format!("attribution: not computable ({task})"),
+            None => {
+                let ids = recorded.get(harness).cloned().unwrap_or_default();
+                let (ours, theirs): (Vec<&VendorFile>, Vec<&VendorFile>) = files
+                    .iter()
+                    .partition(|f| transcript_is_recorded(&root, &f.path, &ids));
+                format!(
+                    "orgasmic-attributed {}; unattributed {}",
+                    summarize_vendor_files(&ours, now),
+                    summarize_vendor_files(&theirs, now)
+                )
+            }
+        };
+        out.push(Finding::Ok(format!(
+            "vendor transcripts {harness}: {} at {}; {split}",
+            summarize_vendor_files(&files.iter().collect::<Vec<_>>(), now),
+            root.display()
+        )));
+    }
+    out
+}
+
+/// `N files, SIZE (<1d a, 1-7d b, 7-30d c, >30d d)` by mtime.
+fn summarize_vendor_files(files: &[&VendorFile], now: SystemTime) -> String {
+    const DAY: u64 = 24 * 60 * 60;
+    let mut buckets = [0usize; 4];
+    let mut bytes = 0u64;
+    for f in files {
+        bytes += f.bytes;
+        let days = f
+            .modified
+            .and_then(|m| now.duration_since(m).ok())
+            .map_or(0, |age| age.as_secs() / DAY);
+        let bucket = match days {
+            0 => 0,
+            1..=6 => 1,
+            7..=29 => 2,
+            _ => 3,
+        };
+        buckets[bucket] += 1;
+    }
+    format!(
+        "{} files, {} (<1d {}, 1-7d {}, 7-30d {}, >30d {})",
+        files.len(),
+        crate::manager::format_bytes(bytes),
+        buckets[0],
+        buckets[1],
+        buckets[2],
+        buckets[3]
+    )
+}
+
+/// Every regular `.jsonl` under `root`, recursively; symlinks are not followed.
+fn collect_jsonl(root: &Path, out: &mut Vec<VendorFile>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            collect_jsonl(&path, out)?;
+        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+        {
+            let meta = entry.metadata()?;
+            out.push(VendorFile {
+                path,
+                bytes: meta.len(),
+                modified: meta.modified().ok(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The file itself (`<id>.jsonl`) or a directory between the root and the
+/// file (claude subagent transcripts nest under `<id>/`) names a recorded id.
+fn transcript_is_recorded(
+    root: &Path,
+    path: &Path,
+    ids: &std::collections::HashSet<String>,
+) -> bool {
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut parts: Vec<&str> = rel
+        .parent()
+        .into_iter()
+        .flat_map(|p| p.iter())
+        .filter_map(|c| c.to_str())
+        .collect();
+    parts.extend(rel.file_stem().and_then(|s| s.to_str()));
+    parts.iter().any(|p| ids.contains(*p))
+}
+
+/// provider -> native session ids from recorded `NativeRuntime` events across
+/// every orgasmic session JSONL in `session_dirs`. Bounded scan: the event is
+/// written at launch, so it sits in the prefix window. Unreadable or
+/// malformed files are skipped — this is an inventory, not recovery.
+fn recorded_native_session_ids(
+    session_dirs: &[PathBuf],
+) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+    let mut by_provider: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        Default::default();
+    for dir in session_dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for path in entries.flatten().map(|e| e.path()) {
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(scan) = orgasmic_core::scan_session_lifecycle(&path, SessionScanBudget::DEFAULT)
+            else {
+                continue;
+            };
+            for env in scan.envelopes {
+                if env.kind != SessionEventKind::Lifecycle {
+                    continue;
+                }
+                if let Ok(Lifecycle::NativeRuntime {
+                    provider,
+                    session_id: Some(id),
+                    ..
+                }) = serde_json::from_value::<Lifecycle>(env.event)
+                {
+                    by_provider
+                        .entry(provider.trim().to_ascii_lowercase())
+                        .or_default()
+                        .insert(id);
+                }
+            }
+        }
+    }
+    by_provider
 }
 
 fn push_dir_check(out: &mut Vec<Finding>, path: &Path, label: &str) {
@@ -1395,5 +1602,110 @@ mod tests {
                 Finding::Warn(message) if message.contains("orgasmic restart")
             )
         }));
+    }
+
+    // ---- vendor transcript inventory (TASK-E3K1B) ----
+
+    fn write_native_runtime_session(dir: &Path, provider: &str, session_id: &str) {
+        let envelope = orgasmic_core::SessionEnvelope {
+            seq: 0,
+            time: Utc::now(),
+            run_id: "run-1".into(),
+            runtime_id: "rt-1".into(),
+            boot_id: "boot-1".into(),
+            kind: SessionEventKind::Lifecycle,
+            event: serde_json::to_value(Lifecycle::NativeRuntime {
+                provider: provider.into(),
+                session_id: Some(session_id.into()),
+                session_path: None,
+                launch_argv: vec![],
+                resume_argv: vec![],
+            })
+            .unwrap(),
+        };
+        let line = serde_json::to_string(&envelope).unwrap();
+        write(&dir.join("run-1.jsonl"), &format!("{line}\n"));
+    }
+
+    fn vendor_findings(findings: &[Finding]) -> Vec<&Finding> {
+        findings
+            .iter()
+            .filter(|f| matches!(f, Finding::Ok(s) | Finding::Warn(s) if s.starts_with("vendor transcripts")))
+            .collect()
+    }
+
+    #[test]
+    fn doctor_transcript_inventory_splits_claude_by_recorded_native_runtime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = TranscriptRoots::from_home(tmp.path().join("vendor"));
+        let slug = roots.claude_projects.join("-Users-me-proj");
+        write(&slug.join("aaaa-1111.jsonl"), "0123456789");
+        write(&slug.join("bbbb-2222.jsonl"), "01234567890123456789");
+        // Ten days old → the 7-30d bucket.
+        let old = std::fs::OpenOptions::new()
+            .write(true)
+            .open(slug.join("bbbb-2222.jsonl"))
+            .unwrap();
+        old.set_modified(SystemTime::now() - Duration::from_secs(10 * 24 * 60 * 60))
+            .unwrap();
+        let sessions = tmp.path().join("sessions");
+        write_native_runtime_session(&sessions, "claude", "aaaa-1111");
+
+        let findings = vendor_transcript_findings(&roots, &[sessions], SystemTime::now());
+        let lines = vendor_findings(&findings);
+        assert_eq!(lines.len(), 1, "{findings:?}");
+        let Finding::Ok(line) = lines[0] else {
+            panic!("expected info finding: {:?}", lines[0]);
+        };
+        assert!(
+            line.starts_with(
+                "vendor transcripts claude: 2 files, 30B (<1d 1, 1-7d 0, 7-30d 1, >30d 0) at "
+            ),
+            "{line}"
+        );
+        assert!(
+            line.ends_with(
+                "; orgasmic-attributed 1 files, 10B (<1d 1, 1-7d 0, 7-30d 0, >30d 0); \
+                 unattributed 1 files, 20B (<1d 0, 1-7d 0, 7-30d 1, >30d 0)"
+            ),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn doctor_transcript_inventory_codex_attribution_is_not_computable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = TranscriptRoots::from_home(tmp.path().join("vendor"));
+        write(
+            &roots.codex_home.join("sessions/2026/09/01/rollout-x.jsonl"),
+            "{}\n",
+        );
+        // A recorded codex id must not flip the line to 0/N: the split is
+        // only honest once TASK-F9VEZ lands.
+        let sessions = tmp.path().join("sessions");
+        write_native_runtime_session(&sessions, "codex", "x");
+
+        let findings = vendor_transcript_findings(&roots, &[sessions], SystemTime::now());
+        let lines = vendor_findings(&findings);
+        assert_eq!(lines.len(), 1, "{findings:?}");
+        let Finding::Ok(line) = lines[0] else {
+            panic!("expected info finding: {:?}", lines[0]);
+        };
+        assert!(
+            line.starts_with("vendor transcripts codex: 1 files, 3B"),
+            "{line}"
+        );
+        assert!(
+            line.ends_with("; attribution: not computable (TASK-F9VEZ)"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn doctor_transcript_inventory_missing_roots_emit_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = TranscriptRoots::from_home(tmp.path().join("vendor"));
+        let findings = vendor_transcript_findings(&roots, &[], SystemTime::now());
+        assert!(vendor_findings(&findings).is_empty(), "{findings:?}");
     }
 }
