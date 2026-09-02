@@ -934,6 +934,7 @@ mod tests {
                 reason,
                 outcome,
                 finalized_by_worker,
+                ..
             }) => {
                 assert_eq!(reason, "manager_released");
                 assert_eq!(outcome, ReleaseOutcome::Completed);

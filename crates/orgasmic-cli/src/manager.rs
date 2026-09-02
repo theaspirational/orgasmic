@@ -3291,6 +3291,11 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 .map(|annotation| format!(" {annotation}"))
                 .unwrap_or_default()
         );
+        // TASK-XQCNA: a run that is gone but still open says WHY from its own
+        // tombstone, and names the file the answer came from.
+        for line in terminal_exit_lines(record, &health) {
+            println!("{line}");
+        }
     }
     // TASK-M47E5: the automatic detection half. Managed worktrees now live
     // outside the repo, where `git status` and the operator's eyes no longer
@@ -11127,6 +11132,66 @@ fn dispatch_record_from_fold(dispatch: DispatchFold, entries: &[TxEntry]) -> Dis
     }
 }
 
+/// `  exit: <reason> [<detail>]` + `  evidence: <session jsonl>` for an open
+/// generation whose run is gone (TASK-XQCNA); nothing while the run is live.
+/// The reason is the `exit` the daemon classified onto the last `Release`
+/// tombstone; every way of not having one reads `unknown [<why>]`.
+fn terminal_exit_lines(record: &DispatchRecord, health: &DispatchHealth) -> Vec<String> {
+    if health.run_alive {
+        return Vec::new();
+    }
+    let (reason, detail) = match record.session_path.as_deref() {
+        None => (
+            "unknown".to_string(),
+            Some("no session path recorded".to_string()),
+        ),
+        Some(path) => match session_release_exit(path) {
+            Ok(Some(exit)) => (exit.label().to_string(), exit.detail().map(str::to_string)),
+            Ok(None) => (
+                "unknown".to_string(),
+                Some("no release tombstone in session".to_string()),
+            ),
+            Err(error) => ("unknown".to_string(), Some(error.to_string())),
+        },
+    };
+    vec![
+        format!(
+            "  exit: {reason}{}",
+            detail
+                .map(|detail| format!(" [{detail}]"))
+                .unwrap_or_default()
+        ),
+        format!(
+            "  evidence: {}",
+            record
+                .session_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ),
+    ]
+}
+
+/// The `exit` on the last `Lifecycle::Release` of `session_path`. A release
+/// written by a daemon from before the field existed reads as `unknown` with
+/// the release reason as detail, so the operator still gets the old word.
+fn session_release_exit(session_path: &Path) -> Result<Option<orgasmic_core::ExitReason>> {
+    let envelopes = read_session_file(session_path)
+        .with_context(|| format!("read session {}", session_path.display()))?;
+    Ok(envelopes
+        .into_iter()
+        .rev()
+        .filter(|envelope| envelope.kind == SessionEventKind::Lifecycle)
+        .find_map(|envelope| match serde_json::from_value(envelope.event) {
+            Ok(Lifecycle::Release { reason, exit, .. }) => {
+                Some(exit.unwrap_or(orgasmic_core::ExitReason::Unknown {
+                    detail: Some(reason),
+                }))
+            }
+            _ => None,
+        }))
+}
+
 /// `PREFLIGHT=<value>` for a dispatch whose preflight did not answer `ok`;
 /// nothing for `ok` and for records written before the property existed.
 fn unchecked_preflight_annotation(record: &DispatchRecord) -> Option<String> {
@@ -11809,6 +11874,76 @@ mod tests {
         assert_eq!(
             unchecked_preflight_annotation(&record).as_deref(),
             Some("PREFLIGHT=unchecked:spawn_failed")
+        );
+    }
+
+    /// TASK-XQCNA: the two lines under the flags line for a gone-but-open run,
+    /// read from the release tombstone the daemon wrote.
+    #[test]
+    fn dispatch_status_prints_exit_reason_and_evidence_for_a_gone_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("TASK-086.jsonl");
+        let identity = orgasmic_core::RuntimeIdentity {
+            run_id: "run-gone".into(),
+            runtime_id: "rt-gone".into(),
+            boot_id: "boot-1".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "protocol_end_without_finalize".into(),
+                    outcome: orgasmic_core::ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
+                    exit: Some(orgasmic_core::ExitReason::ProviderQuota {
+                        retry_after: Some("42s".into()),
+                    }),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let mut record = architector_record();
+        record.session_path = Some(path.clone());
+        let gone = DispatchHealth {
+            worktree_exists: true,
+            pid: None,
+            pid_alive: false,
+            run_alive: false,
+        };
+        assert_eq!(
+            terminal_exit_lines(&record, &gone),
+            vec![
+                "  exit: provider_quota [42s]".to_string(),
+                format!("  evidence: {}", path.display()),
+            ]
+        );
+        let live = DispatchHealth {
+            run_alive: true,
+            ..gone
+        };
+        assert!(terminal_exit_lines(&record, &live).is_empty());
+
+        // A tombstone from a daemon that predates the field keeps its word.
+        let old = tmp.path().join("TASK-OLD.jsonl");
+        std::fs::write(
+            &old,
+            r#"{"seq":0,"time":"2026-09-02T00:00:00Z","run_id":"run-old","runtime_id":"rt","boot_id":"b","kind":"lifecycle","event":{"phase":"release","reason":"stall_timeout_exceeded","outcome":"failed"}}
+"#,
+        )
+        .unwrap();
+        record.session_path = Some(old);
+        assert_eq!(
+            terminal_exit_lines(&record, &gone)[0],
+            "  exit: unknown [stall_timeout_exceeded]"
+        );
+        record.session_path = None;
+        assert_eq!(
+            terminal_exit_lines(&record, &gone),
+            vec![
+                "  exit: unknown [no session path recorded]".to_string(),
+                "  evidence: -".to_string(),
+            ]
         );
     }
 
@@ -12518,6 +12653,7 @@ mod tests {
                     reason: "protocol_end_without_finalize".into(),
                     outcome: orgasmic_core::ReleaseOutcome::Failed,
                     finalized_by_worker: false,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -12536,6 +12672,7 @@ mod tests {
                     reason: "worker finalize for TASK-X".into(),
                     outcome: orgasmic_core::ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -12564,6 +12701,7 @@ mod tests {
                     reason: "artifact_submitted".into(),
                     outcome: orgasmic_core::ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )
@@ -12593,6 +12731,7 @@ mod tests {
                     reason: "manager_released".into(),
                     outcome: orgasmic_core::ReleaseOutcome::Completed,
                     finalized_by_worker: true,
+                    exit: None,
                 })
                 .unwrap(),
             )

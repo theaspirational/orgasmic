@@ -28,8 +28,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use orgasmic_core::{
-    mint_run_id, read_session_file, scan_session_lifecycle_complete, DriverEvent, Lifecycle,
-    ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind, TextStream,
+    mint_run_id, read_session_file, scan_session_lifecycle_complete, DriverEvent, ExitReason,
+    Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind, TextStream,
 };
 use orgasmic_drivers::{
     AttachOutcome, DriverConfig, DriverContext, DriverControl, DriverError, ManagerWakeRequest,
@@ -1203,6 +1203,11 @@ struct RunRecord {
     max_iterations: Option<u32>,
     next_event_seq: u64,
     terminal_outcome: Option<ReleaseOutcome>,
+    /// First error the driver produced, `(transport_level, line)`: a fatal
+    /// `DriverError` is transport-level, a `RunFail` is the provider's own
+    /// verdict. Frozen once set; `ExitReason::classify` reads it at release
+    /// (TASK-XQCNA).
+    first_error: Option<(bool, String)>,
     control: Box<dyn DriverControl>,
     producer: Option<tokio::task::JoinHandle<()>>,
     event_drain: tokio::task::JoinHandle<()>,
@@ -1862,6 +1867,7 @@ impl Supervisor {
                 max_iterations: req.max_iterations,
                 next_event_seq: 0,
                 terminal_outcome: None,
+                first_error: None,
                 control,
                 producer,
                 event_drain: tokio::spawn(async {}),
@@ -2557,6 +2563,7 @@ impl Supervisor {
             max_iterations: None,
             next_event_seq: 0,
             terminal_outcome: None,
+            first_error: None,
             control,
             producer,
             event_drain: tokio::spawn(async {}),
@@ -3170,12 +3177,19 @@ impl Supervisor {
                 &rec.task_id,
                 rec.kind,
             ));
-            rec.terminal_outcome.unwrap_or(outcome)
+            (rec.terminal_outcome.unwrap_or(outcome), rec.first_error)
         };
+        let (final_outcome, first_error) = final_outcome;
         let evt = Lifecycle::Release {
             reason: reason.into(),
             outcome: final_outcome,
             finalized_by_worker,
+            exit: Some(ExitReason::classify(
+                reason,
+                final_outcome,
+                finalized_by_worker,
+                first_error.as_ref().map(|(t, line)| (*t, line.as_str())),
+            )),
         };
         self.writer
             .append_session(SessionAppend {
@@ -5617,6 +5631,16 @@ fn terminal_outcome_for_event(evt: &DriverEvent) -> Option<ReleaseOutcome> {
     }
 }
 
+/// The first non-empty line of a driver error, trimmed: the classifier's
+/// input and the `unknown` detail shown to the operator.
+fn first_line(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
 fn applicable_state_allowed(allowed: &[String], target: &str) -> bool {
     if allowed.is_empty() {
         return true;
@@ -5646,6 +5670,20 @@ fn apply_driver_event_to_record(
         {
             rec.terminal_outcome = Some(outcome);
         }
+    }
+    if rec.first_error.is_none() {
+        rec.first_error = match evt {
+            DriverEvent::DriverError {
+                fatal: true,
+                message,
+            } => Some((true, message.clone())),
+            DriverEvent::RunFail {
+                error_code,
+                error_markdown,
+            } => Some((false, format!("{error_code}: {error_markdown}"))),
+            _ => None,
+        }
+        .map(|(transport, line)| (transport, first_line(&line)));
     }
     if matches!(evt, DriverEvent::Ready { .. }) {
         rec.driver_has_ready = true;
@@ -6404,10 +6442,19 @@ async fn append_terminal_release(
         watcher.abort();
         let _ = watcher.await;
     }
+    let exit = ExitReason::classify(
+        &resolved.reason,
+        resolved.outcome,
+        resolved.finalized_by_worker,
+        rec.first_error
+            .as_ref()
+            .map(|(transport, line)| (*transport, line.as_str())),
+    );
     let evt = Lifecycle::Release {
         reason: resolved.reason,
         outcome: resolved.outcome,
         finalized_by_worker: resolved.finalized_by_worker,
+        exit: Some(exit),
     };
     let _ = writer
         .append_session(SessionAppend {
@@ -9460,6 +9507,19 @@ mod tests {
         );
     }
 
+    /// The classified `exit` object on the release tombstone (TASK-XQCNA).
+    fn release_exit(path: &Path) -> serde_json::Value {
+        session_events(path)
+            .into_iter()
+            .find(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|phase| phase.as_str())
+                        == Some("release")
+            })
+            .and_then(|envelope| envelope.event.get("exit").cloned())
+            .expect("release carries an exit reason")
+    }
+
     fn release_count(path: &Path) -> usize {
         session_events(path)
             .iter()
@@ -9520,6 +9580,10 @@ mod tests {
 
         assert!(!run_is_live(&sup, &resp.run_id).await);
         assert_release_reason(&session_path, "stall_timeout_exceeded");
+        assert_eq!(
+            release_exit(&session_path),
+            json!({"reason": "stall_killed"})
+        );
     }
 
     /// TASK-JQ8AV.1 finding 2: progress that arrives WHILE the work probe is
@@ -12028,6 +12092,7 @@ mod tests {
             }),
             "deferred operator cancel must record Cancelled after writer commit"
         );
+        assert_eq!(release_exit(&path), json!({"reason": "operator_aborted"}));
     }
 
     #[tokio::test]
@@ -13041,6 +13106,7 @@ mod tests {
             "completed",
         );
         assert_eq!(release_finalize_flags(&session_path), vec![true]);
+        assert_eq!(release_exit(&session_path), json!({"reason": "reported"}));
     }
 
     /// Wait for the finalize-admission marker (TASK-QSSQH) to reach `path`.
@@ -13418,6 +13484,9 @@ mod tests {
 
         assert_release(&path, "protocol_end_without_finalize", "failed");
         assert_eq!(release_count(&path), 1, "exactly one release");
+        // TASK-XQCNA: the fatal `claude authentication_failed` the harness
+        // printed is what the tombstone now says, not a bare protocol_end.
+        assert_eq!(release_exit(&path), json!({"reason": "provider_auth"}));
         // The lease must be free again, or the next dispatch for this task is
         // refused by a run that has already failed.
         assert!(
@@ -13465,6 +13534,7 @@ mod tests {
         wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
 
         assert_release(&path, "protocol_end_without_finalize", "failed");
+        assert_eq!(release_exit(&path), json!({"reason": "provider_auth"}));
         assert_eq!(release_count(&path), 1, "exactly one release");
         assert!(
             !sup.snapshot()
@@ -13525,6 +13595,7 @@ mod tests {
             max_iterations: None,
             next_event_seq: 0,
             terminal_outcome: None,
+            first_error: None,
             control: Box::new(NoopControl),
             producer: None,
             event_drain: tokio::spawn(async {}),
