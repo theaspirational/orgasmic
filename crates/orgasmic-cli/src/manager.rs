@@ -135,6 +135,11 @@ pub struct DispatchArgs {
     /// tx, or launching a worker.
     #[arg(long)]
     pub dry_run: bool,
+    /// Refuse when the checkout you dispatch from has uncommitted changes
+    /// (outside `.orgasmic/`): the worker branches from a commit and never
+    /// sees them. Without this flag the same finding is a stderr warning.
+    #[arg(long = "require-clean")]
+    pub require_clean: bool,
     /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
     #[arg(long = "governance-json")]
     pub governance_json: Option<String>,
@@ -923,6 +928,7 @@ pub(crate) fn dispatch_quiet(home: &Home, args: DispatchArgs) -> Result<String> 
 }
 
 fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<String>> {
+    let require_clean = args.require_clean;
     let plan = build_dispatch_plan(home, args)?;
     if plan.brief_content.is_empty() {
         bail!("brief is empty: {}", plan.brief_path.display());
@@ -932,6 +938,7 @@ fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<
             eprintln!("{warning}");
         }
     }
+    guard_dirty_main_checkout(require_clean)?;
     // Each dispatch kind owns a distinct default worktree suffix; reject any
     // accidental reuse of another kind's default path for the same task.
     for other_kind in [DispatchKind::Implementer, DispatchKind::Reviewer] {
@@ -2730,6 +2737,84 @@ fn worktree_has_uncommitted_changes(project_root: &Path) -> Result<bool> {
     Ok(!worktree_status_porcelain(project_root)?.is_empty())
 }
 
+/// Uncommitted changes in the checkout the manager works from, minus
+/// `.orgasmic/` (a live daemon writes there continuously, so that half is
+/// dirty without anyone having typed anything). TASK-GCTMA / TASK-EXN3N.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DirtyCheckout {
+    /// `git status --porcelain` lines outside `.orgasmic/`.
+    count: usize,
+    /// The first three of those paths, for the message.
+    sample: Vec<String>,
+}
+
+fn dirty_checkout(checkout: &Path) -> Result<DirtyCheckout> {
+    // `verify` already answers "dirty, minus the daemon's churn"; same rule here.
+    let lines = crate::verify::dirty_paths(checkout)?;
+    let sample = lines
+        .iter()
+        .take(3)
+        .map(|line| {
+            // `XY path`, or `XY old -> new` for a rename.
+            let path = line.get(3..).unwrap_or(line);
+            path.rsplit(" -> ").next().unwrap_or(path).to_string()
+        })
+        .collect();
+    Ok(DirtyCheckout {
+        count: lines.len(),
+        sample,
+    })
+}
+
+/// The checkout `manager dispatch` branches from by default and the one a
+/// worker must never write into: the git toplevel of the cwd. `None` when
+/// the cwd is not inside a git checkout.
+fn main_checkout() -> Option<PathBuf> {
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| git_toplevel(&cwd).ok())
+}
+
+/// TASK-GCTMA: a worktree is provisioned from a commit, so whatever is
+/// uncommitted here is invisible to the worker — and a reviewer will return
+/// a confident verdict on a tree it never read. One warning; a refusal only
+/// on `--require-clean`, because an unrelated edit in flight is the norm.
+fn guard_dirty_main_checkout(require_clean: bool) -> Result<()> {
+    let Some(checkout) = main_checkout() else {
+        return Ok(());
+    };
+    let dirty = dirty_checkout(&checkout)?;
+    if dirty.count == 0 {
+        return Ok(());
+    }
+    let message = format!(
+        "main checkout has {} uncommitted changes the worker will not see: {}",
+        dirty.count,
+        dirty.sample.join(", ")
+    );
+    if require_clean {
+        bail!("{message} (--require-clean; commit or stash them, or pass --from <ref>)");
+    }
+    eprintln!("warning: {message}");
+    Ok(())
+}
+
+/// TASK-EXN3N: the dispatch-status header while a dispatch is open. A
+/// reviewer is asked to stay in its worktree, not prevented from writing
+/// into main; this is where a write into main becomes visible.
+fn main_checkout_status_line(checkout: &Path, dirty: &DirtyCheckout) -> String {
+    format!(
+        "main_checkout_dirty={} CHECKOUT={} PATHS={}",
+        dirty.count,
+        checkout.display(),
+        if dirty.sample.is_empty() {
+            "-".to_string()
+        } else {
+            dirty.sample.join(",")
+        }
+    )
+}
+
 /// Commit the worktree if dirty (so commit-stall is structurally impossible,
 /// acceptance #2), then return the resulting HEAD sha either way.
 fn commit_worktree(project_root: &Path, message: &str) -> Result<String> {
@@ -3110,6 +3195,14 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
     let claims = read_claims(&project_root).context("read task claims for dispatch-status")?;
     if let Some(task) = args.task.as_deref() {
         open.retain(|record| record.tasks.iter().any(|got| got == task));
+    }
+    // TASK-EXN3N: while a worker is out, say whether anything wrote into the
+    // checkout it was told to stay out of. Quiet when nothing is open.
+    if !open.is_empty() {
+        if let Some(checkout) = main_checkout() {
+            let dirty = dirty_checkout(&checkout)?;
+            println!("{}", main_checkout_status_line(&checkout, &dirty));
+        }
     }
     for record in &open {
         let health = dispatch_health(record, &live_runs);
@@ -15857,5 +15950,84 @@ mod tests {
             classify_dispatch_wait_round(&[generation("waiting")]),
             DispatchWaitRound::Waiting
         ));
+    }
+
+    /// A committed repo with one tracked file, for the dirty-checkout helper.
+    fn dirty_fixture() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        git_ok(root, &["init", "-qb", "main"]);
+        git_ok(root, &["config", "user.email", "t@example.com"]);
+        git_ok(root, &["config", "user.name", "T"]);
+        std::fs::write(root.join("src.txt"), "v1\n").unwrap();
+        git_ok(root, &["add", "."]);
+        git_ok(root, &["commit", "-qm", "init"]);
+        tmp
+    }
+
+    // TASK-GCTMA
+    #[test]
+    fn dirty_checkout_counts_only_changes_outside_orgasmic() {
+        let tmp = dirty_fixture();
+        let root = tmp.path();
+        assert_eq!(dirty_checkout(root).unwrap(), DirtyCheckout::default());
+
+        std::fs::write(root.join("src.txt"), "v2\n").unwrap();
+        assert_eq!(
+            dirty_checkout(root).unwrap(),
+            DirtyCheckout {
+                count: 1,
+                sample: vec!["src.txt".to_string()],
+            }
+        );
+
+        // The daemon's half: writes under .orgasmic/ are not the worker's loss.
+        std::fs::write(root.join("src.txt"), "v1\n").unwrap();
+        std::fs::create_dir_all(root.join(".orgasmic/tx")).unwrap();
+        std::fs::write(root.join(".orgasmic/tx/2026-09.org"), "* TX\n").unwrap();
+        assert_eq!(dirty_checkout(root).unwrap(), DirtyCheckout::default());
+    }
+
+    // TASK-GCTMA
+    #[test]
+    fn dirty_checkout_samples_at_most_three_paths() {
+        let tmp = dirty_fixture();
+        let root = tmp.path();
+        for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+            std::fs::write(root.join(name), "x\n").unwrap();
+        }
+        let dirty = dirty_checkout(root).unwrap();
+        assert_eq!(dirty.count, 4);
+        assert_eq!(dirty.sample, ["a.txt", "b.txt", "c.txt"]);
+    }
+
+    // TASK-EXN3N: the dispatch-status header token, rendered as printed.
+    #[test]
+    fn dispatch_status_header_reports_main_checkout_dirty() {
+        let clean = main_checkout_status_line(Path::new("/repo"), &DirtyCheckout::default());
+        assert_eq!(clean, "main_checkout_dirty=0 CHECKOUT=/repo PATHS=-");
+
+        let dirty = DirtyCheckout {
+            count: 2,
+            sample: vec!["src/a.rs".to_string(), "b.md".to_string()],
+        };
+        assert_eq!(
+            main_checkout_status_line(Path::new("/repo"), &dirty),
+            "main_checkout_dirty=2 CHECKOUT=/repo PATHS=src/a.rs,b.md"
+        );
+    }
+
+    // TASK-EXN3N: the reviewer's worktree is its own `<slug>-review` tree,
+    // never the implementer's and never the main checkout.
+    #[test]
+    fn reviewer_worktree_stem_is_pinned_to_its_review_tree() {
+        assert_eq!(
+            worktree_stem("TASK-EXN3N", DispatchKind::Reviewer),
+            "task-exn3n-review"
+        );
+        assert_ne!(
+            worktree_stem("TASK-EXN3N", DispatchKind::Reviewer),
+            worktree_stem("TASK-EXN3N", DispatchKind::Implementer)
+        );
     }
 }

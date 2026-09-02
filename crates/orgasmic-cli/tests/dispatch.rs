@@ -923,6 +923,27 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     );
     assert!(status_stdout.contains("TASK=TASK-DISPATCH"));
     assert!(status_stdout.contains("[exists]"));
+    // TASK-EXN3N: the daemon's .orgasmic/ writes do not count as dirt...
+    assert!(
+        status_stdout.contains("main_checkout_dirty=0 "),
+        "{status_stdout}"
+    );
+    // ...a stray file a worker left in the main checkout does.
+    let stray = project_root.join("reviewer-left-this.txt");
+    write(&stray, "oops\n");
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.contains("main_checkout_dirty=1 ")
+            && status_stdout.contains("PATHS=reviewer-left-this.txt"),
+        "{status_stdout}"
+    );
+    std::fs::remove_file(&stray).unwrap();
 
     let other_claims = project_root.join(".orgasmic/machines/machine-other/claims.org");
     std::fs::create_dir_all(other_claims.parent().unwrap()).unwrap();
@@ -3780,6 +3801,95 @@ async fn dispatch_address_shows_in_dry_run_plan() {
     assert!(stdout.contains("dispatch plan:"));
     assert!(stdout.contains("mode:     stdio"));
     assert!(stdout.contains("harness:  codex"));
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-GCTMA: the worker branches from a commit, so uncommitted changes in
+/// the checkout the manager dispatches from are invisible to it. A dirty
+/// checkout warns on stderr by default and refuses under `--require-clean`;
+/// writes under `.orgasmic/` (the daemon's) never count. The guard runs
+/// before the `--dry-run` return, so no worker is spawned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_require_clean_refuses_dirty_main_checkout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+    let codex_dir = tmp.path().join("codex");
+    std::fs::create_dir_all(&codex_dir).unwrap();
+    let brief = codex_dir.join("task-dirty-brief.md");
+    write(&brief, "dirty checkout regression brief");
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let running = boot(home.clone()).await;
+    let args = |require_clean: bool| {
+        let mut args = vec![
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "stdio",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--dry-run",
+        ];
+        if require_clean {
+            args.push("--require-clean");
+        }
+        args
+    };
+
+    // Clean apart from the daemon's own .orgasmic/ writes: no warning.
+    write(
+        &project_root.join(".orgasmic/scratch.txt"),
+        "daemon churn\n",
+    );
+    let output = run_orgasmic_output(&home, &running, &project_root, &path_env, &args(true));
+    assert!(
+        output.status.success(),
+        "a checkout dirty only under .orgasmic/ must pass --require-clean: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("main checkout has"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // An uncommitted source file: warn by default, refuse on --require-clean.
+    write(&project_root.join("unsaved.rs"), "fn wip() {}\n");
+    let output = run_orgasmic_output(&home, &running, &project_root, &path_env, &args(false));
+    assert!(
+        output.status.success(),
+        "a dirty checkout warns, it does not refuse"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "warning: main checkout has 1 uncommitted changes the worker will not see: unsaved.rs"
+        ),
+        "{stderr}"
+    );
+
+    let stderr = run_orgasmic_failure(&home, &running, &project_root, &path_env, &args(true));
+    assert!(
+        stderr.contains(
+            "main checkout has 1 uncommitted changes the worker will not see: unsaved.rs"
+        ) && stderr.contains("--require-clean"),
+        "{stderr}"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;

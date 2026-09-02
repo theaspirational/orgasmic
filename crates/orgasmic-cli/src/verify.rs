@@ -471,8 +471,10 @@ fn git_toplevel(cwd: &Path) -> Result<PathBuf> {
     std::fs::canonicalize(&path).with_context(|| format!("canonicalize {}", path.display()))
 }
 
-/// Working-tree paths that are neither committed nor daemon-owned.
-fn dirty_paths(repo: &Path) -> Result<Vec<String>> {
+/// Working-tree paths that are neither committed nor daemon-owned, as
+/// `git status --porcelain` lines. Shared with `manager dispatch` and
+/// `dispatch-status` (TASK-GCTMA, TASK-EXN3N).
+pub(crate) fn dirty_paths(repo: &Path) -> Result<Vec<String>> {
     let output = git(repo, &["status", "--porcelain"])?;
     if !output.status.success() {
         bail!(
