@@ -62,3 +62,18 @@
 :NODE_ID: TASK-SJNNA
 :EVENT_ID: ece3de4b-3f6b-4f20-8d37-407b43894642
 :END:
+
+* tx-20260902-orgasmic-35ab2432-e34e-407a-b442-e77d01cf3a7a task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-35ab2432-e34e-407a-b442-e77d01cf3a7a
+:TIME:    [2026-09-02 Wed 14:07:34]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SJNNA
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-SJNNA/node.org
+:REASON: edited task node TASK-SJNNA
+:NODE_ID: TASK-SJNNA
+:EVENT_ID: 9dc8dca1-378c-4bb4-8167-78c26be827d5
+:END:
