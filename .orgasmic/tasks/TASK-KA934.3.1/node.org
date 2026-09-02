@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-KA934.3.1
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-KA934.3.1 Hoist the :ACTOR: namespace guard into the shared tx append path :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-KA934.3.1
+:IMPLEMENTS: dec_Q78QN
+:PRIORITY: P2
+:RELATES_TO: TASK-KA934.3
+:FIX_SUBTASK: t
+:END:
+
+Fix round for the KA934.3 review (opus-5, tx-bfe6e70a; merged 9f6874f0). MEDIUM: ensure_actor_namespace_free is called only from the three task-comment handlers; POST /tx with type=comment (orgasmic tx record --actor <member>) writes the same journal entry unguarded. Move the guard to prepare_tx_append_request (api.rs ~:3023), gated on event_routes_to_journal(type) and only for admin identities; delete the three handler-level copies. Also: warn! when read_members fails (guard currently fails open silently, api.rs ~:2349); one more sentence on the writer.rs:1683 doc about the inverse rename case.
+
+** Acceptance
+- [ ] Test: admin POST /tx type=comment with actor == member name is refused 403; member session comments still work; the three comment handlers have no local guard copy.
+- [ ] warn! on members.org read failure; doc sentence added.
+- [ ] cargo test -p orgasmic-daemon --lib -- comment member identity authz tx_append; clippy -D; fmt.

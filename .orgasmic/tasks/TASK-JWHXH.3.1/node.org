@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-JWHXH.3.1
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-JWHXH.3.1 doctor reports a stale views/ dir on non-git projects; fix stale refusal string and migrate output :e01mc:chain-review:
+:PROPERTIES:
+:ID: TASK-JWHXH.3.1
+:IMPLEMENTS: dec_XH2XY
+:PRIORITY: P2
+:RELATES_TO: TASK-JWHXH.3
+:FIX_SUBTASK: t
+:END:
+
+Fix round for the JWHXH.3 review (opus-5, tx-1e50f79f; merged ad642ca7). MEDIUM: doctor.rs:~254 push_tracked_views_findings continues early for non-git projects, so a stale .orgasmic/views/ dir there is never reported; keep the dir_present branch for every registered project and run git ls-files only inside a work tree. LOWs in the same round: api.rs ~:14705 post_org_file refusal for .orgasmic/views/* still says "regenerate it through the view refresh operation" - say the views are rendered on demand and are read-only; project_migrate.rs ~:155/~:170 drop the unreachable "else if views_applied" arm and print post-apply state, not the pre-apply tracked count; shipped/schema/tx.org:294 drop the "derived aggregate read views under .orgasmic/views/" line.
+
+** Acceptance
+- [ ] Test: non-git registered project with .orgasmic/views/ present -> doctor warns; after project migrate -> quiet.
+- [ ] Refusal string updated (test asserts new text); migrate summary correct on a real apply.
+- [ ] cargo test -p orgasmic-cli --bin orgasmic -- doctor migrate; cargo test -p orgasmic-daemon --lib -- org_file; clippy -D; fmt.
