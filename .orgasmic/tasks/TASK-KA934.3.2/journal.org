@@ -76,3 +76,42 @@
 :TO_STATE: in_review
 :EVENT_ID: 751089f3-55a1-4c80-aed4-5b00686e75e6
 :END:
+
+* tx-20260902-orgasmic-7083 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7083
+:TIME:    [2026-09-02 Wed 08:00:27]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.2
+:REASON: LOW crates/orgasmic-cli/src/doctor.rs:318 — push_member_actor_collision_findings returns early unless the daemon is Running, so a collision against the $USER boot default or config manager.actor (both knowable offline and both checked by member add) is undiagnosable exactly when the daemon is down.
+:EVENT_ID: 155bb2f8-edf8-454e-9c8c-a1baf662549d
+:END:
+
+* tx-20260902-orgasmic-7084 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7084
+:TIME:    [2026-09-02 Wed 08:00:31]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.2
+:REASON: LOW crates/orgasmic-cli/src/member.rs:104 — the $USER candidate is the CLI process's USER, not the daemon's, and there is no --force override, so on a host where the daemon runs as a different user member add hard-refuses a legitimate name and the message's remedy (change manager.actor) does not apply to the $USER case.
+:EVENT_ID: 1090b42c-8eae-408d-8508-3b680e8f3428
+:END:
+
+* tx-20260902-orgasmic-7085 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7085
+:TIME:    [2026-09-02 Wed 08:00:35]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.2
+:REASON: LOW crates/orgasmic-cli/src/member.rs:111 — member add now builds a tokio runtime and makes a blocking HTTP /daemon/status call with a 10s timeout (doctor.rs:466), so a hung-but-listening daemon stalls a purely local, filesystem-only command for 10 seconds.
+:EVENT_ID: 3d0cb0d8-1594-4827-861c-187ed2af6176
+:END:
