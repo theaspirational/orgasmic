@@ -102,3 +102,29 @@
 :REASON: LOW crates/orgasmic-cli/src/project_migrate.rs:170 — the bail message says 'init git or back up .orgasmic first', but a bare 'git init' then makes refuse_dirty_tree fail with 'refusing to migrate a dirty git tree' (git status --untracked-files=all lists every file); the advice needs 'git init && git add -A && git commit'
 :EVENT_ID: 48881cf1-3dbf-4f08-9c78-50e96e5f6513
 :END:
+
+* tx-20260902-orgasmic-7074 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7074
+:TIME:    [2026-09-02 Wed 07:51:16]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.2
+:REASON: LOW crates/orgasmic-cli/src/project_migrate.rs:168-176 — 'project migrate --dry-run' on a non-git v1 root now exits non-zero and prints nothing instead of the previous DRY RUN plan plus views plan; the read-only inspection path lost its output
+:EVENT_ID: f4501e88-3610-49ce-9419-e8576faa39fc
+:END:
+
+* tx-20260902-orgasmic-7075 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7075
+:TIME:    [2026-09-02 Wed 07:51:19]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.2
+:REASON: LOW test crates/orgasmic-cli/src/project_migrate.rs:906-910 — the 'summary line' assertion calls views_summary_lines on a hand-built plan, not the call site; run_at bails before print_summary on that path, so the assertion passes whether or not the line is ever printed
+:EVENT_ID: 30218c9a-819a-4b14-ba51-75c1272b20b6
+:END:
