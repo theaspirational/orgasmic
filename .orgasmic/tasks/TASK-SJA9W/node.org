@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-SJA9W
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-SJA9W dispatch-status tells the operator to run a close command that cannot be run, and the only runnable variant records a falsehood
+* DONE TASK-SJA9W dispatch-status tells the operator to run a close command that cannot be run, and the only runnable variant records a falsehood
 :PROPERTIES:
 :ID: TASK-SJA9W
 :PRIORITY: P2

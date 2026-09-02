@@ -77,3 +77,19 @@
 :NODE_ID: TASK-STWVB.1.1.1.1.1.1
 :EVENT_ID: 6fc2c915-0b8c-4750-a2d3-ce5dc97c6745
 :END:
+
+* tx-20260902-orgasmic-4a2702a3-cb91-4804-a404-a18461a48159 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-4a2702a3-cb91-4804-a404-a18461a48159
+:TIME:    [2026-09-02 Wed 14:16:38]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-STWVB.1.1.1.1.1.1
+:TARGET: .orgasmic/tasks/TASK-STWVB.1.1.1.1.1.1/node.org
+:REASON: 2026-09-02 manager sprint: merged and pushed to main, runtime reinstalled, reviewed (APPROVE-WITH-FOLLOW-UPS, zero HIGH); follow-ups filed separately
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: adbd9df4-c50c-4f48-956f-8a54fcab6fe1
+:END:

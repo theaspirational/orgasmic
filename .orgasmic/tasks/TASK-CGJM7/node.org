@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-CGJM7
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-CGJM7 the log rotation rename-failure branch is still per-line: ~32 stderr writes per tracing line into the unrotated daemon.err.log :daemon:ops:
+* DONE TASK-CGJM7 the log rotation rename-failure branch is still per-line: ~32 stderr writes per tracing line into the unrotated daemon.err.log :daemon:ops:
 :PROPERTIES:
 :ID: TASK-CGJM7
 :PRIORITY: P2

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-QCG6J
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-QCG6J the reattach fence regression asserts which refusal fired, so it goes red on a safe outcome under load
+* DONE TASK-QCG6J the reattach fence regression asserts which refusal fired, so it goes red on a safe outcome under load
 :PROPERTIES:
 :ID: TASK-QCG6J
 :PRIORITY: P2

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-XQCNA
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-XQCNA Terminal run states carry a classified reason and the evidence path in dispatch-status; API 500s carry the inner cause :vscode-orsl-letter:
+* DONE TASK-XQCNA Terminal run states carry a classified reason and the evidence path in dispatch-status; API 500s carry the inner cause :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-XQCNA
 :PRIORITY: P1

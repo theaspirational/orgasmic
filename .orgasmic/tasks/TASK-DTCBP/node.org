@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DTCBP
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-DTCBP orgasmic verify: --all, the verify_artifact drawer property, and the dispatch-close gating decision :cli:verification:mechanism:
+* IN_PROGRESS TASK-DTCBP orgasmic verify: --all, the verify_artifact drawer property, and the dispatch-close gating decision :cli:verification:mechanism:
 :PROPERTIES:
 :ID: TASK-DTCBP
 :PRIORITY: P2

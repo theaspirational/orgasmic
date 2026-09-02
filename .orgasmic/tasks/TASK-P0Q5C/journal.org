@@ -62,3 +62,19 @@
 :NODE_ID: TASK-P0Q5C
 :EVENT_ID: 3bcc98eb-0391-4109-8b75-e5ef6dfdc6a8
 :END:
+
+* tx-20260902-orgasmic-01a81f4a-70f3-4f51-9e1a-bbb899b7dcda task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-01a81f4a-70f3-4f51-9e1a-bbb899b7dcda
+:TIME:    [2026-09-02 Wed 14:16:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-P0Q5C
+:TARGET: .orgasmic/tasks/TASK-P0Q5C/node.org
+:REASON: 2026-09-02 manager sprint: merged and pushed to main, runtime reinstalled, reviewed (APPROVE-WITH-FOLLOW-UPS, zero HIGH); follow-ups filed separately
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 55224faa-71db-48e7-a9d9-e0036680ac75
+:END:

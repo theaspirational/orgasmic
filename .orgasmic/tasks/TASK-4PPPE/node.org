@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-4PPPE
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-4PPPE serve announces readiness before it can handle SIGTERM, so the graceful-shutdown test races itself
+* DONE TASK-4PPPE serve announces readiness before it can handle SIGTERM, so the graceful-shutdown test races itself
 :PROPERTIES:
 :ID: TASK-4PPPE
 :PRIORITY: P2

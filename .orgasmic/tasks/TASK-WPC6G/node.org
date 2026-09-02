@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-WPC6G
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-WPC6G gotchas.org is off the node write surface, so every entry in it is a rule-violating hand edit :runtime:cli:process:
+* DONE TASK-WPC6G gotchas.org is off the node write surface, so every entry in it is a rule-violating hand edit :runtime:cli:process:
 :PROPERTIES:
 :ID: TASK-WPC6G
 :PRIORITY: P2

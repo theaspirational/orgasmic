@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-RRT4T
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-RRT4T Eight rmux-dependent daemon tests silently pass when rmux is missing, which is why worker green claims keep not reproducing :testing:daemon:dispatch:trust:
+* DONE TASK-RRT4T Eight rmux-dependent daemon tests silently pass when rmux is missing, which is why worker green claims keep not reproducing :testing:daemon:dispatch:trust:
 :PROPERTIES:
 :ID: TASK-RRT4T
 :PRIORITY: P0

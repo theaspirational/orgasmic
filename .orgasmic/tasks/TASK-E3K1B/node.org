@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-E3K1B
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-E3K1B doctor reports no vendor-transcript inventory, so dec_Y5MPK's operator-owned retention has no numbers to act on :doctor:sessions:evidence:
+* DONE TASK-E3K1B doctor reports no vendor-transcript inventory, so dec_Y5MPK's operator-owned retention has no numbers to act on :doctor:sessions:evidence:
 :PROPERTIES:
 :ID: TASK-E3K1B
 :PRIORITY: P2

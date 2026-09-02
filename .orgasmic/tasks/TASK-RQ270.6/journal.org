@@ -47,3 +47,19 @@
 :TO_STATE: in_review
 :EVENT_ID: 041c2141-fb5e-4c6c-8a45-eb30b0f2f402
 :END:
+
+* tx-20260902-orgasmic-e8555e3e-04f1-404e-bc5d-633b15604131 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-e8555e3e-04f1-404e-bc5d-633b15604131
+:TIME:    [2026-09-02 Wed 14:16:37]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-RQ270.6
+:TARGET: .orgasmic/tasks/TASK-RQ270.6/node.org
+:REASON: 2026-09-02 manager sprint: merged and pushed to main, runtime reinstalled, reviewed (APPROVE-WITH-FOLLOW-UPS, zero HIGH); follow-ups filed separately
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: ef69ee9d-f88f-4953-857f-87f092e129c1
+:END:

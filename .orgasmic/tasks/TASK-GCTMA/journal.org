@@ -77,3 +77,19 @@
 :NODE_ID: TASK-GCTMA
 :EVENT_ID: e81f8817-9b4c-4756-9f17-790babc46519
 :END:
+
+* tx-20260902-orgasmic-8219cedf-74ab-4bc9-b9d7-11ea59b30810 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-8219cedf-74ab-4bc9-b9d7-11ea59b30810
+:TIME:    [2026-09-02 Wed 14:16:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-GCTMA
+:TARGET: .orgasmic/tasks/TASK-GCTMA/node.org
+:REASON: 2026-09-02 manager sprint: merged and pushed to main, runtime reinstalled, reviewed (APPROVE-WITH-FOLLOW-UPS, zero HIGH); follow-ups filed separately
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: ba7a600c-d3fa-4030-9bc3-217494b0d847
+:END:

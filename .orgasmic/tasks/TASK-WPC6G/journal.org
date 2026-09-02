@@ -62,3 +62,19 @@
 :NODE_ID: TASK-WPC6G
 :EVENT_ID: d8c565a2-a375-4956-b330-c9458d74ab41
 :END:
+
+* tx-20260902-orgasmic-7a949ebb-53bb-4fd1-9feb-f92da1cef450 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7a949ebb-53bb-4fd1-9feb-f92da1cef450
+:TIME:    [2026-09-02 Wed 14:16:38]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-WPC6G
+:TARGET: .orgasmic/tasks/TASK-WPC6G/node.org
+:REASON: 2026-09-02 manager sprint: merged and pushed to main, runtime reinstalled, reviewed (APPROVE-WITH-FOLLOW-UPS, zero HIGH); follow-ups filed separately
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 8eb2967a-ca02-4089-be0f-be2dbf64700d
+:END:

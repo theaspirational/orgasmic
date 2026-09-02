@@ -62,3 +62,34 @@
 :TO_STATE: in_review
 :EVENT_ID: a2de1390-f221-4195-a0f3-512310dc3365
 :END:
+
+* tx-20260902-orgasmic-fd325f2d-39e5-47e2-b254-84255ecb0cb3 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-fd325f2d-39e5-47e2-b254-84255ecb0cb3
+:TIME:    [2026-09-02 Wed 14:16:50]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-X0PV1
+:TARGET: .orgasmic/tasks/TASK-X0PV1/node.org
+:REASON: sprint work merged and reviewed; task kept open for its named remaining item
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: 7e3081d7-64ce-4826-b8f8-a0cfa42eaa1c
+:END:
+
+* tx-20260902-orgasmic-c7f9e228-434f-4c30-ae6e-a02060ca94ad task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-c7f9e228-434f-4c30-ae6e-a02060ca94ad
+:TIME:    [2026-09-02 Wed 14:16:51]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-X0PV1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-X0PV1/node.org
+:REASON: edited task node TASK-X0PV1
+:NODE_ID: TASK-X0PV1
+:EVENT_ID: db0a2aea-58d3-499b-b31b-749af452b7cd
+:END:

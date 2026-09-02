@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-0KP3T
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-0KP3T the stdout-mirror fallback keys on handle presence, not write success: a failed durable write loses the line and wedges the sink for the process lifetime :daemon:ops:
+* DONE TASK-0KP3T the stdout-mirror fallback keys on handle presence, not write success: a failed durable write loses the line and wedges the sink for the process lifetime :daemon:ops:
 :PROPERTIES:
 :ID: TASK-0KP3T
 :PRIORITY: P2

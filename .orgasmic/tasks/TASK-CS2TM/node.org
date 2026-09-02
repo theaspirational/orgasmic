@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-CS2TM
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-CS2TM CLI rough edges from the letter: task/tasks split, task create --body 500 on *** / nested **, node prop set --kind lacks config (silently writes project.org), --brief relative path fails late, no --json on dispatch-status :vscode-orsl-letter:
+* IN_PROGRESS TASK-CS2TM CLI rough edges from the letter: task/tasks split, task create --body 500 on *** / nested **, node prop set --kind lacks config (silently writes project.org), --brief relative path fails late, no --json on dispatch-status :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-CS2TM
 :PRIORITY: P2

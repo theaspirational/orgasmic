@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-QNE3R
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-QNE3R the sequencer marker table is pinned by label, not by behaviour — 4 of 7 rows unexercised :testing:dispatch:
+* DONE TASK-QNE3R the sequencer marker table is pinned by label, not by behaviour — 4 of 7 rows unexercised :testing:dispatch:
 :PROPERTIES:
 :ID: TASK-QNE3R
 :PRIORITY: P2

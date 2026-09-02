@@ -122,3 +122,19 @@
 :NODE_ID: TASK-BX5SR.2
 :EVENT_ID: 3bfe3ee8-a9b0-4c0e-9cf6-2ea422b7f2c6
 :END:
+
+* tx-20260902-orgasmic-e8047614-1538-4149-8bfa-8de7a1ea4c77 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-e8047614-1538-4149-8bfa-8de7a1ea4c77
+:TIME:    [2026-09-02 Wed 14:16:35]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-BX5SR.2
+:TARGET: .orgasmic/tasks/TASK-BX5SR.2/node.org
+:REASON: 2026-09-02 manager sprint: merged and pushed to main, runtime reinstalled, reviewed (APPROVE-WITH-FOLLOW-UPS, zero HIGH); follow-ups filed separately
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 31412d23-7d55-499e-97c1-4003806e6c4e
+:END:
