@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-40ZMJ
 #+orgasmic_version: 2
 
-* BACKLOG TASK-40ZMJ Provider/quota health invisible until a worker dies: manager drivers --health probe + dispatch pre-flight refusing provider_quota/provider_auth    :vscode-orsl-letter:
+* IN_PROGRESS TASK-40ZMJ Provider/quota health invisible until a worker dies: manager drivers --health probe + dispatch pre-flight refusing provider_quota/provider_auth :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-40ZMJ
 :PRIORITY: P2
