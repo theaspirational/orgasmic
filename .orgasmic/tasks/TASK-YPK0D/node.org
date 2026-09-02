@@ -48,4 +48,6 @@ An operator forcing a recovery is an explicit act with a human behind it, which
 is materially different from boot auto-reattach or a polled inventory offering a
 candidate. That is why this is P2 and was correctly kept out of the blocking
 round.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 67ddcab3 on sprint/DAEMON2, merged onto local sprint-20260902 as 42d8c87e. Finding: the two .reattach( sites in execute_run_recover_action are unreachable for a blocked verdict (classify_session_files clears every recovery action for non-verified authority; such requests died earlier as 400s). The single shared check therefore sits in post_run_recover right after prior is found, ahead of recovery_origin_authority, covering both operator routes; RecoveredRun carries serde(skip) worktree_authority_verdict so the endpoint calls the same blocks_attach() on the same verdict the inventory classified; refusal = 409 conflict_json {error, run_id, worktree_authority, reason=authority_error()}. Tests: explicit_reattach_tmux_is_refused_when_worktree_authority_blocks_attach (Tombstoned), pending_plan_reattach_existing_is_refused_when_worktree_authority_blocks_attach (Unprovable via corrupt run-tombstones.json; pending claim still Pending). Gates (private target): daemon 20 passed, clippy rc=0, fmt rc=0. Operator review/test after the sprint.
 
