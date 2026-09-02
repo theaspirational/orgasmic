@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-CS2TM
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-CS2TM CLI rough edges from the letter: task/tasks split, task create --body 500 on *** / nested **, node prop set --kind lacks config (silently writes project.org), --brief relative path fails late, no --json on dispatch-status :vscode-orsl-letter:
+* DONE TASK-CS2TM CLI rough edges from the letter: task/tasks split, task create --body 500 on *** / nested **, node prop set --kind lacks config (silently writes project.org), --brief relative path fails late, no --json on dispatch-status :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-CS2TM
 :PRIORITY: P2
@@ -20,4 +20,8 @@ One noun→verb family with `list` under each; `--json` on every read; bodies ac
 ** Evidence
 - sprint 2026-09-02 (no dispatch): 3 commits on sprint/CS2TM (0e1a8558 test pins nested ** / *** body headings stored verbatim; 8cd761f5 explicit --kind contradicting the id prefix is a 400 naming the inferred kind, one guard in resolve_node_layer; 0ca77380 manager dispatch --brief absolutized against cwd at parse time, missing file fails as 'brief not found: <path>'). Item 4 (dispatch-status --json) skipped: multi-branch output, needs a struct per branch. Merged into sprint-20260902 as ecdcb78a (--no-ff; manager.rs test-module conflict resolved by keeping both test blocks). Agent gates green in a private target dir; post-merge integration gate running.
 - 2026-09-02 sprint review (CLI reviewer): CONFIRMED clean. parse_brief_path does not run on --help or shell completion (clap invokes value parsers only on supplied values), and the later canonicalize re-validates, which closes the TOCTOU between parse and use.
+- 2026-09-02 dispatch (stdio/codex-chat, gpt-5.6-sol, effort high, started_tx tx-20260902-orgasmic-eac18907): ITEM 4 DONE, the one item skipped earlier as "needs a struct per branch". Worker commit 308e8436, merged as d7c91e11, close tx recorded. "manager dispatch-status --json" now emits one typed branch each for torn-close reconcile, cleanup failures, open dispatches (with main_checkout, parked and records) and managed worktrees. Absent values are null, never the "-" the human line prints; liveness is booleans (run_alive, pid_alive, reported, worktree_exists) rather than bracket tokens; a record carries "tasks" as a list, which is correct for a multi-task dispatch.
+- Carries every token this sprint added: model, effort, preflight, claim_holder, double_claim, terminal_exit, parked tasks, awaiting-merge disposition and main_checkout dirtiness.
+- Manager gate (independent of the worker's own): real "Compiling orgasmic-cli" from the worker worktree in a fresh private target dir; dispatch_status_ 5 passed; shipped_conventions 9, cli_parity 6, retired_content 5 passed. Human-output regression checked the strong way - the installed runtime and the new binary were run against the SAME live daemon with open dispatches and cmp returned 0, so the byte-identical claim is measured on real data, not only in tests. Live JSON parsed: 4 top-level branches, no "-" strings, model=gpt-5.6-sol effort=high preflight=ok on real records.
+- Also added shipped/skills/orgasmic/proposals/operations-dispatch.md via "okfy propose" (a proposal, not a direct concept edit). RESIDUAL: the bundle owner must accept it and repackage to clear the expected W_STALE_PACKAGE warning.
 

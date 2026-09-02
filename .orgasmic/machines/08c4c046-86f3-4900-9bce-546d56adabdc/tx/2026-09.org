@@ -7814,3 +7814,27 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-CS2TM/dispatches/tx-20260902-orgasmic-eac18907-5eb7-48d8-8973-1fbe0524763c/report.md
 :EVENT_ID:     77cc2397-db67-4e62-9778-cf2f9b956ae2
 :END:
+
+* TX 2026-09-02 Wed 15:31:28 implementer.done TASK-CS2TM
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-96ae54a1-bda9-4666-8286-089f662e1be2
+:TIME:         [2026-09-02 Wed 15:31:28]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-CS2TM
+:REASON:       manager gated the change directly: dispatch_status_ unit tests 5 passed with a real compile from the worker worktree, shipped_conventions 9 / cli_parity 6 / retired_content 5 passed, and the human output verified BYTE-IDENTICAL against the installed runtime on live data with open dispatches (cmp exit 0). JSON validated live: four typed top-level branches, no '-' placeholder strings, model/effort/preflight/claim_holder populated on real records.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WORKER_COMMIT: 308e84362cc96a2703ec2b1a9caa966f607f161d
+:MERGE_SHA:    d7c91e11cb5db2e65f3a10a6c47e30e9a885c10e
+:BRANCH:       task-cs2tm-impl
+:NO_REVIEW_REQUIRED: true
+:CLOSED_TX:    tx-20260902-orgasmic-eac18907-5eb7-48d8-8973-1fbe0524763c
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-CS2TM/dispatches/tx-20260902-orgasmic-eac18907-5eb7-48d8-8973-1fbe0524763c/report.md
+:EVENT_ID:     a758d3a3-ff60-4ae2-9a97-37f5f13f63b4
+:END:

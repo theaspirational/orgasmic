@@ -110,3 +110,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: 6d1494c9-6292-42e1-9690-ee7674738696
 :END:
+
+* tx-20260902-orgasmic-e67ae46e-fdcf-4c81-b1da-11f2693bad46 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-e67ae46e-fdcf-4c81-b1da-11f2693bad46
+:TIME:    [2026-09-02 Wed 15:31:29]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CS2TM
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-CS2TM/node.org
+:REASON: edited task node TASK-CS2TM
+:NODE_ID: TASK-CS2TM
+:EVENT_ID: 4904c6e2-aa04-4ba0-8caf-3c880ba498f6
+:END:
+
+* tx-20260902-orgasmic-d2dc4bb9-770e-4f87-9a9b-52dd992eb19f task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-d2dc4bb9-770e-4f87-9a9b-52dd992eb19f
+:TIME:    [2026-09-02 Wed 15:31:29]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CS2TM
+:TARGET: .orgasmic/tasks/TASK-CS2TM/node.org
+:REASON: all four items resolved; item 4 landed as merge d7c91e11, manager-gated incl. a byte-identical human-output check against the installed runtime
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 1a06a3e5-f9bb-46ac-9995-ea897d52ba7c
+:END:
