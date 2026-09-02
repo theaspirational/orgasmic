@@ -46,3 +46,19 @@
 :NODE_ID: TASK-8VBXR
 :EVENT_ID: 5ba7e9ca-d73a-4bcb-a45c-715a1c0449cf
 :END:
+
+* tx-20260902-orgasmic-3ed1324d-cc84-4180-9d5b-c726c5f08e00 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-3ed1324d-cc84-4180-9d5b-c726c5f08e00
+:TIME:    [2026-09-02 Wed 13:30:46]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8VBXR
+:TARGET: .orgasmic/tasks/TASK-8VBXR/node.org
+:REASON: 2026-09-02 manager sprint: code merged and pushed to main b1c6ca5f, runtime reinstalled; awaiting review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 60ae22b9-9e4e-4fab-9f97-3124a3802ae6
+:END:

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-0MSK7
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-0MSK7 set_title on a project node drops the PROJECT heading word, so every cwd-resolved CLI command stops finding project.org :daemon:writer:
+* IN_REVIEW TASK-0MSK7 set_title on a project node drops the PROJECT heading word, so every cwd-resolved CLI command stops finding project.org :daemon:writer:
 :PROPERTIES:
 :ID: TASK-0MSK7
 :PRIORITY: P1

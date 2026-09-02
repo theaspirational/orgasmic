@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-1MEW6
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-1MEW6 live_rebuild git probe retry can exhaust under extreme load: 'every attempt returned without writing a URL' — 5FEN5's fix has a ceiling
+* IN_REVIEW TASK-1MEW6 live_rebuild git probe retry can exhaust under extreme load: 'every attempt returned without writing a URL' — 5FEN5's fix has a ceiling
 :PROPERTIES:
 :ID: TASK-1MEW6
 :PRIORITY: P2

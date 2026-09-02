@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-3HR8R
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-3HR8R A task parked in in_review with no reviewer dispatch is invisible
+* IN_REVIEW TASK-3HR8R A task parked in in_review with no reviewer dispatch is invisible
 :PROPERTIES:
 :ID: TASK-3HR8R
 :PRIORITY: P2
