@@ -99,4 +99,6 @@ Acceptance ADDS:
   missing field, and leaves no run record, no worktree and no lease behind
 - the refusal is proven by a shipped injection artifact under verify/, like any
   other correctness claim on this project
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 489616e2 on sprint/TASK-A55J7, merged onto local sprint-20260902 as 02a5ca80. Already present before: :MODEL:/:EFFORT: on dispatch_started from the request. New: tmux codex branch passes -c model_reasoning_effort=<effort>; tmux_effort_delivery() = requested for claude/codex, 'unsupported' for cursor-agent/hermes; RunRecord/RunSummary carry model/effort (serde default) derived at acquire+reattach; :EFFORT: on the tx is the DELIVERED value computed from the resolved driver/harness; dispatch-status prints MODEL= EFFORT=. Agent gates (private target): drivers 96 passed (one real-tmux flake passed on rerun), daemon 59, cli 28, clippy rc=0, fmt rc=0. Left out: UI runs surface, refuse-on-unresolved model/effort, no invented 'resolved default' when nothing requested. Operator review/test after the sprint.
 

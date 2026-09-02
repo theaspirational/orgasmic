@@ -79,22 +79,7 @@ mechanism is; do not assume the claude flag shape generalises. Same question for
   confirm it takes effect) and for the =rmux= mode, which composes argv
   separately in =modes/rmux.rs= and was not examined.
 ** Evidence
-SECOND CONFIRMED INSTANCE [2026-08-08]. Dispatch =tx-20260808-orgasmic-5331=
-(TASK-2QK4P reviewer) was created with =--effort high=. The tx records
-=:EFFORT: high=. The live pane reports =gpt-5.6-sol xhigh= — the harness
-default, because the tmux driver's codex/cursor-agent/hermes branch pushes
-=--model= and never pushes an effort flag at all, while the claude branch pushes
-=--effort=.
-
-The SAME dispatch round sent a claude implementer with =--effort high=, and its
-pane shows =thinking with high effort= against the argv
-=claude --model claude-opus-5 ... --effort high=. *Same manager invocation, same
-flag, one harness honours it and one silently discards it.*
-
-The harm is not that =xhigh= is worse than =high= — it is higher. The harm is
-that *the dispatch record asserts a parameter that was never sent*, so any later
-comparison of review quality against effort reads a fabricated column. Fail
-loudly on an unsupported flag, or map it, but do not record it as sent.
+Manager sprint 2026-09-02 (no dispatch): subagent commit 489616e2 on sprint/TASK-A55J7, merged onto local sprint-20260902 as 02a5ca80. Already present before: :MODEL:/:EFFORT: on dispatch_started from the request. New: tmux codex branch passes -c model_reasoning_effort=<effort>; tmux_effort_delivery() = requested for claude/codex, 'unsupported' for cursor-agent/hermes; RunRecord/RunSummary carry model/effort (serde default) derived at acquire+reattach; :EFFORT: on the tx is the DELIVERED value computed from the resolved driver/harness; dispatch-status prints MODEL= EFFORT=. Agent gates (private target): drivers 96 passed (one real-tmux flake passed on rerun), daemon 59, cli 28, clippy rc=0, fmt rc=0. Left out: UI runs surface, refuse-on-unresolved model/effort, no invented 'resolved default' when nothing requested. Operator review/test after the sprint.
 ** Letter evidence
 vscode-orsl manager letter 2026-08-22 (item 5). `--model` is unvalidated passthrough too: a wrong id does not fail loudly; the manager confirmed the model by grepping the session jsonl for `"model":"…"`. The driver/harness substitution half of item 5 is TASK-XC9N4.
 
