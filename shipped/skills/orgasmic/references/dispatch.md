@@ -24,6 +24,12 @@ orgasmic manager dispatch --kind <kind> --mode <mode> --harness <harness> \
 Discover installed `mode`+`harness` pairs: `orgasmic manager drivers`.
 Choosing the values: [`agent-selection.md`](agent-selection.md).
 
+`orgasmic manager drivers --health` shows the shared dispatch auth preflight
+and any remembered provider quota lockout. Dispatch refuses an active lockout
+as `provider_quota: <provider> locked until <time>`; `--force-preflight`
+overrides only that remembered quota refusal and records the override on the
+dispatch tx.
+
 ## Visibility — workers see committed refs only
 
 - The worktree is built from `--from` (default: current branch HEAD). Every

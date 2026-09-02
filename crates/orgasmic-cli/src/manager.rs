@@ -148,6 +148,10 @@ pub struct DispatchArgs {
     /// launch anyway. Without it the daemon refuses such a dispatch by name.
     #[arg(long = "allow-simulated")]
     pub allow_simulated: bool,
+    /// Override a remembered provider quota lockout for this dispatch. The
+    /// override is recorded on `manager.dispatch_started`.
+    #[arg(long = "force-preflight")]
+    pub force_preflight: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -660,6 +664,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) dry_run: bool,
     pub(crate) governance: Option<orgasmic_daemon::governance::GovernancePatch>,
     pub(crate) allow_simulated: bool,
+    pub(crate) force_preflight: bool,
 }
 
 impl DispatchPlan {
@@ -6905,6 +6910,7 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
         dry_run: args.dry_run,
         governance,
         allow_simulated: args.allow_simulated,
+        force_preflight: args.force_preflight,
     })
 }
 
@@ -6948,6 +6954,9 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
     }
     if let Some(credential_mode) = plan.credential_mode_override.as_deref() {
         println!("  cred:     {credential_mode}");
+    }
+    if plan.force_preflight {
+        println!("  force:    provider quota preflight override");
     }
 }
 

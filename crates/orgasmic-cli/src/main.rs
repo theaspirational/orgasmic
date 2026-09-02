@@ -4050,7 +4050,7 @@ fn print_lifecycle_entry(action: &str, entry: &LifecycleEntry) {
 
 fn cmd_manager(home: &Home, cmd: ManagerCmd) -> Result<()> {
     match cmd {
-        ManagerCmd::Drivers(args) => drivers::cmd_drivers(args),
+        ManagerCmd::Drivers(args) => drivers::cmd_drivers(home, args),
         ManagerCmd::Dispatch(args) => manager::cmd_dispatch(home, args),
         ManagerCmd::DispatchClose(args) => manager::cmd_dispatch_close(home, args),
         ManagerCmd::DispatchStatus(args) => manager::cmd_dispatch_status(home, args),
