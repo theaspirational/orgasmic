@@ -130,6 +130,7 @@ Canonical commands in this family:
 - `orgasmic node body set`
 - `orgasmic node body append`
 - `orgasmic node body unset`
+- `orgasmic gotcha` (group: `add`, `list`)
 - `orgasmic gotcha add`
 - `orgasmic gotcha list`
 - `orgasmic node prop set`
