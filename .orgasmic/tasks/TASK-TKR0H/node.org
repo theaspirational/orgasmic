@@ -35,4 +35,6 @@ extraction so real negatives survive.
 - The guard runs in the same test binary as the existing shipped-prose check
   and shares its extraction, so the two directions cannot drift apart.
 - Zero false failures on the corpus at HEAD.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit c789b16e on sprint/TKR0H, merged onto local sprint-20260902 as e8cb8a8f. cli_parity.rs gains shipped_prose_does_not_deny_a_verb_that_resolves (phrases: not exist / never existed / no such verb|command / there is no … command; nearest inline code span each side within the clause and 200 chars; whitelist marker 'parity: allow-negative') + fixture test negative_claim_guard_fires_on_a_real_verb_and_not_on_a_fake_one. No offenders at HEAD. ALSO fixed a pre-existing RED on main 7c85f177: shipped/skills/orgasmic/references/recall-resume.md quoted 'orgasmic task list' (from JWHXH.3) -> 'tasks list'. Agent gates: cli_parity 9 passed; clippy rc=0; fmt rc=0. Ceiling: only the nearest span of a comma list is checked. Operator review/test after the sprint.
 
