@@ -42,4 +42,5 @@ pinning in production.
   `orgasmic verify --artifact` before reporting.
 ** Evidence
 Manager sprint 2026-09-02 (no dispatch): subagent commit b53dafdf on sprint/HARDEN (tmux.rs: tmux_command()/tmux_async_command() env_remove TMUX and TMUX_PANE via TMUX_SCRUBBED_ENV; test tmux_commands_scrub_inherited_tmux_env), merged onto local sprint-20260902 as c0d1d7e9. Gates: drivers tmux 84 passed; clippy rc=0; fmt rc=0. Operator review/test after the sprint.
+- 2026-09-02 sprint review (drivers/docs reviewer): CONFIRMED correct and complete. The scrub is applied in BOTH command builders in modes/tmux.rs (794, 805). The two spawn sites that bypass them are safe: the keepalive at tmux.rs:869 pins its socket explicitly with -L (tmux ignores $TMUX when -L is given), and "tmux -V" at 930 never contacts a server; the daemon-side probe at supervisor.rs:6731 is -V plus a tmux_command()-built spawn. Legitimate nesting is unharmed - panes get $TMUX from the NEW server, not from the scrubbed client env. The unit test asserts the removals on the built Command for both builders.
 
