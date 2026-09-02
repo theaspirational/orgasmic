@@ -9,9 +9,11 @@
 //! would double-write is decided from the live durable handle at write time
 //! (TASK-G64ZH.1.1), not from a construction-time path/tty/flag proxy.
 //! Reopen after a failed durable open — including boot — is backoff-bounded
-//! (TASK-G64ZH).
+//! (TASK-G64ZH); so is a retry after a failed rotation (TASK-CGJM7). A failed
+//! durable *write* drops the handle so the same reopen backoff owns recovery
+//! and the line falls back to the stdout mirror (TASK-0KP3T).
 //!
-//! orgasmic:TASK-FZF2D,TASK-ZBYH3,TASK-ZBYH3.1,TASK-G64ZH,TASK-G64ZH.1,TASK-G64ZH.1.1
+//! orgasmic:TASK-FZF2D,TASK-ZBYH3,TASK-ZBYH3.1,TASK-G64ZH,TASK-G64ZH.1,TASK-G64ZH.1.1,TASK-CGJM7,TASK-0KP3T
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, IsTerminal, Write};
@@ -23,9 +25,10 @@ use std::time::{Duration, Instant};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
 
-/// Initial wait before retrying a failed durable reopen (TASK-G64ZH F1).
+/// Initial wait before retrying a failed durable reopen (TASK-G64ZH F1) or a
+/// failed rotation (TASK-CGJM7).
 const REOPEN_BACKOFF_INITIAL: Duration = Duration::from_secs(1);
-/// Cap for the reopen backoff (TASK-G64ZH F1).
+/// Cap for the reopen/rotation backoff (TASK-G64ZH F1, TASK-CGJM7).
 const REOPEN_BACKOFF_CAP: Duration = Duration::from_secs(60);
 
 /// Env var that suppresses the stdout tracing mirror when set to `off` / `0` /
@@ -50,8 +53,12 @@ pub const MAX_LOG_KEEP: u32 = 32;
 
 static DROPPED_LOG_WRITES: AtomicU64 = AtomicU64::new(0);
 
-/// Process-wide count of sink write failures (BrokenPipe/EPIPE and other I/O
-/// errors). Cheap to read; never consulted on the request success path.
+/// Process-wide count of sink I/O failures. One meaning across every path:
+/// one per line that never landed in a sink it was routed to (durable
+/// open/write failure, mirror write failure) plus one per failed rotation
+/// attempt — never one per syscall, and rotation attempts are backoff-bounded
+/// (TASK-G64ZH F1, TASK-CGJM7). Cheap to read; never consulted on the request
+/// success path.
 pub fn dropped_log_writes() -> u64 {
     DROPPED_LOG_WRITES.load(Ordering::Relaxed)
 }
@@ -329,9 +336,15 @@ struct SinkState {
     /// Current reopen backoff; doubles after each failed attempt up to
     /// [`REOPEN_BACKOFF_CAP`].
     reopen_backoff: Duration,
-    /// Last durable-open error kind reported to stderr. Same-kind retries stay
-    /// quiet; a kind change or the first success after a streak re-emits
-    /// (TASK-G64ZH.1.1 R-4).
+    /// Earliest Instant at which a failed rotation may be retried. Without it
+    /// a persistent rename failure re-ran the whole rename loop on every line
+    /// (TASK-CGJM7).
+    next_rotate_attempt: Instant,
+    /// Current rotation backoff; same 1s→60s shape as `reopen_backoff`.
+    rotate_backoff: Duration,
+    /// Last durable open/write error kind reported to stderr. Same-kind
+    /// retries stay quiet; a kind change or the first success after a streak
+    /// re-emits (TASK-G64ZH.1.1 R-4).
     last_open_err_kind: Option<io::ErrorKind>,
     /// Test-only: simulate EMFILE/ENOSPC on durable reopen (TASK-ZBYH3.1 F3).
     #[cfg(test)]
@@ -339,7 +352,8 @@ struct SinkState {
     /// Test-only: count reopen attempts (TASK-G64ZH F1 bound).
     #[cfg(test)]
     open_attempts: u64,
-    /// Test-only: count `maybe_rotate` entries (TASK-G64ZH F1).
+    /// Test-only: count rotation attempts that passed every gate, including
+    /// the rotation backoff (TASK-G64ZH F1, TASK-CGJM7).
     #[cfg(test)]
     rotate_attempts: u64,
     /// Test-only: lines that never landed in the durable file (TASK-G64ZH F1).
@@ -409,6 +423,8 @@ impl BestEffortMakeWriter {
                 mirror,
                 next_reopen_attempt: Instant::now(),
                 reopen_backoff: REOPEN_BACKOFF_INITIAL,
+                next_rotate_attempt: Instant::now(),
+                rotate_backoff: REOPEN_BACKOFF_INITIAL,
                 last_open_err_kind,
                 #[cfg(test)]
                 reject_durable_open: false,
@@ -438,6 +454,8 @@ impl BestEffortMakeWriter {
                 mirror: MirrorState::StdoutWhenNoDurable,
                 next_reopen_attempt: Instant::now(),
                 reopen_backoff: REOPEN_BACKOFF_INITIAL,
+                next_rotate_attempt: Instant::now(),
+                rotate_backoff: REOPEN_BACKOFF_INITIAL,
                 // Pretend the failure was already noted so injected retries stay quiet.
                 last_open_err_kind: Some(io::ErrorKind::Other),
                 reject_durable_open: true,
@@ -507,11 +525,34 @@ impl SinkState {
     }
 
     fn schedule_reopen_retry(&mut self) {
-        self.next_reopen_attempt = self.now() + self.reopen_backoff;
-        self.reopen_backoff = self
-            .reopen_backoff
-            .saturating_mul(2)
-            .min(REOPEN_BACKOFF_CAP);
+        let now = self.now();
+        schedule_retry(&mut self.next_reopen_attempt, &mut self.reopen_backoff, now);
+    }
+
+    /// Same 1s→60s shape as the reopen retry, for a failed rotation (TASK-CGJM7).
+    fn schedule_rotate_retry(&mut self) {
+        let now = self.now();
+        schedule_retry(&mut self.next_rotate_attempt, &mut self.rotate_backoff, now);
+    }
+
+    /// A live handle whose write failed (ENOSPC/EDQUOT/EIO): drop it so
+    /// [`Self::maybe_reopen_durable`] owns recovery behind the backoff, and
+    /// let the write-time mirror fallback take the line (TASK-0KP3T). One
+    /// stderr line per error kind, throttled like open failures.
+    fn note_write_failure(&mut self, err: &io::Error) {
+        let kind = err.kind();
+        if self.last_open_err_kind != Some(kind) {
+            if let Some(path) = &self.durable_path {
+                let _ = writeln!(
+                    io::stderr(),
+                    "orgasmic: failed to write log file {}: {err}",
+                    path.display()
+                );
+            }
+            self.last_open_err_kind = Some(kind);
+        }
+        self.durable = None;
+        self.schedule_reopen_retry();
     }
 
     /// Attempt a durable reopen only when the backoff window allows it.
@@ -570,13 +611,19 @@ fn write_all_best_effort(inner: &Mutex<SinkState>, buf: &[u8]) {
     // Reopen owns the retry behind a backoff; maybe_rotate does not run while
     // the handle is missing (TASK-G64ZH F1).
     let _ = state.maybe_reopen_durable();
+    // "Durable took the line" is decided from the write result, not from
+    // handle presence (TASK-0KP3T).
+    let mut landed = false;
     if let Some(file) = state.durable.as_mut() {
-        if file.write_all(buf).is_err() {
-            record_drop();
-        } else {
-            state.bytes_written = state.bytes_written.saturating_add(buf.len() as u64);
+        match file.write_all(buf) {
+            Ok(()) => {
+                state.bytes_written = state.bytes_written.saturating_add(buf.len() as u64);
+                landed = true;
+            }
+            Err(err) => state.note_write_failure(&err),
         }
-    } else if state.durable_path.is_some() {
+    }
+    if !landed && state.durable_path.is_some() {
         // One drop per line that never landed in the durable file — not one
         // per syscall on the reopen/rotate paths (TASK-G64ZH F1).
         record_drop();
@@ -592,10 +639,10 @@ fn write_all_best_effort(inner: &Mutex<SinkState>, buf: &[u8]) {
             }
         }
         MirrorState::StdoutWhenNoDurable => {
-            // Live handle means the durable sink already has the line — do not
-            // double-write. Missing handle means fall back to stdout so a
-            // failure window is not total silence (TASK-G64ZH.1.1).
-            if state.durable.is_none() && io::stdout().write_all(buf).is_err() {
+            // A successful durable write means the durable sink already has
+            // the line — do not double-write. Otherwise fall back to stdout so
+            // a failure window is not total silence (TASK-G64ZH.1.1, TASK-0KP3T).
+            if !landed && io::stdout().write_all(buf).is_err() {
                 record_drop();
             }
         }
@@ -641,15 +688,20 @@ fn flush_best_effort(inner: &Mutex<SinkState>) {
     }
 }
 
+/// Double `backoff` up to [`REOPEN_BACKOFF_CAP`] and park `next` behind it.
+fn schedule_retry(next: &mut Instant, backoff: &mut Duration, now: Instant) {
+    *next = now + *backoff;
+    *backoff = backoff.saturating_mul(2).min(REOPEN_BACKOFF_CAP);
+}
+
 /// Roll the durable file when the tracked byte count exceeds the threshold.
-/// Failures never propagate — keep writing the current handle and count a drop.
+/// Failures never propagate — keep writing the current handle, count ONE drop
+/// per failed attempt, and retry only behind `next_rotate_attempt` so a
+/// persistent rename failure costs a bounded number of syscalls and stderr
+/// lines per unit time, not per tracing line (TASK-CGJM7).
 /// Must not be called while `state.durable` is `None` (the write path owns
 /// reopen retries via [`SinkState::maybe_reopen_durable`]).
 fn maybe_rotate(state: &mut SinkState) {
-    #[cfg(test)]
-    {
-        state.rotate_attempts = state.rotate_attempts.saturating_add(1);
-    }
     if state.durable.is_none() {
         return;
     }
@@ -659,9 +711,16 @@ fn maybe_rotate(state: &mut SinkState) {
     if state.bytes_written <= state.rotation.max_bytes {
         return;
     }
+    if state.now() < state.next_rotate_attempt {
+        return;
+    }
     let Some(path) = state.durable_path.clone() else {
         return;
     };
+    #[cfg(test)]
+    {
+        state.rotate_attempts = state.rotate_attempts.saturating_add(1);
+    }
     if let Some(file) = state.durable.as_mut() {
         let _ = file.flush();
     }
@@ -673,6 +732,7 @@ fn maybe_rotate(state: &mut SinkState) {
         if let Err(err) = std::fs::remove_file(&path) {
             if err.kind() != io::ErrorKind::NotFound {
                 record_drop();
+                state.schedule_rotate_retry();
                 if !state.try_open_durable() {
                     state.schedule_reopen_retry();
                 }
@@ -691,7 +751,9 @@ fn maybe_rotate(state: &mut SinkState) {
                 break;
             }
         }
-        // Roll .N -> .(N+1) … .1 -> .2, then current -> .1.
+        // Roll .N -> .(N+1) … .1 -> .2, then current -> .1. Remember the first
+        // failure; ONE drop and ONE stderr line per attempt, not per rename.
+        let mut failed: Option<(PathBuf, io::Error)> = None;
         for i in (1..=highest).rev() {
             let from = rolled_path(&path, i);
             let to = rolled_path(&path, i + 1);
@@ -699,27 +761,32 @@ fn maybe_rotate(state: &mut SinkState) {
                 Ok(()) => {}
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {}
                 Err(err) => {
-                    record_drop();
-                    let _ = writeln!(
-                        io::stderr(),
-                        "orgasmic: log rotation rename failed for {}: {err}",
-                        from.display()
-                    );
+                    failed.get_or_insert((from, err));
                 }
             }
         }
         // Drop the handle before renaming so the path is free; the open fd
         // would otherwise keep writing the renamed inode after we reopen.
         state.durable = None;
-        if let Err(err) = std::fs::rename(&path, rolled_path(&path, 1)) {
+        let current_err = std::fs::rename(&path, rolled_path(&path, 1)).err();
+        let current_failed = current_err.is_some();
+        if let Some(err) = current_err {
+            failed = Some((path.clone(), err));
+        }
+        if let Some((from, err)) = &failed {
             record_drop();
             let _ = writeln!(
                 io::stderr(),
                 "orgasmic: log rotation rename failed for {}: {err}",
-                path.display()
+                from.display()
             );
-            // Keep writing the current file when reopen succeeds; otherwise the
-            // write-path backoff owns the retry (TASK-G64ZH F1).
+        }
+        if current_failed {
+            // Current file was not rolled: keep writing it when reopen succeeds
+            // (bytes_written stays above the threshold) and retry the roll only
+            // behind the rotation backoff (TASK-CGJM7). A failed reopen is the
+            // write-path backoff's to retry (TASK-G64ZH F1).
+            state.schedule_rotate_retry();
             if !state.try_open_durable() {
                 state.schedule_reopen_retry();
             }
@@ -727,6 +794,7 @@ fn maybe_rotate(state: &mut SinkState) {
         }
     }
 
+    state.rotate_backoff = REOPEN_BACKOFF_INITIAL;
     if state.try_open_durable() {
         state.bytes_written = 0;
     } else {
@@ -1310,6 +1378,207 @@ mod tests {
         assert!(
             contents.contains("still-logging-after-failed-rotation"),
             "daemon must keep logging the current file after a failed rotation: {contents:?}"
+        );
+    }
+
+    /// orgasmic:TASK-CGJM7 — the mode-555 reproducer: renames fail EACCES
+    /// while appends to the existing file keep succeeding. A persistent rename
+    /// failure must cost ONE rotation attempt per backoff window, not one
+    /// rename loop (and ~32 stderr lines) per tracing line; every line still
+    /// lands; the retry does happen once the window expires.
+    #[test]
+    fn persistent_rotation_rename_failure_bounds_attempts_not_per_line() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.out.log");
+        std::fs::write(rolled_path(&path, 1), "retained-gen\n").unwrap();
+        let durable = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let mut perms = std::fs::metadata(dir.path()).unwrap().permissions();
+        let original_mode = perms.mode();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(dir.path(), perms).unwrap();
+        struct RestoreMode(PathBuf, u32);
+        impl Drop for RestoreMode {
+            fn drop(&mut self) {
+                let mut perms = std::fs::metadata(&self.0).unwrap().permissions();
+                perms.set_mode(self.1);
+                let _ = std::fs::set_permissions(&self.0, perms);
+            }
+        }
+        let _restore = RestoreMode(dir.path().to_path_buf(), original_mode);
+
+        let rotation = LogRotation {
+            max_bytes: 16,
+            keep: 32,
+        };
+        let sink =
+            BestEffortMakeWriter::new(Some((path.clone(), Ok(durable))), LogMirror::None, rotation);
+        const LINES: u64 = 40;
+        {
+            let mut writer = sink.make_writer();
+            for i in 0..LINES {
+                writer
+                    .write_all(format!("rotation-stuck-line-{i:02}\n").as_bytes())
+                    .unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        {
+            let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            assert_eq!(
+                state.rotate_attempts, 1,
+                "40 over-threshold lines inside the initial 1s rotation backoff \
+                 window must cost one rotation attempt, not one per line (got {})",
+                state.rotate_attempts
+            );
+            assert_eq!(
+                state.open_attempts, 1,
+                "one reopen for the one failed rotation (got {})",
+                state.open_attempts
+            );
+            assert_eq!(
+                state.lines_dropped, 0,
+                "every line landed in the current file; a failed roll is not a \
+                 dropped line (got {})",
+                state.lines_dropped
+            );
+            assert!(
+                state.next_rotate_attempt > state.now(),
+                "failed rotation must park the next attempt behind the backoff"
+            );
+        }
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains("rotation-stuck-line-00")
+                && contents.contains("rotation-stuck-line-39"),
+            "daemon must keep logging the current file across a failed rotation: {contents:?}"
+        );
+
+        // Liveness: once the window expires the roll is retried.
+        {
+            let mut state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            state.clock = Some(state.now() + REOPEN_BACKOFF_CAP + Duration::from_millis(1));
+        }
+        {
+            let mut writer = sink.make_writer();
+            writer.write_all(b"rotation-retry-window\n").unwrap();
+        }
+        let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(
+            state.rotate_attempts, 2,
+            "after the rotation backoff expires a second attempt must run (got {})",
+            state.rotate_attempts
+        );
+    }
+
+    /// orgasmic:TASK-0KP3T — a live handle whose write fails (ENOSPC/EIO
+    /// class; here a read-only fd) must not lose the line and must not wedge
+    /// the sink: the line reaches the stdout fallback, the handle is dropped so
+    /// the reopen backoff owns recovery, and a later successful reopen resumes
+    /// durable writes without double-writing.
+    #[test]
+    fn failed_durable_write_falls_back_to_stdout_and_recovers_on_reopen() {
+        use std::os::unix::io::AsRawFd;
+
+        let _lock = STDOUT_REDIRECT_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let durable_path = dir.path().join("daemon.out.log");
+        let stdout_path = dir.path().join("daemon.stdout.log");
+        std::fs::write(&durable_path, "").unwrap();
+        let stdout_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&stdout_path)
+            .unwrap();
+        let saved_fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        assert!(saved_fd >= 0, "dup stdout");
+        assert!(unsafe { libc::dup2(stdout_file.as_raw_fd(), libc::STDOUT_FILENO) } >= 0);
+        drop(stdout_file);
+        struct RestoreStdout(i32);
+        impl Drop for RestoreStdout {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::dup2(self.0, libc::STDOUT_FILENO);
+                    libc::close(self.0);
+                }
+            }
+        }
+        let _restore = RestoreStdout(saved_fd);
+
+        // Open succeeds, every write fails (EBADF): the handle-present /
+        // write-failed shape no other test drives.
+        let read_only = File::open(&durable_path).unwrap();
+        let sink = BestEffortMakeWriter::new_with_terminal_gate(
+            Some((durable_path.clone(), Ok(read_only))),
+            LogMirror::Stdout,
+            LogRotation::default(),
+            false,
+        );
+        let before = dropped_log_writes();
+        {
+            let mut writer = sink.make_writer();
+            writer.write_all(b"0kp3t-write-failed-1\n").unwrap();
+            writer.write_all(b"0kp3t-write-failed-2\n").unwrap();
+            writer.flush().unwrap();
+        }
+        let _ = io::stdout().flush();
+        assert!(
+            dropped_log_writes() > before,
+            "failed durable write must move dropped_log_writes"
+        );
+        {
+            let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            assert!(
+                state.durable.is_none(),
+                "a handle whose write failed must be dropped so reopen owns recovery"
+            );
+            assert_eq!(
+                state.lines_dropped, 2,
+                "each line that never landed durably counts once (got {})",
+                state.lines_dropped
+            );
+            assert_eq!(
+                state.open_attempts, 0,
+                "the second line must sit inside the reopen backoff, not reopen \
+                 per line (got {})",
+                state.open_attempts
+            );
+        }
+        let stdout_contents = std::fs::read_to_string(&stdout_path).unwrap();
+        assert!(
+            stdout_contents.contains("0kp3t-write-failed-1")
+                && stdout_contents.contains("0kp3t-write-failed-2"),
+            "lines the durable handle rejected must reach the stdout fallback: \
+             {stdout_contents:?}"
+        );
+
+        // Expire the backoff: reopen (append mode) succeeds and durable resumes.
+        {
+            let mut state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            state.next_reopen_attempt = state.now();
+        }
+        {
+            let mut writer = sink.make_writer();
+            writer.write_all(b"0kp3t-recovered\n").unwrap();
+            writer.flush().unwrap();
+        }
+        let _ = io::stdout().flush();
+        let durable_contents = std::fs::read_to_string(&durable_path).unwrap();
+        assert!(
+            durable_contents.contains("0kp3t-recovered"),
+            "after a successful reopen durable writes must resume: {durable_contents:?}"
+        );
+        let stdout_contents = std::fs::read_to_string(&stdout_path).unwrap();
+        assert!(
+            !stdout_contents.contains("0kp3t-recovered"),
+            "a line the durable sink took must not also hit stdout: {stdout_contents:?}"
         );
     }
 
