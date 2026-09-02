@@ -47,3 +47,19 @@
 :TO_STATE: in_review
 :EVENT_ID: 04ae5e1e-4a1e-4f4f-98ac-168c3ba6d93c
 :END:
+
+* tx-20260902-orgasmic-1b4e8f23-6e04-4bd3-9e28-1f497d010091 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-1b4e8f23-6e04-4bd3-9e28-1f497d010091
+:TIME:    [2026-09-02 Wed 09:51:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-37WN7
+:TARGET: .orgasmic/tasks/TASK-37WN7/node.org
+:REASON: already fixed (ab5cb079); SIGINT twin closed by 52b3424d on the sprint branch
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: b0585cee-bc75-4aa2-bff2-803229424db5
+:END:

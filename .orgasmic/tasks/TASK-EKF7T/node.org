@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-EKF7T
 #+orgasmic_version: 2
 
-* BACKLOG TASK-EKF7T Whole-file session readers remain where lifecycle facts suffice: the completion watcher re-reads the growing transcript on every poll
+* IN_PROGRESS TASK-EKF7T Whole-file session readers remain where lifecycle facts suffice: the completion watcher re-reads the growing transcript on every poll
 :PROPERTIES:
 :ID: TASK-EKF7T
 :PRIORITY: P2
