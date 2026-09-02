@@ -426,11 +426,48 @@ async fn send_successful(
             );
         }
         if status == StatusCode::CONFLICT {
-            bail!("conflict — node changed on disk; reload base_version and retry: {body}");
+            bail!(conflict_error_message(&body));
         }
         bail!(daemon_http_error_message(status, &body));
     }
     Ok(response)
+}
+
+/// The 409 sentence, chosen by what the daemon actually refused.
+///
+/// The blanket "reload base_version and retry" advice was written for node
+/// optimistic-concurrency conflicts, and TASK-RB1ZN already had to patch one
+/// call site that wore it wrongly. The daemon now answers 409 for typed
+/// writer conflicts too, where that advice is not merely vague but harmful:
+/// telling a caller to retry a request-id reuse conflict under a fresh
+/// identity invites the duplicate write the idempotency key exists to
+/// prevent. So a body that names its own error prints that error (with the
+/// cause and next step the daemon supplied), and only an OCC conflict — or a
+/// body that names nothing — keeps the base_version sentence.
+fn conflict_error_message(body: &str) -> String {
+    let parsed = serde_json::from_str::<serde_json::Value>(body).ok();
+    let error = parsed
+        .as_ref()
+        .and_then(|value| value.get("error"))
+        .and_then(|value| value.as_str());
+    match error {
+        Some(error) if !error.contains("changed on disk") => {
+            let cause = parsed
+                .as_ref()
+                .and_then(|value| value.get("cause"))
+                .and_then(|value| value.as_str())
+                .map(|cause| format!(": {cause}"))
+                .unwrap_or_default();
+            let next = parsed
+                .as_ref()
+                .and_then(|value| value.get("next"))
+                .and_then(|value| value.as_str())
+                .map(|next| format!(" (next: `{next}`)"))
+                .unwrap_or_default();
+            format!("conflict — {error}{cause}{next}")
+        }
+        _ => format!("conflict — node changed on disk; reload base_version and retry: {body}"),
+    }
 }
 
 fn daemon_http_error_message(status: StatusCode, body: &str) -> String {
@@ -861,6 +898,38 @@ mod tests {
         assert!(
             DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
             "transport failures after POST may have reached the daemon"
+        );
+    }
+
+    #[test]
+    fn a_typed_conflict_prints_its_own_error_not_the_base_version_advice() {
+        // orgasmic:TASK-BX5SR.2 — a request-id reuse 409 told the caller to
+        // "reload base_version and retry", which is exactly the duplicate
+        // write the idempotency key exists to prevent.
+        let reuse = conflict_error_message(
+            r#"{"error":"request_id `r1` was reused with a different operation, project, or payload; the key still serves its first request, so mint a new request id for this one"}"#,
+        );
+        assert!(reuse.contains("mint a new request id"), "{reuse}");
+        assert!(!reuse.contains("base_version"), "{reuse}");
+
+        let with_cause = conflict_error_message(
+            r#"{"error":"run r1 is no longer reattachable","cause":"blocks_attach","next":"orgasmic daemon status"}"#,
+        );
+        assert_eq!(
+            with_cause,
+            "conflict — run r1 is no longer reattachable: blocks_attach (next: `orgasmic daemon status`)"
+        );
+
+        // A node OCC conflict keeps the advice that is true for it, and so
+        // does a body the daemon did not shape.
+        let occ = conflict_error_message(
+            r#"{"error":"node dec_001 changed on disk; reload before editing"}"#,
+        );
+        assert!(occ.contains("reload base_version and retry"), "{occ}");
+        let untyped = conflict_error_message("gateway said no");
+        assert!(
+            untyped.contains("reload base_version and retry"),
+            "{untyped}"
         );
     }
 }
