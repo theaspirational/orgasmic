@@ -34,7 +34,7 @@ Paths relative to the project root printed by `orgasmic entry` (usually
   or start the runtime. Never hand-edit.
 - Tasks/decisions/glossary: create via their verbs; revise via
   `orgasmic node body set|append` / `orgasmic node prop set`; retitle via
-  `orgasmic node title set` (goal and project titles excepted; goal: TASK-V460X).
+  `orgasmic node title set` (goal titles excepted: TASK-V460X).
 - Claims prevent overlapping dispatch writes while held, not free writes between
   dispatches. A cross-machine Git conflict parks the local side before following
   the remote; reconcile from the parked ref reported by daemon status.
