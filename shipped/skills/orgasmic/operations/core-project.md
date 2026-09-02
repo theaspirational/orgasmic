@@ -20,6 +20,7 @@ aliases:
 - orgasmic project init
 - orgasmic project add
 - orgasmic project list
+- orgasmic project remove
 - orgasmic project migrate
 sources:
 - cli-help/init.txt
@@ -69,6 +70,7 @@ Canonical commands in this family:
 - `orgasmic project init`
 - `orgasmic project add`
 - `orgasmic project list`
+- `orgasmic project remove` (board registration only; previews unless `--yes`)
 - `orgasmic project migrate`
 
 ## Parameters

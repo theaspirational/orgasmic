@@ -484,6 +484,15 @@ enum ProjectCmd {
         #[arg(long)]
         ids: bool,
     },
+    /// Remove a project's board registration through the daemon. Never
+    /// touches the repository or its `.orgasmic/`; previews unless `--yes`.
+    Remove {
+        /// Project id as printed by `orgasmic project list --ids`.
+        id: String,
+        /// Apply the removal instead of previewing it.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Convert aggregate task, decision, and glossary files to node directories.
     Migrate {
         /// Report the migration without changing files.
@@ -1513,6 +1522,7 @@ fn main() -> Result<()> {
             } => cmd_project_init(&home, path, name, default_branch, force, no_register),
             ProjectCmd::Add { path } => cmd_project_add(&home, path),
             ProjectCmd::List { ids } => cmd_project_list(&home, ids),
+            ProjectCmd::Remove { id, yes } => cmd_project_remove(&home, &id, yes),
             ProjectCmd::Migrate { dry_run, to_branch } => {
                 project_migrate::run(&home, dry_run, to_branch)
             }
@@ -2404,6 +2414,34 @@ fn cmd_project_add(home: &Home, path: Option<PathBuf>) -> Result<()> {
     let branch = git_default_branch(&project_root).unwrap_or_default();
     projects::register_project(home, &project_root, &config.id, &branch)?;
     println!("✓ registered {} → {}", config.id, project_root.display());
+    Ok(())
+}
+
+fn cmd_project_remove(home: &Home, id: &str, yes: bool) -> Result<()> {
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+    runtime.block_on(async {
+        let client = DaemonClient::from_home_autostart_async(home).await?;
+        project_remove_via(&client, id, yes).await
+    })
+}
+
+/// `POST /projects/:id/remove`; prints the preview or the outcome.
+async fn project_remove_via(client: &DaemonClient, id: &str, yes: bool) -> Result<()> {
+    let value: serde_json::Value = client
+        .post_json(
+            &format!("/projects/{id}/remove"),
+            &serde_json::json!({ "confirm": yes }),
+        )
+        .await?;
+    let path = value["path"].as_str().unwrap_or("");
+    if !value["registered"].as_bool().unwrap_or(false) {
+        println!("{id} is not on the board; nothing to remove");
+    } else if value["removed"].as_bool().unwrap_or(false) {
+        println!("✓ removed {id} ({path}) from the board; repository and .orgasmic left intact");
+    } else {
+        println!("would remove {id} ({path}) from the board; repository and .orgasmic untouched");
+        println!("re-run with --yes to apply");
+    }
     Ok(())
 }
 
@@ -4457,5 +4495,70 @@ mod create_request_id_tests {
         let derived = resolve_create_request_id(None, "task.create", "orgasmic", &payload).unwrap();
         assert!(derived.starts_with("create-"));
         assert_ne!(derived, "explicit-1");
+    }
+}
+
+#[cfg(test)]
+mod project_remove_tests {
+    use super::{project_remove_via, Cli, Cmd, ProjectCmd};
+    use crate::daemon_client::DaemonClient;
+    use crate::test_support::{env_guard, RecordingDaemon, ScopedEnv};
+    use clap::Parser;
+    use orgasmic_core::Home;
+
+    fn remove_endpoint(path: &str) -> Option<(u16, String)> {
+        (path == "/api/projects/proj-x/remove").then(|| {
+            (
+                200,
+                r#"{"project_id":"proj-x","path":"/tmp/proj-x","registered":true,"removed":false,"note":"preview"}"#
+                    .to_string(),
+            )
+        })
+    }
+
+    /// orgasmic:TASK-3R3EZ — `project remove` is a daemon call, never a local
+    /// board or repository edit, and it previews unless `--yes` is given.
+    #[test]
+    fn project_remove_parses_and_posts_to_the_daemon() {
+        let cli =
+            Cli::try_parse_from(["orgasmic", "project", "remove", "proj-x", "--yes"]).unwrap();
+        assert!(matches!(
+            cli.cmd,
+            Cmd::Project {
+                cmd: ProjectCmd::Remove { ref id, yes: true }
+            } if id == "proj-x"
+        ));
+
+        let _env = env_guard();
+        let _scoped = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon = RecordingDaemon::start(remove_endpoint);
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::fs::write(
+            home.config(),
+            format!("bind_host: 127.0.0.1\nbind_port: {}\n", daemon.port()),
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.auth_token().parent().unwrap()).unwrap();
+        std::fs::write(home.auth_token(), "remove-token\n").unwrap();
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let client = DaemonClient::from_home(&home).unwrap();
+            project_remove_via(&client, "proj-x", false).await.unwrap();
+            project_remove_via(&client, "proj-x", true).await.unwrap();
+        });
+        assert_eq!(
+            daemon.paths(),
+            vec![
+                "/api/projects/proj-x/remove".to_string(),
+                "/api/projects/proj-x/remove".to_string()
+            ]
+        );
+        assert!(
+            !home.board().exists(),
+            "the CLI must not edit the board itself"
+        );
     }
 }

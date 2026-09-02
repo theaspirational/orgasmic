@@ -297,6 +297,17 @@ impl WorktreeAuthority {
         }
     }
 
+    /// The filesystem path this verdict is about, when it is about one.
+    pub fn recorded_path(&self) -> Option<&Path> {
+        match self {
+            Self::Verified { worktree, .. } => Some(worktree.as_path()),
+            Self::Tombstoned { recorded, .. }
+            | Self::Mismatched { recorded }
+            | Self::Unprovable { recorded } => Some(recorded.as_path()),
+            Self::Unrecorded | Self::Unidentified => None,
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::Verified { .. } => "verified",
@@ -535,6 +546,15 @@ pub struct CatalogRefreshStats {
     /// (orgasmic:TASK-FZB6T.4 finding 2). Non-zero means the board is being
     /// served fail-closed and an operator has a ledger to repair.
     pub tombstones_unprovable: u64,
+    /// Worktree paths this pass actually stat'd or read for authority: one per
+    /// rebuilt record with a recorded worktree, one per cached `Verified`
+    /// record. Tombstoned, mismatched and unprovable records cost zero here,
+    /// which is the orgasmic:TASK-3R3EZ claim stated as a number.
+    pub authority_probes: u64,
+    /// Authority transition warnings this pass emitted. One per (path, verdict),
+    /// however many records share the path, and never again for a verdict the
+    /// catalog has already reported.
+    pub authority_warnings: u64,
 }
 
 /// How a durable snapshot load ended. Every non-`Loaded` outcome means the same
@@ -603,9 +623,47 @@ struct CatalogState {
     /// built, so the writer's invalidation can never be silently overwritten by
     /// an entry derived from the bytes that preceded it.
     invalidations: BTreeMap<PathBuf, u64>,
+    /// (recorded worktree path, verdict label) pairs already warned about.
+    /// orgasmic:TASK-3R3EZ — the inventory re-derives a verdict on every
+    /// rebuild, and several records routinely share one pruned worktree; the
+    /// operator wants to read the fact once, not once per poll per record.
+    authority_warned: std::collections::BTreeSet<(PathBuf, &'static str)>,
+    /// Per project root: whether `.orgasmic/project.org` was readable on the
+    /// last refresh. A transition is logged once; a steady state is not.
+    project_identity_readable: BTreeMap<PathBuf, bool>,
 }
 
 impl CatalogState {
+    /// Log a worktree-authority verdict the first time it is seen for its
+    /// path. `Verified` and the two path-less verdicts are silent.
+    fn note_authority(
+        &mut self,
+        run_id: &str,
+        authority: &WorktreeAuthority,
+        stats: &mut CatalogRefreshStats,
+    ) {
+        let Some(path) = authority.recorded_path() else {
+            return;
+        };
+        if matches!(authority, WorktreeAuthority::Verified { .. }) {
+            return;
+        }
+        if !self
+            .authority_warned
+            .insert((path.to_path_buf(), authority.label()))
+        {
+            return;
+        }
+        stats.authority_warnings += 1;
+        tracing::warn!(
+            run_id,
+            worktree = %path.display(),
+            authority = authority.label(),
+            reason = authority.authority_error().unwrap_or_default(),
+            "run worktree authority changed; reported once for this path"
+        );
+    }
+
     fn mark_dirty(&mut self, project_root: &Path) {
         self.projects
             .entry(project_root.to_path_buf())
@@ -816,6 +874,35 @@ impl RunCatalog {
     ) -> CatalogRefreshStats {
         let mut stats = CatalogRefreshStats::default();
 
+        // orgasmic:TASK-3R3EZ — a registered root whose `project.org` cannot
+        // be read is stated once per transition, not once per poll. The read
+        // itself stays with the caller (it is cheap and is how a returned
+        // volume is noticed); only the log line is deduplicated here.
+        {
+            let readable = project_id.is_some();
+            let mut state = self.lock();
+            let previous = state
+                .project_identity_readable
+                .insert(project_root.to_path_buf(), readable);
+            match (previous, readable) {
+                (Some(true), false) | (None, false) => {
+                    stats.authority_warnings += 1;
+                    tracing::warn!(
+                        project_root = %project_root.display(),
+                        "registered project has no readable .orgasmic/project.org; its runs \
+                         are classified without project authority until it returns"
+                    );
+                }
+                (Some(false), true) => {
+                    tracing::info!(
+                        project_root = %project_root.display(),
+                        "registered project .orgasmic/project.org is readable again"
+                    );
+                }
+                _ => {}
+            }
+        }
+
         // --- phase 1: gather, no lock held ---------------------------------
         let mut observed: Vec<(PathBuf, SessionFileFingerprint, u64)> = Vec::new();
         let entries = match std::fs::read_dir(dir) {
@@ -994,8 +1081,9 @@ impl RunCatalog {
         let mut authority_updates: Vec<(PlannedRecheck, WorktreeAuthority)> = Vec::new();
         for planned in recheck {
             during_work(self);
-            let probed = probe_authority_path(&planned.previous)
-                .and_then(|probe| reverify_authority(&planned.previous, probe));
+            let probe = probe_authority_path(&planned.previous);
+            stats.authority_probes += u64::from(probe.is_some());
+            let probed = probe.and_then(|probe| reverify_authority(&planned.previous, probe));
             let derived = probed.as_ref().unwrap_or(&planned.previous);
             let updated = match reconcile_authority_with_ledger(
                 derived,
@@ -1044,6 +1132,14 @@ impl RunCatalog {
             if state.invalidation(&planned.path) != planned.invalidation {
                 continue;
             }
+            stats.authority_probes += u64::from(entry.worktree_authority.recorded_path().is_some());
+            let previous = state
+                .by_path
+                .get(&planned.path)
+                .map(|cached| cached.worktree_authority.clone());
+            if previous.as_ref() != Some(&entry.worktree_authority) {
+                state.note_authority(&entry.run_id, &entry.worktree_authority, &mut stats);
+            }
             state.by_path.insert(planned.path, entry);
             dirty = true;
         }
@@ -1059,6 +1155,8 @@ impl RunCatalog {
             }
             entry.worktree_authority = refreshed;
             stats.authority_reverified += 1;
+            let (run_id, authority) = (entry.run_id.clone(), entry.worktree_authority.clone());
+            state.note_authority(&run_id, &authority, &mut stats);
             dirty = true;
         }
         for planned in stale {
@@ -1739,8 +1837,8 @@ pub fn verify_worktree_authority(
     let Ok(canonical) = recorded.canonicalize() else {
         return WorktreeAuthority::Mismatched { recorded };
     };
-    match crate::api::read_existing_project_identity(&canonical.join(".orgasmic/project.org")) {
-        Ok(identity) if identity.project_id == project_id => {
+    match crate::api::project_identity_at(&canonical) {
+        Some(identity) if identity == project_id => {
             // Identity of the canonical path, because that is the path a later
             // probe stats and the path a tombstone would record.
             let identity = DirIdentity::at(&canonical);
@@ -3115,6 +3213,92 @@ mod tests {
             "a pruned worktree must become a stable tombstone: {:?}",
             entry.worktree_authority
         );
+    }
+
+    /// orgasmic:TASK-3R3EZ — several terminal records share one pruned
+    /// worktree. The pass that notices it probes each record once and warns
+    /// once for the path; every later poll probes nothing and warns nothing.
+    #[tokio::test]
+    async fn inventory_worktree_authority_is_classified_once_and_warned_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let worktree = dir.path().join("wt");
+        project(&worktree, "proj-1");
+        for run in ["run-a", "run-b", "run-c"] {
+            write_session(
+                &sessions,
+                run,
+                1024,
+                Some(ReleaseOutcome::Completed),
+                &worktree,
+                "proj-1",
+            );
+        }
+        // A worktree that exists but carries no `.orgasmic/project.org` (a
+        // checkout of a repo whose ledger lives out of tree) is the other
+        // shape that used to log on every rebuild.
+        let bare = dir.path().join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        write_session(
+            &sessions,
+            "run-bare",
+            1024,
+            Some(ReleaseOutcome::Completed),
+            &bare,
+            "proj-1",
+        );
+
+        let catalog = RunCatalog::new();
+        let first =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(
+            first.authority_probes, 4,
+            "every rebuilt record is probed once"
+        );
+        assert_eq!(
+            first.authority_warnings, 1,
+            "the bare worktree is reported once; verified ones are silent"
+        );
+
+        std::fs::remove_dir_all(&worktree).unwrap();
+        let pruned =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(pruned.rebuilt, 0);
+        assert_eq!(
+            pruned.authority_probes, 3,
+            "the three cached verified records"
+        );
+        assert_eq!(pruned.authority_reverified, 3);
+        assert_eq!(
+            pruned.authority_warnings, 1,
+            "one pruned path, one warning, however many records share it"
+        );
+
+        for _ in 0..3 {
+            let steady =
+                catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+            assert_eq!(steady.rebuilt, 0);
+            assert_eq!(
+                steady.authority_probes, 0,
+                "tombstoned history is not re-probed"
+            );
+            assert_eq!(steady.authority_warnings, 0, "and not re-reported");
+        }
+        assert!(catalog
+            .entries()
+            .iter()
+            .filter(|entry| entry.run_id != "run-bare")
+            .all(|entry| entry.worktree_authority.is_tombstoned()));
+
+        // The registered root itself losing its project.org is one warning
+        // per transition, not one per poll.
+        let no_identity = catalog.refresh_dir(&sessions, None, &root, SessionScanBudget::DEFAULT);
+        assert_eq!(no_identity.authority_warnings, 1);
+        let still_no_identity =
+            catalog.refresh_dir(&sessions, None, &root, SessionScanBudget::DEFAULT);
+        assert_eq!(still_no_identity.authority_warnings, 0);
     }
 
     /// orgasmic:TASK-FZB6T.1 finding 5 — a tombstone is terminal for the run
