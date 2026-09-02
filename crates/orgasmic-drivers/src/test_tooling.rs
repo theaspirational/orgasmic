@@ -405,3 +405,42 @@ fn emit_visible_notice(message: &str) {
     }
     eprintln!("{message}");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // orgasmic:TASK-RRT4T
+    /// A missing tool must fail the sentinel loudly, naming the tool and the
+    /// opt-out, and the opt-out must be the only thing that turns it back
+    /// into a skip.
+    #[test]
+    fn missing_tool_panics_unless_explicitly_allowed() {
+        let _environment = test_environment_lock().blocking_lock();
+        const TOOL: &str = "orgasmic-test-tool-that-does-not-exist";
+        let requirement = [ToolRequirement::new(TOOL, 3, false)];
+
+        let previous = std::env::var_os(ALLOW_MISSING_TOOLS_ENV);
+        std::env::remove_var(ALLOW_MISSING_TOOLS_ENV);
+        let panic = std::panic::catch_unwind(|| assert_required_test_tooling(&requirement))
+            .expect_err("missing tool without an opt-out must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .expect("panic payload is the formatted message");
+        assert!(message.contains(TOOL), "message names the tool: {message}");
+        assert!(message.contains("gates 3 tests"), "{message}");
+        assert!(
+            message.contains(&format!("{ALLOW_MISSING_TOOLS_ENV}={TOOL}")),
+            "message names the exact opt-out: {message}"
+        );
+
+        std::env::set_var(ALLOW_MISSING_TOOLS_ENV, format!(" other , {TOOL}"));
+        assert_required_test_tooling(&requirement);
+
+        match previous {
+            Some(value) => std::env::set_var(ALLOW_MISSING_TOOLS_ENV, value),
+            None => std::env::remove_var(ALLOW_MISSING_TOOLS_ENV),
+        }
+    }
+}
