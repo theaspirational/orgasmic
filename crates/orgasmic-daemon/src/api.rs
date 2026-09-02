@@ -37935,15 +37935,16 @@ pub(crate) mod tests {
         test_environment_lock().lock().await
     }
 
+    // orgasmic:TASK-5NBTZ
+    /// Strictness first, claim second: the owned server's keepalive is only
+    /// started once the tmux on PATH has passed the same rule the drivers gate
+    /// on (the `recovery_fault_restart.rs` / `dispatch.rs` shape).
     fn real_tmux_on_path() -> bool {
+        if !orgasmic_drivers::modes::tmux::real_tmux_on_path() {
+            return false;
+        }
         orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
-        Command::new("tmux")
-            .arg("-V")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
+        true
     }
 
     fn tmux_available_for_test() -> bool {
