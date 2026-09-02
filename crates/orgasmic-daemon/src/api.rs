@@ -93,8 +93,8 @@ use crate::supervisor::{
     DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{
-    CommittedSyncUncertainError, FileMutate, FileRewrite, MutationIdentity, TxAppend, TxIdPolicy,
-    WriterHandle, DAEMON_OWNED_SURFACES,
+    CommittedSyncUncertainError, FileMutate, FileRewrite, MutationIdentity,
+    MutationIdentityConflict, TxAppend, TxIdPolicy, WriterHandle, DAEMON_OWNED_SURFACES,
 };
 use crate::ws;
 
@@ -1727,7 +1727,14 @@ fn content_error(error: ContentLoadError, artifact: &'static str) -> ApiError {
     }
 }
 
-fn writer_transaction_error(error: impl std::fmt::Display) -> ApiError {
+fn writer_transaction_error(error: anyhow::Error) -> ApiError {
+    // orgasmic:TASK-BX5SR.2 — a request-id reused across the transaction and
+    // mutation writer APIs is the caller's key collision, not a daemon fault:
+    // 409 with the colliding id, and the next independent write is unaffected.
+    if let Some(conflict) = error.downcast_ref::<MutationIdentityConflict>() {
+        tracing::warn!(error = %conflict, "writer request id collided across APIs");
+        return ApiError::conflict(conflict.to_string());
+    }
     tracing::error!(error = %error, "writer transaction failed");
     ApiError::internal("failed to apply changes")
 }
@@ -23160,6 +23167,36 @@ pub(crate) mod tests {
                 .count(),
             0
         );
+    }
+
+    // orgasmic:TASK-BX5SR.2
+    #[test]
+    fn writer_request_id_collision_across_apis_is_a_409_not_a_500() {
+        let conflict = writer_transaction_error(anyhow::anyhow!(MutationIdentityConflict {
+            request_id: "dispatch-close-state-task-x-tx-1".into(),
+        }));
+        assert_eq!(conflict.status, StatusCode::CONFLICT);
+        assert!(conflict
+            .message
+            .contains("dispatch-close-state-task-x-tx-1"));
+        assert!(conflict.message.contains("mint a new request id"));
+        let other = writer_transaction_error(anyhow::anyhow!("disk full"));
+        assert_eq!(other.status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // orgasmic:TASK-BX5SR.2 — dispatch-close cannot reach the cross-API
+    // collision: every mutation-domain key is `<id>/tx`, and the close tx and
+    // lifecycle keys the CLI mints never carry that suffix.
+    #[test]
+    fn dispatch_close_request_ids_never_enter_the_mutation_key_domain() {
+        let mutation_key = transaction_request_key(Some("abc")).unwrap();
+        assert!(mutation_key.ends_with("/tx"));
+        let close_tx = dispatch_close_request(LifecycleStage::Backlog)
+            .close_tx
+            .request_id
+            .unwrap();
+        assert!(!close_tx.ends_with("/tx"), "{close_tx}");
+        assert!(!"dispatch-close-state-task-pre-tx-started".ends_with("/tx"));
     }
 
     #[tokio::test]

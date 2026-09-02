@@ -3287,7 +3287,7 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 .unwrap_or_default(),
             // Only when there is something to say: an admitted-but-unchecked
             // dispatch is the one a post-mortem needs flagged (TASK-AP298).
-            unchecked_preflight_annotation(&record)
+            unchecked_preflight_annotation(record)
                 .map(|annotation| format!(" {annotation}"))
                 .unwrap_or_default()
         );
@@ -7440,11 +7440,7 @@ fn close_done_request(
         // Deterministic per (task, dispatch generation), not per invocation
         // (TASK-6AYEJ.1): a replayed close of the same generation dedupes at
         // the writer instead of appending a second terminal tx.
-        request_id: Some(format!(
-            "dispatch-close-{}-{}",
-            request_slug(task),
-            open.tx_id
-        )),
+        request_id: Some(close_tx_request_id(task, &open.tx_id)),
         ty: tx_type.to_string(),
         actor: Some(format!("agent.{}", open.kind)),
         machine: None,
@@ -9997,6 +9993,11 @@ fn apply_task_lifecycle_transitions(
 /// unlabelled empty change set.
 fn close_lifecycle_request_id(task: &str, started_tx: &str) -> String {
     format!("dispatch-close-state-{}-{}", request_slug(task), started_tx)
+}
+
+/// The close tx's own writer key, deterministic per (task, dispatch generation).
+fn close_tx_request_id(task: &str, started_tx: &str) -> String {
+    format!("dispatch-close-{}-{}", request_slug(task), started_tx)
 }
 
 /// The daemon's labelled no-op contract for `POST /projects/:id/tasks/:task`
@@ -12989,6 +12990,23 @@ mod tests {
             close_lifecycle_request_id("TASK-086", "tx-20260729-orgasmic-1"),
             close_lifecycle_request_id("TASK-086", "tx-20260729-orgasmic-2")
         );
+    }
+
+    // orgasmic:TASK-BX5SR.2 — `dispatch-close` sends two writer keys per
+    // (task, generation): the close tx key (atomic commit, `transaction_multi`)
+    // and the lifecycle key (legacy repair leg, plain `transaction`). They never
+    // coincide with each other, and neither carries the daemon's `/tx`
+    // mutation-domain suffix, so no dispatch-close write can replay a
+    // `transaction_mutation` key or vice versa.
+    #[test]
+    fn dispatch_close_request_ids_are_distinct_and_outside_the_mutation_domain() {
+        let close = close_tx_request_id("TASK-086", "tx-20260729-orgasmic-1");
+        let lifecycle = close_lifecycle_request_id("TASK-086", "tx-20260729-orgasmic-1");
+        assert_ne!(close, lifecycle);
+        assert_eq!(close, "dispatch-close-task-086-tx-20260729-orgasmic-1");
+        for key in [&close, &lifecycle] {
+            assert!(!key.ends_with("/tx"), "{key}");
+        }
     }
 
     #[test]

@@ -697,6 +697,21 @@ enum MultiDurability {
     SyncUncertain,
 }
 
+/// orgasmic:TASK-BX5SR.2 — a `request_id` first used by `transaction` /
+/// `transaction_mutate_file` (which record no mutation id) and then replayed
+/// through `transaction_mutation` / `transaction_mutate_file_mutation` with
+/// the same identity. The writer cannot invent the missing id, so the replay
+/// is refused per request (409 at the API) instead of a generic 500; the key
+/// stays valid for the API that first used it.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error(
+    "request_id `{request_id}` was first used by a writer transaction that records no mutation \
+     id, so a mutation replay cannot return its identity; mint a new request id for this mutation"
+)]
+pub struct MutationIdentityConflict {
+    pub request_id: String,
+}
+
 fn cached_mutation_from_map(
     cache: &HashMap<String, CachedResponse>,
     request_id: &str,
@@ -718,9 +733,11 @@ fn cached_mutation_from_map(
             "request_id `{request_id}` was reused with a different operation, project, or payload"
         );
     }
-    let mutation_id = mutation_id
-        .clone()
-        .ok_or_else(|| anyhow!("cached mutation lacks its recorded identity"))?;
+    let mutation_id = mutation_id.clone().ok_or_else(|| {
+        anyhow!(MutationIdentityConflict {
+            request_id: request_id.to_string(),
+        })
+    })?;
     Ok(Some(CachedMutation {
         tx_id: result.tx_id.clone(),
         mutation_id,
@@ -2159,8 +2176,15 @@ async fn writer_loop(
                 WriterCommand::Transaction { req, reply } => {
                     let cached = {
                         let cache = idempotency.lock().await;
-                        match req.mutation.as_ref() {
-                            Some(mutation) => {
+                        match (req.mutation.as_ref(), req.mutation_id.as_ref()) {
+                            // orgasmic:TASK-BX5SR.2 — a plain `transaction` never
+                            // records a mutation id, so its queued duplicate
+                            // (the 2026-08-02 shape: a retry enqueued before the
+                            // first attempt cached) replays on identity alone.
+                            (Some(mutation), None) => {
+                                cached_transaction_from_map(&cache, &req.request_id, mutation)
+                            }
+                            (Some(mutation), Some(_)) => {
                                 cached_mutation_from_map(&cache, &req.request_id, mutation).map(
                                     |cached| {
                                         cached.map(|cached| TxAppendResult {
@@ -2170,7 +2194,9 @@ async fn writer_loop(
                                     },
                                 )
                             }
-                            None => Err(anyhow!("writer transaction lacks a mutation identity")),
+                            (None, _) => {
+                                Err(anyhow!("writer transaction lacks a mutation identity"))
+                            }
                         }
                     };
                     let mut reply = Some(reply);
@@ -4175,10 +4201,10 @@ mod tests {
             .await
             .expect("writer replies to the conflicting replay")
             .expect_err("cached entry without a mutation id must be rejected");
-        assert_eq!(
-            error.to_string(),
-            "cached mutation lacks its recorded identity"
-        );
+        let conflict = error
+            .downcast_ref::<MutationIdentityConflict>()
+            .expect("identity collision is the typed conflict");
+        assert_eq!(conflict.request_id, "req-cached-without-mutation-id");
 
         handle
             .rewrite_file(
@@ -4194,6 +4220,174 @@ mod tests {
             std::fs::read_to_string(target).unwrap(),
             "writer-still-live-after-error\n"
         );
+    }
+
+    // orgasmic:TASK-BX5SR.2 — the cross-API collision at the public handle
+    // boundary: `transaction` first, then `transaction_mutation` with the SAME
+    // request id and identity. The replay is a typed conflict naming the id,
+    // the key keeps answering the API that first used it, and the next
+    // independent write is unaffected.
+    #[tokio::test]
+    async fn transaction_then_mutation_replay_same_request_id_is_a_request_local_typed_conflict() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("tasks.org");
+        let tx_path = tmp.path().join("tx").join("2026-08.org");
+        std::fs::write(&target, "before\n").unwrap();
+        let handle = spawn(EventBus::new());
+        let request_id = "req-cross-api-collision".to_string();
+        let rewrites = vec![FileRewrite {
+            path: target.clone(),
+            new_contents: b"committed\n".to_vec(),
+        }];
+        let tx = TxAppend {
+            tx_path: tx_path.clone(),
+            entry: sample_entry("tx-cross-api-collision"),
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::Preserve,
+            request_id: Some(request_id.clone()),
+        };
+        let identity = transaction_identity(&tx, &rewrites);
+
+        let original = handle
+            .transaction(rewrites.clone(), tx.clone())
+            .await
+            .expect("initial plain transaction");
+
+        for attempt in 0..2 {
+            let error = handle
+                .transaction_mutation(
+                    rewrites.clone(),
+                    tx.clone(),
+                    identity.clone(),
+                    "TASK-INVENTED".into(),
+                )
+                .await
+                .expect_err("mutation replay of a plain transaction key must not invent an id");
+            let conflict = error
+                .downcast_ref::<MutationIdentityConflict>()
+                .unwrap_or_else(|| panic!("attempt {attempt}: typed conflict, got {error:#}"));
+            assert_eq!(conflict.request_id, request_id);
+            assert!(error.to_string().contains(&request_id), "{error}");
+        }
+        assert_eq!(
+            handle
+                .transaction(rewrites.clone(), tx.clone())
+                .await
+                .expect("the original API still replays its key"),
+            original
+        );
+
+        let independent = handle
+            .transaction(
+                vec![FileRewrite {
+                    path: target.clone(),
+                    new_contents: b"independent\n".to_vec(),
+                }],
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: sample_entry("tx-after-collision"),
+                    project_id: Some("orgasmic".into()),
+                    tx_id_policy: TxIdPolicy::Preserve,
+                    request_id: Some("req-after-collision".into()),
+                },
+            )
+            .await
+            .expect("an independent write succeeds after the collision");
+        assert_ne!(independent, original);
+        let ledger = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+        assert_eq!(
+            ledger
+                .iter()
+                .map(|entry| entry.tx_id.as_str())
+                .collect::<Vec<_>>(),
+            ["tx-cross-api-collision", "tx-after-collision"],
+            "no invented or duplicated appends"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "independent\n");
+    }
+
+    // orgasmic:TASK-BX5SR.2 — the 2026-08-02 shape through the public handle:
+    // a dispatch-close lifecycle `transaction` whose retry is enqueued while
+    // the first attempt is still queued. Both pass the handle-side cache miss;
+    // the second reaches the writer loop after the first cached and must
+    // replay the original tx id (the loop used to demand a mutation id there
+    // and failed with "cached mutation lacks its recorded identity").
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn queued_duplicate_dispatch_close_state_transaction_replays_the_original_tx_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("node.org");
+        let tx_path = tmp.path().join("tx").join("2026-08.org");
+        std::fs::write(&target, "* IN_PROGRESS TASK-X\n").unwrap();
+        let handle = spawn(EventBus::new());
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+        let barrier_handle = handle.clone();
+        let barrier = tokio::spawn(async move {
+            barrier_handle
+                .run_barrier(move || {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                })
+                .await
+                .unwrap();
+        });
+        tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())
+            .await
+            .unwrap();
+
+        let mut entry = sample_entry("tx-close-state");
+        entry.ty = "task.state_transitioned".into();
+        let tx = TxAppend {
+            tx_path: tx_path.clone(),
+            entry,
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::Preserve,
+            request_id: Some("dispatch-close-state-task-x-tx-started".into()),
+        };
+        let rewrites = vec![FileRewrite {
+            path: target.clone(),
+            new_contents: b"* IN_REVIEW TASK-X\n".to_vec(),
+        }];
+        let attempts = (0..2)
+            .map(|_| {
+                let handle = handle.clone();
+                let rewrites = rewrites.clone();
+                let tx = tx.clone();
+                tokio::spawn(async move { handle.transaction(rewrites, tx).await })
+            })
+            .collect::<Vec<_>>();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while handle.status().queue_depth < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both attempts queue behind the barrier");
+        release_tx.send(()).unwrap();
+        barrier.await.unwrap();
+
+        let mut tx_ids = Vec::new();
+        for attempt in attempts {
+            tx_ids.push(
+                attempt
+                    .await
+                    .unwrap()
+                    .expect("a queued duplicate replays instead of failing"),
+            );
+        }
+        assert_eq!(tx_ids[0], tx_ids[1]);
+        let ledger = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+        assert_eq!(ledger.len(), 1, "one lifecycle append for two attempts");
+        handle
+            .rewrite_file(
+                FileRewrite {
+                    path: target.clone(),
+                    new_contents: b"writer-still-live\n".to_vec(),
+                },
+                None,
+            )
+            .await
+            .expect("writer accepts the next command");
     }
 
     #[tokio::test]
