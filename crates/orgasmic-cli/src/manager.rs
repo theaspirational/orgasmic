@@ -3952,8 +3952,58 @@ enum WorktreeDisposition {
     /// The preliminary anchored walk could not completely traverse the tree.
     /// NEVER reclaimed: this is the fail-closed half of the same errors and
     /// depth limit [`anchored_dir::remove_contents`] propagates during removal.
-    UnsafeTraversal { detail: String },
+    UnsafeTraversal {
+        detail: String,
+        cause: TraversalCause,
+    },
 }
+
+/// Why the preliminary walk stopped, carried structurally so the remedy the
+/// operator is told matches the cause (TASK-GRCWC.2): `chmod` fixes an
+/// unreadable descendant and does nothing for a chain that is merely too deep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TraversalCause {
+    /// A descendant could not be listed or opened; `detail` keeps the errno.
+    Unreadable,
+    /// The tree nests deeper than the fail-closed bound.
+    OverDepth { max_depth: u32 },
+}
+
+/// Classify a [`walk_worktree`] failure without parsing its message: the depth
+/// refusal is raised as a typed [`TraversalDepthExceeded`], everything else the
+/// walk can fail on is an I/O error on some descendant.
+fn unsafe_traversal(err: anyhow::Error) -> WorktreeDisposition {
+    let cause = match err.downcast_ref::<TraversalDepthExceeded>() {
+        Some(exceeded) => TraversalCause::OverDepth {
+            max_depth: exceeded.max_depth,
+        },
+        None => TraversalCause::Unreadable,
+    };
+    WorktreeDisposition::UnsafeTraversal {
+        detail: format!("{err:#}"),
+        cause,
+    }
+}
+
+/// The walk's depth refusal, typed so [`unsafe_traversal`] can tell it from an
+/// unreadable descendant.
+#[derive(Debug)]
+struct TraversalDepthExceeded {
+    max_depth: u32,
+    at: String,
+}
+
+impl fmt::Display for TraversalDepthExceeded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "refusing to descend deeper than {} directory levels while scanning {}",
+            self.max_depth, self.at
+        )
+    }
+}
+
+impl std::error::Error for TraversalDepthExceeded {}
 
 impl ManagedWorktree {
     fn reclaimable(&self) -> bool {
@@ -3973,11 +4023,24 @@ impl ManagedWorktree {
             WorktreeDisposition::Undetermined { detail } => {
                 format!("repository state undetermined ({detail}); kept until it can be proven")
             }
-            WorktreeDisposition::UnsafeTraversal { detail } => {
+            // Status wording, not action wording: `dispatch-status` prints this
+            // too and never pruned anything (TASK-GRCWC.2). The prune verb's
+            // own `SKIP` line carries the tense.
+            WorktreeDisposition::UnsafeTraversal { detail, cause } => {
+                let remedy = match cause {
+                    TraversalCause::Unreadable => {
+                        "make the offending descendant readable (for example with chmod) or \
+                         remove it by hand"
+                            .to_string()
+                    }
+                    TraversalCause::OverDepth { max_depth } => format!(
+                        "it nests deeper than {max_depth} directory levels: flatten the deep \
+                         chain or remove it by hand"
+                    ),
+                };
                 format!(
-                    "worktree traversal incomplete ({detail}); the whole worktree was skipped and \
-                     nothing within it was deleted; make the offending descendant readable (for \
-                     example with chmod) or remove it by hand, then re-run — this verb has no \
+                    "worktree traversal incomplete ({detail}); worktree-prune keeps the whole \
+                     worktree and deletes nothing within it; {remedy} — worktree-prune has no \
                      `--force` override"
                 )
             }
@@ -4105,9 +4168,7 @@ fn scan_managed_worktrees(
             match walk_worktree(&child.dir) {
                 Ok(walk) => Some(walk),
                 Err(err) => {
-                    disposition = WorktreeDisposition::UnsafeTraversal {
-                        detail: format!("{err:#}"),
-                    };
+                    disposition = unsafe_traversal(err);
                     None
                 }
             }
@@ -4351,11 +4412,11 @@ struct WorktreeWalk {
 fn walk_worktree(root: &std::fs::File) -> Result<WorktreeWalk> {
     fn walk(dir: &std::fs::File, depth: u32, prefix: &str, found: &mut WorktreeWalk) -> Result<()> {
         if depth > anchored_dir::MAX_DEPTH {
-            bail!(
-                "refusing to descend deeper than {} directory levels while scanning {}",
-                anchored_dir::MAX_DEPTH,
-                if prefix.is_empty() { "." } else { prefix }
-            );
+            return Err(TraversalDepthExceeded {
+                max_depth: anchored_dir::MAX_DEPTH,
+                at: if prefix.is_empty() { "." } else { prefix }.to_string(),
+            }
+            .into());
         }
         let names = anchored_dir::entry_names(dir).with_context(|| {
             format!(
@@ -15010,6 +15071,48 @@ mod tests {
         }
     }
 
+    /// TASK-GRCWC.2: what BOTH traversal refusals must tell the operator,
+    /// whatever the cause — the whole worktree is kept, nothing in it is
+    /// deleted, there is no `--force` — and, because `dispatch-status` prints
+    /// the same sentence, no claim that a prune ran or should be re-run.
+    /// Returns the rendered sentence so each fixture pins its own remedy.
+    #[cfg(unix)]
+    fn assert_traversal_refusal_contract(
+        worktree: &Path,
+        identity: anchored_dir::DirIdentity,
+        walk_error: anyhow::Error,
+    ) -> String {
+        let kept = ManagedWorktree {
+            path: worktree.to_path_buf(),
+            name: std::ffi::OsString::from("wt"),
+            identity,
+            disposition: unsafe_traversal(walk_error),
+            release_chain_hold: false,
+            bytes: None,
+            nested_git: None,
+        };
+        assert!(
+            !kept.reclaimable(),
+            "a traversal refusal is never reclaimable"
+        );
+        let why = kept.why();
+        assert!(
+            why.contains("keeps the whole worktree and deletes nothing within it"),
+            "the whole-worktree no-delete guarantee must be stated: {why}"
+        );
+        assert!(
+            why.contains("has no `--force` override"),
+            "the no-force guarantee must be stated: {why}"
+        );
+        for tense in ["was skipped", "re-run", "was pruned"] {
+            assert!(
+                !why.contains(tense),
+                "the shared sentence must not claim a prune ran ({tense:?}): {why}"
+            );
+        }
+        why
+    }
+
     /// TASK-GRCWC: the cheap parity fixture. The preliminary walk and the
     /// destructive traversal must reject the same unreadable descendant, and
     /// the removal-side proof must show it rejected before touching anything.
@@ -15042,6 +15145,20 @@ mod tests {
 
         let parent = std::fs::File::open(tmp.path()).unwrap();
         let expected = anchored_dir::identity_at(&parent, std::ffi::OsStr::new("wt")).unwrap();
+        // TASK-GRCWC.2: unreadable keeps its errno and gets the permissions remedy.
+        let why = assert_traversal_refusal_contract(&worktree, expected, walk_error);
+        assert!(
+            why.contains("os error 13") || why.contains("Permission denied"),
+            "the unreadable refusal must keep the errno: {why}"
+        );
+        assert!(
+            why.contains("chmod") && why.contains("remove it by hand"),
+            "the unreadable refusal must offer the permissions or remove-by-hand remedy: {why}"
+        );
+        assert!(
+            !why.contains("flatten"),
+            "the unreadable refusal must not carry the over-depth remedy: {why}"
+        );
         let failure =
             anchored_dir::remove_dir_all_at(&parent, std::ffi::OsStr::new("wt"), expected)
                 .expect_err("the removal traversal must reject the same unreadable descendant");
@@ -15092,6 +15209,26 @@ mod tests {
 
         let parent = std::fs::File::open(tmp.path()).unwrap();
         let expected = anchored_dir::identity_at(&parent, std::ffi::OsStr::new("wt")).unwrap();
+        // TASK-GRCWC.2: over-depth is classified structurally and NEVER told to chmod.
+        assert!(
+            walk_error
+                .downcast_ref::<TraversalDepthExceeded>()
+                .is_some(),
+            "the depth refusal must be the typed error, not a string: {walk_error:#}"
+        );
+        let why = assert_traversal_refusal_contract(&worktree, expected, walk_error);
+        assert!(
+            !why.contains("chmod") && !why.contains("readable"),
+            "an over-depth refusal must never recommend a permissions fix: {why}"
+        );
+        assert!(
+            why.contains(&format!(
+                "deeper than {} directory levels",
+                anchored_dir::MAX_DEPTH
+            )) && why.contains("flatten")
+                && why.contains("remove it by hand"),
+            "the over-depth refusal must name the bound and the flatten/remove remedy: {why}"
+        );
         let failure =
             anchored_dir::remove_dir_all_at(&parent, std::ffi::OsStr::new("wt"), expected)
                 .expect_err("the removal traversal must reject the same over-depth tree");
