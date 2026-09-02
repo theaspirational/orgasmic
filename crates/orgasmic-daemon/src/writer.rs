@@ -712,6 +712,18 @@ pub struct MutationIdentityConflict {
     pub request_id: String,
 }
 
+/// orgasmic:TASK-BX5SR.2 — a `request_id` replayed with a different operation,
+/// project, or payload. The key keeps serving the identity it was first used
+/// with; the caller's key collision is a 409 at the API, not a daemon fault.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error(
+    "request_id `{request_id}` was reused with a different operation, project, or payload; \
+     the key still serves its first request, so mint a new request id for this one"
+)]
+pub struct RequestIdReuseConflict {
+    pub request_id: String,
+}
+
 fn cached_mutation_from_map(
     cache: &HashMap<String, CachedResponse>,
     request_id: &str,
@@ -729,9 +741,10 @@ fn cached_mutation_from_map(
         bail!("request_id `{request_id}` was already used by a different mutation type");
     };
     if mutation.as_ref() != Some(expected) {
-        bail!(
-            "request_id `{request_id}` was reused with a different operation, project, or payload"
-        );
+        return Err(RequestIdReuseConflict {
+            request_id: request_id.to_string(),
+        }
+        .into());
     }
     let mutation_id = mutation_id.clone().ok_or_else(|| {
         anyhow!(MutationIdentityConflict {
@@ -836,9 +849,10 @@ fn cached_multi_from_map(
         bail!("request_id `{request_id}` was already used by a different mutation type");
     };
     if mutation != expected {
-        bail!(
-            "request_id `{request_id}` was reused with different multi-transaction rewrites or txs"
-        );
+        return Err(RequestIdReuseConflict {
+            request_id: request_id.to_string(),
+        }
+        .into());
     }
     Ok(Some((results.clone(), *durability)))
 }
@@ -858,9 +872,10 @@ fn cached_transaction_from_map(
         bail!("request_id `{request_id}` was already used by a different mutation type");
     };
     if mutation.as_ref() != Some(expected) {
-        bail!(
-            "request_id `{request_id}` was reused with a different operation, project, or payload"
-        );
+        return Err(RequestIdReuseConflict {
+            request_id: request_id.to_string(),
+        }
+        .into());
     }
     Ok(Some(result.clone()))
 }
