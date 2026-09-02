@@ -13,3 +13,6 @@ Found 2026-09-02 by the manager sprint review of 7c85f177..b1c6ca5f (drivers/doc
 TASK-C7NVH fixed "tmux dispatches silently drop --effort" so the tx record never claims an effort the process never saw. That honesty fix lives in tmux_effort_delivery, which means it is TMUX-ONLY.
 
 On stdio and subprocess-stream-json, an adapter that ignores effort (cursor-agent is the named case) still drops it, and nothing marks the record as "unsupported". So the exact failure TASK-C7NVH exists to kill - a record asserting an effort the worker never received - is still reachable on the non-tmux transports.
+** Acceptance
+- A dispatch over stdio or subprocess-stream-json to an adapter that ignores effort records the same 'unsupported'/'not delivered' marker the tmux path records, rather than the requested effort.
+- A test per transport asserting the recorded effort matches what the adapter actually received.
