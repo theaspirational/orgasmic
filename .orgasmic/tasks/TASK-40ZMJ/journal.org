@@ -95,3 +95,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: b36cdbaf-de61-483b-9436-574135c38393
 :END:
+
+* tx-20260902-orgasmic-f0089f3e-76a8-4c54-98f8-8674538f7039 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-f0089f3e-76a8-4c54-98f8-8674538f7039
+:TIME:    [2026-09-02 Wed 15:42:55]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-40ZMJ
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-40ZMJ/node.org
+:REASON: edited task node TASK-40ZMJ
+:NODE_ID: TASK-40ZMJ
+:EVENT_ID: 265f379f-eb61-450c-b4b9-9295ab6678a3
+:END:
+
+* tx-20260902-orgasmic-b4673e1d-09ab-4bbc-8c7a-5ff448682a8b task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-b4673e1d-09ab-4bbc-8c7a-5ff448682a8b
+:TIME:    [2026-09-02 Wed 15:42:55]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-40ZMJ
+:TARGET: .orgasmic/tasks/TASK-40ZMJ/node.org
+:REASON: both halves shipped: drivers --health (0a4f348e) and the quota lockout (29e61d71); manager-gated with one defect found and fixed
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: ac678885-a3b3-4c55-a991-741f1810c385
+:END:
