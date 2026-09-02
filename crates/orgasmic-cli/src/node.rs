@@ -298,13 +298,13 @@ pub enum NodePropCmd {
 // orgasmic:TASK-P0Q5C
 #[derive(Subcommand, Debug)]
 pub enum NodeTitleCmd {
-    /// Rewrite the heading's title prose for a decision, glossary, handoff
-    /// or task node. The lifecycle keyword and the org tags on the same line
-    /// are preserved; a title Org cannot store verbatim is refused with the
-    /// reason (same guard as `task update --title`). Goal titles are refused:
-    /// they have no daemon write path yet (TASK-V460X). Project titles are
-    /// refused: the daemon rewrite would drop the `PROJECT` heading word that
-    /// project.org is located by.
+    /// Rewrite the heading's title prose for a decision, glossary, handoff,
+    /// project or task node. The lifecycle keyword and the org tags on the
+    /// same line are preserved; a title Org cannot store verbatim is refused
+    /// with the reason (same guard as `task update --title`). A project title
+    /// keeps the `PROJECT` heading word project.org is located by
+    /// (TASK-0MSK7). Goal titles are refused: they have no daemon write path
+    /// yet (TASK-V460X).
     Set {
         /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX` /
         /// `handoff-current`.
@@ -551,19 +551,6 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                         "goal titles cannot be set through `node title set`: goal nodes have no \
                          daemon title write path yet (TASK-V460X); use `goal set` to replace the \
                          active goal"
-                    );
-                }
-                // The daemon's set_title composes `<id> <title>` from the
-                // drawer id, so `* PROJECT <id>` becomes `* <id> <title>` —
-                // and `ProjectFile::from_org` locates project.org by the
-                // `PROJECT ` heading prefix, so every cwd project resolution
-                // would fail afterwards. Refuse until the daemon keeps the word.
-                if matches!(kind, Some(NodeKindArg::Project)) {
-                    anyhow::bail!(
-                        "project titles cannot be set through `node title set`: the daemon \
-                         rewrite would drop the `PROJECT` heading word that project.org is \
-                         located by (ProjectFile::from_org), breaking project resolution; \
-                         no daemon write path keeps it yet"
                     );
                 }
                 let response = set_node_title(

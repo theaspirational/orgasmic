@@ -15455,7 +15455,7 @@ pub fn normalize_glossary_identity(value: &str) -> String {
 }
 
 fn glossary_heading_human_title(heading: &Heading) -> String {
-    node_display_title(heading)
+    node_display_title(heading, NodeLayer::Glossary)
 }
 
 fn reject_glossary_duplicate_identity(
@@ -16058,18 +16058,29 @@ fn content_hash(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-/// Display title with the leading id token stripped (`dec_001 Foo` → `Foo`)
-/// when the heading actually has that token. Tokenless drifted headings still
-/// display their full title so a repair edit does not hide the bad state.
-fn node_display_title(heading: &Heading) -> String {
-    let Some(id) = heading.property("ID") else {
-        return heading.title.trim().to_string();
-    };
-    heading
-        .title
-        .strip_prefix(id)
-        .map(str::trim)
-        .unwrap_or_else(|| heading.title.trim())
+// orgasmic:TASK-0MSK7
+/// The token a node's title line opens with, ahead of its prose. Every layer
+/// but Project leads with the drawer id (`dec_001 Foo`). The project scaffold
+/// writes `* PROJECT <name>` with the id in the drawer only, and
+/// `ProjectFile::from_org` locates project.org by that `PROJECT ` prefix — so
+/// for the Project layer the word is the token, and composing `<id> <prose>`
+/// there would drop it and break every cwd-resolved CLI command.
+fn node_title_token(heading: &Heading, layer: NodeLayer) -> Option<&str> {
+    match layer {
+        NodeLayer::Project => Some("PROJECT"),
+        _ => heading.property("ID"),
+    }
+}
+
+/// Display title with the leading token stripped (`dec_001 Foo` → `Foo`,
+/// `PROJECT Foo` → `Foo`) when the heading actually has that token. Tokenless
+/// drifted headings still display their full title so a repair edit does not
+/// hide the bad state.
+fn node_display_title(heading: &Heading, layer: NodeLayer) -> String {
+    let title = heading.title.trim();
+    node_title_token(heading, layer)
+        .and_then(|token| title.strip_prefix(token))
+        .map_or(title, str::trim)
         .to_string()
 }
 
@@ -16096,30 +16107,83 @@ fn validate_node_title(title: &str) -> Result<(), ApiError> {
 }
 
 // orgasmic:task_XPYRR
-/// Describe a node's title-line edit: the display title recomposed with its id
-/// token, plus the tags only when the caller actually asked to change them.
-/// Tags left as `None` are preserved by [`OrgRewriter::edit_heading_line`] —
-/// deliberately not restated here, so a title write has no way to touch them.
+/// Describe a node's title-line edit: the display title recomposed with its
+/// leading token ([`node_title_token`]), plus the tags only when the caller
+/// actually asked to change them. Tags left as `None` are preserved by
+/// [`OrgRewriter::edit_heading_line`] — deliberately not restated here, so a
+/// title write has no way to touch them.
 fn node_heading_line_edit(
     heading: &Heading,
+    layer: NodeLayer,
     new_title: Option<&str>,
     new_tags: Option<&[String]>,
 ) -> HeadingLineEdit {
-    let drawer_id = heading.property("ID").unwrap_or(heading.title.as_str());
+    let token = node_title_token(heading, layer).unwrap_or(heading.title.as_str());
     let current_display = heading
         .title
-        .strip_prefix(drawer_id)
+        .strip_prefix(token)
         .map(str::trim)
         .unwrap_or_else(|| heading.title.trim());
     let display = new_title.map(str::trim).unwrap_or(current_display);
     let title = if display.is_empty() {
-        drawer_id.to_string()
+        token.to_string()
     } else {
-        format!("{drawer_id} {display}")
+        format!("{token} {display}")
     };
     HeadingLineEdit {
         title: Some(title),
         tags: new_tags.map(<[String]>::to_vec),
+    }
+}
+
+// orgasmic:TASK-0MSK7
+#[cfg(test)]
+mod node_heading_line_edit_tests {
+    use super::*;
+
+    fn parse_heading(source: &str) -> Heading {
+        OrgFile::parse(source, "test.org")
+            .expect("parses")
+            .headings
+            .remove(0)
+    }
+
+    /// The incident: `* PROJECT <name>` must stay a `PROJECT ` heading after a
+    /// title write, because project.org is located by that word.
+    #[test]
+    fn set_title_on_a_project_heading_keeps_the_project_word() {
+        let heading =
+            parse_heading("* PROJECT node-title-set\n:PROPERTIES:\n:ID: node-title-set\n:END:\n");
+        assert_eq!(
+            node_display_title(&heading, NodeLayer::Project),
+            "node-title-set"
+        );
+        let edit =
+            node_heading_line_edit(&heading, NodeLayer::Project, Some("Project after"), None);
+        assert_eq!(edit.title.as_deref(), Some("PROJECT Project after"));
+        assert!(edit.tags.is_none(), "a title write never restates tags");
+        let rewritten =
+            parse_heading("* PROJECT Project after\n:PROPERTIES:\n:ID: node-title-set\n:END:\n");
+        assert_eq!(
+            node_display_title(&rewritten, NodeLayer::Project),
+            "Project after"
+        );
+        assert!(
+            rewritten.title.starts_with("PROJECT "),
+            "{}",
+            rewritten.title
+        );
+    }
+
+    /// Every other layer still composes `<drawer id> <prose>`.
+    #[test]
+    fn set_title_on_a_task_heading_keeps_the_id_token() {
+        let heading = parse_heading(
+            "* BACKLOG TASK-AAAAA Task before\n:PROPERTIES:\n:ID: TASK-AAAAA\n:END:\n",
+        );
+        assert_eq!(node_display_title(&heading, NodeLayer::Task), "Task before");
+        let edit = node_heading_line_edit(&heading, NodeLayer::Task, Some("Task after"), None);
+        assert_eq!(edit.title.as_deref(), Some("TASK-AAAAA Task after"));
     }
 }
 
@@ -16155,7 +16219,7 @@ fn org_node_doc(
     NodeDoc {
         id: heading.property("ID").unwrap_or_default().to_string(),
         kind: layer.layer_name().to_string(),
-        title: node_display_title(heading),
+        title: node_display_title(heading, layer),
         todo: heading.todo.clone(),
         tags: heading.tags.clone(),
         body: file.slice(heading.body.clone()).trim().to_string(),
@@ -16486,8 +16550,12 @@ async fn post_org_node_edit(
     }
     if title_override.is_some() || tags_override.is_some() {
         // orgasmic:task_XPYRR
-        let edit =
-            node_heading_line_edit(heading, title_override.as_deref(), tags_override.as_deref());
+        let edit = node_heading_line_edit(
+            heading,
+            layer,
+            title_override.as_deref(),
+            tags_override.as_deref(),
+        );
         rw.edit_heading_line(&id, &edit).map_err(|e| match e {
             // The one rewriter failure an operator can act on: it names the
             // title they submitted and what Org would have stored instead.
