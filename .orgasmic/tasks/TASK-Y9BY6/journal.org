@@ -16,3 +16,50 @@
 :TO_STATE: in_progress
 :EVENT_ID: 8ec30218-2f12-470d-a5d7-b257fc122332
 :END:
+
+* tx-20260902-orgasmic-3fa91327-2f09-46b8-ac49-83bc1d1a1027 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-3fa91327-2f09-46b8-ac49-83bc1d1a1027
+:TIME:    [2026-09-02 Wed 09:42:52]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-Y9BY6
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-Y9BY6/node.org
+:REASON: edited task node TASK-Y9BY6
+:NODE_ID: TASK-Y9BY6
+:EVENT_ID: 29511f47-70c1-451e-be3b-587995b8d6bf
+:END:
+
+* tx-20260902-orgasmic-fbacc57a-4c36-4573-af03-f7767a1948ce task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-fbacc57a-4c36-4573-af03-f7767a1948ce
+:TIME:    [2026-09-02 Wed 09:42:52]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-Y9BY6
+:TARGET: .orgasmic/tasks/TASK-Y9BY6/node.org
+:REASON: obsolete: test removed with the rmux mode in 010a32bc
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 695a1a9c-ae73-416a-a20e-c9f8b5384c91
+:END:
+
+* tx-20260902-orgasmic-d92b8e99-425e-4b29-aad0-2282a6ec9d2a task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-d92b8e99-425e-4b29-aad0-2282a6ec9d2a
+:TIME:    [2026-09-02 Wed 09:42:52]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-Y9BY6
+:TARGET: .orgasmic/tasks/TASK-Y9BY6/node.org
+:REASON: obsolete: rmux driver mode deleted 2026-08-13 (010a32bc)
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: e84a0cba-948a-44e4-ab59-bba7e306a015
+:END:

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-Y9BY6
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-Y9BY6 live_rmux_exit_139_emits_a_fatal_terminal_event times out on every run :testing:drivers:flake:
+* DONE TASK-Y9BY6 live_rmux_exit_139_emits_a_fatal_terminal_event times out on every run :testing:drivers:flake:
 :PROPERTIES:
 :ID: TASK-Y9BY6
 :PRIORITY: P2
@@ -57,4 +57,6 @@ suite has environment-coupled tests whose result depends on what else is running
 on the machine, which is the same reason the daemon suite could not answer "did
 my change break something?". Reproduce by running the suite WHILE a second
 daemon or an rmux server is live, not by running it alone.
+** Evidence
+Obsolete (verified 2026-09-02, manager sprint): crates/orgasmic-drivers/src/modes/rmux.rs and the test live_rmux_exit_139_emits_a_fatal_terminal_event were deleted in 010a32bc 'refactor: simplify runtime to tmux-only operation' (2026-08-13, -5636 lines). No rmux driver mode exists in the tree; nothing to fix. Closed without code change.
 

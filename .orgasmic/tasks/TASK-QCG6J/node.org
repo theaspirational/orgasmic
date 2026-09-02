@@ -154,4 +154,6 @@ not a separate defect.
 
 - Do not change the fence, the admission module, the close-guard persistence, or
   dec_NFZY2. All are merged and manager-verified.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit b1893f83 on sprint/FLAKES, merged onto local sprint-20260902 as 57d5b4e6. Root cause: post_run_recover validates the action against the recovery inventory BEFORE admission; under load the 1s attach probe (RECOVERY_ATTACH_PROBE_BUDGET) misses a live session and the request is refused as 'not valid for run' ahead of the fence — both registered flake signatures were that probe miss. Fix in the shared test body: refusal must name 'cleanup' OR be exactly the probe-miss message (any other error panics); no live run may exist afterwards; probe miss is logged. Injection (worktree None at reattach admission) turned the test red, reverted. 10/10 passes on one binary with rmux on PATH, fence arm exercised each run. verify/flake-registry.toml: both QCG6J entries removed. Gates: daemon filtered test ok, clippy rc=0, fmt rc=0, scripts/run-tests.sh --check OK. Left out: 10 FULL daemon --lib runs. Operator review/test after the sprint.
 
