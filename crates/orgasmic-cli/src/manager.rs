@@ -136,6 +136,11 @@ pub struct DispatchArgs {
     /// tx, or launching a worker.
     #[arg(long)]
     pub dry_run: bool,
+    /// Refuse when the checkout you dispatch from has uncommitted changes
+    /// (outside `.orgasmic/`): the worker branches from a commit and never
+    /// sees them. Without this flag the same finding is a stderr warning.
+    #[arg(long = "require-clean")]
+    pub require_clean: bool,
     /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
     #[arg(long = "governance-json")]
     pub governance_json: Option<String>,
@@ -918,10 +923,12 @@ pub(crate) fn dispatch_quiet(home: &Home, args: DispatchArgs) -> Result<String> 
 }
 
 fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<String>> {
+    let require_clean = args.require_clean;
     let plan = build_dispatch_plan(home, args)?;
     if plan.brief_content.is_empty() {
         bail!("brief is empty: {}", plan.brief_path.display());
     }
+    guard_dirty_main_checkout(require_clean)?;
     // Each dispatch kind owns a distinct default worktree suffix; reject any
     // accidental reuse of another kind's default path for the same task.
     for other_kind in [DispatchKind::Implementer, DispatchKind::Reviewer] {
@@ -2642,6 +2649,68 @@ fn worktree_status_porcelain(project_root: &Path) -> Result<Vec<u8>> {
 
 fn worktree_has_uncommitted_changes(project_root: &Path) -> Result<bool> {
     Ok(!worktree_status_porcelain(project_root)?.is_empty())
+}
+
+/// Uncommitted changes in the checkout the manager works from, minus
+/// `.orgasmic/` (a live daemon writes there continuously, so that half is
+/// dirty without anyone having typed anything). TASK-GCTMA / TASK-EXN3N.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DirtyCheckout {
+    /// `git status --porcelain` lines outside `.orgasmic/`.
+    count: usize,
+    /// The first three of those paths, for the message.
+    sample: Vec<String>,
+}
+
+fn dirty_checkout(checkout: &Path) -> Result<DirtyCheckout> {
+    // `verify` already answers "dirty, minus the daemon's churn"; same rule here.
+    let lines = crate::verify::dirty_paths(checkout)?;
+    let sample = lines
+        .iter()
+        .take(3)
+        .map(|line| {
+            // `XY path`, or `XY old -> new` for a rename.
+            let path = line.get(3..).unwrap_or(line);
+            path.rsplit(" -> ").next().unwrap_or(path).to_string()
+        })
+        .collect();
+    Ok(DirtyCheckout {
+        count: lines.len(),
+        sample,
+    })
+}
+
+/// The checkout `manager dispatch` branches from by default and the one a
+/// worker must never write into: the git toplevel of the cwd. `None` when
+/// the cwd is not inside a git checkout.
+fn main_checkout() -> Option<PathBuf> {
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| git_toplevel(&cwd).ok())
+}
+
+/// TASK-GCTMA: a worktree is provisioned from a commit, so whatever is
+/// uncommitted here is invisible to the worker — and a reviewer will return
+/// a confident verdict on a tree it never read. One warning; a refusal only
+/// on `--require-clean`, because an unrelated edit in flight is the norm.
+fn guard_dirty_main_checkout(require_clean: bool) -> Result<()> {
+    let Some(checkout) = main_checkout() else {
+        return Ok(());
+    };
+    let dirty = dirty_checkout(&checkout)?;
+    if dirty.count == 0 {
+        return Ok(());
+    }
+    let message = format!(
+        "main checkout has {} uncommitted changes the worker will not see: {}",
+        dirty.count,
+        dirty.sample.join(", ")
+    );
+    if require_clean {
+        bail!("{message} (--require-clean; commit or stash them, or pass --from <ref>)");
+    }
+    eprintln!("warning: {message}");
+    Ok(())
 }
 
 /// Commit the worktree if dirty (so commit-stall is structurally impossible,
@@ -15454,5 +15523,54 @@ mod tests {
             classify_dispatch_wait_round(&[generation("waiting")]),
             DispatchWaitRound::Waiting
         ));
+    }
+
+    /// A committed repo with one tracked file, for the dirty-checkout helper.
+    fn dirty_fixture() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        git_ok(root, &["init", "-qb", "main"]);
+        git_ok(root, &["config", "user.email", "t@example.com"]);
+        git_ok(root, &["config", "user.name", "T"]);
+        std::fs::write(root.join("src.txt"), "v1\n").unwrap();
+        git_ok(root, &["add", "."]);
+        git_ok(root, &["commit", "-qm", "init"]);
+        tmp
+    }
+
+    // TASK-GCTMA
+    #[test]
+    fn dirty_checkout_counts_only_changes_outside_orgasmic() {
+        let tmp = dirty_fixture();
+        let root = tmp.path();
+        assert_eq!(dirty_checkout(root).unwrap(), DirtyCheckout::default());
+
+        std::fs::write(root.join("src.txt"), "v2\n").unwrap();
+        assert_eq!(
+            dirty_checkout(root).unwrap(),
+            DirtyCheckout {
+                count: 1,
+                sample: vec!["src.txt".to_string()],
+            }
+        );
+
+        // The daemon's half: writes under .orgasmic/ are not the worker's loss.
+        std::fs::write(root.join("src.txt"), "v1\n").unwrap();
+        std::fs::create_dir_all(root.join(".orgasmic/tx")).unwrap();
+        std::fs::write(root.join(".orgasmic/tx/2026-09.org"), "* TX\n").unwrap();
+        assert_eq!(dirty_checkout(root).unwrap(), DirtyCheckout::default());
+    }
+
+    // TASK-GCTMA
+    #[test]
+    fn dirty_checkout_samples_at_most_three_paths() {
+        let tmp = dirty_fixture();
+        let root = tmp.path();
+        for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+            std::fs::write(root.join(name), "x\n").unwrap();
+        }
+        let dirty = dirty_checkout(root).unwrap();
+        assert_eq!(dirty.count, 4);
+        assert_eq!(dirty.sample, ["a.txt", "b.txt", "c.txt"]);
     }
 }
