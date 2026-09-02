@@ -738,7 +738,10 @@ fn cached_mutation_from_map(
         mutation_id,
     } = cached
     else {
-        bail!("request_id `{request_id}` was already used by a different mutation type");
+        return Err(RequestIdReuseConflict {
+            request_id: request_id.to_string(),
+        }
+        .into());
     };
     if mutation.as_ref() != Some(expected) {
         return Err(RequestIdReuseConflict {
@@ -846,7 +849,10 @@ fn cached_multi_from_map(
         durability,
     } = cached
     else {
-        bail!("request_id `{request_id}` was already used by a different mutation type");
+        return Err(RequestIdReuseConflict {
+            request_id: request_id.to_string(),
+        }
+        .into());
     };
     if mutation != expected {
         return Err(RequestIdReuseConflict {
@@ -869,7 +875,10 @@ fn cached_transaction_from_map(
         result, mutation, ..
     } = cached
     else {
-        bail!("request_id `{request_id}` was already used by a different mutation type");
+        return Err(RequestIdReuseConflict {
+            request_id: request_id.to_string(),
+        }
+        .into());
     };
     if mutation.as_ref() != Some(expected) {
         return Err(RequestIdReuseConflict {
