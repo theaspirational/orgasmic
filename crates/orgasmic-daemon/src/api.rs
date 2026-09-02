@@ -16504,10 +16504,28 @@ fn descriptor_for_layer(
 
 /// Pick the layer that owns a node: an explicit `kind` selector when present,
 /// otherwise inferred from the id prefix.
+///
+/// orgasmic:TASK-CS2TM — an explicit kind that contradicts a distinctive id
+/// prefix (`TASK-`, `dec_`, `goal-`, `handoff-current`) is refused rather than
+/// aimed at the wrong file: `--kind project` on a task id used to be resolved
+/// against project.org. Glossary is the prefix-less fallback, so an id that
+/// infers glossary accepts any explicit kind (that is how `project` is named).
 fn resolve_node_layer(kind: Option<&str>, id: &str) -> Result<NodeLayer, ApiError> {
     match kind {
-        Some(kind) => NodeLayer::from_kind(kind)
-            .ok_or_else(|| ApiError::bad_request(format!("unknown node kind {kind}"))),
+        Some(kind) => {
+            let layer = NodeLayer::from_kind(kind)
+                .ok_or_else(|| ApiError::bad_request(format!("unknown node kind {kind}")))?;
+            match NodeLayer::for_id(id) {
+                Some(inferred) if inferred != layer && inferred != NodeLayer::Glossary => {
+                    Err(ApiError::bad_request(format!(
+                        "node {id} is a {} node by its id, not {kind}; drop --kind or pass --kind {}",
+                        inferred.layer_name(),
+                        inferred.layer_name()
+                    )))
+                }
+                _ => Ok(layer),
+            }
+        }
         None => NodeLayer::for_id(id)
             .ok_or_else(|| ApiError::bad_request("architecture node layer is retired")),
     }
@@ -31434,6 +31452,35 @@ pub(crate) mod tests {
         assert_eq!(values["task.test_cmd"], "cargo test --task-override");
     }
 
+    // orgasmic:TASK-CS2TM
+    #[test]
+    fn resolve_node_layer_infers_from_id_and_refuses_contradicting_kind() {
+        assert_eq!(resolve_node_layer(None, "TASK-1").unwrap(), NodeLayer::Task);
+        assert_eq!(
+            resolve_node_layer(None, "dec_1").unwrap(),
+            NodeLayer::Decision
+        );
+        // Matching explicit kind is fine.
+        assert_eq!(
+            resolve_node_layer(Some("task"), "TASK-1").unwrap(),
+            NodeLayer::Task
+        );
+        // Prefix-less ids accept any explicit kind (project lives here).
+        assert_eq!(
+            resolve_node_layer(Some("project"), "orgasmic").unwrap(),
+            NodeLayer::Project
+        );
+        // Contradicting kind is refused, naming the inferred kind.
+        let err = resolve_node_layer(Some("project"), "TASK-1").unwrap_err();
+        let message = format!("{err:?}");
+        assert!(message.contains("task node"), "{message}");
+        assert!(message.contains("--kind task"), "{message}");
+        assert!(
+            resolve_node_layer(Some("glossary"), "dec_1").is_err(),
+            "decision id with glossary kind"
+        );
+    }
+
     #[test]
     fn task_create_filters_blank_dispatch_params() {
         let mut properties = BTreeMap::new();
@@ -33308,6 +33355,67 @@ pub(crate) mod tests {
                 .any(|line| line.contains("PRIORITY") && line.contains("P1")),
             "{after}"
         );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    // orgasmic:TASK-CS2TM
+    /// A body carrying `**` / `***` sub-headings is legitimate nested org and
+    /// must land under the task heading as-is: one level-1 heading, nested
+    /// sections readable back through the node read model.
+    #[tokio::test]
+    async fn task_create_stores_nested_heading_body_as_valid_org() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let body_text = "Intro prose with **bold** and ${not_a_shell_var}.\n\n\
+            ** Sub\nsub prose\n*** Subsub\nsubsub prose\n** Second\nmore";
+        let resp = client
+            .post(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "title": "Nested body", "body": body_text }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(status.is_success(), "nested-heading body: {status} {body}");
+        let created_id = body["id"].as_str().unwrap().to_string();
+
+        let after =
+            std::fs::read_to_string(task_node_file_path(&project_root, &created_id)).unwrap();
+        let level1 = after.lines().filter(|line| line.starts_with("* ")).count();
+        assert_eq!(level1, 1, "exactly one task heading:\n{after}");
+        assert!(after.contains("\n** Sub\n"), "{after}");
+        assert!(after.contains("\n*** Subsub\n"), "{after}");
+
+        let resp = client
+            .get(format!(
+                "{base}/api/org/node?project=orgasmic&id={created_id}"
+            ))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert!(resp.status().is_success(), "{}", resp.status());
+        let doc: Value = resp.json().await.unwrap();
+        let sections = doc["sections"].as_array().unwrap();
+        let titles: Vec<&str> = sections
+            .iter()
+            .filter_map(|section| section["title"].as_str())
+            .collect();
+        assert_eq!(titles, vec!["Sub", "Second"], "{doc}");
+        assert_eq!(sections[0]["sections"][0]["title"], "Subsub", "{doc}");
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
