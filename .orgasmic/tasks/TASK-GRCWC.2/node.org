@@ -18,4 +18,6 @@ Carry a structured traversal cause rather than parsing the error string. Give un
 - Unreadable output retains errno and its permissions remedy.
 - dispatch-status does not claim a prune was run or tell the operator to rerun it.
 - Both causes remain no-delete and tests prove the messages; no traversal/removal mechanics change.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 7a29e530 on sprint/HARDEN (manager.rs: UnsafeTraversal carries TraversalCause::{Unreadable,OverDepth}; over-depth remedy = flatten/remove, never chmod; shared sentence in status tense so KEPT_WORKTREE never claims a prune ran), merged onto local sprint-20260902 as c0d1d7e9. Gates: both traversal fixtures + contract helper pass; clippy rc=0; fmt rc=0. No traversal/removal mechanics changed.
 

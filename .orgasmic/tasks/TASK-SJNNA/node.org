@@ -40,4 +40,6 @@ pinning in production.
 - Sessions the daemon creates remain reachable by an unpinned operator client.
 - Injection per TCTTD standard, git apply-clean, self-tested with
   `orgasmic verify --artifact` before reporting.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit b53dafdf on sprint/HARDEN (tmux.rs: tmux_command()/tmux_async_command() env_remove TMUX and TMUX_PANE via TMUX_SCRUBBED_ENV; test tmux_commands_scrub_inherited_tmux_env), merged onto local sprint-20260902 as c0d1d7e9. Gates: drivers tmux 84 passed; clippy rc=0; fmt rc=0. Operator review/test after the sprint.
 

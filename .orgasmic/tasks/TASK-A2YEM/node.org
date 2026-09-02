@@ -8,4 +8,6 @@
 :END:
 
 From TASK-G7E4R's axis sweep (its report, section 3): daemon_lifecycle::RESTART_DRAIN_TIMEOUT (40s) waits on the restart endpoint's own budgets (RELEASE_FINALIZATION_DRAIN_TIMEOUT 20s + RESTART_WRITER_DRAIN_TIMEOUT 5s = 25s) and is already guarded by the relationship test restart_drain_fuse_outlasts_the_endpoint_budgets_it_waits_on — so it is NOT the unguarded-literal shape G7E4R removed. But its remaining 15s of slack (rest of the handler) is documented in prose rather than composed from a named margin constant. Ask: express it as endpoint_budgets_total() + RESTART_HANDLER_MARGIN with the existing relationship test asserting the composition, the G7E4R/QRB8S pattern. Small; ship with a verify artifact.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 22fe044c on sprint/HARDEN (crates/orgasmic-cli/src/daemon_lifecycle.rs: RESTART_DRAIN_TIMEOUT = RELEASE_FINALIZATION_DRAIN_TIMEOUT + RESTART_WRITER_DRAIN_TIMEOUT + RESTART_DRAIN_SLACK(15s); const assert == 40s), merged onto local sprint-20260902 as c0d1d7e9. Gates: cli restart_drain 3 passed; clippy rc=0; fmt rc=0.
 
