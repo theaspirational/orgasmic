@@ -14167,6 +14167,123 @@ mod tests {
         );
     }
 
+    /// TASK-QNE3R. The pin in `tests/shipped_conventions.rs` compares the
+    /// convention's operation list against FIELD 3 of `SEQUENCER_MARKERS`, a
+    /// test-only shadow with no production consumer; a typo in the marker file
+    /// (field 1) or a wrong refusal name (field 2) left it green. Fields 1 and
+    /// 2 are what the guard runs on, so this holds them by behaviour: every
+    /// row's real git state, built by the operation the row names, must leave
+    /// that marker file and make the predicate answer with that refusal name.
+    /// `rebase-apply` has two producers (`git am` and `git rebase --apply`),
+    /// so it is built twice.
+    // orgasmic:TASK-QNE3R
+    #[test]
+    fn every_sequencer_marker_row_is_produced_by_its_operation_and_refused_by_its_name() {
+        use crate::sequencer_markers::{SEQUENCER_MARKERS, STOPPED_PICK_RANGE};
+
+        /// A `side` branch whose edit conflicts with the stacked tip, so a
+        /// rebase or merge of `@{-1}` stops.
+        fn diverge(root: &Path) {
+            stack_three_revisions(root);
+            git_ok(root, &["checkout", "-q", "-b", "side", "HEAD~2"]);
+            std::fs::write(root.join("base.txt"), "side\n").unwrap();
+            git_ok(root, &["commit", "-qam", "side"]);
+        }
+        fn git_stops(root: &Path, args: &[&str]) {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                !output.status.success(),
+                "git {args:?} must stop mid-operation: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // `(marker file, refusal name, producing operation)`, spelled
+        // independently of the array: reading the expectation back out of the
+        // array is what let a typo in either field pass.
+        type State = (&'static str, &'static str, fn(&Path));
+        let states: &[State] = &[
+            ("rebase-merge", "rebase", |root| {
+                diverge(root);
+                git_stops(root, &["rebase", "@{-1}"]);
+            }),
+            ("rebase-apply", "rebase or am", |root| {
+                diverge(root);
+                git_stops(root, &["rebase", "--apply", "@{-1}"]);
+            }),
+            ("rebase-apply", "rebase or am", |root| {
+                stack_three_revisions(root);
+                git_ok(root, &["format-patch", "-1", "HEAD~1"]);
+                git_stops(root, &["am", "0001-two.patch"]);
+            }),
+            ("MERGE_HEAD", "merge", |root| {
+                diverge(root);
+                git_stops(root, &["merge", "@{-1}"]);
+            }),
+            ("CHERRY_PICK_HEAD", "cherry-pick", |root| {
+                stack_three_revisions(root);
+                git_stops(root, &["cherry-pick", "HEAD~1"]);
+            }),
+            ("REVERT_HEAD", "revert", |root| {
+                stack_three_revisions(root);
+                git_stops(root, &["revert", "--no-edit", "HEAD~1"]);
+            }),
+            ("BISECT_LOG", "bisect", |root| {
+                stack_three_revisions(root);
+                git_ok(root, &["bisect", "start"]);
+            }),
+            ("sequencer", STOPPED_PICK_RANGE, |root| {
+                stack_three_revisions(root);
+                git_stops(root, &["revert", "--no-edit", "HEAD~1", "HEAD~2"]);
+                git_ok(root, &["reset", "-q", "--hard"]);
+            }),
+        ];
+
+        let mut seen = std::collections::BTreeSet::new();
+        for (index, (marker, operation, build)) in states.iter().enumerate() {
+            let fixture = dispatch_cleanup_fixture(&format!("task-marker-{index}"));
+            let git_dir = fixture.root.join(".git");
+            assert_eq!(
+                sequencer_operation_in_progress(&git_dir),
+                None,
+                "{marker}: a clean repo must not be refused"
+            );
+            build(&fixture.root);
+            assert!(
+                git_dir.join(marker).exists(),
+                "{marker}: the operation must leave exactly this marker file under .git"
+            );
+            let (_, refusal, _) = SEQUENCER_MARKERS
+                .iter()
+                .find(|(file, _, _)| file == marker)
+                .unwrap_or_else(|| panic!("{marker}: no SEQUENCER_MARKERS row names this file"));
+            assert_eq!(
+                refusal, operation,
+                "{marker}: the array's refusal name must be the operation's own"
+            );
+            assert_eq!(
+                sequencer_operation_in_progress(&git_dir),
+                Some(*operation),
+                "{marker}: the guard must refuse this state by that name"
+            );
+            seen.insert(*marker);
+        }
+        let unbuilt = SEQUENCER_MARKERS
+            .iter()
+            .map(|(file, _, _)| *file)
+            .filter(|file| !seen.contains(file))
+            .collect::<Vec<_>>();
+        assert!(
+            unbuilt.is_empty(),
+            "every SEQUENCER_MARKERS row needs a producing operation here: {unbuilt:?}"
+        );
+    }
+
     /// TASK-QGWK7.1.1.1.1.1 C-2, through the close rather than the predicate,
     /// re-aimed by TASK-QGWK7.1.1.1.1.1.1 D-1. `git reset --hard` after a
     /// stopped range leaves `.git/sequencer` on disk for good — `git status`
