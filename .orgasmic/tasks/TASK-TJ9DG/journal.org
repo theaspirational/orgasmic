@@ -16,3 +16,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: 495437a8-71ed-4301-a17f-5bb01f2951fb
 :END:
+
+* tx-20260902-orgasmic-74aa7664-2460-4812-8af9-4e11c3913fef task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-74aa7664-2460-4812-8af9-4e11c3913fef
+:TIME:    [2026-09-02 Wed 10:14:39]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TJ9DG
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-TJ9DG/node.org
+:REASON: edited task node TASK-TJ9DG
+:NODE_ID: TASK-TJ9DG
+:EVENT_ID: d83953ac-9ffc-4247-8aae-04d4c5769995
+:END:
+
+* tx-20260902-orgasmic-95f44175-c13a-4b17-8278-755288fc524a task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-95f44175-c13a-4b17-8278-755288fc524a
+:TIME:    [2026-09-02 Wed 10:14:40]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TJ9DG
+:TARGET: .orgasmic/tasks/TASK-TJ9DG/node.org
+:REASON: sprint: no CLI write path for the retired architecture layer; see Notes
+:FROM_STATE: in_progress
+:TO_STATE: todo
+:EVENT_ID: 4ade02cd-c44d-4d89-8906-12f180aee829
+:END:
