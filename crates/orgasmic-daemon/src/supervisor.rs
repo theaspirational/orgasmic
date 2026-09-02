@@ -6173,7 +6173,7 @@ fn drop_abandoned_cleanup_reservations(inner: &mut Inner) {
     }
 }
 
-fn dispatch_worktree_checked_out_branch(worktree: &Path) -> Option<String> {
+pub(crate) fn dispatch_worktree_checked_out_branch(worktree: &Path) -> Option<String> {
     let output = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(worktree)

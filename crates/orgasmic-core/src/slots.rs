@@ -44,6 +44,7 @@ pub fn default_registry() -> BTreeSet<&'static str> {
         "task.depends_on",
         "task.activity",
         "dispatch.brief",
+        "dispatch.workdir",
         "project.id",
         "project.name",
         "project.path",

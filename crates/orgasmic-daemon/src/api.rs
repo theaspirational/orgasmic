@@ -6369,6 +6369,7 @@ async fn post_task_dispatch(
         &task_id,
         &worker_for_bundle,
         &brief,
+        Some(&req.worktree_path),
     )?;
     let overrides = DriverOverrides {
         provider: verbatim_optional(req.provider_override.clone()),
@@ -7389,10 +7390,27 @@ fn compile_dispatch_prompt_bundle(
     task_id: &str,
     worker: &StageWorker,
     brief: &str,
+    worktree: Option<&FsPath>,
 ) -> Result<String, ApiError> {
     let mut values = SlotValues::new();
     values.insert("task.id".to_string(), task_id.to_string());
     values.insert("dispatch.brief".to_string(), prompt_value_or_not_set(brief));
+    // TASK-YBCYQ: name the worktree FIRST so a worker never resolves "the
+    // project" to the main checkout and commits there.
+    if let Some(worktree) = worktree {
+        let branch = crate::supervisor::dispatch_worktree_checked_out_branch(worktree)
+            .map(|branch| format!(", branch {branch}"))
+            .unwrap_or_default();
+        values.insert(
+            "dispatch.workdir".to_string(),
+            format!(
+                "- Working directory (your git worktree{branch}): {}\n- Project: {}; main checkout (READ-ONLY for you, never commit there): {}",
+                worktree.display(),
+                project.project_id,
+                project.root.display()
+            ),
+        );
+    }
     hydrate_dispatch_task_slots(&mut values, project, task_id)?;
     hydrate_dispatch_project_slots(&mut values, project);
     hydrate_dispatch_worker_slots(&mut values, worker, kind);
@@ -21969,6 +21987,98 @@ pub(crate) mod tests {
         assert_eq!(api_shape_response.status(), StatusCode::NOT_FOUND);
     }
 
+    #[test]
+    fn dispatch_prompt_inputs_name_the_worktree_first_and_mark_the_main_checkout_read_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        symlink_repo_source(&home);
+        let mut project = test_project(tmp.path(), &[], &[]);
+        project.tasks.push(crate::index::TaskSummary {
+            id: "TASK-WT".to_string(),
+            title: "worktree naming".to_string(),
+            lifecycle_stage: LifecycleStage::InProgress,
+            parent_task: None,
+            depends_on: Vec::new(),
+            blocked_by: Vec::new(),
+            implements: Vec::new(),
+            produces: Vec::new(),
+            read_scope: Vec::new(),
+            write_scope: Vec::new(),
+            owner: TaskOwner::Human,
+            run_id: None,
+            priority: None,
+            provider: None,
+            model: None,
+            reasoning_effort: None,
+            test_cmd: None,
+            tags: Vec::new(),
+            source_file: task_node_file_path(tmp.path(), "TASK-WT"),
+            sandbox_permissions: None,
+        });
+        let worker = dispatch_prompt_test_worker("markdown", WorkerKind::Implementer);
+        let compile = |worktree: Option<&FsPath>| {
+            compile_dispatch_prompt_bundle(
+                &home,
+                &project,
+                DispatchEndpointKind::Implementer,
+                "TASK-WT",
+                &worker,
+                "brief",
+                worktree,
+            )
+            .unwrap()
+        };
+        let root = project.root.display().to_string();
+
+        let worktree = tmp.path().join("wt-task-wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        for args in [
+            vec!["init", "-q", "-b", "task-wt-impl"],
+            vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        ] {
+            let status = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&worktree)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?}");
+        }
+        let with_worktree = compile(Some(&worktree));
+        let worktree_line = format!(
+            "- Working directory (your git worktree, branch task-wt-impl): {}",
+            worktree.display()
+        );
+        let project_line = format!(
+            "- Project: {}; main checkout (READ-ONLY for you, never commit there): {root}",
+            project.project_id
+        );
+        let worktree_at = with_worktree.find(&worktree_line).expect("worktree line");
+        let project_at = with_worktree
+            .find(&project_line)
+            .expect("read-only project line");
+        assert!(
+            worktree_at < project_at,
+            "worktree must be named before the project"
+        );
+        assert!(!with_worktree.contains(&format!("at {root}.")));
+
+        let without_worktree = compile(None);
+        assert!(without_worktree.contains(&format!("- Project: {} at {root}.", project.project_id)));
+        assert!(!without_worktree.contains("Working directory"));
+        assert!(!without_worktree.contains("READ-ONLY"));
+    }
+
     fn dispatch_prompt_test_worker(renderer: &str, kind: WorkerKind) -> StageWorker {
         StageWorker {
             id: format!("{}-{renderer}", kind.as_str()),
@@ -22123,6 +22233,7 @@ pub(crate) mod tests {
                 task_id,
                 &worker,
                 brief,
+                None,
             )
             .unwrap();
 
@@ -22215,6 +22326,7 @@ pub(crate) mod tests {
                     "TASK-FIX",
                     &worker,
                     "Check the bounded command-session contract.",
+                    None,
                 )
                 .unwrap();
 
@@ -30419,6 +30531,7 @@ pub(crate) mod tests {
             "TASK-NO-WORKERS",
             &worker,
             "brief body",
+            None,
         )
         .unwrap();
 
