@@ -691,6 +691,7 @@ SPRINT 13:15: sprint-20260902 = main + 20 --no-ff merges (LOGGING, 3HR8R, HARDEN
 
 ** In flight
 - main = origin/main = 4a428912 (sprint-20260902 merged and pushed 2026-09-02). Installed runtime is behind at 7c85f177; reinstall from source when the operator asks (recipe in memory orgasmic-runtime-reinstall). Sprint tasks stay in_progress with Evidence until operator review/testing; TASK-0MSK7 fix is on main (b1b0635f). Open follow-ups: X0PV1, 40ZMJ, DTCBP items 2/3, CS2TM item 4, BX5SR.2 sibling error still 500, D6N77.1. Operator's scripts/install.sh edit still uncommitted.
+- 14:28 30-minute tail: agent bx5sr2b on sprint/BX5SR2B (off main 4a428912) making the 'reused with a different operation' writer error a typed 409 (BX5SR.2 follow-up), deadline 14:45; DTCBP item 3 decided (no default gate, recorded in Evidence).
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
