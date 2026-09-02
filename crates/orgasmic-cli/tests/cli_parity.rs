@@ -513,6 +513,208 @@ fn shipped_value_enum_arguments_match_clap_possible_values() {
     );
 }
 
+/// The INVERSE of [`shipped_entry_commands_resolve_against_the_cli`]: shipped
+/// prose must not deny a verb the binary has.
+///
+/// orgasmic:TASK-TKR0H — for months after TASK-JQARS landed `orgasmic manager
+/// drivers`, `manager-dispatch.org` said "there is no listing command … that
+/// verb has never existed in any command group" and told managers to discover
+/// transport pairs by submitting a bogus pair and reading the rejection. Every
+/// QUOTED command resolved, so the positive guard above was green throughout.
+///
+/// Detection: a negative phrase ([`NEGATIVE_PHRASES`], plus "there is no …
+/// command/verb") anchors a window bounded by the clause it sits in and by
+/// [`NEGATIVE_WINDOW`] chars; the NEAREST inline code span on each side is the
+/// candidate, and the claim fails only if that span's command path resolves.
+/// Nearest-only is what keeps real negatives alive: "`task show` does not exist
+/// (it is `task get`)" names the correction two spans away, and it must not be
+/// blamed for it. A historical note that must keep denying a live verb carries
+/// [`NEGATIVE_ALLOW_MARKER`] on its own line or the line before.
+#[test]
+fn shipped_prose_does_not_deny_a_verb_that_resolves() {
+    let root = repo_root().join(SHIPPED_DIR);
+    let mut failures = Vec::new();
+    for path in shipped_prose_files(&root) {
+        let name = path
+            .strip_prefix(repo_root())
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let org = path.extension().and_then(|e| e.to_str()) == Some("org");
+        failures.extend(resolving_negative_claims(&name, &text, org));
+    }
+    assert!(
+        failures.is_empty(),
+        "shipped prose denies verb(s) the CLI has — fix the sentence, or mark a deliberate \
+         historical note with `{NEGATIVE_ALLOW_MARKER}`:\n  {}",
+        failures.join("\n  ")
+    );
+}
+
+#[test]
+fn negative_claim_guard_fires_on_a_real_verb_and_not_on_a_fake_one() {
+    let text = concat!(
+        "There is no listing command; `orgasmic manager drivers` has never existed in\n",
+        "any command group, so submit a bogus pair and read the rejection.\n",
+        "\n",
+        "`orgasmic manager frobnicate` does not exist either; use `orgasmic manager drivers`.\n",
+        "\n",
+        "# parity: allow-negative\n",
+        "Historically `orgasmic manager drivers` did not exist (fixed in TASK-JQARS).\n",
+    );
+    let failures = resolving_negative_claims("fixture.org", text, true);
+    assert_eq!(
+        failures.len(),
+        1,
+        "expected exactly the real-verb denial to fire:\n  {}",
+        failures.join("\n  ")
+    );
+    assert!(
+        failures[0].starts_with("fixture.org:1: ") && failures[0].contains("manager drivers"),
+        "{}",
+        failures[0]
+    );
+}
+
+/// Negative-existence phrases, matched case-insensitively. "not exist" covers
+/// does/do/did; "never existed" covers has/had.
+const NEGATIVE_PHRASES: &[&str] = &[
+    "not exist",
+    "never existed",
+    "no such verb",
+    "no such command",
+    "no such subcommand",
+];
+const NEGATIVE_WINDOW: usize = 200;
+const NEGATIVE_ALLOW_MARKER: &str = "parity: allow-negative";
+
+/// `file:line: <claim> — but \`orgasmic …\` resolves` for every negative claim
+/// in `text` whose nearest command span the binary accepts.
+fn resolving_negative_claims(file: &str, text: &str, org: bool) -> Vec<String> {
+    let lower = text.to_ascii_lowercase();
+    let spans = code_span_ranges(text, org);
+    let mut hits: Vec<(usize, usize)> = NEGATIVE_PHRASES
+        .iter()
+        .flat_map(|phrase| {
+            lower
+                .match_indices(phrase)
+                .map(|(start, _)| (start, start + phrase.len()))
+        })
+        .collect();
+    // "there is no … command/verb": the noun sits later in the same sentence.
+    hits.extend(lower.match_indices("there is no").filter_map(|(start, _)| {
+        let end = start + "there is no".len();
+        let tail = lower[end..].split('.').next().unwrap_or("");
+        let tail = tail.chars().take(80).collect::<String>();
+        (tail.contains("command") || tail.contains("verb")).then_some((start, end))
+    }));
+    hits.sort_unstable();
+
+    let mut out = Vec::new();
+    for (start, end) in hits {
+        let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+        let prev_line_start = text[..line_start.saturating_sub(1)]
+            .rfind('\n')
+            .map_or(0, |i| i + 1);
+        let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
+        if text[prev_line_start..line_end].contains(NEGATIVE_ALLOW_MARKER) {
+            continue;
+        }
+        let (clause_start, clause_end) = clause_bounds(text, start, end);
+        let mut window_start = clause_start.max(start.saturating_sub(NEGATIVE_WINDOW));
+        while !text.is_char_boundary(window_start) {
+            window_start += 1;
+        }
+        let mut window_end = clause_end.min(end + NEGATIVE_WINDOW).min(text.len());
+        while !text.is_char_boundary(window_end) {
+            window_end -= 1;
+        }
+        let before = spans
+            .iter()
+            .rev()
+            .find(|(_, span_end)| *span_end <= start)
+            .filter(|(span_start, _)| *span_start >= window_start);
+        let after = spans
+            .iter()
+            .find(|(span_start, _)| *span_start >= end)
+            .filter(|(span_start, _)| *span_start < window_end);
+        for &(span_start, span_end) in before.into_iter().chain(after) {
+            let path = command_path_in_span(&text[span_start..span_end]);
+            if path.is_empty() || try_help(&path).is_err() {
+                continue;
+            }
+            let line = text[..start].matches('\n').count() + 1;
+            let claim = text[window_start..window_end]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            out.push(format!(
+                "{file}:{line}: \"{claim}\" — but `{}` resolves",
+                format_command_path(&path)
+            ));
+        }
+    }
+    out
+}
+
+/// Bounds of the clause around `[start, end)`: a `.`/`,`/`;`/`:` followed by
+/// whitespace, or a blank line, on either side. Comma included on purpose —
+/// "`x` does not exist, use `y`" must not blame `y`.
+fn clause_bounds(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let bytes = text.as_bytes();
+    let is_boundary = |index: usize| {
+        (matches!(bytes[index], b'.' | b',' | b';' | b':')
+            && bytes.get(index + 1).is_some_and(u8::is_ascii_whitespace))
+            || (bytes[index] == b'\n' && bytes.get(index + 1) == Some(&b'\n'))
+    };
+    let clause_start = (0..start)
+        .rev()
+        .find(|&index| is_boundary(index))
+        .map_or(0, |index| index + 1);
+    let clause_end = (end..text.len())
+        .find(|&index| is_boundary(index))
+        .unwrap_or(text.len());
+    (clause_start, clause_end)
+}
+
+/// Byte ranges of inline code span CONTENTS, paired per line — the same rule as
+/// pass (3) of [`code_spans`], because unbalanced `=` is ordinary in org prose.
+fn code_span_ranges(text: &str, org: bool) -> Vec<(usize, usize)> {
+    let delimiters: &[char] = if org { &['`', '=', '~'] } else { &['`'] };
+    let mut out = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        for &delimiter in delimiters {
+            let mut opened = None;
+            for (index, _) in line.match_indices(delimiter) {
+                match opened.take() {
+                    Some(open) => out.push((offset + open, offset + index)),
+                    None => opened = Some(index + 1),
+                }
+            }
+        }
+        offset += line.len();
+    }
+    out.sort_unstable();
+    out
+}
+
+/// Subcommand words at the head of one code span, with a leading `orgasmic`
+/// dropped: `` `orgasmic task get <ID>` `` and `` `task get` `` both give
+/// `[task, get]`; a flag or a filename gives nothing.
+fn command_path_in_span(span: &str) -> Vec<String> {
+    let mut tokens = span.split_whitespace().peekable();
+    if tokens.peek() == Some(&"orgasmic") {
+        tokens.next();
+    }
+    tokens
+        .take_while(|token| is_subcommand_word(token))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Every flag and positional on every leaf command must say what it does.
 ///
 /// TASK-HXSW0's item 1: `manager dispatch --help` rendered `--task`, `--brief`,
