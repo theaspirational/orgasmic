@@ -9255,6 +9255,11 @@ pub struct RecoveredRun {
     /// property of the run, not a liveness guess that a later poll can revise.
     #[serde(default)]
     pub worktree_authority: String,
+    /// The typed verdict behind `worktree_authority`, so `POST /runs/:id/recover`
+    /// can ask `blocks_attach()` of the SAME verdict the inventory classified
+    /// from (orgasmic:TASK-YPK0D). Not on the wire: the label above is.
+    #[serde(skip)]
+    pub worktree_authority_verdict: Option<crate::run_catalog::WorktreeAuthority>,
     pub classification: String,
     pub reason: String,
     /// Backend-owned, ordered, harness-aware recovery actions (dec_052). The
@@ -10909,6 +10914,30 @@ async fn post_run_recover(
         .find(|run| run.run_id == id && run.project_id.as_deref() == Some(project_id.as_str()))
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("recoverable run {id}")))?;
+    // orgasmic:TASK-YPK0D — the SAME refusal boot and the polled inventory apply
+    // (`WorktreeAuthority::blocks_attach`): a durably tombstoned run, or one
+    // whose tombstone ledger cannot be read, is not an attach candidate on any
+    // path, and an explicit operator recover does not override that. Both
+    // operator routes below — explicit `reattach_tmux` and the pending-plan
+    // `reattach_existing` replay — go through here. The inventory already
+    // withholds every recovery action from such a record, so before this the
+    // operator was refused anyway, but as "action not valid for run": a
+    // request-shape answer to a record fact — or, before that, "origin RunMeta
+    // worktree is required", because a non-verified verdict exposes none. Name
+    // the fact, ahead of both.
+    if let Some(authority) = prior
+        .worktree_authority_verdict
+        .as_ref()
+        .filter(|authority| authority.blocks_attach())
+    {
+        return Err(ApiError::conflict_json(json!({
+            "error": "recovery refused: recorded worktree authority blocks attach",
+            "run_id": id,
+            "worktree_authority": authority.label(),
+            "reason": authority.authority_error(),
+        })));
+    }
+
     let origin_authority = recovery_origin_authority(&state, &project_id, &prior).await?;
     #[cfg(test)]
     if let Some(hook) = take_recovery_post_origin_authority_hook(&id) {
@@ -13098,6 +13127,7 @@ async fn classify_catalog_entries(
                 project_root: entry.project_root.clone(),
                 worktree: None,
                 worktree_authority: "unrecorded".to_string(),
+                worktree_authority_verdict: None,
                 classification: "ambiguous".to_string(),
                 reason: "session JSONL could not be parsed".to_string(),
                 recovery_unobserved: None,
@@ -13230,6 +13260,7 @@ async fn classify_catalog_entries(
                 .verified_worktree()
                 .map(std::path::Path::to_path_buf),
             worktree_authority: entry.worktree_authority.label().to_string(),
+            worktree_authority_verdict: Some(entry.worktree_authority.clone()),
             classification,
             reason,
             recovery_actions,
@@ -41999,6 +42030,146 @@ pub(crate) mod tests {
             "pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree",
         )
         .await;
+    }
+
+    fn assert_blocks_attach_refusal(refused: &ApiError, authority: &str, reason: &str) {
+        assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.message);
+        let body = refused.body.as_ref().expect("typed refusal body");
+        assert_eq!(body["worktree_authority"], authority, "{body}");
+        assert!(
+            body["reason"].as_str().is_some_and(|r| r.contains(reason)),
+            "the refusal must carry the inventory's reason: {body}"
+        );
+    }
+
+    /// orgasmic:TASK-YPK0D — operator route 1, explicit `reattach_tmux`, against a
+    /// run whose recorded worktree is gone (`Tombstoned`). The non-blocking
+    /// twin is `explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds`,
+    /// whose second half reattaches the same shape once nothing blocks it.
+    #[tokio::test]
+    async fn explicit_reattach_tmux_is_refused_when_worktree_authority_blocks_attach() {
+        let test_name = "explicit_reattach_tmux_is_refused_when_worktree_authority_blocks_attach";
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, MuxMode::Tmux) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        // Recorded, never created: the pruned-worktree case.
+        let worktree = tmp.path().join("worktrees/task-gone");
+        let (identity, _mux, _session_path) = seed_live_interrupted_run(
+            MuxMode::Tmux,
+            &live_guard,
+            &project_root,
+            &worktree,
+            "TASK-GONE-WORKTREE",
+        );
+        let state = direct_stage_test_state(home).await;
+
+        let refused = post_run_recover(
+            State(state.clone()),
+            Path(identity.run_id.clone()),
+            Json(RunRecoverRequest {
+                action: Some("reattach_tmux".into()),
+                project: Some("orgasmic".into()),
+                request_id: Some("req-gone-worktree".into()),
+                force_inert: None,
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect_err("reattach_tmux must be refused for a tombstoned worktree");
+        assert_blocks_attach_refusal(&refused, "tombstoned", "run tombstoned");
+        assert!(
+            state.supervisor.snapshot().await.runs.is_empty(),
+            "{test_name}: a refused reattach must leave no live run behind"
+        );
+    }
+
+    /// orgasmic:TASK-YPK0D — operator route 2, the pending-plan `reattach_existing`
+    /// replay, against an origin whose tombstone ledger is unreadable
+    /// (`Unprovable`). Same fixture as the close-guard fence test minus the
+    /// guard; the refusal comes from the authority verdict alone.
+    #[tokio::test]
+    async fn pending_plan_reattach_existing_is_refused_when_worktree_authority_blocks_attach() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let origin_path = write_failed_recoverable_session(
+            &project_root,
+            "run-unprovable-origin",
+            "protocol_end_without_finalize",
+            false,
+        );
+        let spec = PendingRecoveryClaimSpec {
+            project_id: "orgasmic".into(),
+            origin_run_id: "run-unprovable-origin".into(),
+            request_id: "req-unprovable".into(),
+            origin_session_path: origin_path,
+            replacement_session_path: project_sessions_dir(&project_root)
+                .join("recover-unprovable.jsonl"),
+            boot_id: "boot-unprovable".into(),
+            action: "start_recovery_run".into(),
+            target: "worker".into(),
+            draft_prompt: Some("unprovable draft".into()),
+            force_inert: true,
+            task_id: "TASK-UNPROVABLE".into(),
+            kind: "worker".into(),
+            worker_id: "implementer-claude-stream-json".into(),
+            role: "implementer".into(),
+            requires_worker_finalize: true,
+            transport: "tmux".into(),
+            harness: Some("claude".into()),
+            driver_config: json!({"force_inert": true, "harness": "claude"}),
+            worktree: Some(project_root.clone()),
+            last_path: None,
+            stdout_path: None,
+            planned_native_runtime: None,
+            run_options: RecoveryRunOptions {
+                stall_timeout_secs: None,
+                max_run_duration_secs: None,
+                idle_timeout_secs: None,
+                cleanup_on_failure: false,
+            },
+        };
+        plan_pending_recovery_claim(&home, &spec).expect("plan pending claim");
+        // The ledger that would prove the origin attachable cannot be read.
+        std::fs::write(
+            project_root.join(crate::run_catalog::TOMBSTONE_REL_PATH),
+            b"{\"tombstoned\": {\"run-",
+        )
+        .unwrap();
+        let state = direct_stage_test_state(home).await;
+
+        let refused = post_run_recover(
+            State(state.clone()),
+            Path("run-unprovable-origin".to_string()),
+            Json(RunRecoverRequest {
+                action: Some("start_recovery_run".into()),
+                project: Some("orgasmic".into()),
+                request_id: Some("req-unprovable".into()),
+                force_inert: Some(true),
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect_err("a crash-replay reattach must be refused under an unreadable ledger");
+        assert_blocks_attach_refusal(&refused, "unprovable", "ledger could not be read");
+        assert!(
+            state.supervisor.snapshot().await.runs.is_empty(),
+            "a refused crash replay must leave no live replacement behind"
+        );
+        let claim = load_recovery_claim(&state.home, "orgasmic", "run-unprovable-origin")
+            .expect("claim load")
+            .expect("the pending claim is untouched by the refusal");
+        assert_eq!(claim.status, RecoveryClaimStatus::Pending);
     }
 
     /// TASK-567JG: a daemon restart mid-run must respawn the completion watcher
