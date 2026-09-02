@@ -29961,6 +29961,43 @@ pub(crate) mod tests {
         assert_eq!(canonical_runtime_provider(&worker), Some("claude"));
     }
 
+    // orgasmic:TASK-XC9N4
+    /// The CLI's `--dry-run` prints `addressing::canonical_chat_address`; the
+    /// tx records the worker `canonicalize_dispatch_worker` produced. For every
+    /// catalog pair — and the custom+opencode argv spelling — they are the same
+    /// answer, so a plan never describes a launch the daemon does not perform.
+    #[test]
+    fn dry_run_resolution_equals_the_tx_recorded_pair_for_every_supported_pair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let mut cases: Vec<(&str, &str, Vec<String>)> = orgasmic_drivers::SUPPORTED
+            .iter()
+            .map(|&(mode, harness)| (mode, harness, Vec::new()))
+            .collect();
+        cases.push(("tmux", "custom", vec!["opencode".into(), "--print-logs".into()]));
+        for (mode, harness, args) in cases {
+            let worker = resolve_addressed_stage_worker(
+                &home,
+                WorkerKind::Implementer,
+                mode,
+                harness,
+                args.clone(),
+                &DispatchGovernanceOverlay::default(),
+                None,
+            )
+            .unwrap();
+            let recorded = canonicalize_dispatch_worker(worker);
+            let planned = crate::addressing::canonical_chat_address(mode, harness, &args)
+                .unwrap_or((mode, harness));
+            assert_eq!(
+                (recorded.driver.as_str(), recorded.harness.as_str()),
+                planned,
+                "{mode}/{harness} {args:?}: dry-run and tx disagree"
+            );
+        }
+    }
+
     #[test]
     fn unknown_dispatch_runtime_is_rejected_instead_of_silently_downgrading() {
         assert!(!canonical_dispatch_runtime_requested(None).unwrap());

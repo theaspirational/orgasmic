@@ -1078,6 +1078,17 @@ fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<
     // POST succeeded — commit artifact ownership before any further I/O.
     reservation.commit();
 
+    // orgasmic:TASK-XC9N4 — the daemon answers with the pair it launched (the
+    // same one it wrote on the tx); say so when that is not the pair asked for.
+    if let Some(warning) = readdress_warning(
+        &plan.mode,
+        &plan.harness,
+        &response.driver,
+        &response.harness,
+    ) {
+        eprintln!("{warning}");
+    }
+
     // `started_tx` is the generation token `dispatch-close --started-tx` takes
     // (TASK-6AYEJ.1); print it here so the manager never has to go looking.
     if emit {
@@ -1099,6 +1110,25 @@ fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<
         );
     }
     Ok(Some(response.dispatch_tx_id))
+}
+
+// orgasmic:TASK-XC9N4
+/// The one stderr line a real dispatch prints when the daemon launched a
+/// different `(driver, harness)` than the request named. `None` when the pair
+/// ran as requested. The daemon's answer is the pair it recorded on the tx, so
+/// this and the `dispatched:` line cannot disagree.
+fn readdress_warning(
+    requested_mode: &str,
+    requested_harness: &str,
+    driver: &str,
+    harness: &str,
+) -> Option<String> {
+    (requested_mode != driver || requested_harness != harness).then(|| {
+        format!(
+            "re-addressed: requested driver={requested_mode} harness={requested_harness} \
+             -> runs as driver={driver} harness={harness}"
+        )
+    })
 }
 
 pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()> {
@@ -11055,6 +11085,19 @@ fn path_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // orgasmic:TASK-XC9N4
+    #[test]
+    fn readdress_warning_names_both_pairs_and_stays_quiet_when_they_match() {
+        assert_eq!(readdress_warning("stdio", "opencode", "stdio", "opencode"), None);
+        assert_eq!(
+            readdress_warning("tmux", "codex", "stdio", "codex-chat").as_deref(),
+            Some(
+                "re-addressed: requested driver=tmux harness=codex -> runs as driver=stdio \
+                 harness=codex-chat"
+            )
+        );
+    }
 
     fn write_evidence_session(path: &Path, envelopes: Vec<SessionEnvelope>) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
