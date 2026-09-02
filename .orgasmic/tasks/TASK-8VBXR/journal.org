@@ -31,3 +31,18 @@
 :NODE_ID: TASK-8VBXR
 :EVENT_ID: 04b82182-6f61-4d02-9ce6-0ab7fded887f
 :END:
+
+* tx-20260902-orgasmic-9c5ca035-75d9-4137-8e64-4427b9d5210d task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-9c5ca035-75d9-4137-8e64-4427b9d5210d
+:TIME:    [2026-09-02 Wed 10:27:41]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-8VBXR
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-8VBXR/node.org
+:REASON: edited task node TASK-8VBXR
+:NODE_ID: TASK-8VBXR
+:EVENT_ID: 5ba7e9ca-d73a-4bcb-a45c-715a1c0449cf
+:END:
