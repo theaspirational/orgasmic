@@ -22,4 +22,6 @@ Trace whether current `manager dispatch-close` can actually share this key path;
 - A rejected collision is request-local; a subsequent independent writer write succeeds.
 - Dispatch-close is either proven to avoid this domain collision or corrected atomically without introducing duplicate tx/lifecycle effects.
 - Focused writer/API/CLI regressions and independent review pass.
+** Evidence
+- sprint 2026-09-02 (no dispatch): fix on sprint/BX5SR2 commit 0ea11b09 (cross-API writer idempotency keeps its identity or returns a typed conflict instead of a permanent 500; writer.rs, api.rs, manager.rs). Agent gates rc=0 (cli, clippy, daemon, fmt) in a private target dir. Merged into sprint-20260902 as 4a428912 (--no-ff, clean); final full integration gate running.
 
