@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JWHXH.3.2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-JWHXH.3.2 project migrate on a non-git root: views cleanup only; refuse the v1->v2 rewrite and --to-branch up front :e01mc:chain-review:
+* IN_REVIEW TASK-JWHXH.3.2 project migrate on a non-git root: views cleanup only; refuse the v1->v2 rewrite and --to-branch up front :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-JWHXH.3.2
 :IMPLEMENTS: dec_XH2XY
@@ -15,3 +15,5 @@ Fix round for the JWHXH.3.1 review (opus-5, tx-21182657; merged e290d7fb). MEDIU
 ** Acceptance
 - [ ] Non-git v1 fixture: migrate deletes views, refuses the rewrite with the plain message, leaves the v1 files untouched; non-git --to-branch refused before any git call (tests).
 - [ ] Git fixtures unchanged. cargo test -p orgasmic-cli --bin orgasmic -- migrate doctor; clippy -D; fmt.
+** Evidence
+Worker commit 8c460413 (opencode zai-coding-plan/glm-5.3-flash variant max) merged to main as 82ed5a9d (--no-ff, on top of 2be9f0a0). Manager gates on merged main 2026-09-02: cargo test -p orgasmic-cli --bin orgasmic -- migrate doctor = 33 passed 0 failed (/private/tmp/claude-501/-Users-aspirational-Documents-code-tools-orgasmic/25219e20-4403-4221-9eb2-cd596e21be27/scratchpad/gates-JWHXH.3.2-cli.log); clippy -p orgasmic-cli --all-targets -D warnings rc=0; fmt rc=0. Worker gates matched. Manager pre-check: single work-tree probe, non-git branch = views cleanup then plain bail when the plan has old_files or --to-branch, refuse_dirty_tree early return deleted, summary shared via print_summary.

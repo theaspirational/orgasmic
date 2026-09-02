@@ -6680,3 +6680,73 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.3.2/dispatches/tx-20260902-orgasmic-c3861bb8-3f98-4726-b1ca-ff77f3c75156/report.md
 :EVENT_ID:     42f483fc-7504-44d0-a3cf-9144f9fc28f0
 :END:
+
+* TX 2026-09-02 Wed 07:49:06 manager.dispatch_started TASK-JWHXH.3.2
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-c7fb41cd-0a26-470d-a1ba-96d3b7aaa920
+:TIME:         [2026-09-02 Wed 07:49:06]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.3.2
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.3.2-review
+:BRANCH:       task-jwhxh.3.2-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.3.2-review/brief-TASK-JWHXH.3.2-review.md
+:STARTED_AT:   [2026-09-02 Wed 07:49:06]
+:LIVENESS:     82ed5a9dafb4befb0faee79a1d8aea269105255b
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260902-orgasmic-c3861bb8-3f98-4726-b1ca-ff77f3c75156
+:REASON_INITIAL: narrow review of merge 82ed5a9d: migrate on non-git roots = cleanup only (JWHXH.3.1 follow-up)
+:EVENT_ID:     0eb143be-d7ef-41aa-998f-a0e244307dd4
+:END:
+
+* TX 2026-09-02 Wed 07:49:06 run.created TASK-JWHXH.3.2
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-5f0913bb-30fb-496a-ba42-059147695ed2
+:TIME:         [2026-09-02 Wed 07:49:06]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.3.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-JWHXH.3.2-reviewer-20260902T074906.jsonl
+:REASON:       narrow review of merge 82ed5a9d: migrate on non-git roots = cleanup only (JWHXH.3.1 follow-up)
+:RUN_ID:       run-01M1GHFMTGCBY6MNEWM8DRSGNW
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.3.2-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.3.2-review/brief-TASK-JWHXH.3.2-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-JWHXH.3.2-review/brief-TASK-JWHXH.3.2-review-476d5218d8584f61b9fce4bc45f95aff-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-JWHXH.3.2-review/brief-TASK-JWHXH.3.2-review-476d5218d8584f61b9fce4bc45f95aff-stdout.log
+:DISPATCH_ATTEMPT: 476d5218d8584f61b9fce4bc45f95aff
+:PID:          25639
+:DISPATCH_TX:  tx-20260902-orgasmic-c7fb41cd-0a26-470d-a1ba-96d3b7aaa920
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     c1ad04be-b9f1-4d0f-8725-65eab887e9aa
+:END:
+
+* TX 2026-09-02 Wed 07:49:21 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-1bdf26ba-9098-4c96-a582-8c62d898d9f7
+:TIME:         [2026-09-02 Wed 07:49:21]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     1a638644-ce9b-4c82-a017-c49bb621a483
+:END:
