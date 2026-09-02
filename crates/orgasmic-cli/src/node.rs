@@ -49,6 +49,12 @@ pub enum NodeCmd {
         #[command(subcommand)]
         cmd: NodePropCmd,
     },
+    // orgasmic:TASK-P0Q5C
+    /// Rewrite a node's heading title through the daemon org-node editor.
+    Title {
+        #[command(subcommand)]
+        cmd: NodeTitleCmd,
+    },
     /// Submit a complete regenerated node.org replacement.
     Submit {
         /// Existing node id.
@@ -289,6 +295,45 @@ pub enum NodePropCmd {
     },
 }
 
+// orgasmic:TASK-P0Q5C
+#[derive(Subcommand, Debug)]
+pub enum NodeTitleCmd {
+    /// Rewrite the heading's title prose for a decision, glossary, handoff
+    /// or task node. The lifecycle keyword and the org tags on the same line
+    /// are preserved; a title Org cannot store verbatim is refused with the
+    /// reason (same guard as `task update --title`). Goal titles are refused:
+    /// they have no daemon write path yet (TASK-V460X). Project titles are
+    /// refused: the daemon rewrite would drop the `PROJECT` heading word that
+    /// project.org is located by.
+    Set {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX` /
+        /// `handoff-current`.
+        id: String,
+        /// New title prose, written verbatim after the id token.
+        #[arg(long)]
+        title: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
+        #[arg(long)]
+        project: Option<String>,
+        /// Node layer to address; omitted → inferred from the id prefix.
+        #[arg(long, value_enum)]
+        kind: Option<NodeKindArg>,
+        /// Optimistic-concurrency token from a prior read/edit; fetched when
+        /// omitted. The write is refused if the node moved underneath it.
+        #[arg(long = "base-version")]
+        base_version: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
+        #[arg(long = "request-id")]
+        request_id: Option<String>,
+        /// Print the full node document instead of the default compact
+        /// `{id, changed, tx_id}` mutation response.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Deserialize)]
 struct NodeDoc {
     body: String,
@@ -484,6 +529,58 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&response)?);
                 }
             },
+            NodeCmd::Title {
+                cmd:
+                    NodeTitleCmd::Set {
+                        id,
+                        title,
+                        project,
+                        kind,
+                        base_version,
+                        request_id,
+                        json,
+                    },
+            } => {
+                // orgasmic:TASK-P0Q5C
+                // The daemon's /org/node editor refuses goal nodes wholesale;
+                // say up front that no supported tooling can retitle one yet.
+                if matches!(kind, Some(NodeKindArg::Goal))
+                    || (kind.is_none() && id.starts_with("goal-"))
+                {
+                    anyhow::bail!(
+                        "goal titles cannot be set through `node title set`: goal nodes have no \
+                         daemon title write path yet (TASK-V460X); use `goal set` to replace the \
+                         active goal"
+                    );
+                }
+                // The daemon's set_title composes `<id> <title>` from the
+                // drawer id, so `* PROJECT <id>` becomes `* <id> <title>` —
+                // and `ProjectFile::from_org` locates project.org by the
+                // `PROJECT ` heading prefix, so every cwd project resolution
+                // would fail afterwards. Refuse until the daemon keeps the word.
+                if matches!(kind, Some(NodeKindArg::Project)) {
+                    anyhow::bail!(
+                        "project titles cannot be set through `node title set`: the daemon \
+                         rewrite would drop the `PROJECT` heading word that project.org is \
+                         located by (ProjectFile::from_org), breaking project resolution; \
+                         no daemon write path keeps it yet"
+                    );
+                }
+                let response = set_node_title(
+                    &client,
+                    NodeTitleWrite {
+                        id: &id,
+                        project,
+                        kind: kind_str(kind),
+                        title: &title,
+                        base_version,
+                        request_id,
+                        json,
+                    },
+                )
+                .await?;
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            }
             NodeCmd::Submit { id, file, project } => {
                 let project = resolve_project(project)?;
                 let content = std::fs::read_to_string(&file)
@@ -854,7 +951,7 @@ mod node_edit_op_parity {
             // node prop set / unset
             "set_property",
             "remove_property",
-            // task update --title / --tag
+            // node title set / task update --title / --tag
             "set_title",
             "set_tags",
         ])
