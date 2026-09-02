@@ -1,0 +1,20 @@
+{
+  "event_count": 437,
+  "tool_call_count": 136,
+  "unparsed_events": 0,
+  "bounded_events": 1,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-CS2TM-implementer-20260902T150726.jsonl",
+    "size_bytes": 666229
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/02/rollout-2026-09-02T18-07-27-01a062a9-261a-75a2-a8ea-eb1d341091d1.jsonl",
+    "session_id": "01a062a9-261a-75a2-a8ea-eb1d341091d1",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
