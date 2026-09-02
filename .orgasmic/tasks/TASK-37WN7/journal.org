@@ -1,2 +1,49 @@
 #+title: orgasmic journal TASK-37WN7
 #+orgasmic_version: 2
+
+* tx-20260902-orgasmic-d6852066-470b-47e8-8b32-e20d7885f1d0 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-d6852066-470b-47e8-8b32-e20d7885f1d0
+:TIME:    [2026-09-02 Wed 09:51:35]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-37WN7
+:TARGET: .orgasmic/tasks/TASK-37WN7/node.org
+:REASON: manager sprint 2026-09-02: verified fixed on main since ab5cb079; SIGINT twin closed on sprint-20260902
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 918f8ccf-149d-4058-b7c5-4d20ffd36ea1
+:END:
+
+* tx-20260902-orgasmic-f6b0989a-284b-4a16-9660-36fe8fd30df1 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-f6b0989a-284b-4a16-9660-36fe8fd30df1
+:TIME:    [2026-09-02 Wed 09:51:36]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-37WN7
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-37WN7/node.org
+:REASON: edited task node TASK-37WN7
+:NODE_ID: TASK-37WN7
+:EVENT_ID: 23ba4beb-9fe2-4f55-96d5-7f28117dd8ac
+:END:
+
+* tx-20260902-orgasmic-8961e7fc-8f41-4266-8f4c-f8125493285c task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-8961e7fc-8f41-4266-8f4c-f8125493285c
+:TIME:    [2026-09-02 Wed 09:51:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-37WN7
+:TARGET: .orgasmic/tasks/TASK-37WN7/node.org
+:REASON: evidence recorded
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 04ae5e1e-4a1e-4f4f-98ac-168c3ba6d93c
+:END:

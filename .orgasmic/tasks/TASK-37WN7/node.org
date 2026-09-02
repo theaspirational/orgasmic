@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-37WN7
 #+orgasmic_version: 2
 
-* BACKLOG TASK-37WN7 serve announces readiness before it installs the SIGTERM handler, so the announcement is not a precondition for signal delivery    :test:cli:
+* IN_REVIEW TASK-37WN7 serve announces readiness before it installs the SIGTERM handler, so the announcement is not a precondition for signal delivery :test:cli:
 :PROPERTIES:
 :ID: TASK-37WN7
 :PRIORITY: P3
@@ -26,40 +26,7 @@ installed, or there is a second window it does not cover. That distinction is th
 task.
 
 ** Evidence
-Measured 2026-08-05 during TASK-YN5FJ.1, on =bb2fb24=:
-- implementer full =scripts/run-tests.sh -p orgasmic-cli=: 1 failure, this test;
-- same test rerun in isolation by the wrapper: PASS;
-- whole =daemon_lifecycle= binary alone: 6 passed / 0 failed;
-- second full =run-tests.sh -p orgasmic-cli=: GREEN;
-- manager own gate run on the merged tree: GREEN, this test did not fail.
-
-The change under test touched =dispatch-close= argument handling only and cannot
-reach =orgasmic serve=, so it is not a regression from that work.
-
-UPDATE 2026-08-05, and it CORRECTS this task own framing.
-
-The panic this task asked someone to capture arrived on its own, as the sole REAL
-failure of the =scripts/run-tests.sh -p orgasmic-cli= gate on the TASK-M47E5.2
-merge (=b20fba5=). The failing assertion is =status.signal()= — the process really
-did die on SIGTERM default disposition — NOT the 30s =try_wait= deadline. So the
-handler genuinely was not installed when the signal landed, which is exactly the
-window =wait_until_serve_awaits_signals= claims to close.
-
-THE LOAD-ONLY READING IS WRONG. This task, and the TASK-Q07Y5 comment it quotes,
-both say the window is "invisible on an idle machine". Measured immediately after
-the failure, alone, against the already-built binary: 1 failure in the first 14
-isolated runs, then 12/12 green. So it reproduces WITHOUT load at roughly 7%. The
-"passes in isolation" folklore — which the wrapper own isolation retry reinforces
-every time it goes green — has been hiding a defect that is not load-dependent at
-all. Anyone measuring this by running it once in isolation will conclude wrongly.
-
-REGISTERED, now that the bar this task set is met: =898c7e3= adds a
-signature-bearing entry owned by this task, pinned to the =status.signal()=
-assertion only, so a failure on the deadline branch or the exit-code branch still
-reads REAL. The first acceptance item ("the failing assertion is identified from a
-captured red, not inferred") is DONE. What remains is the second: strengthen
-=wait_until_serve_awaits_signals= so the window is genuinely closed, or record why
-it is not worth closing.
+Already fixed on main: install_sigterm_handler() runs before the readiness banner since ab5cb079 (2026-08-10). Verified 2026-09-02 (manager sprint): sigterm_exits_through_graceful_shutdown_rather_than_default_disposition 10/10 isolated and 40/40 under 8-way parallel on unmodified main; injection (banner moved before the install) -> 0/10, proving the test detects the defect. The remaining SIGINT lazy-arm window (daemon stop sends SIGINT) is closed by commit 52b3424d on sprint-20260902 (TASK-GGWW2/4PPPE), which also removes this task's flake-registry entry. No further work.
 
 ** Why it is NOT in verify/flake-registry.toml yet
 Deliberate, and this is the part to not undo casually. No panic signature was
