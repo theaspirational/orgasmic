@@ -1,2 +1,33 @@
 #+title: orgasmic journal TASK-25HSE
 #+orgasmic_version: 2
+
+* tx-20260902-orgasmic-70509a4c-6d51-4dfd-8eb7-c714c7ab2363 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-70509a4c-6d51-4dfd-8eb7-c714c7ab2363
+:TIME:    [2026-09-02 Wed 10:35:22]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-25HSE
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-25HSE/node.org
+:REASON: edited task node TASK-25HSE
+:NODE_ID: TASK-25HSE
+:EVENT_ID: 7bb33acf-8043-4de0-b22e-e832cdad1077
+:END:
+
+* tx-20260902-orgasmic-225335ec-5f6c-4729-bfc2-d8709f0db9f0 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-225335ec-5f6c-4729-bfc2-d8709f0db9f0
+:TIME:    [2026-09-02 Wed 10:35:30]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-25HSE
+:TARGET: .orgasmic/tasks/TASK-25HSE/node.org
+:REASON: sprint triage: verifying the recorded fix in main
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: c3db41df-1d0b-427e-b806-ff27eaa72470
+:END:

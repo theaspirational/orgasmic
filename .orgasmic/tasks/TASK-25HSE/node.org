@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-25HSE
 #+orgasmic_version: 2
 
-* TODO TASK-25HSE TASK-35TK4 fix: preserve machine identity and Git config truth :fix:daemon:
+* IN_PROGRESS TASK-25HSE TASK-35TK4 fix: preserve machine identity and Git config truth :fix:daemon:
 :PROPERTIES:
 :ID: TASK-25HSE
 :READ_SCOPE: .orgasmic/gotchas.org crates/orgasmic-daemon crates/orgasmic-cli
@@ -19,4 +19,6 @@ Acceptance:
 - Re-run focused boot/index tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings. Baseline watcher refresh tests currently fail identically on b18808c and must be reported distinctly, not attributed to this fix.
 ** Notes
 Landed in bd3d7bd as part of the reviewed TASK-35TK4 slice. Independent Claude Opus 4.8/high review returned SHIP; focused daemon and CLI boot tests passed. Baseline watcher-refresh failures were reproduced on b18808c and were not attributed to this fix.
+** Evidence
+- 2026-09-02 sprint triage: landed in bd3d7bd (merge: harden daemon boot ownership), verified as an ancestor of main 7c85f177; the record's own Notes already say it shipped with an independent SHIP review. Closed without new code.
 

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-RRVX0
 #+orgasmic_version: 2
 
-* TODO TASK-RRVX0 TASK-35TK4 fix: eliminate CLI lock-probe acquisition race :fix:daemon:
+* IN_PROGRESS TASK-RRVX0 TASK-35TK4 fix: eliminate CLI lock-probe acquisition race :fix:daemon:
 :PROPERTIES:
 :ID: TASK-RRVX0
 :PRIORITY: high
@@ -21,4 +21,6 @@ Claude Opus review of b18808c..bd3d7bd returned SHIP but identified one medium n
 - Run focused lock/autostart/double-serve tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings; classify known baseline watcher/bootstrap flakes separately.
 ** Notes
 The two originally assigned Codex gpt-5.6-terra/high attempts were interrupted by shared daemon restarts and produced no edits. A concurrently dispatched equivalent fix completed under TASK-870YX: commit 4c0a151, merged to main as e4b6b7b. Manager independently reran the focused daemon-lock, CLI boot-owner, and double-serve regressions; all passed. This duplicate record is cancelled as superseded, not left as an unfixed defect.
+** Evidence
+- 2026-09-02 sprint triage: superseded by TASK-870YX; fix commit 4c0a151 (tolerate transient daemon lock probes) merged to main as e4b6b7b, both verified as ancestors of main 7c85f177. No open defect; closed without new code.
 
