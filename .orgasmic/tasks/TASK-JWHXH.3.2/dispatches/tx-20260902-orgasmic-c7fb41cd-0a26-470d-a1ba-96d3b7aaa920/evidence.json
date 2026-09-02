@@ -1,0 +1,23 @@
+{
+  "event_count": 346,
+  "tool_call_count": 32,
+  "unparsed_events": 1,
+  "bounded_events": 2,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-JWHXH.3.2-reviewer-20260902T074906.jsonl",
+    "size_bytes": 509897
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll review TASK-JWHXH.3.2. Let me start by reading the task record and the diff.Compiling. While that finishes — git-path parity is confirmed byte-for-byte against the pre-diff version."
+    }
+  ],
+  "narrative_truncated": false
+}
