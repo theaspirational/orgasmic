@@ -698,17 +698,30 @@ SPRINT 13:15: sprint-20260902 = main + 20 --no-ff merges (LOGGING, 3HR8R, HARDEN
 - Final review tally: 3 code reviewers + manager browser smoke, all APPROVE-WITH-FOLLOW-UPS, zero HIGH. 2 findings fixed in place; 6 filed (TASK-EVPPH, TASK-S77NG, TASK-N9FTY, TASK-XKK2P, TASK-1V9Z3, TASK-RPRD0); the rest recorded as Evidence on their tasks.
 - 16:20 pushed origin/main b1c6ca5f..512fcb08 (the two review fixes: doc denial 0188eeb4, typed-409 message 512fcb08). LIVENESS 512fcb08. Installed runtime is now BEHIND main by those two commits (running 0.0.24-dev.20260902b at b1c6ca5f, pid 64646) - only a doc line and a CLI error string, so no reinstall needed unless the operator wants the better 409 message locally.
 - 16:30 CLOSED 37 of the 41 reviewed sprint tasks (done). Four kept OPEN on purpose, each for a named remaining item, moved back to in_progress: TASK-X0PV1 (still owns the two orgasmic-cli tests/dispatch.rs flake entries - closing it would make the registry guard refuse and turn run-tests.sh --check red for the wrong reason; verified still "registry: OK, every owner open"), TASK-40ZMJ (quota-lockout half needs a real provider quota signal), TASK-CS2TM (item 4, dispatch-status --json), TASK-DTCBP (item 2, :VERIFY_ARTIFACT: drawer property). Board: 694 done, 94 backlog, 10 todo, 8 in_progress, 19 cancelled, 0 in_review.
+- 18:10 operator decision: the four multi-model extraction parents (TASK-02JJW, 2XT9J, NMV4P, V6JW4) all asked the IDENTICAL question - duplicates from earlier experiments. Cancelled all four plus their 8 billed child dispatches rather than spending on paid outside models.
+- 18:12 DISPATCHED the four remaining code tasks as real orgasmic dispatches, operator-chosen model: --mode stdio --harness codex --model gpt-5.6-sol --effort high --kind implementer. Re-addressed by the daemon to driver=stdio harness=codex-chat (canonical chat runtime) - the XC9N4 readdress warning fired correctly. All four [run-live pid-alive], managed worktrees under ~/.orgasmic/worktrees/orgasmic/.
+  - TASK-CS2TM item 4 (dispatch-status --json)  started_tx tx-20260902-orgasmic-eac18907-5eb7-48d8-8973-1fbe0524763c
+  - TASK-DTCBP item 2 (:VERIFY_ARTIFACT: drawer property) started_tx tx-20260902-orgasmic-4bded295-fde8-4469-a40a-1178e910a4fc
+  - TASK-X0PV1 (measure/retire the last 2 flake entries) started_tx tx-20260902-orgasmic-8003ebd3-f1d8-4456-824c-3b1c5feedb95
+  - TASK-40ZMJ (quota lockout) started_tx tx-20260902-orgasmic-5d2b619d-1de7-41cd-b40b-0322d048e9c3
+- TASK-40ZMJ was UNBLOCKED by this sprint: its Evidence said it needed "letter item 1 (TASK-XQCNA)" first, and XQCNA shipped today (merge e796cb72) with the classified ExitReason the quota work was waiting for. The brief says to build on it.
+- Briefs are in the session scratchpad under briefs/ and were copied by the daemon into each dispatch tmp dir.
 
 ** Next likely actions
 1. On operator yes: git push origin main (from the repo root, branch main at 62f986e0); then the publish flow per memory orgasmic-release-channels with scripts/release-runtime-fast.sh --notes-file scratchpad/release-note-e01mc-step2.md (copy the note into the repo or a stable path first - scratchpad is session-local); upgrade EVERY machine together (old-runtime machines stall on the views/ deletion until upgraded). 2. Record KA934.2 / JWHXH.2 answers via orgasmic decision create + file implementing tasks with IMPLEMENTS. 3. Optional housekeeping: the two one-line LOWs above as one trivial .1.5 round (--no-review-required --fix-round-final); torn-close reconcile replay noise (every dispatch/dispatch-close prints reconciled TASK-8DWJP ... tx=...6914 - stale replay, harmless, candidate LOW for the EPG6H line); conflict-ref retention (8DWJP.1.3 LOW d). 4. Goal goal-20260826-finalise-the-e01mc-twcp9: step 2 done; read the goal body for step 3 before dispatching anything new.
 
 ** In flight
-- Nothing in flight. main = origin/main = 512fcb08. Installed runtime = b1c6ca5f (0.0.24-dev.20260902b, pid 64646), two doc/message commits behind; reinstall only if the operator wants the improved typed-409 CLI message locally.
-- 41 sprint tasks sit in_review with Evidence recorded, reviewed by 3 code reviewers + a browser smoke, all APPROVE-WITH-FOLLOW-UPS, zero HIGH. They are ready for the operator to close in bulk, or to close as each follow-up is judged.
-- Follow-ups filed by the review: TASK-EVPPH (writer panic arm keeps torn handles, leaks leases), TASK-S77NG (dirty-checkout refusal names --from but never reads it; fires on --dry-run), TASK-N9FTY (gotcha add whole-file RMW, silent last-write-wins), TASK-RPRD0 (effort-delivery truth is tmux-only), TASK-1V9Z3 (negative-claim guard blind to "excepted"), TASK-XKK2P (3 CLI robustness lows).
-- Older open follow-ups still standing: X0PV1 (2 cli dispatch.rs flake entries need a full-load measurement), 40ZMJ (quota lockout), DTCBP item 2 (:VERIFY_ARTIFACT: drawer property; item 3 decided - no default gate), CS2TM item 4 (dispatch-status --json), D6N77.1 (large).
-- Verify artifacts: 39 of 109 stale, and 9 of those have NO injection.patch at all (broken, not stale) - recorded on TASK-8Q92K. run-tests.sh --check exits 2 for this by design; no live CI keys on it.
-- NOT published to the stable channel: other machines still run the old runtime. Operator's scripts/install.sh edit still uncommitted.
+- FOUR DISPATCHES LIVE (started 2026-09-02 ~15:07 daemon clock / 18:12 local), all codex-chat stdio, gpt-5.6-sol, effort high, from main 512fcb08:
+  TASK-CS2TM  tx-20260902-orgasmic-eac18907-5eb7-48d8-8973-1fbe0524763c
+  TASK-DTCBP  tx-20260902-orgasmic-4bded295-fde8-4469-a40a-1178e910a4fc
+  TASK-X0PV1  tx-20260902-orgasmic-8003ebd3-f1d8-4456-824c-3b1c5feedb95
+  TASK-40ZMJ  tx-20260902-orgasmic-5d2b619d-1de7-41cd-b40b-0322d048e9c3
+  Watch one: orgasmic manager dispatch-wait --started-tx <tx> --timeout 1h
+  On completion: read the worker report, gate in a PRIVATE target dir passed as a FLAG, then dispatch-close with the merge sha. X0PV1 may legitimately stay open (its brief says to say so).
+- main = origin/main = 512fcb08. Installed runtime = b1c6ca5f + the two review fixes are NOT in it (doc line + CLI 409 message only).
+- Follow-ups filed by the review round and still open: TASK-EVPPH, TASK-S77NG, TASK-N9FTY, TASK-RPRD0, TASK-1V9Z3, TASK-XKK2P.
+- 39 of 109 verify artifacts stale, 9 of them MISSING injection.patch (broken, not stale) - recorded on TASK-8Q92K.
+- NOT published to the stable channel. Operator's scripts/install.sh edit still uncommitted (every dispatch warns about it).
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
