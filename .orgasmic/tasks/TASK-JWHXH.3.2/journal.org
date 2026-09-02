@@ -76,3 +76,29 @@
 :TO_STATE: in_review
 :EVENT_ID: b2830e1e-3615-4b08-ba4f-f7cf2e107854
 :END:
+
+* tx-20260902-orgasmic-7072 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7072
+:TIME:    [2026-09-02 Wed 07:51:09]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.2
+:REASON: LOW crates/orgasmic-cli/src/project_migrate.rs:169-176 — on a non-git v1 root the real run deletes .orgasmic/views and then bail!s, so print_summary never runs and the error text never mentions the deletion the command just performed
+:EVENT_ID: d7143869-2d97-495d-ad54-fdfe04b3f7c8
+:END:
+
+* tx-20260902-orgasmic-7073 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7073
+:TIME:    [2026-09-02 Wed 07:51:12]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.2
+:REASON: LOW crates/orgasmic-cli/src/project_migrate.rs:170 — the bail message says 'init git or back up .orgasmic first', but a bare 'git init' then makes refuse_dirty_tree fail with 'refusing to migrate a dirty git tree' (git status --untracked-files=all lists every file); the advice needs 'git init && git add -A && git commit'
+:EVENT_ID: 48881cf1-3dbf-4f08-9c78-50e96e5f6513
+:END:
