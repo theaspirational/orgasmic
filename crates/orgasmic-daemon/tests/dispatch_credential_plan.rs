@@ -201,6 +201,27 @@ fn warm_up_stub(stub: &Path, log: &Path, warmups: &Path) {
     );
 }
 
+/// Project tx, from the legacy `.orgasmic/tx/` and the per-machine
+/// `.orgasmic/machines/<machine-id>/tx/` the daemon writes since TASK-MSYN4.
+fn read_project_tx(project_root: &Path) -> String {
+    let dotorg = project_root.join(".orgasmic");
+    let mut tx_dirs = vec![dotorg.join("tx")];
+    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
+        tx_dirs.extend(machines.flatten().map(|machine| machine.path().join("tx")));
+    }
+    let mut raw = String::new();
+    for tx_dir in tx_dirs {
+        if let Ok(entries) = std::fs::read_dir(&tx_dir) {
+            for entry in entries.flatten() {
+                if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
+                    raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                }
+            }
+        }
+    }
+    raw
+}
+
 fn session_lines(project_root: &Path) -> Vec<serde_json::Value> {
     let sessions_dir = project_root.join(".orgasmic/tmp/sessions");
     let mut out = Vec::new();
@@ -327,6 +348,27 @@ async fn the_daemon_pins_the_admitted_credential_plan_into_the_launch() {
     assert_eq!(
         run_meta["event"]["credential_mode"], "native_login",
         "RunMeta must record the admitted mode: {run_meta}"
+    );
+
+    // 2b. The verdict itself, on both evidence surfaces (TASK-AP298): a
+    //     checked admission says `ok` where an unchecked one says why not.
+    assert_eq!(
+        run_meta["event"]["preflight"], "ok",
+        "RunMeta must record the preflight verdict: {run_meta}"
+    );
+    let tx = read_project_tx(&project_root);
+    let started = tx
+        .split("\n* ")
+        .find(|entry| entry.contains("manager.dispatch_started"))
+        .expect("a manager.dispatch_started tx");
+    let verdict = started
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix(":PREFLIGHT:"))
+        .map(str::trim);
+    assert_eq!(
+        verdict,
+        Some("ok"),
+        "manager.dispatch_started must carry the preflight verdict: {started}"
     );
 
     // 3. The count, named. One dispatch asks the harness about its credential

@@ -3995,6 +3995,7 @@ mod tests {
             })
             .unwrap(),
             serde_json::to_value(Lifecycle::RunMeta {
+                preflight: None,
                 transport: claim.transport.clone().unwrap(),
                 harness: claim.harness.clone(),
                 project_id: Some(claim.project_id.clone()),
@@ -4154,6 +4155,7 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),
@@ -4239,6 +4241,7 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
                     project_id: Some(spec.project_id.clone()),
@@ -4701,6 +4704,7 @@ mod tests {
             .append(
                 orgasmic_core::session::SessionEventKind::Lifecycle,
                 serde_json::to_value(orgasmic_core::session::Lifecycle::RunMeta {
+                    preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),
@@ -4933,6 +4937,7 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),
@@ -4963,6 +4968,7 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),

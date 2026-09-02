@@ -70,16 +70,41 @@ pub(crate) struct StatusOutput {
     pub combined: String,
 }
 
+/// Why a status command could not be asked.
+///
+/// Distinguished so the run's own record can say which it was (TASK-AP298):
+/// a missing binary and a wedged or overloaded machine call for different
+/// remedies, and the daemon log was the only place that told them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unasked {
+    /// No answer within [`STATUS_ATTEMPTS`] tries of [`STATUS_TIMEOUT`].
+    Timeout,
+    /// The binary could not be spawned at all.
+    SpawnFailed,
+}
+
+impl Unasked {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::SpawnFailed => "spawn_failed",
+        }
+    }
+}
+
 /// Run a harness's own status command.
 ///
-/// `None` means the question could not be put at all — the binary is missing,
+/// `Err` means the question could not be put at all — the binary is missing,
 /// the spawn failed, or it did not answer within [`STATUS_ATTEMPTS`] tries —
 /// which every caller must treat as inconclusive rather than as a "no".
 ///
-/// Every path to `None` is logged. A silent one is what made TASK-GEZHQ's
+/// Every path to `Err` is logged. A silent one is what made TASK-GEZHQ's
 /// admitted dispatch unreadable from its own artifacts: the run record said the
 /// preflight had no opinion, and nothing said why.
-pub(crate) async fn read_status_output(command: &str, args: &[&str]) -> Option<StatusOutput> {
+pub(crate) async fn read_status_output(
+    command: &str,
+    args: &[&str],
+) -> Result<StatusOutput, Unasked> {
     for attempt in 1..=STATUS_ATTEMPTS {
         let mut cmd = tokio::process::Command::new(command);
         cmd.args(args)
@@ -92,7 +117,7 @@ pub(crate) async fn read_status_output(command: &str, args: &[&str]) -> Option<S
             Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
                 let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-                return Some(StatusOutput {
+                return Ok(StatusOutput {
                     combined: format!("{stdout}{stderr}"),
                     stdout,
                 });
@@ -105,7 +130,7 @@ pub(crate) async fn read_status_output(command: &str, args: &[&str]) -> Option<S
                     "harness status command could not be spawned; this dispatch's \
                      credentials go unchecked"
                 );
-                return None;
+                return Err(Unasked::SpawnFailed);
             }
             Err(_) => tracing::warn!(
                 command,
@@ -123,7 +148,7 @@ pub(crate) async fn read_status_output(command: &str, args: &[&str]) -> Option<S
          unchecked and a worker that cannot authenticate will fail after it owns \
          a lease, a session and a worktree"
     );
-    None
+    Err(Unasked::Timeout)
 }
 
 /// The exact phrases a prose-answering harness uses for each login state.
@@ -299,12 +324,45 @@ exit 1
         let started = std::time::Instant::now();
         let status = read_status_output(missing.to_str().unwrap(), &["status"]).await;
 
-        assert!(status.is_none(), "a missing binary cannot answer");
+        assert_eq!(
+            status.err(),
+            Some(Unasked::SpawnFailed),
+            "a missing binary cannot answer, and must say that is why"
+        );
         assert!(
             started.elapsed() < STATUS_TIMEOUT,
             "a spawn failure must not be retried through the timeout: {:?}",
             started.elapsed()
         );
+    }
+
+    /// The one word a run's own record carries (TASK-AP298). An inconclusive
+    /// probe says *why* when it knows, so a post-mortem reads "timeout" or
+    /// "spawn_failed" from RunMeta instead of from daemon-log timestamps.
+    #[test]
+    fn the_preflight_label_names_each_outcome() {
+        use crate::r#trait::PreflightOutcome;
+        assert_eq!(PreflightOutcome::verdict(Preflight::Ready).label(), "ok");
+        assert_eq!(
+            PreflightOutcome::unasked(Unasked::Timeout).label(),
+            "unchecked:timeout"
+        );
+        assert_eq!(
+            PreflightOutcome::unasked(Unasked::SpawnFailed).label(),
+            "unchecked:spawn_failed"
+        );
+        assert_eq!(
+            PreflightOutcome::from(Preflight::Unsupported).label(),
+            "unchecked:inconclusive"
+        );
+        assert_eq!(
+            PreflightOutcome::verdict(Preflight::fatal("run login")).label(),
+            "refused:run login"
+        );
+        // Inconclusive stays admissible (dec_7P79C): the label only describes.
+        assert!(PreflightOutcome::unasked(Unasked::Timeout)
+            .rejects_dispatch()
+            .is_none());
     }
 
     #[test]

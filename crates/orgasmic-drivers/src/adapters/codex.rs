@@ -23,8 +23,8 @@ use orgasmic_core::{
 use crate::preflight::{classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
     DriverConfig, DriverContext, DriverError, HarnessControlOutcome, HarnessEventAdapter,
-    HarnessRequest, Preflight, PreflightOutcome, StdioSpawn, TransitionRequest, UserInputRequest,
-    WireMessage, WsProtocol,
+    HarnessRequest, PreflightOutcome, StdioSpawn, TransitionRequest, UserInputRequest, WireMessage,
+    WsProtocol,
 };
 
 /// How `codex login status` reports each login state.
@@ -161,19 +161,19 @@ impl HarnessEventAdapter for CodexAdapter {
             .stdio_spawn()
             .map(|spawn| spawn.command)
             .unwrap_or_else(|| "codex".to_string());
+        // Nothing to pin: codex resolves no per-run credential choice, so its
+        // launch derives nothing this probe could disagree with.
         match read_status_output(&command, &["login", "status"]).await {
-            Some(status) => classify_prose_login(
+            Ok(status) => classify_prose_login(
                 // codex answers on stderr, not stdout.
                 &status.combined,
                 &CODEX_LOGIN_PHRASES,
                 "codex is not logged in on this machine, so this worker cannot start. \
                  Run `codex login` and try the dispatch again.",
-            ),
-            None => Preflight::Unsupported,
+            )
+            .into(),
+            Err(why) => PreflightOutcome::unasked(why),
         }
-        // Nothing to pin: codex resolves no per-run credential choice, so its
-        // launch derives nothing this probe could disagree with.
-        .into()
     }
 
     fn stdio_spawn(&self) -> Option<StdioSpawn> {

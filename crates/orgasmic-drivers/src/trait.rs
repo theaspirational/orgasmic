@@ -775,6 +775,9 @@ pub struct PreflightOutcome {
     /// Driver-config fragment pinning what the probe resolved, or `None` when
     /// the probe resolved nothing a launch would otherwise re-derive.
     pub plan: Option<Value>,
+    /// Why an [`Preflight::Unsupported`] verdict reached no answer, when the
+    /// probe knows (`timeout`, `spawn_failed`). Read only by [`Self::label`].
+    pub unchecked: Option<&'static str>,
 }
 
 impl PreflightOutcome {
@@ -784,6 +787,32 @@ impl PreflightOutcome {
         Self {
             verdict,
             plan: None,
+            unchecked: None,
+        }
+    }
+
+    /// An inconclusive verdict whose cause the probe knows.
+    pub(crate) fn unasked(why: crate::preflight::Unasked) -> Self {
+        Self {
+            verdict: Preflight::Unsupported,
+            plan: None,
+            unchecked: Some(why.as_str()),
+        }
+    }
+
+    /// The verdict as one word for the run's own record (TASK-AP298): `ok`,
+    /// `unchecked:<timeout|spawn_failed|inconclusive>`, or `refused:<reason>`.
+    ///
+    /// This is what lets a run that died at startup say, from its own RunMeta
+    /// and dispatch tx, whether it was admitted on a credential check or on
+    /// the absence of one — without correlating daemon-log timestamps.
+    pub fn label(&self) -> String {
+        match &self.verdict {
+            Preflight::Ready => "ok".to_string(),
+            Preflight::Fatal { reason } => format!("refused:{reason}"),
+            Preflight::Unsupported => {
+                format!("unchecked:{}", self.unchecked.unwrap_or("inconclusive"))
+            }
         }
     }
 
