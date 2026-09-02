@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-S77NG
+#+orgasmic_version: 2
+
+* tx-20260902-orgasmic-4c134288-c06c-432e-8001-ed1ff74ab053 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-4c134288-c06c-432e-8001-ed1ff74ab053
+:TIME:    [2026-09-02 Wed 13:57:43]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-S77NG
+:TARGET: .orgasmic/tasks/TASK-S77NG/node.org
+:REASON: created task TASK-S77NG
+:EVENT_ID: ee52484c-c81f-413a-9948-030a9a5dc36d
+:END:

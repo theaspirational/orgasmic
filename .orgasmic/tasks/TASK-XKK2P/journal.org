@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-XKK2P
+#+orgasmic_version: 2
+
+* tx-20260902-orgasmic-fb7f08da-3bc2-4e63-9d09-6586e1e9025d task.created
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-fb7f08da-3bc2-4e63-9d09-6586e1e9025d
+:TIME:    [2026-09-02 Wed 13:57:43]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-XKK2P
+:TARGET: .orgasmic/tasks/TASK-XKK2P/node.org
+:REASON: created task TASK-XKK2P
+:EVENT_ID: 621d1d17-136d-4487-b12f-eaa6330f1896
+:END:

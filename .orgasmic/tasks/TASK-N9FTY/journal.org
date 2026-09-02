@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-N9FTY
+#+orgasmic_version: 2
+
+* tx-20260902-orgasmic-1aa6e669-65c4-48ee-8953-becde364d0ea task.created
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-1aa6e669-65c4-48ee-8953-becde364d0ea
+:TIME:    [2026-09-02 Wed 13:57:43]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-N9FTY
+:TARGET: .orgasmic/tasks/TASK-N9FTY/node.org
+:REASON: created task TASK-N9FTY
+:EVENT_ID: 424e2988-2b3b-4254-89e6-01423ce9aedb
+:END:

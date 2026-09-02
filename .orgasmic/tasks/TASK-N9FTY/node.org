@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-N9FTY
+#+orgasmic_version: 2
+
+* BACKLOG TASK-N9FTY gotcha add is a whole-file read-modify-write with no base version, so a concurrent append is silently lost    :cli:daemon:
+:PROPERTIES:
+:ID: TASK-N9FTY
+:PRIORITY: P2
+:RELATES_TO: TASK-WPC6G
+:END:
+
+Found 2026-09-02 by the manager sprint review of 7c85f177..b1c6ca5f (CLI reviewer, MEDIUM, SUSPECTED).
+
+crates/orgasmic-cli/src/gotcha.rs, at the 'ponytail:' comment.
+
+'gotcha add' reads gotchas.org whole, appends, and writes it back through /org/file with NO base version. Two concurrent writers, or one writer racing a daemon-side rewrite of gotchas.org, is last-write-wins: the loser's entry vanishes and the command still exits 0.
+
+The simplification is acknowledged in a comment, but this file is the SHARED gotcha ledger that many agents are expected to append to, which is exactly the racing case. A silent loss with a success exit code is the bad shape.
+
+** Fix (smallest)
+Send a base version/etag once the /org/file endpoint grows one; until then, retry-on-changed (re-fetch, re-append, re-write) and fail loudly if the retry also loses.
+
+** Acceptance
+- A test with two interleaved appends that asserts both entries survive, or that the loser gets a non-zero exit and a named conflict.

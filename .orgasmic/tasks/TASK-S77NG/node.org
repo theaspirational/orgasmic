@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-S77NG
+#+orgasmic_version: 2
+
+* BACKLOG TASK-S77NG dirty-checkout refusal prints a remedy that does not work (--from ignored, fires on --dry-run)    :cli:manager:
+:PROPERTIES:
+:ID: TASK-S77NG
+:PRIORITY: P2
+:RELATES_TO: TASK-GCTMA
+:END:
+
+Found 2026-09-02 by the manager sprint review of 7c85f177..b1c6ca5f (CLI reviewer, MEDIUM, CONFIRMED).
+
+crates/orgasmic-cli/src/manager.rs:216-234, guard_dirty_main_checkout.
+
+The refusal message says "commit or stash them, or pass --from <ref>". The guard never looks at args.from, so an operator who follows the printed advice and passes --from is refused again. The advice is false.
+
+It also fires on --dry-run, so '--require-clean --dry-run' in a dirty tree refuses a run that would change nothing.
+
+** Fix (smallest)
+Skip the guard, or downgrade it to the warning, when args.from is set or dry_run is true. Alternatively drop "--from" from the message so the advice is at least true.
+
+** Acceptance
+- A test that a dirty tree with --from <ref> is admitted (or that the message no longer names --from).
+- A test that --require-clean --dry-run in a dirty tree does not refuse.

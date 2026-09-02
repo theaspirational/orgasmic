@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-XKK2P
+#+orgasmic_version: 2
+
+* BACKLOG TASK-XKK2P three CLI robustness edges from the sprint review: dispatch-status hard-fails on git error, verify --all vacuous green, inline model probe has no timeout    :cli:
+:PROPERTIES:
+:ID: TASK-XKK2P
+:PRIORITY: P3
+:RELATES_TO: TASK-SJA9W
+:END:
+
+Three LOW findings from the manager sprint review of 7c85f177..b1c6ca5f (CLI reviewer). Grouped because each is a few lines.
+
+** 1. dispatch-status hard-fails on a git status error (CONFIRMED)
+crates/orgasmic-cli/src/manager.rs:296 uses '?' on dirty_checkout in the status header. A transient failure (index.lock held, or a TCC denial, which THIS machine has hit before) aborts the whole inventory that used to print.
+Fix: degrade to 'main_checkout_dirty=?' on error instead of propagating.
+
+** 2. verify --all edge exits (CONFIRMED)
+crates/orgasmic-cli/src/verify.rs, artifacts_under: a repo with no verify/ directory ERRORS instead of reporting zero artifacts, and an empty verify/ prints '0/0 pass' and exits 0 - a vacuous green in CI.
+Fix: treat a missing dir as empty, and fail (or at least warn) on zero targets.
+
+** 3. dispatch --model probes the harness adapter inline, unbounded (SUSPECTED)
+crates/orgasmic-cli/src/manager.rs:108-119, unvalidated_model_warning, calls the same adapter probe that 'drivers --no-runtime-options' exists to skip because it is slow. Every dispatch naming a model pays it, and a HUNG adapter binary hangs the dispatch before any tx is written.
+Fix: a short timeout around the probe; degrade to the existing 'catalog unavailable' warning on timeout.
