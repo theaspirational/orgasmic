@@ -98,26 +98,6 @@ evidence = "Measured 2026-08-30 on b00b48bd (and previously on 9413059a): full-w
 filed = "2026-08-30"
 
 # --------------------------------------------------------------------------
-# TASK-QCG6J — the reattach-fence regression asserts WHICH refusal fired, so it
-# goes red on a safe outcome under load. Two assertions in one test body, so two
-# entries: whichever one trips, the owner is named and the other is not blamed.
-# --------------------------------------------------------------------------
-
-[[flake]]
-test = "api::tests::explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds"
-owner = "TASK-QCG6J"
-signature = "the same action is admitted once the guard is released"
-evidence = "Measured here 2026-07-28: full daemon --lib at --test-threads=48 under 8 cpu hogs, 548 passed / 1 failed, panic at crates/orgasmic-daemon/src/api.rs:19247 with 'ApiError { status: 400, message: recovery action reattach_tmux is not valid for run run-fence-b73c0c65 }'. Passed in the same suite at default parallelism."
-filed = "2026-07-28"
-
-[[flake]]
-test = "api::tests::explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds"
-owner = "TASK-QCG6J"
-signature = "the refusal must name the cleanup reservation"
-evidence = "The mode TASK-QCG6J was filed from: manager gate on TASK-AK6EM, 2026-07-28, panic at crates/orgasmic-daemon/src/api.rs:19225 — the reattach WAS refused, by an earlier validity check rather than by the cleanup fence. Same test, same owner, different assertion than the entry above."
-filed = "2026-07-28"
-
-# --------------------------------------------------------------------------
 # Deliberately NOT registered. Each of these is a failure somebody could excuse
 # from memory today; none of them may be excused by this file, and the runner
 # will report every one of them REAL until that changes.
