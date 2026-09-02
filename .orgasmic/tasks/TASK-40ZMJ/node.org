@@ -14,4 +14,6 @@ Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches
 - dispatch pre-flight refuses with `provider_quota: codex locked until …` instead of spawning a worker that dies in two seconds.
 - Empty catalog message: catalog unavailable; --model passed through unvalidated.
 Related: item 1 (reason classification) supplies the provider_quota class.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 85fde20d on sprint/PREFLIGHT, merged onto local sprint-20260902 as 0a4f348e. Built: 'orgasmic manager drivers --health' [--json] runs the same adapter preflight the dispatch path uses for every SUPPORTED harness and prints '<harness> auth=<ok|missing|unknown (<why>)> quota=unknown (no probe)' (smoke on this Mac: claude/codex/cursor-agent auth=ok, hermes/custom unknown). SKIPPED with reason: quota lockout memory + 'provider_quota: locked until' refusal + --force-preflight — no terminal-reason classification or 429/quota signal exists anywhere in the drivers (only codex's passive account.rate-limits.updated event); needs letter item 1 (TASK-XQCNA) first. Empty-catalog message already landed via XC9N4. TASK STAYS OPEN for the quota part. Gates as on AP298.
 
