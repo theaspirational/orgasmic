@@ -437,6 +437,20 @@ impl WorkerDriver for StdioDriver {
         preflight_via_adapter(self.adapter.as_ref(), ctx, config).await
     }
 
+    /// The same composition `acquire` performs, so a simulated request the
+    /// adapter upgrades to a real subprocess (binary on `$PATH`) is not
+    /// reported as simulated.
+    fn simulates(&self, ctx: &DriverContext, config: &DriverConfig) -> bool {
+        let mut compose = StdioComposeAdapter {
+            inner: self.adapter.clone_box(),
+            jsonrpc_session_init: None,
+        };
+        matches!(
+            compose.compose_request(ctx, config),
+            Ok(HarnessRequest::Simulated { .. })
+        )
+    }
+
     async fn acquire(
         &self,
         ctx: DriverContext,

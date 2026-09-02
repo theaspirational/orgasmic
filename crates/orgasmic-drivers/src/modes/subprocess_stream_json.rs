@@ -80,6 +80,14 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
         preflight_via_adapter(self.adapter.as_ref(), ctx, config).await
     }
 
+    /// Harness binary absent: the adapter answers with its stub events.
+    fn simulates(&self, ctx: &DriverContext, config: &DriverConfig) -> bool {
+        matches!(
+            self.adapter.clone_box().compose_request(ctx, config),
+            Ok(HarnessRequest::Simulated { .. })
+        )
+    }
+
     async fn acquire(
         &self,
         ctx: DriverContext,

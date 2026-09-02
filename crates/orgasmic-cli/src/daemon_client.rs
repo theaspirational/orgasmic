@@ -265,6 +265,7 @@ pub(crate) struct DispatchRequest {
     goal_id: Option<String>,
     reviewed_dispatch_txs: Vec<String>,
     governance: Option<orgasmic_daemon::governance::GovernancePatch>,
+    allow_simulated: bool,
 }
 
 pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
@@ -289,6 +290,7 @@ pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
         goal_id: plan.goal_id.clone(),
         reviewed_dispatch_txs: plan.reviewed_dispatch_txs.clone(),
         governance: plan.governance.clone(),
+        allow_simulated: plan.allow_simulated,
     }
 }
 
@@ -592,6 +594,7 @@ mod tests {
             reason: None,
             dry_run: false,
             governance: None,
+            allow_simulated: false,
         }
     }
 

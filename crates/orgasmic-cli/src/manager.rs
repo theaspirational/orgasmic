@@ -138,6 +138,11 @@ pub struct DispatchArgs {
     /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
     #[arg(long = "governance-json")]
     pub governance_json: Option<String>,
+    /// Let a driver that would run as an in-memory stub (no harness endpoint
+    /// or binary configured, e.g. `ws`/`hermes` without a hermes endpoint)
+    /// launch anyway. Without it the daemon refuses such a dispatch by name.
+    #[arg(long = "allow-simulated")]
+    pub allow_simulated: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -646,6 +651,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) reason: Option<String>,
     pub(crate) dry_run: bool,
     pub(crate) governance: Option<orgasmic_daemon::governance::GovernancePatch>,
+    pub(crate) allow_simulated: bool,
 }
 
 impl DispatchPlan {
@@ -6186,6 +6192,7 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .filter(|s| !s.is_empty()),
         dry_run: args.dry_run,
         governance,
+        allow_simulated: args.allow_simulated,
     })
 }
 
@@ -11088,7 +11095,10 @@ mod tests {
     // orgasmic:TASK-XC9N4
     #[test]
     fn readdress_warning_names_both_pairs_and_stays_quiet_when_they_match() {
-        assert_eq!(readdress_warning("stdio", "opencode", "stdio", "opencode"), None);
+        assert_eq!(
+            readdress_warning("stdio", "opencode", "stdio", "opencode"),
+            None
+        );
         assert_eq!(
             readdress_warning("tmux", "codex", "stdio", "codex-chat").as_deref(),
             Some(

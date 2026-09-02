@@ -487,6 +487,15 @@ pub trait WorkerDriver: Send + Sync + 'static {
         Ok(())
     }
 
+    // orgasmic:TASK-XC9N4
+    /// Would `acquire` with this exact configuration run the in-memory stub —
+    /// no process, no connection — instead of a harness? Composes the request
+    /// on a fresh adapter clone and launches nothing. `false` by default: a
+    /// mode that never simulates has nothing to declare.
+    fn simulates(&self, _ctx: &DriverContext, _config: &DriverConfig) -> bool {
+        false
+    }
+
     /// Ask the harness, non-interactively and within a bounded time, whether a
     /// worker launched with this exact configuration could actually start.
     ///
