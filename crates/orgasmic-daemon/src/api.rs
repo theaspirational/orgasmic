@@ -692,6 +692,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/me", get(get_me))
         .route("/projects", post(add_project).get(get_projects))
         .route("/projects/:id", get(get_project))
+        .route("/projects/:id/remove", post(remove_project))
         .route(
             "/projects/:id/tasks",
             get(get_project_tasks).post(post_task_create),
@@ -1380,6 +1381,143 @@ async fn add_project(
         .find(|entry| entry.project_id == inputs.project_id)
         .ok_or_else(|| ApiError::internal("project registered but missing from catalog"))?;
     Ok((StatusCode::CREATED, Json(project)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveProjectRequest {
+    /// Without it the endpoint only previews what would be removed.
+    #[serde(default)]
+    confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoveProjectResponse {
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    /// Whether the id was on the board when the request arrived.
+    pub registered: bool,
+    /// Whether this request removed it. `false` for a preview and for an id
+    /// that was already gone.
+    pub removed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_id: Option<String>,
+    pub note: &'static str,
+}
+
+/// `POST /projects/:id/remove` — drop a project's board registration.
+///
+/// orgasmic:TASK-3R3EZ item 3. Removes the `board.org` entry, the index
+/// projection and the filesystem watch, and records `project.removed` in the
+/// home tx ledger. It never reads or writes the repository or its `.orgasmic/`
+/// beyond the open-dispatch scan, and it refuses while live runs or open
+/// dispatches still belong to the project.
+async fn remove_project(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    Json(req): Json<RemoveProjectRequest>,
+) -> Result<Json<RemoveProjectResponse>, ApiError> {
+    let entry = state
+        .index
+        .snapshot()
+        .await
+        .board
+        .iter()
+        .find(|entry| entry.id == id)
+        .cloned();
+    let Some(entry) = entry else {
+        return Ok(Json(RemoveProjectResponse {
+            project_id: id,
+            path: None,
+            registered: false,
+            removed: false,
+            tx_id: None,
+            note: "not on the board; nothing to remove",
+        }));
+    };
+    let live: Vec<String> = state
+        .supervisor
+        .snapshot()
+        .await
+        .runs
+        .into_iter()
+        .filter(|run| run.project_id.as_deref() == Some(id.as_str()))
+        .map(|run| run.run_id)
+        .collect();
+    if !live.is_empty() {
+        return Err(ApiError::conflict(format!(
+            "project {id} still has live runs: {}",
+            live.join(", ")
+        )));
+    }
+    // A root that is gone has no dispatch ledger to consult; that is the case
+    // an operator most wants to remove, so it is not a refusal.
+    if entry.path.is_dir() {
+        let open: Vec<String> = fold_dispatches(&project_tx_entries(&entry.path)?)
+            .into_iter()
+            .filter(|dispatch| {
+                !dispatch.closed && dispatch.started.project.as_deref() == Some(id.as_str())
+            })
+            .map(|dispatch| dispatch.started.tx_id)
+            .collect();
+        if !open.is_empty() {
+            return Err(ApiError::conflict(format!(
+                "project {id} still has open dispatches: {}; close them first",
+                open.join(", ")
+            )));
+        }
+    }
+    if !req.confirm {
+        return Ok(Json(RemoveProjectResponse {
+            project_id: id,
+            path: Some(entry.path),
+            registered: true,
+            removed: false,
+            tx_id: None,
+            note: "preview; pass confirm=true to remove the board registration",
+        }));
+    }
+    orgasmic_core::projects::unregister_project(&state.home, &id).map_err(|error| {
+        tracing::warn!(project_id = %id, error = %error, "board unregister failed");
+        ApiError::internal("failed to update the board")
+    })?;
+    state.index.refresh_board().await;
+    if let Some(watcher) = &state.watcher {
+        if let Err(error) = watcher.unwatch(entry.path.clone()).await {
+            tracing::warn!(project_id = %id, error = %error, "project unwatch after removal failed");
+        }
+    }
+    state
+        .events
+        .publish(Topic::Board, EventPayload::BoardRefreshed);
+    let tx = append_tx_request(
+        &state,
+        TxAppendRequest {
+            request_id: None,
+            r#type: "project.removed".to_string(),
+            actor: None,
+            machine: None,
+            project: Some(id.clone()),
+            task: None,
+            target: Some(entry.path.display().to_string()),
+            reason: Some(
+                "board registration removed; repository and .orgasmic left intact".to_string(),
+            ),
+            extra: Vec::new(),
+            tx_path: Some(state.default_tx_path.clone()),
+        },
+    )
+    .await?;
+    tracing::info!(project_id = %id, path = %entry.path.display(), tx_id = %tx.tx_id, "project removed from the board");
+    Ok(Json(RemoveProjectResponse {
+        project_id: id,
+        path: Some(entry.path),
+        registered: true,
+        removed: true,
+        tx_id: Some(tx.tx_id),
+        note: "board registration removed; repository and .orgasmic left intact",
+    }))
 }
 
 #[derive(Debug, Serialize)]
@@ -22637,6 +22775,86 @@ pub(crate) mod tests {
 
     async fn direct_catalog_test_state(home: Home) -> ApiState {
         direct_test_state(home, false).await
+    }
+
+    /// orgasmic:TASK-3R3EZ item 3 — `project remove` drops the board entry and
+    /// nothing else: the repository and its `.orgasmic/` stay, and the home tx
+    /// ledger records the removal.
+    #[tokio::test]
+    async fn project_remove_drops_only_the_board_registration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(root.join(".orgasmic/tasks")).unwrap();
+        std::fs::write(root.join("README.md"), "keep me\n").unwrap();
+        std::fs::write(
+            root.join(".orgasmic/project.org"),
+            "#+title: gone\n#+orgasmic_version: 1\n\n* PROJECT gone\n:PROPERTIES:\n:ID: proj-gone\n:END:\n",
+        )
+        .unwrap();
+        register_project(&home, &root, "proj-gone", "main").unwrap();
+        let state = direct_catalog_test_state(home.clone()).await;
+        state.index.refresh_board().await;
+
+        let preview = remove_project(
+            State(state.clone()),
+            Path("proj-gone".to_string()),
+            Json(RemoveProjectRequest { confirm: false }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(preview.registered && !preview.removed, "{preview:?}");
+        assert_eq!(
+            orgasmic_core::projects::read_board(&home).unwrap().len(),
+            1,
+            "a preview must not touch the board"
+        );
+
+        let removed = remove_project(
+            State(state.clone()),
+            Path("proj-gone".to_string()),
+            Json(RemoveProjectRequest { confirm: true }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(removed.removed, "{removed:?}");
+        assert!(orgasmic_core::projects::read_board(&home)
+            .unwrap()
+            .is_empty());
+        assert!(!state
+            .index
+            .snapshot()
+            .await
+            .board
+            .iter()
+            .any(|entry| entry.id == "proj-gone"));
+        assert!(
+            root.join("README.md").is_file(),
+            "the repository is not ours to delete"
+        );
+        assert!(
+            root.join(".orgasmic/project.org").is_file(),
+            ".orgasmic stays intact"
+        );
+        let ledger = std::fs::read_to_string(crate::default_home_tx_path(&home)).unwrap();
+        assert!(ledger.contains("project.removed"), "{ledger}");
+        assert!(
+            ledger.contains(removed.tx_id.as_deref().unwrap()),
+            "{ledger}"
+        );
+
+        let again = remove_project(
+            State(state.clone()),
+            Path("proj-gone".to_string()),
+            Json(RemoveProjectRequest { confirm: true }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(!again.registered && !again.removed, "idempotent: {again:?}");
     }
 
     #[tokio::test]

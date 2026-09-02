@@ -306,6 +306,44 @@ pub fn register_project(
     result.and(unlock)
 }
 
+/// Drop `project_id` from the global board. Touches only `board.org`: the
+/// repository and its `.orgasmic/` are never read or written. Returns the
+/// removed entry, or `None` when the id was not registered (idempotent).
+pub fn unregister_project(home: &Home, project_id: &str) -> Result<Option<BoardEntry>> {
+    let path = board_path(home);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    fs2::FileExt::lock_exclusive(&file).with_context(|| format!("lock {}", path.display()))?;
+    let result = (|| {
+        let mut source = String::new();
+        file.read_to_string(&mut source)
+            .with_context(|| format!("read {}", path.display()))?;
+        let mut entries = parse_board_entries(&source, &path)?;
+        let Some(index) = entries.iter().position(|entry| entry.id == project_id) else {
+            return Ok(None);
+        };
+        let removed = entries.remove(index);
+        let rendered = render_board(&entries);
+        file.set_len(0)
+            .with_context(|| format!("truncate {}", path.display()))?;
+        file.seek(SeekFrom::Start(0))
+            .with_context(|| format!("seek {}", path.display()))?;
+        file.write_all(rendered.as_bytes())
+            .with_context(|| format!("write {}", path.display()))?;
+        OrgFile::parse(rendered, path.to_string_lossy())
+            .context("board.org failed to parse after write")?;
+        Ok(Some(removed))
+    })();
+    let unlock = fs2::FileExt::unlock(&file).with_context(|| format!("unlock {}", path.display()));
+    result.and_then(|removed| unlock.map(|()| removed))
+}
+
 fn register_project_locked(
     file: &mut std::fs::File,
     path: &Path,
