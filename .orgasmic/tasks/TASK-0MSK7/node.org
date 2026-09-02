@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-0MSK7
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-0MSK7 set_title on a project node drops the PROJECT heading word, so every cwd-resolved CLI command stops finding project.org :daemon:writer:
+:PROPERTIES:
+:ID: TASK-0MSK7
+:PRIORITY: P1
+:RELATES_TO: TASK-XPYRR
+:END:
+
+Found 2026-09-02 by the TASK-P0Q5C implementer (manager sprint). Reproduced in a temp-home daemon test: set_title on the project node (the op the UI already exposes) rewrote '* PROJECT node-title-set' to '* node-title-set Project after' — node_heading_line_edit composes '<drawer id> <display>' and PROJECT is not a TODO keyword, so the word is dropped. orgasmic-core schema.rs ProjectFile::from_org locates project.org via find_by_title_prefix("PROJECT "), called by read_project_id (CLI cwd project resolution), read_project_config, read_existing_project_identity (daemon) and project_migrate. One project retitle therefore breaks every CLI command that omits --project. The UI can trigger it today. Mitigation on sprint-20260902: 'node title set' REFUSES --kind project with this reason. Fix: keep the PROJECT word for the Project layer in node_heading_line_edit (and make node_display_title consistent); consider HANDOFF too ('* HANDOFF current' becomes '* handoff-current Handoff …' — cosmetic, lookup is by :ID:). Add a round-trip test for project retitle that asserts ProjectFile::from_org still resolves.

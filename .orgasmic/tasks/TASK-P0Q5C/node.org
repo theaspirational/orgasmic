@@ -28,4 +28,6 @@ all title-capable kinds rather than per-kind flags.
 - Refusal semantics identical to task update --title (same guard, same
   messages).
 - Verify artifact per TCTTD standard, `git apply`-clean.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 153d4607 on sprint/P0Q5C, merged onto local sprint-20260902 as 7af20abb. 'orgasmic node title set <ID> --title …' routes to the existing set_node_title path (edit_heading_line guard); round-trips task/decision/glossary/handoff; goal refused (TASK-V460X); project REFUSED because the daemon rewrite drops the PROJECT heading word and breaks project.org lookup (new P1 task filed from this finding, see RELATES_TO on it); architecture is a retired layer (dec_HBK6A) so the task text was stale there. task-graph.md + ledger.md updated. Agent gates: task_title_edit_cli 2 passed, cli title/node 7 passed, daemon set_title 5 passed, clippy rc=0, fmt rc=0; cli_parity's single failure = pre-existing recall-resume.md slip (fixed by TKR0H on the sprint branch). Operator review/test after the sprint.
 

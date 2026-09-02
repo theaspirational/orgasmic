@@ -16,3 +16,18 @@
 :TO_STATE: in_progress
 :EVENT_ID: 58a9f44c-613d-438d-8729-2c1f2e255f62
 :END:
+
+* tx-20260902-orgasmic-7e8c6cbc-008d-4bbd-a16b-6f1d1026e9b2 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7e8c6cbc-008d-4bbd-a16b-6f1d1026e9b2
+:TIME:    [2026-09-02 Wed 09:40:07]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-P0Q5C
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-P0Q5C/node.org
+:REASON: edited task node TASK-P0Q5C
+:NODE_ID: TASK-P0Q5C
+:EVENT_ID: 3b1a7f55-1e89-4abf-b259-6a57035e8d97
+:END:
