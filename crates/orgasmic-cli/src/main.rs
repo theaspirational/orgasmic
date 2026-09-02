@@ -19,6 +19,7 @@ mod doctor;
 mod drivers;
 mod forum;
 mod goal;
+mod gotcha;
 mod home;
 mod install_state;
 mod managed_binary;
@@ -49,6 +50,7 @@ use crate::content_lifecycle::{HubInstall, LifecycleEntry};
 use crate::daemon_client::DaemonClient;
 use crate::doctor::Finding;
 use crate::goal::{cmd_goal, GoalCmd};
+use crate::gotcha::{cmd_gotcha, GotchaCmd};
 use crate::home::Home;
 use crate::manager::{DispatchArgs, DispatchCloseArgs, DispatchFinalizeArgs, DispatchStatusArgs};
 use crate::member::{cmd_member, MemberCmd};
@@ -322,6 +324,11 @@ Examples:
     Goal {
         #[command(subcommand)]
         cmd: GoalCmd,
+    },
+    /// `.orgasmic/gotchas.org` entries (add / list) through the daemon.
+    Gotcha {
+        #[command(subcommand)]
+        cmd: GotchaCmd,
     },
     /// Recovery status.
     Recovery {
@@ -1538,6 +1545,7 @@ fn main() -> Result<()> {
         Cmd::Dispatch { cmd } => cmd_dispatch_top(&home, cmd),
         Cmd::Tx { cmd } => cmd_tx(&home, cmd),
         Cmd::Goal { cmd } => cmd_goal(&home, cmd),
+        Cmd::Gotcha { cmd } => cmd_gotcha(&home, cmd),
         Cmd::Recovery { cmd } => match cmd.unwrap_or(RecoveryCmd::Status) {
             RecoveryCmd::Status => cmd_recovery(&home),
         },
