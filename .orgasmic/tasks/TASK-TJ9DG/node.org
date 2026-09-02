@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-TJ9DG
 #+orgasmic_version: 2
 
-* BACKLOG TASK-TJ9DG Reconcile arch_EAVPP with the shipped evidence clock: its R2/R11 assumptions are now false in code, with measured cause
+* IN_PROGRESS TASK-TJ9DG Reconcile arch_EAVPP with the shipped evidence clock: its R2/R11 assumptions are now false in code, with measured cause
 :PROPERTIES:
 :ID: TASK-TJ9DG
 :PRIORITY: P2
