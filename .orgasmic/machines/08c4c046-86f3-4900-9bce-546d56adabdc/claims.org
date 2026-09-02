@@ -3245,3 +3245,16 @@
 :TARGET:       .orgasmic/tasks/TASK-X0PV1
 :EVENT_ID:     4c4e552a-3806-4252-88a4-fb50aa0014b1
 :END:
+
+* TX 2026-09-02 Wed 15:24:44.311839 task.claim_released TASK-DTCBP
+:PROPERTIES:
+:TX_ID:        tx-20260902152444-57bac98f
+:TIME:         [2026-09-02 Wed 15:24:44.311839]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DTCBP
+:TARGET:       .orgasmic/tasks/TASK-DTCBP
+:EVENT_ID:     96562ab0-4dfe-4579-952c-faab4a700722
+:END:

@@ -7760,3 +7760,27 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-DTCBP/dispatches/tx-20260902-orgasmic-4bded295-fde8-4469-a40a-1178e910a4fc/report.md
 :EVENT_ID:     3684113d-2c77-4644-b8eb-3e4e71d3c9c7
 :END:
+
+* TX 2026-09-02 Wed 15:24:44 implementer.done TASK-DTCBP
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-9a72d101-86fd-4f36-84a3-fec04062432c
+:TIME:         [2026-09-02 Wed 15:24:44]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DTCBP
+:REASON:       manager gated the change directly in a fresh private target dir (real compile from the worker worktree): orgasmic-cli verify:: 21 passed, orgasmic-core fixtures verify_artifact 1 passed, clippy on cli+core+daemon -D warnings rc=0, fmt rc=0. Verified the new dispatch-close guard returns early when a task claims no artifact, and that NO task in the ledger currently sets :VERIFY_ARTIFACT: as a drawer property, so no existing close changes behavior.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WORKER_COMMIT: 2c7424794bc9a0d4f3564c3d87d11d3a0f7810b7
+:MERGE_SHA:    335a5b48365e75b0e58289e11b71b6e2451037f0
+:BRANCH:       task-dtcbp-impl
+:NO_REVIEW_REQUIRED: true
+:CLOSED_TX:    tx-20260902-orgasmic-4bded295-fde8-4469-a40a-1178e910a4fc
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-DTCBP/dispatches/tx-20260902-orgasmic-4bded295-fde8-4469-a40a-1178e910a4fc/report.md
+:EVENT_ID:     19b380d1-b7a1-4f8b-a63c-3307f4f8d394
+:END:
