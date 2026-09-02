@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-RPRD0
+#+orgasmic_version: 2
+
+* tx-20260902-orgasmic-a0cba8e6-4417-44ac-8668-f468e687193f task.created
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-a0cba8e6-4417-44ac-8668-f468e687193f
+:TIME:    [2026-09-02 Wed 14:03:33]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-RPRD0
+:TARGET: .orgasmic/tasks/TASK-RPRD0/node.org
+:REASON: created task TASK-RPRD0
+:EVENT_ID: 35e6b8e6-f95d-44f6-a6c6-c9cd2f3f7bc6
+:END:
