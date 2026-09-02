@@ -76,3 +76,42 @@
 :TO_STATE: in_review
 :EVENT_ID: 8545a83b-e29b-442d-bab1-a0495d160077
 :END:
+
+* tx-20260902-orgasmic-7060 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7060
+:TIME:    [2026-09-02 Wed 05:15:30]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.1
+:REASON: MEDIUM api.rs:3077 — hoisting the guard to every journal-routed type means a members.org name equal to the daemon actor ($USER, lib.rs:268) or manager_actor now 403s task.created/task.state_transitioned/task.property_updated/graph.*.created too, not just comments; add_member (members.rs:186) has no inverse guard or warning, so 'orgasmic member add $USER' silently bricks all journal writes.
+:EVENT_ID: 0accf2b5-7720-4f9b-9cb2-a2a469b2f843
+:END:
+
+* tx-20260902-orgasmic-7061 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7061
+:TIME:    [2026-09-02 Wed 05:15:33]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.1
+:REASON: LOW api.rs:39085 — the new test's 'no forged :ACTOR: alice' assertion is inside 'if journal.exists()', and seed_two_projects (api.rs:38498) never writes journal.org, so that block never executes; only the 403 status assertion has force.
+:EVENT_ID: 80dd2968-e334-4083-b088-e1e3723e7d73
+:END:
+
+* tx-20260902-orgasmic-7062 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7062
+:TIME:    [2026-09-02 Wed 05:15:37]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.1
+:REASON: LOW api.rs:19525 — ten artifact.* journal-routed producers build TxEntry directly (19129/19162/19251/19525/19646/20111/20268/20363/20545/20775) and bypass all three choke points; harmless today since every one passes &state.actor and never a client value, but the guard is not uniform across journal :ACTOR: writers.
+:EVENT_ID: 824240c9-def5-4239-acd4-1bd85362564d
+:END:
