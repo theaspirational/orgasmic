@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-XC9N4
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-XC9N4 Dispatch silently substitutes driver/harness (tmux+codex→stdio codex-chat, custom+opencode→stdio opencode); --dry-run prints the request, not the resolution; ws+hermes is a simulated stub in the normal catalog :vscode-orsl-letter:
+* IN_REVIEW TASK-XC9N4 Dispatch silently substitutes driver/harness (tmux+codex→stdio codex-chat, custom+opencode→stdio opencode); --dry-run prints the request, not the resolution; ws+hermes is a simulated stub in the normal catalog :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-XC9N4
 :PRIORITY: P1

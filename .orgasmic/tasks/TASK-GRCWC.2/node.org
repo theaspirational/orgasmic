@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-GRCWC.2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-GRCWC.2 Give over-depth worktree-prune refusals a cause-specific remedy and avoid prune tense in inventory output :cli:safety:
+* IN_REVIEW TASK-GRCWC.2 Give over-depth worktree-prune refusals a cause-specific remedy and avoid prune tense in inventory output :cli:safety:
 :PROPERTIES:
 :ID: TASK-GRCWC.2
 :PRIORITY: P2

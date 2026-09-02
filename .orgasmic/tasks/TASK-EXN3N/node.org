@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-EXN3N
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-EXN3N Read-only reviewer is a request, not a guarantee: pin cwd to the worktree and report main_checkout_dirty in dispatch-status :vscode-orsl-letter:
+* IN_REVIEW TASK-EXN3N Read-only reviewer is a request, not a guarantee: pin cwd to the worktree and report main_checkout_dirty in dispatch-status :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-EXN3N
 :PRIORITY: P2

@@ -31,3 +31,19 @@
 :NODE_ID: TASK-SJA9W
 :EVENT_ID: 7cd0dde4-807c-4d87-b0bc-511070eb6e31
 :END:
+
+* tx-20260902-orgasmic-152b46a6-3c1d-4526-9831-a070f414323c task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-152b46a6-3c1d-4526-9831-a070f414323c
+:TIME:    [2026-09-02 Wed 13:30:49]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SJA9W
+:TARGET: .orgasmic/tasks/TASK-SJA9W/node.org
+:REASON: 2026-09-02 manager sprint: code merged and pushed to main b1c6ca5f, runtime reinstalled; awaiting review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 0ea922a9-5c7d-4490-94de-6622582e38f8
+:END:

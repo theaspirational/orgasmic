@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-AP298
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-AP298 An admitted-but-unchecked preflight leaves no trace in the dispatch's own evidence (RunMeta/tx)
+* IN_REVIEW TASK-AP298 An admitted-but-unchecked preflight leaves no trace in the dispatch's own evidence (RunMeta/tx)
 :PROPERTIES:
 :ID: TASK-AP298
 :PRIORITY: P2

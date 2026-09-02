@@ -31,3 +31,19 @@
 :NODE_ID: TASK-CGJM7
 :EVENT_ID: e6e1a5cb-a25b-4f1c-8cc3-c3a749b2c1e7
 :END:
+
+* tx-20260902-orgasmic-5c7079ce-c2d0-430d-bfea-3f9e9bd7e4f3 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-5c7079ce-c2d0-430d-bfea-3f9e9bd7e4f3
+:TIME:    [2026-09-02 Wed 13:30:47]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CGJM7
+:TARGET: .orgasmic/tasks/TASK-CGJM7/node.org
+:REASON: 2026-09-02 manager sprint: code merged and pushed to main b1c6ca5f, runtime reinstalled; awaiting review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 633e4451-681a-4bb8-b09b-f0585c2f7c2d
+:END:

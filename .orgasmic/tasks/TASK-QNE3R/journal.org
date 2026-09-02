@@ -31,3 +31,19 @@
 :NODE_ID: TASK-QNE3R
 :EVENT_ID: ff1fd885-7463-430d-bcd5-fe8663f2842c
 :END:
+
+* tx-20260902-orgasmic-b95d9348-1fa5-4b1c-9750-e0c046e963f5 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-b95d9348-1fa5-4b1c-9750-e0c046e963f5
+:TIME:    [2026-09-02 Wed 13:30:49]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-QNE3R
+:TARGET: .orgasmic/tasks/TASK-QNE3R/node.org
+:REASON: 2026-09-02 manager sprint: code merged and pushed to main b1c6ca5f, runtime reinstalled; awaiting review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 6828b553-c3e8-41b4-9bdf-2fe80e371b46
+:END:

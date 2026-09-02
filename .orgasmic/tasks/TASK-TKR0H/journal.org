@@ -31,3 +31,19 @@
 :NODE_ID: TASK-TKR0H
 :EVENT_ID: 0562c57e-e074-47e3-a3ed-3bafd6344c82
 :END:
+
+* tx-20260902-orgasmic-c0d0e878-b1ab-4141-a430-d792f0e633c5 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-c0d0e878-b1ab-4141-a430-d792f0e633c5
+:TIME:    [2026-09-02 Wed 13:30:49]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TKR0H
+:TARGET: .orgasmic/tasks/TASK-TKR0H/node.org
+:REASON: 2026-09-02 manager sprint: code merged and pushed to main b1c6ca5f, runtime reinstalled; awaiting review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 20d59b8a-b72b-4035-975d-802df2ef854c
+:END:

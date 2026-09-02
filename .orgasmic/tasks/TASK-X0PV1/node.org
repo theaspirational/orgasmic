@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-X0PV1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-X0PV1 own the four TASK-STWVB daemon-parallelism flake-registry entries :testing:daemon:flake:
+* IN_REVIEW TASK-X0PV1 own the four TASK-STWVB daemon-parallelism flake-registry entries :testing:daemon:flake:
 :PROPERTIES:
 :ID: TASK-X0PV1
 :PRIORITY: P2

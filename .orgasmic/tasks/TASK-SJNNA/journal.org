@@ -31,3 +31,19 @@
 :NODE_ID: TASK-SJNNA
 :EVENT_ID: 3933be5f-f8b2-493c-96e9-d0dae288a61a
 :END:
+
+* tx-20260902-orgasmic-9b5e20d4-3f96-445e-95c8-82081238fdac task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-9b5e20d4-3f96-445e-95c8-82081238fdac
+:TIME:    [2026-09-02 Wed 13:30:49]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-SJNNA
+:TARGET: .orgasmic/tasks/TASK-SJNNA/node.org
+:REASON: 2026-09-02 manager sprint: code merged and pushed to main b1c6ca5f, runtime reinstalled; awaiting review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: b0405d4e-d994-4b52-84aa-ce3774801351
+:END:

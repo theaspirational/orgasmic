@@ -31,3 +31,19 @@
 :NODE_ID: TASK-AP298
 :EVENT_ID: b8df3a93-dcaf-4d9b-9570-79d22a6e9f7d
 :END:
+
+* tx-20260902-orgasmic-19238732-b0bb-423d-bad3-4dd34cd7a361 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-19238732-b0bb-423d-bad3-4dd34cd7a361
+:TIME:    [2026-09-02 Wed 13:30:46]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-AP298
+:TARGET: .orgasmic/tasks/TASK-AP298/node.org
+:REASON: 2026-09-02 manager sprint: code merged and pushed to main b1c6ca5f, runtime reinstalled; awaiting review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 11a2c8c3-8593-4cf2-862b-59aa9d3cd563
+:END:
