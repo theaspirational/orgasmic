@@ -7438,3 +7438,227 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     88015ae0-1020-40d1-aeda-d5ad5c2db107
 :END:
+
+* TX 2026-09-02 Wed 15:07:28 manager.dispatch_started TASK-CS2TM
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-eac18907-5eb7-48d8-8973-1fbe0524763c
+:TIME:         [2026-09-02 Wed 15:07:28]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-CS2TM
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-cs2tm
+:BRANCH:       task-cs2tm-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/CS2TM/CS2TM.md
+:STARTED_AT:   [2026-09-02 Wed 15:07:28]
+:LIVENESS:     512fcb08d040ab1a11e2fb19fd778fd68b51a10e
+:NEXT:         fix-implementer-watch-then-integrate
+:PREFLIGHT:    ok
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: TASK-CS2TM remaining item, 2026-09-02 operator-requested dispatch round
+:EVENT_ID:     ebd1b32f-2b60-4f10-a15b-0674a39d85f4
+:END:
+
+* TX 2026-09-02 Wed 15:07:28 run.created TASK-CS2TM
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-9acb2ca9-712b-41b1-a7ea-975193370b7f
+:TIME:         [2026-09-02 Wed 15:07:28]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-CS2TM
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-CS2TM-implementer-20260902T150726.jsonl
+:REASON:       TASK-CS2TM remaining item, 2026-09-02 operator-requested dispatch round
+:RUN_ID:       run-01M1HAJ8G80W4GP52NZXSRTS8H
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-cs2tm
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/CS2TM/CS2TM.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/CS2TM/CS2TM-8cb74ce6c6ab41158fc3a04c350dc02d-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/CS2TM/CS2TM-8cb74ce6c6ab41158fc3a04c350dc02d-stdout.log
+:DISPATCH_ATTEMPT: 8cb74ce6c6ab41158fc3a04c350dc02d
+:PID:          93098
+:DISPATCH_TX:  tx-20260902-orgasmic-eac18907-5eb7-48d8-8973-1fbe0524763c
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     4797010f-326b-4107-8975-a5bbc78adf00
+:END:
+
+* TX 2026-09-02 Wed 15:07:30 manager.dispatch_started TASK-DTCBP
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-4bded295-fde8-4469-a40a-1178e910a4fc
+:TIME:         [2026-09-02 Wed 15:07:30]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DTCBP
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-dtcbp
+:BRANCH:       task-dtcbp-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/DTCBP/DTCBP.md
+:STARTED_AT:   [2026-09-02 Wed 15:07:30]
+:LIVENESS:     512fcb08d040ab1a11e2fb19fd778fd68b51a10e
+:NEXT:         fix-implementer-watch-then-integrate
+:PREFLIGHT:    ok
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: TASK-DTCBP remaining item, 2026-09-02 operator-requested dispatch round
+:EVENT_ID:     8a3e9d39-dac1-4b0d-8d41-d3b4748f3a7d
+:END:
+
+* TX 2026-09-02 Wed 15:07:30 run.created TASK-DTCBP
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-ac36c1ad-0f34-43a4-b20c-9be8442d9900
+:TIME:         [2026-09-02 Wed 15:07:30]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-DTCBP
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-DTCBP-implementer-20260902T150729.jsonl
+:REASON:       TASK-DTCBP remaining item, 2026-09-02 operator-requested dispatch round
+:RUN_ID:       run-01M1HAJB6Y64WXVQ14F9VY3V95
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-dtcbp
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/DTCBP/DTCBP.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/DTCBP/DTCBP-f3deca2d144f4926a8622b558575769a-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/DTCBP/DTCBP-f3deca2d144f4926a8622b558575769a-stdout.log
+:DISPATCH_ATTEMPT: f3deca2d144f4926a8622b558575769a
+:PID:          94592
+:DISPATCH_TX:  tx-20260902-orgasmic-4bded295-fde8-4469-a40a-1178e910a4fc
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     0b239f5c-f86e-409b-8c8b-37a1e22446de
+:END:
+
+* TX 2026-09-02 Wed 15:07:32 manager.dispatch_started TASK-X0PV1
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-8003ebd3-f1d8-4456-824c-3b1c5feedb95
+:TIME:         [2026-09-02 Wed 15:07:32]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-X0PV1
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-x0pv1
+:BRANCH:       task-x0pv1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/X0PV1/X0PV1.md
+:STARTED_AT:   [2026-09-02 Wed 15:07:32]
+:LIVENESS:     512fcb08d040ab1a11e2fb19fd778fd68b51a10e
+:NEXT:         fix-implementer-watch-then-integrate
+:PREFLIGHT:    ok
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: TASK-X0PV1 remaining item, 2026-09-02 operator-requested dispatch round
+:EVENT_ID:     81d33a2c-2ee6-45e3-ae5f-0b2b4d524ee7
+:END:
+
+* TX 2026-09-02 Wed 15:07:32 run.created TASK-X0PV1
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-ed00eb1e-c782-45c2-b439-491f5b7fd4d9
+:TIME:         [2026-09-02 Wed 15:07:32]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-X0PV1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-X0PV1-implementer-20260902T150731.jsonl
+:REASON:       TASK-X0PV1 remaining item, 2026-09-02 operator-requested dispatch round
+:RUN_ID:       run-01M1HAJCZP83WB207JC0EAQ699
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-x0pv1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/X0PV1/X0PV1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/X0PV1/X0PV1-34d018b14df44d46a332275263f967f2-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/X0PV1/X0PV1-34d018b14df44d46a332275263f967f2-stdout.log
+:DISPATCH_ATTEMPT: 34d018b14df44d46a332275263f967f2
+:PID:          96098
+:DISPATCH_TX:  tx-20260902-orgasmic-8003ebd3-f1d8-4456-824c-3b1c5feedb95
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     3e5950b0-9539-4255-ace8-f3dd43eea1a2
+:END:
+
+* TX 2026-09-02 Wed 15:07:33 manager.dispatch_started TASK-40ZMJ
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-5d2b619d-1de7-41cd-b40b-0322d048e9c3
+:TIME:         [2026-09-02 Wed 15:07:33]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-40ZMJ
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-40zmj
+:BRANCH:       task-40zmj-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/40ZMJ/40ZMJ.md
+:STARTED_AT:   [2026-09-02 Wed 15:07:33]
+:LIVENESS:     512fcb08d040ab1a11e2fb19fd778fd68b51a10e
+:NEXT:         fix-implementer-watch-then-integrate
+:PREFLIGHT:    ok
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: TASK-40ZMJ remaining item, 2026-09-02 operator-requested dispatch round
+:EVENT_ID:     ca081eb4-63a7-4fe7-a182-735a540f9f1d
+:END:
+
+* TX 2026-09-02 Wed 15:07:33 run.created TASK-40ZMJ
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-65eb74de-2419-449b-a18a-211f5e371932
+:TIME:         [2026-09-02 Wed 15:07:33]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-40ZMJ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-40ZMJ-implementer-20260902T150733.jsonl
+:REASON:       TASK-40ZMJ remaining item, 2026-09-02 operator-requested dispatch round
+:RUN_ID:       run-01M1HAJETZ2XRQ14K3E9PVG1VW
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-40zmj
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/40ZMJ/40ZMJ.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/40ZMJ/40ZMJ-9fe0ee98d5a94d589c170b5700718427-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/40ZMJ/40ZMJ-9fe0ee98d5a94d589c170b5700718427-stdout.log
+:DISPATCH_ATTEMPT: 9fe0ee98d5a94d589c170b5700718427
+:PID:          97651
+:DISPATCH_TX:  tx-20260902-orgasmic-5d2b619d-1de7-41cd-b40b-0322d048e9c3
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     dfbb5718-6113-43a7-93dc-4c835f7326e1
+:END:

@@ -79,3 +79,19 @@
 :TO_STATE: todo
 :EVENT_ID: 5a77440f-f5a2-4f6a-9db7-5c00e174f5f7
 :END:
+
+* tx-20260902-orgasmic-3eeadb0a-bf71-44ac-8db6-1d06c64bca8f task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-3eeadb0a-bf71-44ac-8db6-1d06c64bca8f
+:TIME:    [2026-09-02 Wed 15:07:32]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-40ZMJ
+:TARGET: .orgasmic/tasks/TASK-40ZMJ/node.org
+:REASON: transition TASK-40ZMJ to in_progress
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: b36cdbaf-de61-483b-9436-574135c38393
+:END:
