@@ -115,3 +115,18 @@
 :REASON: LOW api.rs:19525 — ten artifact.* journal-routed producers build TxEntry directly (19129/19162/19251/19525/19646/20111/20268/20363/20545/20775) and bypass all three choke points; harmless today since every one passes &state.actor and never a client value, but the guard is not uniform across journal :ACTOR: writers.
 :EVENT_ID: 824240c9-def5-4239-acd4-1bd85362564d
 :END:
+
+* tx-20260902-orgasmic-7063 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7063
+:TIME:    [2026-09-02 Wed 05:17:36]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-KA934.3.1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-KA934.3.1/node.org
+:REASON: edited task node TASK-KA934.3.1
+:NODE_ID: TASK-KA934.3.1
+:EVENT_ID: e4d142dd-ec36-4d25-9cdf-92f03bf9641c
+:END:
