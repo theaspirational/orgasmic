@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-6FNAY
 #+orgasmic_version: 2
 
-* TODO TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact :drivers:rmux:bug:production:
+* DONE TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact :drivers:rmux:bug:production:
 :PROPERTIES:
 :ID: TASK-6FNAY
 :PRIORITY:    P1
@@ -82,4 +82,6 @@ Acceptance:
 - a cancelled release does not silently drop its RunComplete
 - at least one test fails, rather than skips, when rmux is absent in a lane
   designated as a gate
+** Evidence
+Obsolete (verified 2026-09-02, manager sprint): the rmux driver mode, its shim detection and its transport were deleted in 010a32bc 'refactor: simplify runtime to tmux-only operation' (2026-08-13); on main 7c85f177 'rg -il rmux crates/' returns 0 files. The mechanism this task describes no longer exists in the code. Closed without code change.
 

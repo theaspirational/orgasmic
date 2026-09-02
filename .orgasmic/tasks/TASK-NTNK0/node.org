@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-NTNK0
 #+orgasmic_version: 2
 
-* BACKLOG TASK-NTNK0 The rmux shim's tmux shadowing is documented but not defaulted, and two workers lost tmux coverage to it in one session    :drivers:rmux:testing:dispatch:
+* DONE TASK-NTNK0 The rmux shim's tmux shadowing is documented but not defaulted, and two workers lost tmux coverage to it in one session :drivers:rmux:testing:dispatch:
 :PROPERTIES:
 :ID: TASK-NTNK0
 :PRIORITY: P1
@@ -109,4 +109,6 @@ under the name =tmux=, ahead of the real binary.
 TASK-WPC6G (no write surface for gotchas.org). TASK-R2HDN (the different, false
 PATH theory). TASK-SJNNA (daemon should scrub =TMUX= before spawning tmux) is
 adjacent: same family of environment leakage between mux transports.
+** Evidence
+Obsolete (verified 2026-09-02, manager sprint): the rmux driver mode, its shim detection and its transport were deleted in 010a32bc 'refactor: simplify runtime to tmux-only operation' (2026-08-13); on main 7c85f177 'rg -il rmux crates/' returns 0 files. The mechanism this task describes no longer exists in the code. Closed without code change.
 

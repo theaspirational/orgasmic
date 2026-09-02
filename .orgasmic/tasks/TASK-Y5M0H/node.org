@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-Y5M0H
 #+orgasmic_version: 2
 
-* BACKLOG TASK-Y5M0H rmux pane-liveness stream source has no fast regression guard    :rmux:drivers:test-gap:
+* DONE TASK-Y5M0H rmux pane-liveness stream source has no fast regression guard :rmux:drivers:test-gap:
 :PROPERTIES:
 :ID: TASK-Y5M0H
 :PRIORITY: P2
@@ -16,4 +16,6 @@ So the exact defect TASK-RWCRN.1 fixed could silently return while every non-ign
 WANTED: a fast, non-ignored test that pins the stream source itself - either asserting spawn_pane_exit_watch subscribes via output_stream_starting_at rather than line_stream_starting_at, or a seam that lets a fake pane transport feed newline-free bytes through the real wiring without a live rmux server.
 
 Not a ship blocker and not urgent: it is insurance on a fix that is already validated live (the TASK-WGXKD dispatch ran claude-on-rmux 1675s with 55 PaneActivity bytes events).
+** Evidence
+Obsolete (verified 2026-09-02, manager sprint): the rmux driver mode, its shim detection and its transport were deleted in 010a32bc 'refactor: simplify runtime to tmux-only operation' (2026-08-13); on main 7c85f177 'rg -il rmux crates/' returns 0 files. The mechanism this task describes no longer exists in the code. Closed without code change.
 

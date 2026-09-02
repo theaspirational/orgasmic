@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-VJ633
 #+orgasmic_version: 2
 
-* BACKLOG TASK-VJ633 Promote the strict tmux rule to one public copy in orgasmic_drivers; drivers and cli gates still accept the shim (K4G1D artifact re-authoring required)
+* DONE TASK-VJ633 Promote the strict tmux rule to one public copy in orgasmic_drivers; drivers and cli gates still accept the shim (K4G1D artifact re-authoring required)
 :PROPERTIES:
 :ID: TASK-VJ633
 :PRIORITY: P2
@@ -36,4 +36,6 @@ after.
 - verify/TASK-K4G1D and verify/TASK-JGHNC both PASS after the move (re-authored
   if needed, with the re-measurement shown).
 - Injection per TCTTD standard for the new wiring surface.
+** Evidence
+Obsolete (verified 2026-09-02, manager sprint): the rmux driver mode, its shim detection and its transport were deleted in 010a32bc 'refactor: simplify runtime to tmux-only operation' (2026-08-13); on main 7c85f177 'rg -il rmux crates/' returns 0 files. The mechanism this task describes no longer exists in the code. Closed without code change.
 

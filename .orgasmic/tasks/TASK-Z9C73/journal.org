@@ -1,2 +1,65 @@
 #+title: orgasmic journal TASK-Z9C73
 #+orgasmic_version: 2
+
+* tx-20260902-orgasmic-0400d819-3e8a-4f6e-ade1-8f3077ea143e task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-0400d819-3e8a-4f6e-ade1-8f3077ea143e
+:TIME:    [2026-09-02 Wed 10:19:57]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-Z9C73
+:TARGET: .orgasmic/tasks/TASK-Z9C73/node.org
+:REASON: manager sprint 2026-09-02: verifying premise against main 7c85f177
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 0c43d66a-9750-4937-9f5c-40f492625ce5
+:END:
+
+* tx-20260902-orgasmic-a629cd9f-144e-43ff-a171-a1146616f5f5 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-a629cd9f-144e-43ff-a171-a1146616f5f5
+:TIME:    [2026-09-02 Wed 10:19:57]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-Z9C73
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-Z9C73/node.org
+:REASON: edited task node TASK-Z9C73
+:NODE_ID: TASK-Z9C73
+:EVENT_ID: d0d26771-9946-46ed-8253-c5ddbb43074b
+:END:
+
+* tx-20260902-orgasmic-8b7474f7-a6cc-44a5-81b1-4b3480e35c67 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-8b7474f7-a6cc-44a5-81b1-4b3480e35c67
+:TIME:    [2026-09-02 Wed 10:19:57]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-Z9C73
+:TARGET: .orgasmic/tasks/TASK-Z9C73/node.org
+:REASON: obsolete: rmux mode removed in 010a32bc
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: d908aa72-c699-4b24-a5e9-7d02cf9fa860
+:END:
+
+* tx-20260902-orgasmic-a257421e-b705-4c23-90cd-5e949b0f6440 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-a257421e-b705-4c23-90cd-5e949b0f6440
+:TIME:    [2026-09-02 Wed 10:19:57]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-Z9C73
+:TARGET: .orgasmic/tasks/TASK-Z9C73/node.org
+:REASON: obsolete: rmux driver mode deleted 2026-08-13 (010a32bc); 0 rmux references in crates/
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 11222301-9390-46f1-a830-43f33cfc1873
+:END:

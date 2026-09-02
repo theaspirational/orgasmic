@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-4DTBZ
 #+orgasmic_version: 2
 
-* BACKLOG TASK-4DTBZ rmux review transport must survive auth-shadow and daemon disconnects    :drivers:rmux:claude:hardening:
+* DONE TASK-4DTBZ rmux review transport must survive auth-shadow and daemon disconnects :drivers:rmux:claude:hardening:
 :PROPERTIES:
 :ID: TASK-4DTBZ
 :PRIORITY: P1
@@ -53,4 +53,6 @@ WHAT A FIX HAS TO COVER, beyond the original scope:
   worktrees by hand.
 - consider whether the daemon should refuse to keep dispatching onto a transport
   whose endpoint it has just failed to reach.
+** Evidence
+Obsolete (verified 2026-09-02, manager sprint): the rmux driver mode, its shim detection and its transport were deleted in 010a32bc 'refactor: simplify runtime to tmux-only operation' (2026-08-13); on main 7c85f177 'rg -il rmux crates/' returns 0 files. The mechanism this task describes no longer exists in the code. Closed without code change.
 

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-Z9C73
 #+orgasmic_version: 2
 
-* BACKLOG TASK-Z9C73 a released rmux run leaves one zombie harness child under the rmux daemon    :rmux:drivers:defect:
+* DONE TASK-Z9C73 a released rmux run leaves one zombie harness child under the rmux daemon :rmux:drivers:defect:
 :PROPERTIES:
 :ID: TASK-Z9C73
 :PRIORITY: P2
@@ -20,4 +20,6 @@ ACCEPTANCE:
 - name which of the three options is taken, with the tradeoff argued
 - if the leak is retained, bound it and prove the bound
 - the exit code/signal fidelity relied on by TASK-6FNAY and TASK-8W30B is preserved or its loss is explicitly accepted
+** Evidence
+Obsolete (verified 2026-09-02, manager sprint): the rmux driver mode, its shim detection and its transport were deleted in 010a32bc 'refactor: simplify runtime to tmux-only operation' (2026-08-13); on main 7c85f177 'rg -il rmux crates/' returns 0 files. The mechanism this task describes no longer exists in the code. Closed without code change.
 
