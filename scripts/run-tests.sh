@@ -1008,12 +1008,29 @@ FAIL_COUNT=$(wc -l < "$FAILURES_TSV" | tr -d ' ')
 # one, `(signal: 6, SIGABRT: process abort signal)`. So on this cargo the
 # reporting/non-reporting split is the only signal that exists, and a cause
 # line is a bonus rather than the load-bearing test.
+#
+# orgasmic:TASK-STWVB.1.1.1.1.1.1
+# F-6. Of the four cargo string shapes this detector rests on, the rerun line
+# is the one whose breakage fails GREEN: reword it and TARGETS_TSV is empty,
+# CRASH_COUNT is 0, and the only witness left is exit 101, which the
+# FAIL_COUNT guard swallows as soon as one registered flake fires. Cargo
+# emits an INDEPENDENT count in a different sentence, `error: N target(s)
+# failed:` (measured on 1.94.1, printed for N=1 too, under the
+# --no-fail-fast this script always passes). It is parsed into
+# TARGETS_SUMMARY and cross-checked against TARGETS_FAILED below; a
+# disagreement is parser drift and reads RED on its own arm. A log with no
+# summary line (older cargo, a hand-built fixture) is not checked.
+# F-7. Both awks now keep the same `---- name ----` capture region the
+# failure parser does, so a cargo-shaped line a test printed to its own
+# stdout cannot mint a target (or a summary count).
 TARGETS_TSV="$WORK/failing-targets.tsv"
+TARGETS_SUMMARY="$WORK/failing-targets-summary.txt"
 CRASH_TSV="$WORK/crashed.tsv"
 : > "$TARGETS_TSV"
+: > "$TARGETS_SUMMARY"
 : > "$CRASH_TSV"
 
-awk -v out="$TARGETS_TSV" '
+awk -v out="$TARGETS_TSV" -v summary="$TARGETS_SUMMARY" '
     function flush() {
         if (pending != "") {
             printf("%s\t%s\t%s\t%s\n", pending, pendbin,
@@ -1021,12 +1038,17 @@ awk -v out="$TARGETS_TSV" '
         }
         pending = ""; pendbin = ""; pendshow = ""; pendcause = ""
     }
+    /^---- .* ----$/ { capturing = 1; in_cause = 0; next }
+    /^failures:$/ || /^test result:/ { capturing = 0; in_cause = 0; next }
     /^[ \t]+Running / {
         bin = $0; sub(/^.*\(/, "", bin); sub(/\).*$/, "", bin)
+        capturing = 0
         in_cause = 0
         next
     }
-    /^[ \t]+Doc-tests / { bin = "doctests"; in_cause = 0; next }
+    /^[ \t]+Doc-tests / { bin = "doctests"; capturing = 0; in_cause = 0; next }
+    capturing { next }
+    /^error: [0-9]+ targets? failed:$/ { print $2 > summary; next }
     /^error: [a-z]+ failed, to rerun pass `/ {
         flush()
         t = $0
@@ -1080,6 +1102,12 @@ awk -F'\t' -v fails="$FAILURES_TSV" -v out="$CRASH_TSV" '
 
 CRASH_COUNT=$(wc -l < "$CRASH_TSV" | tr -d ' ')
 TARGETS_FAILED=$(wc -l < "$TARGETS_TSV" | tr -d ' ')
+# F-6: empty when cargo printed no summary line; otherwise it must agree.
+TARGETS_PER_CARGO=$(tail -n1 "$TARGETS_SUMMARY")
+TARGETS_DRIFT=0
+if [ -n "$TARGETS_PER_CARGO" ] && [ "$TARGETS_PER_CARGO" -ne "$TARGETS_FAILED" ]; then
+    TARGETS_DRIFT=1
+fi
 TARGETS_REPORTED=$(awk -F'\t' '
     $2 != "" { if (!($2 in seen)) { seen[$2] = 1; n++ } }
     END { print n + 0 }' "$FAILURES_TSV")
@@ -1457,6 +1485,11 @@ if [ "$CRASH_COUNT" -eq 0 ]; then
 else
     printf '  crashed  : %s target(s) died without reporting a failure list\n' "$CRASH_COUNT"
 fi
+# F-6: printed only when the two counts disagree; agreement is the silent norm.
+if [ "$TARGETS_DRIFT" -eq 1 ]; then
+    printf '  targets  : cargo counts %s failing target(s), this script parsed %s rerun line(s) — PARSER DRIFT\n' \
+        "$TARGETS_PER_CARGO" "$TARGETS_FAILED"
+fi
 # F-1: cargo's own exit gets a line of its own, always present, for the same
 # reason `crashed :` does — a truncated suite must not be something a reader
 # has to infer from a silence. 0 and 101 are the two ordinary codes; anything
@@ -1581,6 +1614,16 @@ if [ "$BILLED_RAN" -eq 1 ]; then
     STATUS=$EXIT_REAL
 elif [ "$BUILD_BROKE" -eq 1 ]; then
     printf '\nverdict: RED — build failure.\n'
+    STATUS=$EXIT_REAL
+elif [ "$TARGETS_DRIFT" -eq 1 ]; then
+    # orgasmic:TASK-STWVB.1.1.1.1.1.1
+    # F-6: the crash arm below is derived from the rerun lines; when those
+    # disagree with cargo's own summary count, that derivation is blind, so
+    # this sits above it. RED, never GREEN: a reworded cargo must fail loudly.
+    printf '\nverdict: RED — cargo counts %s failing target(s) but this script parsed %s rerun line(s).' \
+        "$TARGETS_PER_CARGO" "$TARGETS_FAILED"
+    printf ' The crash detector has drifted from cargo'"'"'s wording; nothing below it is trusted. Read %s.\n' \
+        "$SUITE_LOG"
     STATUS=$EXIT_REAL
 elif [ "$CRASH_COUNT" -gt 0 ]; then
     # orgasmic:TASK-STWVB.1.1.1.1
