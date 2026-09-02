@@ -2875,6 +2875,7 @@ fn launch(
             reason: Some(reason.to_string()),
             dry_run: false,
             governance_json: None,
+            allow_simulated: false,
         },
     )?;
     eprintln!("launched {task}: {}", participant.identity());

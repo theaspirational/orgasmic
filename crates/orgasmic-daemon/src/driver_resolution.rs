@@ -169,7 +169,9 @@ pub(crate) fn resolve_driver_by_transport(transport: &str) -> Option<Box<dyn Wor
 }
 
 #[cfg(test)]
-pub(crate) use stub::{stub_driver, STUB_HARNESS, STUB_MODE, STUB_TRANSPORT, TEST_PROFILE_REFUSAL};
+pub(crate) use stub::{
+    stub_driver, STUB_HARNESS, STUB_MODE, STUB_SIMULATED_ARG, STUB_TRANSPORT, TEST_PROFILE_REFUSAL,
+};
 
 /// The refusal a `(mode, harness)` pair earns under the test profile, or `None`
 /// when the pair is resolvable there.
@@ -235,6 +237,8 @@ mod stub {
     pub(crate) const STUB_HARNESS: &str = "stub";
     /// Legacy-transport spelling of the stub.
     pub(crate) const STUB_TRANSPORT: &str = "stub";
+    /// `harness_args` token that makes the stub answer `simulates() == true`.
+    pub(crate) const STUB_SIMULATED_ARG: &str = "--stub-simulated";
 
     /// Build the in-process stub transport.
     pub(crate) fn stub_driver() -> Box<dyn WorkerDriver> {
@@ -272,6 +276,15 @@ mod stub {
 
         fn interaction(&self) -> TransportInteraction {
             TransportInteraction::Unattended
+        }
+
+        // orgasmic:TASK-XC9N4
+        /// Simulated only when the fixture says so through the one field a
+        /// `StageWorker` carries verbatim into the driver config.
+        fn simulates(&self, _ctx: &DriverContext, config: &DriverConfig) -> bool {
+            config.0["harness_args"]
+                .as_array()
+                .is_some_and(|args| args.iter().any(|arg| arg == STUB_SIMULATED_ARG))
         }
 
         async fn acquire(

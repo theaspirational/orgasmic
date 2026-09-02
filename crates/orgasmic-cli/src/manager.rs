@@ -70,8 +70,7 @@ Examples:
     --brief /path/to/brief.md --mode stdio --harness cursor-agent
 
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
-    --brief /path/to/brief.md --mode tmux --harness custom \\
-    --harness-arg opencode --harness-arg --print-logs --dry-run")]
+    --brief /path/to/brief.md --mode stdio --harness opencode --dry-run")]
 pub struct DispatchArgs {
     /// Task id to dispatch, e.g. `TASK-XXXXX`; repeatable to send one worker
     /// at several tasks. The task must be in BACKLOG or TODO — a dispatch from
@@ -139,6 +138,11 @@ pub struct DispatchArgs {
     /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
     #[arg(long = "governance-json")]
     pub governance_json: Option<String>,
+    /// Let a driver that would run as an in-memory stub (no harness endpoint
+    /// or binary configured, e.g. `ws`/`hermes` without a hermes endpoint)
+    /// launch anyway. Without it the daemon refuses such a dispatch by name.
+    #[arg(long = "allow-simulated")]
+    pub allow_simulated: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -647,6 +651,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) reason: Option<String>,
     pub(crate) dry_run: bool,
     pub(crate) governance: Option<orgasmic_daemon::governance::GovernancePatch>,
+    pub(crate) allow_simulated: bool,
 }
 
 impl DispatchPlan {
@@ -922,6 +927,11 @@ fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<
     if plan.brief_content.is_empty() {
         bail!("brief is empty: {}", plan.brief_path.display());
     }
+    if let Some(model) = plan.model_override.as_deref() {
+        if let Some(warning) = unvalidated_model_warning(&plan, model)? {
+            eprintln!("{warning}");
+        }
+    }
     // Each dispatch kind owns a distinct default worktree suffix; reject any
     // accidental reuse of another kind's default path for the same task.
     for other_kind in [DispatchKind::Implementer, DispatchKind::Reviewer] {
@@ -1078,6 +1088,17 @@ fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<
     // POST succeeded — commit artifact ownership before any further I/O.
     reservation.commit();
 
+    // orgasmic:TASK-XC9N4 — the daemon answers with the pair it launched (the
+    // same one it wrote on the tx); say so when that is not the pair asked for.
+    if let Some(warning) = readdress_warning(
+        &plan.mode,
+        &plan.harness,
+        &response.driver,
+        &response.harness,
+    ) {
+        eprintln!("{warning}");
+    }
+
     // `started_tx` is the generation token `dispatch-close --started-tx` takes
     // (TASK-6AYEJ.1); print it here so the manager never has to go looking.
     if emit {
@@ -1099,6 +1120,71 @@ fn dispatch_inner(home: &Home, args: DispatchArgs, emit: bool) -> Result<Option<
         );
     }
     Ok(Some(response.dispatch_tx_id))
+}
+
+// orgasmic:TASK-XC9N4
+/// `--model` is passed to the harness verbatim (dec_WDR5K item 9). Say so
+/// out loud when nothing could have checked it: the harness that will run —
+/// the canonical chat provider when the address is re-addressed onto one —
+/// is asked for its offline catalog, and any answer short of "this model is
+/// listed" becomes one stderr line.
+fn unvalidated_model_warning(plan: &DispatchPlan, model: &str) -> Result<Option<String>> {
+    let harness = orgasmic_daemon::addressing::dispatch_chat_provider(
+        &plan.mode,
+        &plan.harness,
+        &plan.harness_args,
+    )
+    .unwrap_or(plan.harness.as_str());
+    let options = tokio::runtime::Runtime::new()
+        .context("create tokio runtime")?
+        .block_on(orgasmic_drivers::catalog::harness_runtime_options(harness));
+    Ok(model_catalog_warning(model, &options))
+}
+
+fn model_catalog_warning(
+    model: &str,
+    options: &orgasmic_drivers::catalog::HarnessRuntimeOptions,
+) -> Option<String> {
+    use orgasmic_drivers::catalog::RuntimeOptionsSource as Source;
+    let unavailable = |why: &str| {
+        format!(
+            "model catalog unavailable; --model {model} passed through unvalidated ({}: {why})",
+            options.harness
+        )
+    };
+    match &options.source {
+        Source::Offline { models, .. } if models.iter().any(|m| m == model.trim()) => None,
+        Source::Offline { models, .. } if models.is_empty() => {
+            Some(unavailable("catalog lists no models"))
+        }
+        Source::Offline { source, .. } => Some(format!(
+            "model {model} is not in the {source} catalog; --model {model} passed through \
+             unvalidated"
+        )),
+        Source::ProtocolRpc { method } => Some(unavailable(&format!(
+            "models are listed only by {method} inside a live session"
+        ))),
+        Source::Unavailable { reason } => Some(unavailable(reason)),
+    }
+}
+
+// orgasmic:TASK-XC9N4
+/// The one stderr line a real dispatch prints when the daemon launched a
+/// different `(driver, harness)` than the request named. `None` when the pair
+/// ran as requested. The daemon's answer is the pair it recorded on the tx, so
+/// this and the `dispatched:` line cannot disagree.
+fn readdress_warning(
+    requested_mode: &str,
+    requested_harness: &str,
+    driver: &str,
+    harness: &str,
+) -> Option<String> {
+    (requested_mode != driver || requested_harness != harness).then(|| {
+        format!(
+            "re-addressed: requested driver={requested_mode} harness={requested_harness} \
+             -> runs as driver={driver} harness={harness}"
+        )
+    })
 }
 
 pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()> {
@@ -6327,6 +6413,7 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .filter(|s| !s.is_empty()),
         dry_run: args.dry_run,
         governance,
+        allow_simulated: args.allow_simulated,
     })
 }
 
@@ -11225,6 +11312,66 @@ fn path_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // orgasmic:TASK-XC9N4
+    #[test]
+    fn model_catalog_warning_says_unvalidated_unless_the_model_is_listed() {
+        use orgasmic_drivers::catalog::{HarnessRuntimeOptions, RuntimeOptionsSource};
+        let options = |source| HarnessRuntimeOptions {
+            harness: "claude".into(),
+            source,
+        };
+        let unavailable = options(RuntimeOptionsSource::Unavailable {
+            reason: "no catalog surface".into(),
+        });
+        assert_eq!(
+            model_catalog_warning("opus-x", &unavailable).as_deref(),
+            Some(
+                "model catalog unavailable; --model opus-x passed through unvalidated \
+                 (claude: no catalog surface)"
+            )
+        );
+        let rpc = options(RuntimeOptionsSource::ProtocolRpc {
+            method: "model/list".into(),
+        });
+        assert!(model_catalog_warning("gpt-x", &rpc)
+            .unwrap()
+            .starts_with("model catalog unavailable; --model gpt-x passed through unvalidated"));
+        let offline = options(RuntimeOptionsSource::Offline {
+            source: "fixture".into(),
+            models: vec!["listed".into()],
+            efforts: Vec::new(),
+        });
+        assert_eq!(model_catalog_warning("listed", &offline), None);
+        assert_eq!(
+            model_catalog_warning("other", &offline).as_deref(),
+            Some("model other is not in the fixture catalog; --model other passed through unvalidated")
+        );
+        let empty = options(RuntimeOptionsSource::Offline {
+            source: "fixture".into(),
+            models: Vec::new(),
+            efforts: vec!["high".into()],
+        });
+        assert!(model_catalog_warning("any", &empty)
+            .unwrap()
+            .starts_with("model catalog unavailable; --model any passed through unvalidated"));
+    }
+
+    // orgasmic:TASK-XC9N4
+    #[test]
+    fn readdress_warning_names_both_pairs_and_stays_quiet_when_they_match() {
+        assert_eq!(
+            readdress_warning("stdio", "opencode", "stdio", "opencode"),
+            None
+        );
+        assert_eq!(
+            readdress_warning("tmux", "codex", "stdio", "codex-chat").as_deref(),
+            Some(
+                "re-addressed: requested driver=tmux harness=codex -> runs as driver=stdio \
+                 harness=codex-chat"
+            )
+        );
+    }
 
     fn write_evidence_session(path: &Path, envelopes: Vec<SessionEnvelope>) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

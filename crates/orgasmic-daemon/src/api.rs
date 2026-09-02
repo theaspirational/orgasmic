@@ -5946,6 +5946,10 @@ struct DispatchRequest {
     pub reviewed_dispatch_txs: Vec<String>,
     #[serde(default)]
     pub governance: Option<GovernancePatch>,
+    /// Let a driver that would run as an in-memory stub (no endpoint, no
+    /// binary) launch anyway; refused by name otherwise (TASK-XC9N4).
+    #[serde(default)]
+    pub allow_simulated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -6031,6 +6035,8 @@ struct SpawnWorkerRequest<'a> {
     dispatch_kind: Option<&'a str>,
     /// Task-heading sandbox override, when known for this spawn.
     task_sandbox_permissions: Option<SandboxAllowlist>,
+    /// `false` refuses a driver that would run as an in-memory stub.
+    allow_simulated: bool,
 }
 
 struct SpawnWorkerResult {
@@ -6105,6 +6111,17 @@ async fn spawn_worker_run(
         project_id: Some(req.project_id.to_string()),
         worktree: Some(req.worktree_path.to_path_buf()),
     };
+    // orgasmic:TASK-XC9N4 — a stub that runs `sh`, reports clean and bills
+    // nothing looks like a finished dispatch. Refuse it unless asked for.
+    if !req.allow_simulated && driver.simulates(&preflight_ctx, &driver_config) {
+        return Err(SpawnWorkerFailure {
+            error: ApiError::bad_request(format!(
+                "{}/{} would run as a simulated stub (no harness endpoint or binary \
+                 is configured for it); pass --allow-simulated to dispatch it anyway",
+                worker.driver, worker.harness
+            )),
+        });
+    }
     let preflight = driver.preflight(&preflight_ctx, &driver_config).await;
     if let Some(reason) = preflight.rejects_dispatch() {
         return Err(SpawnWorkerFailure {
@@ -6360,6 +6377,7 @@ async fn post_task_dispatch(
             origin: "cli_dispatch",
             dispatch_kind: Some(kind.as_str()),
             task_sandbox_permissions,
+            allow_simulated: req.allow_simulated,
         },
     )
     .await
@@ -20088,6 +20106,9 @@ async fn launch_artifact_generation(
             origin: "artifact_generate",
             dispatch_kind: Some("artifactor"),
             task_sandbox_permissions: None,
+            // Artifact generation kept its pre-TASK-XC9N4 behaviour; only the
+            // manager dispatch surface gates simulated drivers.
+            allow_simulated: true,
         },
     )
     .await
@@ -20235,6 +20256,9 @@ async fn launch_node_regeneration(
             origin: "node_regenerate",
             dispatch_kind: Some("artifactor"),
             task_sandbox_permissions: None,
+            // Artifact generation kept its pre-TASK-XC9N4 behaviour; only the
+            // manager dispatch surface gates simulated drivers.
+            allow_simulated: true,
         },
     )
     .await
@@ -27971,6 +27995,7 @@ pub(crate) mod tests {
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
+                allow_simulated: true,
             },
         )
         .await
@@ -28095,6 +28120,7 @@ pub(crate) mod tests {
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
+                allow_simulated: true,
             },
         )
         .await;
@@ -29970,6 +29996,47 @@ pub(crate) mod tests {
         assert_eq!(canonical_runtime_provider(&worker), Some("claude"));
     }
 
+    // orgasmic:TASK-XC9N4
+    /// The CLI's `--dry-run` prints `addressing::canonical_chat_address`; the
+    /// tx records the worker `canonicalize_dispatch_worker` produced. For every
+    /// catalog pair — and the custom+opencode argv spelling — they are the same
+    /// answer, so a plan never describes a launch the daemon does not perform.
+    #[test]
+    fn dry_run_resolution_equals_the_tx_recorded_pair_for_every_supported_pair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let mut cases: Vec<(&str, &str, Vec<String>)> = orgasmic_drivers::SUPPORTED
+            .iter()
+            .map(|&(mode, harness)| (mode, harness, Vec::new()))
+            .collect();
+        cases.push((
+            "tmux",
+            "custom",
+            vec!["opencode".into(), "--print-logs".into()],
+        ));
+        for (mode, harness, args) in cases {
+            let worker = resolve_addressed_stage_worker(
+                &home,
+                WorkerKind::Implementer,
+                mode,
+                harness,
+                args.clone(),
+                &DispatchGovernanceOverlay::default(),
+                None,
+            )
+            .unwrap();
+            let recorded = canonicalize_dispatch_worker(worker);
+            let planned = crate::addressing::canonical_chat_address(mode, harness, &args)
+                .unwrap_or((mode, harness));
+            assert_eq!(
+                (recorded.driver.as_str(), recorded.harness.as_str()),
+                planned,
+                "{mode}/{harness} {args:?}: dry-run and tx disagree"
+            );
+        }
+    }
+
     #[test]
     fn unknown_dispatch_runtime_is_rejected_instead_of_silently_downgrading() {
         assert!(!canonical_dispatch_runtime_requested(None).unwrap());
@@ -30143,6 +30210,78 @@ pub(crate) mod tests {
         assert_eq!(verbatim_optional(None), None);
     }
 
+    // orgasmic:TASK-XC9N4
+    /// A driver that would run as an in-memory stub is refused before any
+    /// lease, session or tx exists, and the refusal names the flag that lets
+    /// it through. Through the stub, which answers `simulates()` only when its
+    /// `harness_args` carry the fixture token, so the same fixture proves the
+    /// flag admits the dispatch.
+    #[tokio::test]
+    async fn simulated_dispatch_is_refused_unless_allow_simulated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("project");
+        seed_project(&home, &project_root, "project");
+        let worktree = tmp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let state = direct_stage_test_state(home).await;
+        let worker = StageWorker {
+            id: "implementer-stub".to_string(),
+            kind: WorkerKind::Implementer,
+            driver: crate::driver_resolution::STUB_MODE.to_string(),
+            harness: crate::driver_resolution::STUB_HARNESS.to_string(),
+            linked_skills: Vec::new(),
+            missing_skills: Vec::new(),
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: vec![crate::driver_resolution::STUB_SIMULATED_ARG.to_string()],
+        };
+        let request = |worker: StageWorker, allow_simulated: bool| SpawnWorkerRequest {
+            project_id: "project",
+            task_id: "TASK-XC9N4-SIMULATED",
+            worker,
+            run_kind: RunKind::Worker,
+            bundle: "simulated refusal probe",
+            overrides: DriverOverrides::default(),
+            project_root_path: &project_root,
+            worktree_path: &worktree,
+            last_path: None,
+            stdout_path: None,
+            dispatch_attempt_token: None,
+            origin: "cli_dispatch",
+            dispatch_kind: Some("implementer"),
+            task_sandbox_permissions: None,
+            allow_simulated,
+        };
+
+        let refused = spawn_worker_run(&state, request(worker.clone(), false))
+            .await
+            .err()
+            .expect("a simulated driver must be refused without the flag");
+        assert_eq!(refused.error.status, StatusCode::BAD_REQUEST);
+        assert!(
+            refused.error.message.contains("--allow-simulated")
+                && refused.error.message.contains("stub/stub"),
+            "refusal must name the pair and the flag: {}",
+            refused.error.message
+        );
+        assert!(
+            state.supervisor.snapshot().await.runs.is_empty(),
+            "a refused simulated dispatch must not have acquired a run"
+        );
+
+        spawn_worker_run(&state, request(worker, true))
+            .await
+            .unwrap_or_else(|failure| {
+                panic!("--allow-simulated must admit: {}", failure.error.message)
+            });
+    }
+
     // orgasmic:TASK-M47E5.1.1.1
     /// Exercise the real dispatch spawn edge so a change to its `last_path`
     /// derivation is visible in the config persisted for the driver.
@@ -30195,6 +30334,7 @@ pub(crate) mod tests {
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
+                allow_simulated: true,
             },
         )
         .await

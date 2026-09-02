@@ -1541,6 +1541,32 @@ async fn codex_turn_start_terminal_notification_does_not_emit_followup_error() {
     server.await.unwrap();
 }
 
+// orgasmic:TASK-XC9N4
+/// What the daemon's `--allow-simulated` gate reads: a ws address with no
+/// endpoint composes the in-memory stub, the same address with one does not.
+/// Nothing is connected — `simulates` composes the request and stops.
+#[test]
+fn ws_pairs_report_simulated_exactly_when_no_endpoint_is_configured() {
+    for harness in ["hermes", "codex"] {
+        let driver = driver_for_mode_harness("ws", harness).expect("ws driver");
+        assert!(
+            driver.simulates(&ctx(), &DriverConfig::empty()),
+            "ws/{harness} with no endpoint runs the stub"
+        );
+        let cfg = DriverConfig::from_value(json!({
+            "endpoint": "ws://127.0.0.1:1",
+            "session_token": "fixture-token",
+        }));
+        assert!(
+            !driver.simulates(&ctx(), &cfg),
+            "ws/{harness} with an endpoint is a real transport"
+        );
+    }
+    assert!(!driver_for_mode_harness("tmux", "custom")
+        .expect("tmux driver")
+        .simulates(&ctx(), &DriverConfig::empty()));
+}
+
 #[tokio::test]
 async fn hermes_connect_error_is_emitted_on_event_stream() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
