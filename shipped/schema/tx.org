@@ -291,5 +291,4 @@ Properties for =artifact.regenerated= (reserved; no write path yet):
 
 ** Property registry (per type)
 [Filled out during v0.0.1 implementation; state lives in
-`.orgasmic/<collection>/<ID>/node.org`, with derived aggregate read views under
-`.orgasmic/views/`.]
+`.orgasmic/<collection>/<ID>/node.org`.]

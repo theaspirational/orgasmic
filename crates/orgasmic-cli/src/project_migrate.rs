@@ -112,6 +112,40 @@ impl ViewsMigration {
     }
 }
 
+fn views_summary_lines(views: &ViewsMigration, views_applied: bool, dry_run: bool) -> Vec<String> {
+    if dry_run {
+        let mut lines = Vec::new();
+        if !views.tracked.is_empty() {
+            lines.push(format!(
+                "  views {} tracked file(s){}",
+                views.tracked.len(),
+                if views.dir_present {
+                    " + directory on disk"
+                } else {
+                    ""
+                }
+            ));
+            lines.push(
+                "  views plan: git rm -r --cached -- .orgasmic/views, then delete the directory"
+                    .to_string(),
+            );
+        } else if views.dir_present {
+            lines.push("  views directory on disk (untracked)".to_string());
+        }
+        return lines;
+    }
+    if !views_applied {
+        return Vec::new();
+    }
+    let line = match (views.tracked.is_empty(), views.dir_present) {
+        (true, true) => "  views directory removed",
+        (true, false) => return Vec::new(),
+        (false, true) => "  views untracked and directory removed",
+        (false, false) => "  views untracked",
+    };
+    vec![line.to_string()]
+}
+
 pub(crate) fn run(home: &Home, dry_run: bool, to_branch: bool) -> Result<()> {
     let root = crate::manager::find_project_root()?;
     run_at(home, &root, dry_run, to_branch)
@@ -150,25 +184,8 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
     );
     println!("  bytes {}", migration.bytes);
     println!("  heading_round_trip byte-for-byte");
-    if !views.tracked.is_empty() {
-        println!(
-            "  views {} tracked file(s){}",
-            views.tracked.len(),
-            if views.dir_present {
-                " + directory on disk"
-            } else {
-                ""
-            }
-        );
-        if dry_run {
-            println!(
-                "  views plan: git rm -r --cached -- .orgasmic/views, then delete the directory"
-            );
-        }
-    } else if views.dir_present {
-        println!("  views directory on disk (untracked)");
-    } else if views_applied {
-        println!("  views untracked and directory removed");
+    for line in views_summary_lines(&views, views_applied, dry_run) {
+        println!("{line}");
     }
     if to_branch {
         println!("  target orphan branch orgasmic");
@@ -199,6 +216,9 @@ fn refuse_dirty_tree(root: &Path) -> Result<()> {
     // `.orgasmic/views/` is exempt: a migrate run untracks and deletes it, and
     // the operator commits that deletion afterwards, so a re-run before the
     // commit must still count as clean (idempotency).
+    if !git_ok(root, &["rev-parse", "--is-inside-work-tree"]) {
+        return Ok(());
+    }
     let output = Command::new("git")
         .args([
             "status",
@@ -778,6 +798,79 @@ mod tests {
         );
 
         assert!(views_warns(&home).is_empty());
+    }
+
+    #[test]
+    fn non_git_project_views_doctor_warns_migrate_deletes_then_doctor_quiet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        let root = tmp.path().join("plain");
+        std::fs::create_dir(&root).unwrap();
+        let dotorg = root.join(".orgasmic");
+        std::fs::create_dir_all(dotorg.join("views")).unwrap();
+        std::fs::write(
+            dotorg.join("project.org"),
+            "#+orgasmic_version: 2\n\n* PROJECT plaindir\n:PROPERTIES:\n:ID: plaindir\n:END:\n",
+        )
+        .unwrap();
+        std::fs::write(dotorg.join("views/board.org"), "#+title: derived\n").unwrap();
+        projects::register_project(&home, &root, "plaindir", "main").unwrap();
+        assert!(!git_ok(&root, &["rev-parse", "--is-inside-work-tree"]));
+
+        let warns = views_warns(&home);
+        assert_eq!(warns.len(), 1, "{warns:?}");
+        assert!(warns[0].contains("still present"), "{}", warns[0]);
+        assert!(
+            warns[0].contains("orgasmic project migrate"),
+            "{}",
+            warns[0]
+        );
+
+        run_at(&home, &root, false, false).unwrap();
+        assert!(!dotorg.join("views").exists());
+        assert!(dotorg.join("project.org").is_file());
+        assert!(views_warns(&home).is_empty());
+    }
+
+    #[test]
+    fn views_summary_reports_post_apply_state_not_pre_apply_counts() {
+        let tracked_and_dir = ViewsMigration {
+            tracked: vec![".orgasmic/views/board.org".to_string()],
+            dir_present: true,
+        };
+        assert_eq!(
+            views_summary_lines(&tracked_and_dir, true, false),
+            vec!["  views untracked and directory removed".to_string()]
+        );
+        let tracked_only = ViewsMigration {
+            tracked: vec![".orgasmic/views/board.org".to_string()],
+            dir_present: false,
+        };
+        assert_eq!(
+            views_summary_lines(&tracked_only, true, false),
+            vec!["  views untracked".to_string()]
+        );
+        let dir_only = ViewsMigration {
+            tracked: Vec::new(),
+            dir_present: true,
+        };
+        assert_eq!(
+            views_summary_lines(&dir_only, true, false),
+            vec!["  views directory removed".to_string()]
+        );
+        assert_eq!(
+            views_summary_lines(&tracked_and_dir, false, true),
+            vec![
+                "  views 1 tracked file(s) + directory on disk".to_string(),
+                "  views plan: git rm -r --cached -- .orgasmic/views, then delete the directory"
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            views_summary_lines(&dir_only, false, true),
+            vec!["  views directory on disk (untracked)".to_string()]
+        );
+        assert!(views_summary_lines(&tracked_only, false, false).is_empty());
     }
 
     #[test]

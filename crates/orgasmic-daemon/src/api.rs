@@ -14702,7 +14702,7 @@ fn reject_ledger_rewrite(rel: &FsPath) -> Result<(), ApiError> {
             "org file path is machine-owned ledger state; write it through tx and claim operations instead of rewriting the file",
         )),
         Some("views") => Err(ApiError::bad_request(
-            "org file path is a derived view; regenerate it through the view refresh operation instead of rewriting the file",
+            "org file path is a derived view; views render on demand from tasks/decisions/glossary and are read-only",
         )),
         Some("tx") => Err(ApiError::bad_request(
             "org file path is an append-only tx ledger; append entries through the tx surface instead of rewriting the file",
@@ -21409,6 +21409,14 @@ pub(crate) mod tests {
         }
         reject_ledger_rewrite(FsPath::new(".orgasmic/gotchas.org"))
             .expect("ordinary org file must stay writable");
+        let views_error = reject_ledger_rewrite(FsPath::new(".orgasmic/views/board.org"))
+            .expect_err("derived view rewrite must be refused");
+        assert!(
+            views_error
+                .message
+                .contains("views render on demand from tasks/decisions/glossary and are read-only"),
+            "{views_error:?}"
+        );
         reject_ledger_rewrite(FsPath::new(".orgasmic/tx-notes.org"))
             .expect("a tx string prefix is not the tx path component");
         reject_ledger_rewrite(FsPath::new("docs/adr/adr-0001.org"))
