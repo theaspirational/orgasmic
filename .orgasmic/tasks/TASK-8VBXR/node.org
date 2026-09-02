@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-8VBXR
 #+orgasmic_version: 2
 
-* BACKLOG TASK-8VBXR the stall killer captures the pane to decide to kill, then discards it and tears down the session that held it    :daemon:diagnosability:
+* IN_PROGRESS TASK-8VBXR the stall killer captures the pane to decide to kill, then discards it and tears down the session that held it :daemon:diagnosability:
 :PROPERTIES:
 :ID: TASK-8VBXR
 :PRIORITY: P1
