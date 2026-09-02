@@ -78,4 +78,6 @@ rather than lexically.
 - No change to =SEQUENCER_MARKERS='s contents — this task pins what is there, and
   the reviewer verified all seven are correct today. If building a state proves a
   row WRONG, stop and report rather than editing the array to match the test.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit 152982fa on sprint/TESTS, merged onto local sprint-20260902 as 548e3782. manager.rs test every_sequencer_marker_row_is_produced_by_its_operation_and_refused_by_its_name builds all 7 SEQUENCER_MARKERS rows with real git (rebase-apply via both rebase --apply and am = 8 states), asserts marker file, refusal name, predicate, and that every row was built; mutation-checked (MERGE_HAED, merge->rebase both red). Coverage 3/7 -> 7/7; no dead rows. Gates (private target): cli sequencer_marker 1 passed, shipped_conventions 5 passed, clippy rc=0, fmt rc=0. Operator review/test after the sprint.
 

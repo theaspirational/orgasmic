@@ -104,4 +104,6 @@ Both reviews in this chain found what they found by compiling the test file's ow
 extractor functions verbatim into a standalone probe and running them against
 mutated copies. Reading the code is how the original hole survived its first
 review, and how this second class survived its second.
+** Evidence
+Manager sprint 2026-09-02 (no dispatch): subagent commit e49852bb on sprint/TESTS, merged onto local sprint-20260902 as 548e3782. cli_parity.rs shipped_value_enum_arguments_match_clap_possible_values: 6 comparisons at 3 sites -> 18 comparisons at 17 sites; fragment class reachable via shipped_enum_fragments() against the union of clap possible_values; org =verbatim= scanner rewritten (word-boundary, --class=architecture stays whole); --verdict added to VALUE_ENUM_FLAGS; floor 6->12; value assertion before the count floor. Corpus mutation: 15/15 poisoned sites red, fragments red. No prose offenders; recall-resume.md 'task list' slip fixed (same fix as TKR0H, merged clean). Gates (private target): cli_parity 7 passed, clippy rc=0, fmt rc=0.
 
