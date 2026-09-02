@@ -30325,6 +30325,50 @@ pub(crate) mod tests {
         assert!(cfg.0.get("provider").is_none() || cfg.0["provider"].is_null());
     }
 
+    /// TASK-EXN3N: a reviewer is spawned with its cwd pinned to the review
+    /// worktree the CLI provisioned, never the project root it is asked to
+    /// stay out of. "Read-only" is a request in the brief; this is the part
+    /// the daemon can actually guarantee.
+    #[test]
+    fn reviewer_dispatch_cwd_is_its_review_worktree_not_the_project_root() {
+        let worker = StageWorker {
+            id: "reviewer-codex-subprocess-stream-json".to_string(),
+            kind: WorkerKind::Reviewer,
+            driver: "subprocess-stream-json".to_string(),
+            harness: "codex".to_string(),
+            linked_skills: Vec::new(),
+            missing_skills: Vec::new(),
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: Vec::new(),
+        };
+        let project_root = FsPath::new("/tmp/project");
+        let review_worktree = FsPath::new("/tmp/worktrees/orgasmic/task-exn3n-review");
+        let cfg = stage_driver_config_with_overrides(
+            &worker,
+            project_root,
+            review_worktree,
+            None,
+            "review brief",
+            DriverOverrides {
+                provider: None,
+                model: None,
+                credential_mode: None,
+                effort: None,
+            },
+            None,
+            &DriverDefaults::default(),
+            None,
+        );
+        assert_eq!(cfg.0["cwd"], review_worktree.to_str().unwrap());
+        assert_ne!(cfg.0["cwd"], cfg.0["project_root"]);
+        assert_eq!(cfg.0["project_root"], project_root.to_str().unwrap());
+    }
+
     /// A rejected driver config must say what was wrong with it. The driver
     /// already knows — serde names the duplicated or mistyped field, the
     /// adapters name the missing credential — and a 400 reading only "driver

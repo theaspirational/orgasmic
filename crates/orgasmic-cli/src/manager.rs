@@ -2713,6 +2713,22 @@ fn guard_dirty_main_checkout(require_clean: bool) -> Result<()> {
     Ok(())
 }
 
+/// TASK-EXN3N: the dispatch-status header while a dispatch is open. A
+/// reviewer is asked to stay in its worktree, not prevented from writing
+/// into main; this is where a write into main becomes visible.
+fn main_checkout_status_line(checkout: &Path, dirty: &DirtyCheckout) -> String {
+    format!(
+        "main_checkout_dirty={} CHECKOUT={} PATHS={}",
+        dirty.count,
+        checkout.display(),
+        if dirty.sample.is_empty() {
+            "-".to_string()
+        } else {
+            dirty.sample.join(",")
+        }
+    )
+}
+
 /// Commit the worktree if dirty (so commit-stall is structurally impossible,
 /// acceptance #2), then return the resulting HEAD sha either way.
 fn commit_worktree(project_root: &Path, message: &str) -> Result<String> {
@@ -3093,6 +3109,14 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
     let claims = read_claims(&project_root).context("read task claims for dispatch-status")?;
     if let Some(task) = args.task.as_deref() {
         open.retain(|record| record.tasks.iter().any(|got| got == task));
+    }
+    // TASK-EXN3N: while a worker is out, say whether anything wrote into the
+    // checkout it was told to stay out of. Quiet when nothing is open.
+    if !open.is_empty() {
+        if let Some(checkout) = main_checkout() {
+            let dirty = dirty_checkout(&checkout)?;
+            println!("{}", main_checkout_status_line(&checkout, &dirty));
+        }
     }
     for record in &open {
         let health = dispatch_health(record, &live_runs);
@@ -15572,5 +15596,35 @@ mod tests {
         let dirty = dirty_checkout(root).unwrap();
         assert_eq!(dirty.count, 4);
         assert_eq!(dirty.sample, ["a.txt", "b.txt", "c.txt"]);
+    }
+
+    // TASK-EXN3N: the dispatch-status header token, rendered as printed.
+    #[test]
+    fn dispatch_status_header_reports_main_checkout_dirty() {
+        let clean = main_checkout_status_line(Path::new("/repo"), &DirtyCheckout::default());
+        assert_eq!(clean, "main_checkout_dirty=0 CHECKOUT=/repo PATHS=-");
+
+        let dirty = DirtyCheckout {
+            count: 2,
+            sample: vec!["src/a.rs".to_string(), "b.md".to_string()],
+        };
+        assert_eq!(
+            main_checkout_status_line(Path::new("/repo"), &dirty),
+            "main_checkout_dirty=2 CHECKOUT=/repo PATHS=src/a.rs,b.md"
+        );
+    }
+
+    // TASK-EXN3N: the reviewer's worktree is its own `<slug>-review` tree,
+    // never the implementer's and never the main checkout.
+    #[test]
+    fn reviewer_worktree_stem_is_pinned_to_its_review_tree() {
+        assert_eq!(
+            worktree_stem("TASK-EXN3N", DispatchKind::Reviewer),
+            "task-exn3n-review"
+        );
+        assert_ne!(
+            worktree_stem("TASK-EXN3N", DispatchKind::Reviewer),
+            worktree_stem("TASK-EXN3N", DispatchKind::Implementer)
+        );
     }
 }

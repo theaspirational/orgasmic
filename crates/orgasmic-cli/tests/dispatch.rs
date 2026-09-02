@@ -923,6 +923,27 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     );
     assert!(status_stdout.contains("TASK=TASK-DISPATCH"));
     assert!(status_stdout.contains("[exists]"));
+    // TASK-EXN3N: the daemon's .orgasmic/ writes do not count as dirt...
+    assert!(
+        status_stdout.contains("main_checkout_dirty=0 "),
+        "{status_stdout}"
+    );
+    // ...a stray file a worker left in the main checkout does.
+    let stray = project_root.join("reviewer-left-this.txt");
+    write(&stray, "oops\n");
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.contains("main_checkout_dirty=1 ")
+            && status_stdout.contains("PATHS=reviewer-left-this.txt"),
+        "{status_stdout}"
+    );
+    std::fs::remove_file(&stray).unwrap();
 
     let other_claims = project_root.join(".orgasmic/machines/machine-other/claims.org");
     std::fs::create_dir_all(other_claims.parent().unwrap()).unwrap();
