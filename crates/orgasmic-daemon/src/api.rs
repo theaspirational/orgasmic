@@ -6402,6 +6402,11 @@ async fn post_task_dispatch(
             kind,
             req: &req,
             run_id: &acquire.run_id,
+            effort: crate::supervisor::launched_effort(
+                &worker.driver,
+                Some(&worker.harness),
+                verbatim_optional(req.effort_override.clone()).as_deref(),
+            ),
         },
     )
     .await?;
@@ -7412,6 +7417,10 @@ struct DispatchStartedRecord<'a> {
     kind: DispatchEndpointKind,
     req: &'a DispatchRequest,
     run_id: &'a str,
+    /// The effort the spawned worker was actually launched with — the request
+    /// passed through `supervisor::launched_effort` for the resolved
+    /// driver/harness — so `:EFFORT:` says what ran (TASK-A55J7/TASK-C7NVH).
+    effort: Option<String>,
 }
 
 fn dispatch_expected_next(kind: DispatchEndpointKind) -> &'static str {
@@ -7486,7 +7495,7 @@ async fn record_dispatch_started(
     if let Some(model) = verbatim_optional(record.req.model_override.clone()) {
         extra.push(("MODEL".to_string(), model));
     }
-    if let Some(effort) = verbatim_optional(record.req.effort_override.clone()) {
+    if let Some(effort) = record.effort {
         extra.push(("EFFORT".to_string(), effort));
     }
     if let Some(goal_id) = non_empty_field(record.req.goal_id.clone()) {
