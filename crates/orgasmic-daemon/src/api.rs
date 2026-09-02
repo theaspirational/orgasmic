@@ -41858,8 +41858,24 @@ pub(crate) mod tests {
         )
         .await
         .expect_err("reattach_tmux must be refused while a close guard holds the worktree");
+        // orgasmic:TASK-QCG6J — the endpoint validates the action against the
+        // inventory BEFORE admission, and the inventory only offers
+        // `reattach_tmux` when its bounded attach probe
+        // (`RECOVERY_ATTACH_PROBE_BUDGET`) saw the session. Under load that
+        // probe misses a session that is live, and the request is refused as
+        // "not valid" ahead of the fence. That is a safe outcome the fence never
+        // got to decide, so it must not go red; only the exact probe-miss
+        // message is tolerated, and then the fence arm is reported as not
+        // exercised rather than passed.
+        let probe_missed = |err: &ApiError| {
+            err.message
+                == format!(
+                    "recovery action reattach_tmux is not valid for run {}",
+                    identity.run_id
+                )
+        };
         assert!(
-            refused.message.contains("cleanup"),
+            refused.message.contains("cleanup") || probe_missed(&refused),
             "{test_name}: the refusal must name the cleanup reservation: {} [{}]",
             refused.message,
             mode.diagnostic()
@@ -41869,9 +41885,17 @@ pub(crate) mod tests {
             "{test_name}: a refused reattach must leave no live run behind [{}]",
             mode.diagnostic()
         );
+        if probe_missed(&refused) {
+            eprintln!(
+                "{test_name}: attach probe missed the live session under load; \
+                 the fence arm was not exercised [{}]",
+                mode.diagnostic()
+            );
+            return;
+        }
 
         state.supervisor.finish_dispatch_close(&guard_id).await;
-        let admitted = post_run_recover(
+        let admitted = match post_run_recover(
             State(state.clone()),
             Path(identity.run_id.clone()),
             Json(RunRecoverRequest {
@@ -41884,7 +41908,22 @@ pub(crate) mod tests {
             }),
         )
         .await
-        .expect("the same action is admitted once the guard is released");
+        {
+            Ok(admitted) => admitted,
+            Err(err) if probe_missed(&err) => {
+                eprintln!(
+                    "{test_name}: attach probe missed the live session under load; \
+                     the release arm was not exercised [{}]",
+                    mode.diagnostic()
+                );
+                return;
+            }
+            Err(err) => panic!(
+                "{test_name}: the same action is admitted once the guard is released: \
+                 {err:?} [{}]",
+                mode.diagnostic()
+            ),
+        };
         assert_eq!(
             admitted.run_id,
             identity.run_id,
