@@ -1,0 +1,23 @@
+{
+  "event_count": 589,
+  "tool_call_count": 65,
+  "unparsed_events": 4,
+  "bounded_events": 5,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-KA934.3.2-reviewer-20260902T075454.jsonl",
+    "size_bytes": 962060
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task record and the diff.Now the key attack: is `comment` really the only journal type where `:ACTOR:` grants rights?Now the critical question: does `worker.comment` land in the journal as ty `comment`?Guard narrowing checks out. Now `member add`.Verified the core claim. Now filing findings.Now writing the report."
+    }
+  ],
+  "narrative_truncated": false
+}
