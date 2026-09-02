@@ -76,3 +76,42 @@
 :TO_STATE: in_review
 :EVENT_ID: 807b91ac-dfdb-48c3-b676-29cc06eace21
 :END:
+
+* tx-20260902-orgasmic-7056 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7056
+:TIME:    [2026-09-02 Wed 05:12:37]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.1
+:REASON: MEDIUM crates/orgasmic-cli/src/project_migrate.rs:219 — the non-git early return in refuse_dirty_tree newly enables the full destructive v1->v2 rewrite on non-git roots, where apply_with_recovery's printed recovery commands (git checkout/git clean) are inert, so a half-applied migration is unrecoverable by the instructions it prints.
+:EVENT_ID: 7d93ffd6-a81a-47b8-83aa-8b42b816baf0
+:END:
+
+* tx-20260902-orgasmic-7057 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7057
+:TIME:    [2026-09-02 Wed 05:12:41]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.1
+:REASON: LOW crates/orgasmic-cli/src/project_migrate.rs:481 — project migrate --to-branch on a non-git root now reaches migrate_to_branch and dies inside create_orphan_branch with 'git read-tree --empty failed: not a git repository', under the context line 'branch cutover failed before this run changed the repository' even though views.apply already deleted .orgasmic/views/ earlier in run_at.
+:EVENT_ID: 38060631-f16c-4375-aacf-4b8d3b39dbf6
+:END:
+
+* tx-20260902-orgasmic-7058 reviewer.finding
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-7058
+:TIME:    [2026-09-02 Wed 05:12:45]
+:TYPE:    reviewer.finding
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JWHXH.3.1
+:REASON: LOW test crates/orgasmic-cli/src/project_migrate.rs:836 — the 'migrate summary correct on a real apply' acceptance is proven only by a pure unit test of views_summary_lines; non_git_project_views_doctor_warns_migrate_deletes_then_doctor_quiet calls run_at but never captures stdout, so no test exercises the real println path.
+:EVENT_ID: 35154112-9a4a-47ef-8511-7c330f2941b0
+:END:
