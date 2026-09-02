@@ -1963,6 +1963,22 @@ fn org_rewriter_error(context: &str, node_id: &str, error: impl std::fmt::Displa
     ApiError::bad_request("org file update failed")
 }
 
+/// The project id under `root/.orgasmic/project.org`, or `None` — silently.
+///
+/// orgasmic:TASK-3R3EZ — the classification paths (run inventory, boot scan,
+/// worktree authority) read this file on every pass over roots and worktrees
+/// that may legitimately be gone, and they used to do it through
+/// [`read_existing_project_identity`], whose log line is sized for one 400
+/// answer to one caller. The run catalog reports the transition once instead.
+pub(crate) fn project_identity_at(root: &FsPath) -> Option<String> {
+    let project_org = root.join(".orgasmic/project.org");
+    let source = std::fs::read_to_string(&project_org).ok()?;
+    let file = OrgFile::parse(source, project_org.to_string_lossy()).ok()?;
+    ProjectFile::from_org(&file, project_org.to_string_lossy().as_ref())
+        .ok()
+        .map(|project| project.id.to_string())
+}
+
 pub(crate) fn read_existing_project_identity(
     project_org: &FsPath,
 ) -> Result<ExistingProjectIdentity, ApiError> {
@@ -9432,10 +9448,7 @@ async fn get_run_history(
             if !seen.insert(canonical.clone()) {
                 continue;
             }
-            let project_id =
-                read_existing_project_identity(&canonical.join(".orgasmic/project.org"))
-                    .ok()
-                    .map(|identity| identity.project_id);
+            let project_id = project_identity_at(&canonical);
             catalog.refresh_dir(
                 &project_sessions_dir(&canonical),
                 project_id.as_deref(),
@@ -9774,9 +9787,7 @@ async fn recovery_status_for_run(state: &ApiState, run_id: &str) -> RecoveryResp
 
 /// Refresh one canonical project root's catalog entries. Blocking.
 fn refresh_project_catalog(catalog: &crate::run_catalog::RunCatalog, canonical_root: &FsPath) {
-    let project_id = read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
-        .ok()
-        .map(|identity| identity.project_id);
+    let project_id = project_identity_at(canonical_root);
     catalog.refresh_dir(
         &project_sessions_dir(canonical_root),
         project_id.as_deref(),
@@ -12443,10 +12454,7 @@ fn collect_boot_reattach_candidates(
                 "run catalog snapshot not usable; rebuilding from session files"
             );
         }
-        let project_id =
-            read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
-                .ok()
-                .map(|identity| identity.project_id);
+        let project_id = project_identity_at(&canonical_root);
         let refreshed = catalog.refresh_dir(
             &dir,
             project_id.as_deref(),
@@ -12887,10 +12895,7 @@ async fn classify_session_files(
             let dir = dir.clone();
             let canonical_root = canonical_root.clone();
             match tokio::task::spawn_blocking(move || {
-                let project_id =
-                    read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
-                        .ok()
-                        .map(|identity| identity.project_id);
+                let project_id = project_identity_at(&canonical_root);
                 catalog.refresh_dir(
                     &dir,
                     project_id.as_deref(),
