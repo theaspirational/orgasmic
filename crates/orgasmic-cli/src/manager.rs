@@ -5,7 +5,7 @@
 //! close/status scans. Runtime acquisition goes through the daemon supervisor.
 
 use std::collections::BTreeSet;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -399,6 +399,9 @@ pub struct DispatchStatusArgs {
     /// still open for others.
     #[arg(long = "partial-closed")]
     pub partial_closed: bool,
+    /// Print one structured status object instead of the human inventory.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -919,6 +922,144 @@ struct CleanupFailureRecord {
     tasks: Vec<String>,
     status: String,
     error: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+struct DispatchStatusOutput {
+    torn_close_reconcile: TornCloseStatusBranch,
+    cleanup_failed: Option<CleanupFailedStatusBranch>,
+    open_dispatches: Option<OpenDispatchStatusBranch>,
+    managed_worktrees: ManagedWorktreeStatusBranch,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+struct TornCloseStatusBranch {
+    reconciled: Vec<TornCloseStatusRecord>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct TornCloseStatusRecord {
+    task: String,
+    from: String,
+    to: String,
+    started_tx: String,
+    already_applied: bool,
+    tx_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct CleanupFailedStatusBranch {
+    records: Vec<CleanupFailedStatusRecord>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct CleanupFailedStatusRecord {
+    tx_id: String,
+    tasks: Vec<String>,
+    #[serde(rename = "type")]
+    ty: String,
+    cleanup_status: String,
+    cleanup_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct OpenDispatchStatusBranch {
+    main_checkout: Option<MainCheckoutStatus>,
+    records: Vec<OpenDispatchStatusRecord>,
+    parked: Vec<ParkedTaskStatus>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct MainCheckoutStatus {
+    main_checkout_dirty: usize,
+    checkout: PathBuf,
+    paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct OpenDispatchStatusRecord {
+    tx_id: String,
+    tasks: Vec<String>,
+    kind: String,
+    started_at: Option<String>,
+    worktree: Option<PathBuf>,
+    worker_pid: Option<u32>,
+    worker_pid_derived: bool,
+    run_id: Option<String>,
+    worker: Option<String>,
+    driver: Option<String>,
+    harness: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    preflight: Option<String>,
+    worktree_exists: bool,
+    pid_alive: Option<bool>,
+    run_alive: bool,
+    reported: bool,
+    claim_holder: Option<Vec<String>>,
+    double_claim: Option<Vec<DoubleClaimStatus>>,
+    partial_closed: Option<PartialClosedStatus>,
+    terminal_exit: Option<TerminalExitStatus>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct DoubleClaimStatus {
+    task: String,
+    contenders: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct PartialClosedStatus {
+    closed: usize,
+    total: usize,
+    missing: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct TerminalExitStatus {
+    reason: String,
+    detail: Option<String>,
+    evidence_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct ParkedTaskStatus {
+    task: String,
+    state: String,
+    since: Option<String>,
+    dispatch_kind: String,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
+struct ManagedWorktreeStatusBranch {
+    records: Vec<ManagedWorktreeStatusRecord>,
+    reclaimable_total: Option<ReclaimableWorktreeTotal>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct ManagedWorktreeStatusRecord {
+    disposition: ManagedWorktreeStatusDisposition,
+    path: PathBuf,
+    bytes: Option<u64>,
+    size: Option<String>,
+    why: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ManagedWorktreeStatusDisposition {
+    ReclaimableWorktree,
+    HeldWorktree,
+    KeptWorktree,
+    AwaitingMerge,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+struct ReclaimableWorktreeTotal {
+    count: usize,
+    bytes: u64,
+    size: String,
+    reclaim_with: String,
 }
 
 pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
@@ -2811,6 +2952,7 @@ fn guard_dirty_main_checkout(require_clean: bool) -> Result<()> {
 /// TASK-EXN3N: the dispatch-status header while a dispatch is open. A
 /// reviewer is asked to stay in its worktree, not prevented from writing
 /// into main; this is where a write into main becomes visible.
+#[cfg(test)]
 fn main_checkout_status_line(checkout: &Path, dirty: &DirtyCheckout) -> String {
     format!(
         "main_checkout_dirty={} CHECKOUT={} PATHS={}",
@@ -3151,32 +3293,55 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
     // orgasmic:task_EP3H1 — the command an operator runs after a close warns
     // about a lost lifecycle leg is this one. Repair before reporting, so what
     // it reports is the repaired state.
-    if let Some(project_id) = project_id.as_deref() {
-        reconcile_torn_closes_best_effort(home, &project_root, project_id);
+    let torn_close_reconcile = project_id
+        .as_deref()
+        .map(|project_id| reconcile_torn_closes_status_best_effort(home, &project_root, project_id))
+        .unwrap_or_default();
+    if !args.json {
+        for record in &torn_close_reconcile.reconciled {
+            println!("{}", torn_close_human_line(record));
+        }
     }
+    let torn_close_reconcile = if args.json {
+        torn_close_reconcile
+    } else {
+        TornCloseStatusBranch::default()
+    };
+
     if args.cleanup_failed {
         let mut failures = scan_cleanup_failures(&project_root)?;
         if let Some(task) = args.task.as_deref() {
             failures.retain(|record| record.tasks.iter().any(|got| got == task));
         }
-        for record in failures {
-            println!(
-                "TX_ID={} TASK={} TYPE={} CLEANUP_STATUS={} CLEANUP_ERROR={}",
-                record.tx_id,
-                task_list_property(&record.tasks),
-                record.ty,
-                record.status,
-                record.error.as_deref().unwrap_or("-")
-            );
-        }
+        let cleanup_failed = CleanupFailedStatusBranch {
+            records: failures
+                .into_iter()
+                .map(|record| CleanupFailedStatusRecord {
+                    tx_id: record.tx_id,
+                    tasks: record.tasks,
+                    ty: record.ty,
+                    cleanup_status: record.status,
+                    cleanup_error: record.error,
+                })
+                .collect(),
+        };
         // TASK-M47E5: closing an orphan is exactly the moment its worktree
         // becomes reclaimable, so say so here too. No live-run fetch on this
         // leg — the ledger alone decides whether a worktree is held, and a run
         // list would only sharpen the wording of an entry already refused.
-        if let Some(project_id) = project_id.as_deref() {
-            report_managed_worktrees(home, &project_root, project_id, &[]);
-        }
-        return Ok(());
+        let managed_worktrees = project_id
+            .as_deref()
+            .map(|project_id| managed_worktree_status(home, &project_root, project_id, &[]))
+            .unwrap_or_default();
+        return emit_dispatch_status(
+            &DispatchStatusOutput {
+                torn_close_reconcile,
+                cleanup_failed: Some(cleanup_failed),
+                open_dispatches: None,
+                managed_worktrees,
+            },
+            args.json,
+        );
     }
 
     // TASK-3HR8R: the task list rides on the same client, best effort like
@@ -3207,18 +3372,28 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
     }
     // TASK-EXN3N: while a worker is out, say whether anything wrote into the
     // checkout it was told to stay out of. Quiet when nothing is open.
-    if !open.is_empty() {
-        if let Some(checkout) = main_checkout() {
-            let dirty = dirty_checkout(&checkout)?;
-            println!("{}", main_checkout_status_line(&checkout, &dirty));
+    let main_checkout = if open.is_empty() {
+        None
+    } else {
+        match main_checkout() {
+            Some(checkout) => {
+                let dirty = dirty_checkout(&checkout)?;
+                Some(MainCheckoutStatus {
+                    main_checkout_dirty: dirty.count,
+                    checkout,
+                    paths: (!dirty.sample.is_empty()).then_some(dirty.sample),
+                })
+            }
+            None => None,
         }
-    }
+    };
+    let mut records = Vec::new();
     for record in &open {
         let health = dispatch_health(record, &live_runs);
         if args.orphans_only && health.worktree_exists && (health.pid_alive || health.run_alive) {
             continue;
         }
-        let partial_closed = partial_closed_annotation(record);
+        let partial_closed = partial_closed_status(record);
         if args.partial_closed && partial_closed.is_none() {
             continue;
         }
@@ -3226,7 +3401,9 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
             .tasks
             .iter()
             .filter_map(|task| claims.get(task).map(|claim| claim.holder.clone()))
-            .collect::<BTreeSet<_>>();
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
         let double_claims = record
             .tasks
             .iter()
@@ -3234,98 +3411,292 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 claims
                     .get(task)
                     .filter(|claim| claim.contenders.len() > 1)
-                    .map(|claim| format!("{task}:[{}]", claim.contenders.join(",")))
+                    .map(|claim| DoubleClaimStatus {
+                        task: task.clone(),
+                        contenders: claim.contenders.clone(),
+                    })
             })
             .collect::<Vec<_>>();
-        println!(
-            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} MODEL={} EFFORT={} {} {} {} {} CLAIM_HOLDER={} DOUBLE_CLAIM={}{}{}",
-            record.tx_id,
-            task_list_property(&record.tasks),
-            record.kind,
-            record.started_at.as_deref().unwrap_or("-"),
-            record
-                .worktree
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "-".to_string()),
-            record
-                .worker_pid
-                .or(record.pid)
-                .map(|pid| pid.to_string())
-                .or_else(|| health.pid.map(|pid| format!("{pid} (derived)")))
-                .unwrap_or_else(|| "-".to_string()),
-            record.run_id.as_deref().unwrap_or("-"),
-            record.worker_id.as_deref().unwrap_or("-"),
-            record.driver.as_deref().unwrap_or("-"),
-            record.harness.as_deref().unwrap_or("-"),
-            record.model.as_deref().unwrap_or("-"),
-            record.effort.as_deref().unwrap_or("-"),
-            if health.worktree_exists {
-                "[exists]"
-            } else {
-                "[missing]"
-            },
-            pid_flag(&health),
-            if health.run_alive {
-                "[run-live]"
-            } else {
-                "[run-gone]"
-            },
-            // TASK-6AYEJ: distinguishes "the worker finalized, this is waiting
-            // on `dispatch-close`" from "the run vanished without reporting".
-            if record.reported {
-                "[reported]"
-            } else {
-                "[unreported]"
-            },
-            if holders.is_empty() {
-                "-".to_string()
-            } else {
-                holders.into_iter().collect::<Vec<_>>().join(",")
-            },
-            if double_claims.is_empty() {
-                "-".to_string()
-            } else {
-                double_claims.join(";")
-            },
-            partial_closed
-                .map(|annotation| format!(" {annotation}"))
-                .unwrap_or_default(),
-            // Only when there is something to say: an admitted-but-unchecked
-            // dispatch is the one a post-mortem needs flagged (TASK-AP298).
-            unchecked_preflight_annotation(record)
-                .map(|annotation| format!(" {annotation}"))
-                .unwrap_or_default()
-        );
-        // TASK-XQCNA: a run that is gone but still open says WHY from its own
-        // tombstone, and names the file the answer came from.
-        for line in terminal_exit_lines(record, &health) {
-            println!("{line}");
-        }
+        let recorded_pid = record.worker_pid.or(record.pid);
+        records.push(OpenDispatchStatusRecord {
+            tx_id: record.tx_id.clone(),
+            tasks: record.tasks.clone(),
+            kind: record.kind.clone(),
+            started_at: record.started_at.clone(),
+            worktree: record.worktree.clone(),
+            worker_pid: recorded_pid.or(health.pid),
+            worker_pid_derived: recorded_pid.is_none() && health.pid.is_some(),
+            run_id: record.run_id.clone(),
+            worker: record.worker_id.clone(),
+            driver: record.driver.clone(),
+            harness: record.harness.clone(),
+            model: record.model.clone(),
+            effort: record.effort.clone(),
+            preflight: record.preflight.clone(),
+            worktree_exists: health.worktree_exists,
+            pid_alive: health.pid.map(|_| health.pid_alive),
+            run_alive: health.run_alive,
+            reported: record.reported,
+            claim_holder: (!holders.is_empty()).then_some(holders),
+            double_claim: (!double_claims.is_empty()).then_some(double_claims),
+            partial_closed,
+            terminal_exit: terminal_exit_status(record, &health),
+        });
     }
     // TASK-M47E5: the automatic detection half. Managed worktrees now live
     // outside the repo, where `git status` and the operator's eyes no longer
     // find them, so the inventory verb has to name the ones nothing owns.
-    if let Some(project_id) = project_id.as_deref() {
-        report_managed_worktrees(home, &project_root, project_id, &live_runs);
-    }
+    let managed_worktrees = project_id
+        .as_deref()
+        .map(|project_id| managed_worktree_status(home, &project_root, project_id, &live_runs))
+        .unwrap_or_default();
     // TASK-3HR8R: the absence of a dispatch. A task at an active stage with no
     // open generation is invisible to the inventory above, and `in_review`
     // looks like patience — so name it. Quiet when nothing is parked.
-    for task in parked_tasks(&tasks, &open) {
-        println!(
-            "PARKED TASK={} STATE={} SINCE={} — no open dispatch; dispatch {} or move the task",
-            task.id,
-            task.lifecycle_stage,
-            parked_since(&project_root, &task.id).unwrap_or_else(|| "-".to_string()),
-            if task.lifecycle_stage == LifecycleStage::InReview {
-                "a reviewer"
+    let parked = parked_tasks(&tasks, &open)
+        .into_iter()
+        .map(|task| ParkedTaskStatus {
+            task: task.id.clone(),
+            state: task.lifecycle_stage.to_string(),
+            since: parked_since(&project_root, &task.id),
+            dispatch_kind: if task.lifecycle_stage == LifecycleStage::InReview {
+                "reviewer".to_string()
             } else {
-                "an implementer"
-            }
-        );
+                "implementer".to_string()
+            },
+        })
+        .collect();
+
+    emit_dispatch_status(
+        &DispatchStatusOutput {
+            torn_close_reconcile,
+            cleanup_failed: None,
+            open_dispatches: Some(OpenDispatchStatusBranch {
+                main_checkout,
+                records,
+                parked,
+            }),
+            managed_worktrees,
+        },
+        args.json,
+    )
+}
+
+fn emit_dispatch_status(output: &DispatchStatusOutput, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(output)?);
+    } else {
+        print!("{}", render_dispatch_status_human(output));
     }
     Ok(())
+}
+
+fn torn_close_human_line(record: &TornCloseStatusRecord) -> String {
+    format!(
+        "reconciled: {} {} -> {} (torn close {}{})",
+        record.task,
+        record.from,
+        record.to,
+        record.started_tx,
+        if record.already_applied {
+            "; the timed-out request had already applied it".to_string()
+        } else {
+            record
+                .tx_id
+                .as_ref()
+                .map(|tx_id| format!(" tx={tx_id}"))
+                .unwrap_or_default()
+        }
+    )
+}
+
+fn render_dispatch_status_human(output: &DispatchStatusOutput) -> String {
+    let mut rendered = String::new();
+    for record in &output.torn_close_reconcile.reconciled {
+        writeln!(rendered, "{}", torn_close_human_line(record))
+            .expect("writing to a String cannot fail");
+    }
+    if let Some(cleanup) = &output.cleanup_failed {
+        for record in &cleanup.records {
+            writeln!(
+                rendered,
+                "TX_ID={} TASK={} TYPE={} CLEANUP_STATUS={} CLEANUP_ERROR={}",
+                record.tx_id,
+                task_list_property(&record.tasks),
+                record.ty,
+                record.cleanup_status,
+                record.cleanup_error.as_deref().unwrap_or("-")
+            )
+            .expect("writing to a String cannot fail");
+        }
+    } else if let Some(open) = &output.open_dispatches {
+        if let Some(main) = &open.main_checkout {
+            writeln!(
+                rendered,
+                "main_checkout_dirty={} CHECKOUT={} PATHS={}",
+                main.main_checkout_dirty,
+                main.checkout.display(),
+                main.paths
+                    .as_ref()
+                    .map(|paths| paths.join(","))
+                    .unwrap_or_else(|| "-".to_string())
+            )
+            .expect("writing to a String cannot fail");
+        }
+        for record in &open.records {
+            let double_claim = record.double_claim.as_ref().map(|claims| {
+                claims
+                    .iter()
+                    .map(|claim| format!("{}:[{}]", claim.task, claim.contenders.join(",")))
+                    .collect::<Vec<_>>()
+                    .join(";")
+            });
+            writeln!(
+                rendered,
+                "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} MODEL={} EFFORT={} {} {} {} {} CLAIM_HOLDER={} DOUBLE_CLAIM={}{}{}",
+                record.tx_id,
+                task_list_property(&record.tasks),
+                record.kind,
+                record.started_at.as_deref().unwrap_or("-"),
+                record
+                    .worktree
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                record
+                    .worker_pid
+                    .map(|pid| if record.worker_pid_derived {
+                        format!("{pid} (derived)")
+                    } else {
+                        pid.to_string()
+                    })
+                    .unwrap_or_else(|| "-".to_string()),
+                record.run_id.as_deref().unwrap_or("-"),
+                record.worker.as_deref().unwrap_or("-"),
+                record.driver.as_deref().unwrap_or("-"),
+                record.harness.as_deref().unwrap_or("-"),
+                record.model.as_deref().unwrap_or("-"),
+                record.effort.as_deref().unwrap_or("-"),
+                if record.worktree_exists {
+                    "[exists]"
+                } else {
+                    "[missing]"
+                },
+                match record.pid_alive {
+                    Some(true) => "[pid-alive]",
+                    Some(false) => "[pid-gone]",
+                    None => "",
+                },
+                if record.run_alive {
+                    "[run-live]"
+                } else {
+                    "[run-gone]"
+                },
+                if record.reported {
+                    "[reported]"
+                } else {
+                    "[unreported]"
+                },
+                record
+                    .claim_holder
+                    .as_ref()
+                    .map(|holders| holders.join(","))
+                    .unwrap_or_else(|| "-".to_string()),
+                double_claim.unwrap_or_else(|| "-".to_string()),
+                record
+                    .partial_closed
+                    .as_ref()
+                    .map(|partial| format!(
+                        " PARTIAL_CLOSED={}/{} missing=[{}]",
+                        partial.closed,
+                        partial.total,
+                        partial.missing.join(", ")
+                    ))
+                    .unwrap_or_default(),
+                record
+                    .preflight
+                    .as_deref()
+                    .filter(|preflight| *preflight != "ok")
+                    .map(|preflight| format!(" PREFLIGHT={preflight}"))
+                    .unwrap_or_default()
+            )
+            .expect("writing to a String cannot fail");
+            if let Some(exit) = &record.terminal_exit {
+                writeln!(
+                    rendered,
+                    "  exit: {}{}",
+                    exit.reason,
+                    exit.detail
+                        .as_ref()
+                        .map(|detail| format!(" [{detail}]"))
+                        .unwrap_or_default()
+                )
+                .expect("writing to a String cannot fail");
+                writeln!(
+                    rendered,
+                    "  evidence: {}",
+                    exit.evidence_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                )
+                .expect("writing to a String cannot fail");
+            }
+        }
+    }
+    for record in &output.managed_worktrees.records {
+        match record.disposition {
+            ManagedWorktreeStatusDisposition::ReclaimableWorktree => writeln!(
+                rendered,
+                "RECLAIMABLE_WORKTREE PATH={} BYTES={} SIZE={} WHY={}",
+                record.path.display(),
+                record.bytes.unwrap_or(0),
+                record.size.as_deref().unwrap_or("0B"),
+                record.why
+            ),
+            ManagedWorktreeStatusDisposition::HeldWorktree => writeln!(
+                rendered,
+                "HELD_WORKTREE PATH={} WHY={}",
+                record.path.display(),
+                record.why
+            ),
+            ManagedWorktreeStatusDisposition::KeptWorktree => writeln!(
+                rendered,
+                "KEPT_WORKTREE PATH={} WHY={}",
+                record.path.display(),
+                record.why
+            ),
+            ManagedWorktreeStatusDisposition::AwaitingMerge => writeln!(
+                rendered,
+                "AWAITING_MERGE PATH={} WHY={}",
+                record.path.display(),
+                record.why
+            ),
+        }
+        .expect("writing to a String cannot fail");
+    }
+    if let Some(total) = &output.managed_worktrees.reclaimable_total {
+        writeln!(
+            rendered,
+            "RECLAIMABLE_TOTAL COUNT={} BYTES={} SIZE={} RECLAIM_WITH={}",
+            total.count, total.bytes, total.size, total.reclaim_with
+        )
+        .expect("writing to a String cannot fail");
+    }
+    if let Some(open) = &output.open_dispatches {
+        for task in &open.parked {
+            writeln!(
+                rendered,
+                "PARKED TASK={} STATE={} SINCE={} — no open dispatch; dispatch a {} or move the task",
+                task.task,
+                task.state,
+                task.since.as_deref().unwrap_or("-"),
+                task.dispatch_kind
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
+    rendered
 }
 
 /// One row of the daemon's `/projects/<id>/tasks` list — the same list
@@ -4785,64 +5156,72 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
 /// `worktree-prune` could reclaim. Best effort and never fatal — this is a
 /// report appended to an inventory verb, not the inventory itself.
 // orgasmic:TASK-M47E5,TASK-RMA18
-fn report_managed_worktrees(
+fn managed_worktree_status(
     home: &Home,
     project_root: &Path,
     project_id: &str,
     live_runs: &[RunSummary],
-) {
+) -> ManagedWorktreeStatusBranch {
     let root = match AnchoredManagedRoot::open(home, project_id) {
         Ok(Some(root)) => root,
-        Ok(None) => return,
+        Ok(None) => return ManagedWorktreeStatusBranch::default(),
         Err(err) => {
             eprintln!("warning: could not scan managed worktrees: {err}");
-            return;
+            return ManagedWorktreeStatusBranch::default();
         }
     };
     let found = match scan_managed_worktrees(&root, project_root, project_id, live_runs) {
         Ok(found) => found,
         Err(err) => {
             eprintln!("warning: could not scan managed worktrees: {err}");
-            return;
+            return ManagedWorktreeStatusBranch::default();
         }
     };
-    if found.is_empty() {
-        return;
-    }
     let mut total: u64 = 0;
     let mut count = 0usize;
+    let mut records = Vec::new();
     for worktree in &found {
         if worktree.reclaimable() {
             let bytes = worktree.bytes.unwrap_or(0);
             total = total.saturating_add(bytes);
             count += 1;
-            println!(
-                "RECLAIMABLE_WORKTREE PATH={} BYTES={bytes} SIZE={} WHY={}",
-                worktree.path.display(),
-                format_bytes(bytes),
-                worktree.why()
-            );
+            records.push(ManagedWorktreeStatusRecord {
+                disposition: ManagedWorktreeStatusDisposition::ReclaimableWorktree,
+                path: worktree.path.clone(),
+                bytes: Some(bytes),
+                size: Some(format_bytes(bytes)),
+                why: worktree.why(),
+            });
         } else {
             // Two different reasons not to reclaim, reported apart: somebody
             // owns it, versus nobody could tell (TASK-M47E5.2 finding 3).
-            let line = match worktree.disposition {
+            let disposition = match worktree.disposition {
                 WorktreeDisposition::Undetermined { .. }
-                | WorktreeDisposition::UnsafeTraversal { .. } => "KEPT_WORKTREE",
-                WorktreeDisposition::AwaitingMerge { .. } => "AWAITING_MERGE",
-                _ => "HELD_WORKTREE",
+                | WorktreeDisposition::UnsafeTraversal { .. } => {
+                    ManagedWorktreeStatusDisposition::KeptWorktree
+                }
+                WorktreeDisposition::AwaitingMerge { .. } => {
+                    ManagedWorktreeStatusDisposition::AwaitingMerge
+                }
+                _ => ManagedWorktreeStatusDisposition::HeldWorktree,
             };
-            println!(
-                "{line} PATH={} WHY={}",
-                worktree.path.display(),
-                worktree.why()
-            );
+            records.push(ManagedWorktreeStatusRecord {
+                disposition,
+                path: worktree.path.clone(),
+                bytes: None,
+                size: None,
+                why: worktree.why(),
+            });
         }
     }
-    if count > 0 {
-        println!(
-            "RECLAIMABLE_TOTAL COUNT={count} BYTES={total} SIZE={} RECLAIM_WITH=orgasmic manager worktree-prune",
-            format_bytes(total)
-        );
+    ManagedWorktreeStatusBranch {
+        records,
+        reclaimable_total: (count > 0).then(|| ReclaimableWorktreeTotal {
+            count,
+            bytes: total,
+            size: format_bytes(total),
+            reclaim_with: "orgasmic manager worktree-prune".to_string(),
+        }),
     }
 }
 
@@ -10069,7 +10448,8 @@ fn reconcile_torn_closes(
     runtime: &tokio::runtime::Runtime,
     project_root: &Path,
     project_id: &str,
-) -> Result<()> {
+) -> Result<Vec<TornCloseStatusRecord>> {
+    let mut reconciled = Vec::new();
     for (started_tx, transition) in torn_close_candidates(project_root)? {
         let current = match read_task_lifecycle(project_root, &transition.task) {
             Ok(info) => info.stage,
@@ -10088,41 +10468,51 @@ fn reconcile_torn_closes(
             &close_lifecycle_request_id(&transition.task, &started_tx),
         ));
         match outcome {
-            Ok(outcome) => println!(
-                "reconciled: {} {} -> {} (torn close {}{})",
-                transition.task,
-                transition.from.as_str(),
-                transition.to.as_str(),
+            Ok(outcome) => reconciled.push(TornCloseStatusRecord {
+                task: transition.task,
+                from: transition.from.as_str().to_string(),
+                to: transition.to.as_str().to_string(),
                 started_tx,
-                if outcome.already_applied() {
-                    "; the timed-out request had already applied it".to_string()
-                } else if outcome.tx_id.is_empty() {
-                    String::new()
-                } else {
-                    format!(" tx={}", outcome.tx_id)
-                }
-            ),
+                already_applied: outcome.already_applied(),
+                tx_id: (!outcome.tx_id.is_empty()).then_some(outcome.tx_id),
+            }),
             Err(err) => eprintln!(
                 "warning: could not finish torn close {started_tx} for {}: {err}",
                 transition.task
             ),
         }
     }
-    Ok(())
+    Ok(reconciled)
 }
 
 /// Best-effort reconciliation for a manager command that has not built a
 /// daemon client of its own. A daemon that cannot be reached is not a reason
 /// to fail the command the operator actually asked for.
 fn reconcile_torn_closes_best_effort(home: &Home, project_root: &Path, project_id: &str) {
+    for record in
+        reconcile_torn_closes_status_best_effort(home, project_root, project_id).reconciled
+    {
+        println!("{}", torn_close_human_line(&record));
+    }
+}
+
+fn reconcile_torn_closes_status_best_effort(
+    home: &Home,
+    project_root: &Path,
+    project_id: &str,
+) -> TornCloseStatusBranch {
     let Ok(client) = DaemonClient::from_home_autostart(home) else {
-        return;
+        return TornCloseStatusBranch::default();
     };
     let Ok(runtime) = tokio::runtime::Runtime::new() else {
-        return;
+        return TornCloseStatusBranch::default();
     };
-    if let Err(err) = reconcile_torn_closes(&client, &runtime, project_root, project_id) {
-        eprintln!("warning: torn-close reconciliation skipped: {err}");
+    match reconcile_torn_closes(&client, &runtime, project_root, project_id) {
+        Ok(reconciled) => TornCloseStatusBranch { reconciled },
+        Err(err) => {
+            eprintln!("warning: torn-close reconciliation skipped: {err}");
+            TornCloseStatusBranch::default()
+        }
     }
 }
 
@@ -11155,9 +11545,12 @@ fn dispatch_record_from_fold(dispatch: DispatchFold, entries: &[TxEntry]) -> Dis
 /// generation whose run is gone (TASK-XQCNA); nothing while the run is live.
 /// The reason is the `exit` the daemon classified onto the last `Release`
 /// tombstone; every way of not having one reads `unknown [<why>]`.
-fn terminal_exit_lines(record: &DispatchRecord, health: &DispatchHealth) -> Vec<String> {
+fn terminal_exit_status(
+    record: &DispatchRecord,
+    health: &DispatchHealth,
+) -> Option<TerminalExitStatus> {
     if health.run_alive {
-        return Vec::new();
+        return None;
     }
     let (reason, detail) = match record.session_path.as_deref() {
         None => (
@@ -11173,17 +11566,29 @@ fn terminal_exit_lines(record: &DispatchRecord, health: &DispatchHealth) -> Vec<
             Err(error) => ("unknown".to_string(), Some(error.to_string())),
         },
     };
+    Some(TerminalExitStatus {
+        reason,
+        detail,
+        evidence_path: record.session_path.clone(),
+    })
+}
+
+#[cfg(test)]
+fn terminal_exit_lines(record: &DispatchRecord, health: &DispatchHealth) -> Vec<String> {
+    let Some(exit) = terminal_exit_status(record, health) else {
+        return Vec::new();
+    };
     vec![
         format!(
-            "  exit: {reason}{}",
-            detail
+            "  exit: {}{}",
+            exit.reason,
+            exit.detail
                 .map(|detail| format!(" [{detail}]"))
                 .unwrap_or_default()
         ),
         format!(
             "  evidence: {}",
-            record
-                .session_path
+            exit.evidence_path
                 .as_ref()
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "-".to_string())
@@ -11213,6 +11618,7 @@ fn session_release_exit(session_path: &Path) -> Result<Option<orgasmic_core::Exi
 
 /// `PREFLIGHT=<value>` for a dispatch whose preflight did not answer `ok`;
 /// nothing for `ok` and for records written before the property existed.
+#[cfg(test)]
 fn unchecked_preflight_annotation(record: &DispatchRecord) -> Option<String> {
     record
         .preflight
@@ -11276,7 +11682,7 @@ fn read_tx_entries(project_root: &Path) -> Result<Vec<TxEntry>> {
     Ok(entries)
 }
 
-fn partial_closed_annotation(record: &DispatchRecord) -> Option<String> {
+fn partial_closed_status(record: &DispatchRecord) -> Option<PartialClosedStatus> {
     if record.closed_tasks.is_empty() || record.closed_tasks.len() >= record.tasks.len() {
         return None;
     }
@@ -11286,12 +11692,11 @@ fn partial_closed_annotation(record: &DispatchRecord) -> Option<String> {
         .filter(|task| !record.closed_tasks.contains(*task))
         .cloned()
         .collect::<Vec<_>>();
-    Some(format!(
-        "PARTIAL_CLOSED={}/{} missing=[{}]",
-        record.closed_tasks.len(),
-        record.tasks.len(),
-        missing.join(", ")
-    ))
+    Some(PartialClosedStatus {
+        closed: record.closed_tasks.len(),
+        total: record.tasks.len(),
+        missing,
+    })
 }
 
 fn extra<'a>(entry: &'a TxEntry, key: &str) -> Option<&'a str> {
@@ -11898,6 +12303,213 @@ mod tests {
         assert_eq!(parse_wait_duration("2m").unwrap(), Duration::from_secs(120));
         assert!(parse_wait_duration("0s").is_err());
         assert!(parse_wait_duration("30").is_err());
+    }
+
+    fn dispatch_status_output_fixture() -> DispatchStatusOutput {
+        DispatchStatusOutput {
+            torn_close_reconcile: TornCloseStatusBranch {
+                reconciled: vec![TornCloseStatusRecord {
+                    task: "TASK-TORN".into(),
+                    from: "in_progress".into(),
+                    to: "in_review".into(),
+                    started_tx: "tx-torn".into(),
+                    already_applied: false,
+                    tx_id: Some("tx-repair".into()),
+                }],
+            },
+            cleanup_failed: None,
+            open_dispatches: Some(OpenDispatchStatusBranch {
+                main_checkout: Some(MainCheckoutStatus {
+                    main_checkout_dirty: 0,
+                    checkout: PathBuf::from("/repo"),
+                    paths: None,
+                }),
+                records: vec![
+                    OpenDispatchStatusRecord {
+                        tx_id: "tx-open".into(),
+                        tasks: vec!["TASK-OPEN".into()],
+                        kind: "implementer".into(),
+                        started_at: Some("2026-09-02T12:00:00Z".into()),
+                        worktree: Some(PathBuf::from("/tmp/open")),
+                        worker_pid: Some(42),
+                        worker_pid_derived: false,
+                        run_id: Some("run-open".into()),
+                        worker: Some("agent.implementer".into()),
+                        driver: Some("codex".into()),
+                        harness: Some("codex-chat-stdio".into()),
+                        model: Some("gpt-5.6".into()),
+                        effort: Some("high".into()),
+                        preflight: Some("unchecked:offline".into()),
+                        worktree_exists: true,
+                        pid_alive: Some(true),
+                        run_alive: true,
+                        reported: false,
+                        claim_holder: Some(vec!["machine-a".into()]),
+                        double_claim: Some(vec![DoubleClaimStatus {
+                            task: "TASK-OPEN".into(),
+                            contenders: vec!["machine-a".into(), "machine-b".into()],
+                        }]),
+                        partial_closed: None,
+                        terminal_exit: None,
+                    },
+                    OpenDispatchStatusRecord {
+                        tx_id: "tx-gone".into(),
+                        tasks: vec!["TASK-GONE".into()],
+                        kind: "reviewer".into(),
+                        started_at: None,
+                        worktree: None,
+                        worker_pid: None,
+                        worker_pid_derived: false,
+                        run_id: None,
+                        worker: None,
+                        driver: None,
+                        harness: None,
+                        model: None,
+                        effort: None,
+                        preflight: None,
+                        worktree_exists: false,
+                        pid_alive: None,
+                        run_alive: false,
+                        reported: true,
+                        claim_holder: None,
+                        double_claim: None,
+                        partial_closed: None,
+                        terminal_exit: Some(TerminalExitStatus {
+                            reason: "provider_quota".into(),
+                            detail: Some("42s".into()),
+                            evidence_path: Some(PathBuf::from("/tmp/evidence.jsonl")),
+                        }),
+                    },
+                ],
+                parked: vec![ParkedTaskStatus {
+                    task: "TASK-PARKED".into(),
+                    state: "in_review".into(),
+                    since: None,
+                    dispatch_kind: "reviewer".into(),
+                }],
+            }),
+            managed_worktrees: ManagedWorktreeStatusBranch {
+                records: vec![ManagedWorktreeStatusRecord {
+                    disposition: ManagedWorktreeStatusDisposition::AwaitingMerge,
+                    path: PathBuf::from("/tmp/awaiting"),
+                    bytes: None,
+                    size: None,
+                    why: "reported implementer".into(),
+                }],
+                reclaimable_total: None,
+            },
+        }
+    }
+
+    #[test]
+    fn dispatch_status_json_round_trips_each_output_branch() {
+        use clap::Parser;
+        let args =
+            match crate::Cli::try_parse_from(["orgasmic", "manager", "dispatch-status", "--json"])
+                .unwrap()
+                .cmd
+            {
+                crate::Cmd::Manager {
+                    cmd: crate::ManagerCmd::DispatchStatus(args),
+                } => args,
+                other => panic!("unexpected command: {other:?}"),
+            };
+        assert!(args.json);
+        let inventory = dispatch_status_output_fixture();
+        let json = serde_json::to_string(&inventory).unwrap();
+        assert_eq!(
+            serde_json::from_str::<DispatchStatusOutput>(&json).unwrap(),
+            inventory
+        );
+        let value = serde_json::from_str::<serde_json::Value>(&json).unwrap();
+        assert_eq!(value["open_dispatches"]["records"][0]["model"], "gpt-5.6");
+        assert_eq!(value["open_dispatches"]["records"][0]["effort"], "high");
+        assert_eq!(
+            value["open_dispatches"]["records"][0]["preflight"],
+            "unchecked:offline"
+        );
+        assert_eq!(
+            value["open_dispatches"]["records"][1]["terminal_exit"]["reason"],
+            "provider_quota"
+        );
+        assert_eq!(
+            value["open_dispatches"]["records"][1]["terminal_exit"]["evidence_path"],
+            "/tmp/evidence.jsonl"
+        );
+        assert_eq!(value["open_dispatches"]["parked"][0]["task"], "TASK-PARKED");
+        assert_eq!(
+            value["managed_worktrees"]["records"][0]["disposition"],
+            "awaiting_merge"
+        );
+        assert!(value["open_dispatches"]["records"][1]["model"].is_null());
+        assert!(value["open_dispatches"]["main_checkout"]["paths"].is_null());
+
+        let cleanup = DispatchStatusOutput {
+            torn_close_reconcile: TornCloseStatusBranch::default(),
+            cleanup_failed: Some(CleanupFailedStatusBranch {
+                records: vec![CleanupFailedStatusRecord {
+                    tx_id: "tx-cleanup".into(),
+                    tasks: vec!["TASK-CLEANUP".into()],
+                    ty: "implementer.done".into(),
+                    cleanup_status: "worktree_failed".into(),
+                    cleanup_error: None,
+                }],
+            }),
+            open_dispatches: None,
+            managed_worktrees: ManagedWorktreeStatusBranch::default(),
+        };
+        let json = serde_json::to_string(&cleanup).unwrap();
+        assert_eq!(
+            serde_json::from_str::<DispatchStatusOutput>(&json).unwrap(),
+            cleanup
+        );
+        let value = serde_json::from_str::<serde_json::Value>(&json).unwrap();
+        assert!(value["cleanup_failed"]["records"][0]["cleanup_error"].is_null());
+    }
+
+    #[test]
+    fn dispatch_status_human_output_is_byte_identical_when_json_is_absent() {
+        use clap::Parser;
+        let args = match crate::Cli::try_parse_from(["orgasmic", "manager", "dispatch-status"])
+            .unwrap()
+            .cmd
+        {
+            crate::Cmd::Manager {
+                cmd: crate::ManagerCmd::DispatchStatus(args),
+            } => args,
+            other => panic!("unexpected command: {other:?}"),
+        };
+        assert!(!args.json);
+        assert_eq!(
+            render_dispatch_status_human(&dispatch_status_output_fixture()),
+            concat!(
+                "reconciled: TASK-TORN in_progress -> in_review (torn close tx-torn tx=tx-repair)\n",
+                "main_checkout_dirty=0 CHECKOUT=/repo PATHS=-\n",
+                "TX_ID=tx-open TASK=TASK-OPEN KIND=implementer STARTED_AT=2026-09-02T12:00:00Z WORKTREE=/tmp/open WORKER_PID=42 RUN_ID=run-open WORKER=agent.implementer DRIVER=codex HARNESS=codex-chat-stdio MODEL=gpt-5.6 EFFORT=high [exists] [pid-alive] [run-live] [unreported] CLAIM_HOLDER=machine-a DOUBLE_CLAIM=TASK-OPEN:[machine-a,machine-b] PREFLIGHT=unchecked:offline\n",
+                "TX_ID=tx-gone TASK=TASK-GONE KIND=reviewer STARTED_AT=- WORKTREE=- WORKER_PID=- RUN_ID=- WORKER=- DRIVER=- HARNESS=- MODEL=- EFFORT=- [missing]  [run-gone] [reported] CLAIM_HOLDER=- DOUBLE_CLAIM=-\n",
+                "  exit: provider_quota [42s]\n",
+                "  evidence: /tmp/evidence.jsonl\n",
+                "AWAITING_MERGE PATH=/tmp/awaiting WHY=reported implementer\n",
+                "PARKED TASK=TASK-PARKED STATE=in_review SINCE=- — no open dispatch; dispatch a reviewer or move the task\n",
+            )
+        );
+        assert_eq!(
+            render_dispatch_status_human(&DispatchStatusOutput {
+                torn_close_reconcile: TornCloseStatusBranch::default(),
+                cleanup_failed: Some(CleanupFailedStatusBranch {
+                    records: vec![CleanupFailedStatusRecord {
+                        tx_id: "tx-cleanup".into(),
+                        tasks: vec!["TASK-CLEANUP".into()],
+                        ty: "implementer.done".into(),
+                        cleanup_status: "worktree_failed".into(),
+                        cleanup_error: None,
+                    }],
+                }),
+                open_dispatches: None,
+                managed_worktrees: ManagedWorktreeStatusBranch::default(),
+            }),
+            "TX_ID=tx-cleanup TASK=TASK-CLEANUP TYPE=implementer.done CLEANUP_STATUS=worktree_failed CLEANUP_ERROR=-\n"
+        );
     }
 
     /// `dispatch-status` flags the one case a post-mortem needs (TASK-AP298):
