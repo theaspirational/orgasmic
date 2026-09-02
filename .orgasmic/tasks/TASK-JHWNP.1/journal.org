@@ -78,3 +78,34 @@
 :TO_STATE: in_review
 :EVENT_ID: f9ce34df-f0eb-4962-b35a-1dd6a85cbae0
 :END:
+
+* tx-20260902-orgasmic-f95d74f1-1604-4cb7-a1b9-a93c3082a16d task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-f95d74f1-1604-4cb7-a1b9-a93c3082a16d
+:TIME:    [2026-09-02 Wed 13:28:46]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JHWNP.1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-JHWNP.1/node.org
+:REASON: edited task node TASK-JHWNP.1
+:NODE_ID: TASK-JHWNP.1
+:EVENT_ID: 60e2fafc-485c-4317-9aa0-7d9cd0f42e54
+:END:
+
+* tx-20260902-orgasmic-f61ecfed-881d-4c92-9cb3-08096e45b1eb task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-f61ecfed-881d-4c92-9cb3-08096e45b1eb
+:TIME:    [2026-09-02 Wed 13:28:46]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-JHWNP.1
+:TARGET: .orgasmic/tasks/TASK-JHWNP.1/node.org
+:REASON: re-review APPROVE (0 HIGH); fix commit 3503b86b verified in main
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 9500388f-1e99-4a44-91d8-a29c0947a991
+:END:

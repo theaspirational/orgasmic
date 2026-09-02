@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-W97C8
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-W97C8 Replace stdout.log with typed evidence.json in dispatch records
+* DONE TASK-W97C8 Replace stdout.log with typed evidence.json in dispatch records
 :PROPERTIES:
 :ID: TASK-W97C8
 :PRIORITY: P2
@@ -28,3 +28,5 @@ At dispatch close, promote a small typed =evidence.json= into =dispatches/<tx>/=
 ** Worklog
 - [2026-08-28] Evidence projects reasoning/thinking from typed `ProviderRuntimeEvent::ContentDelta` events instead of adding `TextStream::Reasoning`. Dedicated chat runtimes already emit normalized content deltas, while the other modes retain `TextChunk::Assistant`; this avoids a session-schema variant that current drivers do not emit.
 [2026-08-28] Round 2 decision: narrative is Claude-only today because codex-chat session JSONL does not emit assistant/reasoning content deltas. Codex TextStream::System maps to reasoning_text but carries harness notices, not model thinking, so evidence excludes it rather than mislabeling notices; counts and pointers remain codex proof of work.
+** Evidence
+- Reviewed and APPROVED. Round-2 review dispatch tx-20260828-orgasmic-c75225ff: 'APPROVE-WITH-FOLLOW-UPS'; all nine round-1 findings closed and verified against real ledger and session data, not tests. Measured end to end: the projection that produced {0,0,[]} for every close in round 1 now produces non-zero counts on 452 of 452 historical runs whose session JSONL still exists (the other 150 are age-deleted and correctly yield session.status 'missing' with a named reason). Two non-blocking follow-ups were named by the reviewer; neither is a regression of this diff. Merge 124ed1d5 verified as an ancestor of main b1c6ca5f. Closed 2026-09-02 during operator board review.

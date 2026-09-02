@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-W97C8.1
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-W97C8.1 Move brief.md + compiled-prompt.md from dispatch-start to close-time promote
+* DONE TASK-W97C8.1 Move brief.md + compiled-prompt.md from dispatch-start to close-time promote
 :PROPERTIES:
 :DEPENDS_ON: TASK-W97C8
 :ID: TASK-W97C8.1
@@ -44,3 +44,5 @@ Start-time durable writes break three properties the close-time design bought:
 - Partial promote failure keeps tmp copies intact (no loss).
 - Focused tests: start writes nothing durable; close promotes all files;
   rollback leaves no orphan dir.
+** Evidence
+- Reviewed and APPROVED. Round-2 review dispatch tx-20260828-orgasmic-64f0a2c8: 'APPROVE-WITH-FOLLOW-UPS - all five round-1 findings verified fixed; four LOW residuals named, none ship-blocking' (round 1 at d57d2824 was 1 HIGH, 2 MEDIUM, 2 LOW). F-1 HIGH verified non-blocking end to end: a missing compiled prompt or brief no longer blocks close, each surfaces in CLEANUP_ERROR. Merge 23d4e142 (plus 506d9ff1, b00b48bd) verified as ancestors of main b1c6ca5f. Closed 2026-09-02 during operator board review.

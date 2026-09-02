@@ -108,3 +108,34 @@
 :TO_STATE: in_review
 :EVENT_ID: 90fb4a2b-661a-41b5-8a46-c60ff1008947
 :END:
+
+* tx-20260902-orgasmic-16e1af2f-2882-455d-92c0-fdfff6767a74 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-16e1af2f-2882-455d-92c0-fdfff6767a74
+:TIME:    [2026-09-02 Wed 13:28:46]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-W97C8/node.org
+:REASON: edited task node TASK-W97C8
+:NODE_ID: TASK-W97C8
+:EVENT_ID: 58c93e34-58cc-42df-86d9-b07bb0bcdec7
+:END:
+
+* tx-20260902-orgasmic-28e3a7d5-d626-4bc5-8f99-cbea69ea3586 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260902-orgasmic-28e3a7d5-d626-4bc5-8f99-cbea69ea3586
+:TIME:    [2026-09-02 Wed 13:28:46]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-W97C8
+:TARGET: .orgasmic/tasks/TASK-W97C8/node.org
+:REASON: round-2 review APPROVE-WITH-FOLLOW-UPS; merge 124ed1d5 verified in main
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 248a348e-0f92-4d4c-9bf3-1f27dfbda9b8
+:END:

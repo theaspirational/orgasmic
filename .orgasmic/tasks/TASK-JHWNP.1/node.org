@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JHWNP.1
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-JHWNP.1 fix round: chain-hold release paths (review REJECT on cd43bf91) :dispatch:worktree:
+* DONE TASK-JHWNP.1 fix round: chain-hold release paths (review REJECT on cd43bf91) :dispatch:worktree:
 :PROPERTIES:
 :ID: TASK-JHWNP.1
 :PRIORITY: P2
@@ -25,3 +25,5 @@ Review of cd43bf91 (TASK-JHWNP) returned REJECT: the keep/lock half of the chain
 ** Acceptance
 - Each HIGH gets the review's named regression test, red against cd43bf91.
 - Existing dispatch suite green; no RMA18 refusal weakened; reviewer freshness untouched.
+** Evidence
+- Reviewed and APPROVED. Re-review dispatch tx-20260827-orgasmic-e1daae07 over cd43bf91..3503b86b: 'APPROVE - 0 HIGH, 1 MEDIUM, 2 LOW'; all eight round-1 findings addressed (six fixed, MEDIUM-4 answered with a stated policy, LOW-7 documented). Both named regression tests are red against cd43bf91 by the exact guard each names; abandonment re-traced end to end (default abort salvages and removes; 'abort --no-worktree-remove' -> cancel -> worktree-prune reclaims). Implementation commit 3503b86b verified as an ancestor of main b1c6ca5f. Closed 2026-09-02 during operator board review.
