@@ -6220,3 +6220,59 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-JWHXH.3.1/dispatches/tx-20260902-orgasmic-1e881b31-7897-4d85-877a-62264705fad8/report.md
 :EVENT_ID:     1dfc755c-a900-46e8-9447-1241ddbcd689
 :END:
+
+* TX 2026-09-02 Wed 05:07:51 manager.dispatch_started TASK-JWHXH.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-21182657-3bec-4220-9ab8-aa64484ee021
+:TIME:         [2026-09-02 Wed 05:07:51]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.3.1
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.3.1-review
+:BRANCH:       task-jwhxh.3.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.3.1-review/brief-TASK-JWHXH.3.1-review.md
+:STARTED_AT:   [2026-09-02 Wed 05:07:51]
+:LIVENESS:     e290d7fb53e748c31312620e82a69f24dcc6d4b9
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260902-orgasmic-1e881b31-7897-4d85-877a-62264705fad8
+:REASON_INITIAL: narrow review of merge e290d7fb: doctor non-git stale views + stale strings (JWHXH.3 follow-ups)
+:EVENT_ID:     4c3dc58f-333c-42f2-829d-99c609e8e424
+:END:
+
+* TX 2026-09-02 Wed 05:07:51 run.created TASK-JWHXH.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260902-orgasmic-908772fe-0116-4ebb-9ad0-f4155a3f57e4
+:TIME:         [2026-09-02 Wed 05:07:51]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-JWHXH.3.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-JWHXH.3.1-reviewer-20260902T050748.jsonl
+:REASON:       narrow review of merge e290d7fb: doctor non-git stale views + stale strings (JWHXH.3 follow-ups)
+:RUN_ID:       run-01M1G889R4GAJ3GP9R2P198DX5
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-jwhxh.3.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-TASK-JWHXH.3.1-review/brief-TASK-JWHXH.3.1-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-TASK-JWHXH.3.1-review/brief-TASK-JWHXH.3.1-review-b6033749661a48e6a29f89961c22da57-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-TASK-JWHXH.3.1-review/brief-TASK-JWHXH.3.1-review-b6033749661a48e6a29f89961c22da57-stdout.log
+:DISPATCH_ATTEMPT: b6033749661a48e6a29f89961c22da57
+:PID:          34150
+:DISPATCH_TX:  tx-20260902-orgasmic-21182657-3bec-4220-9ab8-aa64484ee021
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     b7914064-f215-4db8-93e8-0ecb142e8a27
+:END:

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-JWHXH.3.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-JWHXH.3.1 doctor reports a stale views/ dir on non-git projects; fix stale refusal string and migrate output :e01mc:chain-review:
+* IN_REVIEW TASK-JWHXH.3.1 doctor reports a stale views/ dir on non-git projects; fix stale refusal string and migrate output :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-JWHXH.3.1
 :IMPLEMENTS: dec_XH2XY
@@ -16,3 +16,5 @@ Fix round for the JWHXH.3 review (opus-5, tx-1e50f79f; merged ad642ca7). MEDIUM:
 - [ ] Test: non-git registered project with .orgasmic/views/ present -> doctor warns; after project migrate -> quiet.
 - [ ] Refusal string updated (test asserts new text); migrate summary correct on a real apply.
 - [ ] cargo test -p orgasmic-cli --bin orgasmic -- doctor migrate; cargo test -p orgasmic-daemon --lib -- org_file; clippy -D; fmt.
+** Evidence
+Worker commit c60bb97b (opencode zai-coding-plan/glm-5.3-flash variant max) merged to main as e290d7fb (--no-ff, from ad642ca7). Manager gates on merged main 2026-09-02: cargo test -p orgasmic-cli --bin orgasmic -- doctor migrate = 31 passed (/private/tmp/claude-501/-Users-aspirational-Documents-code-tools-orgasmic/25219e20-4403-4221-9eb2-cd596e21be27/scratchpad/gates-JWHXH.3.1-cli.log); cargo test -p orgasmic-daemon --lib -- org_file = 8 passed; clippy daemon+cli -D warnings rc=0; fmt rc=0. Worker gates matched (+ core fixtures 19). Manager pre-check: doctor computes dir_present for every project and probes git only in a work tree; refusal string updated and asserted; summary arm deleted; refuse_dirty_tree early-returns on non-git roots (reviewer asked to size).
