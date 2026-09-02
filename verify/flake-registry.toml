@@ -84,27 +84,11 @@ evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, full daemon --lib: 5
 filed = "2026-07-28"
 
 # --------------------------------------------------------------------------
-# TASK-X0PV1 (continued) — two orgasmic-cli dispatch-suite tests in the same
-# fail-under-full-suite-parallelism, pass-alone class the task already owns.
-# Both measured 2026-08-30 during release certification of b00b48bd:
-# `cargo test --workspace --no-fail-fast` red on each, and the classifier's own
-# isolation rerun green on each ("isolation: passed" in the run-tests report),
-# twice in a row (two certification rounds, 20260830).
+# Retired 2026-09-02 at 512fcb08: 20 concurrent rounds of the two exact
+# orgasmic-cli dispatch tests under 20 CPU hogs passed 20/20 each while load
+# average rose from 10.45 to 78.17. The entries were deleted on that current-HEAD
+# evidence; either mode recurring is now a REAL failure.
 # --------------------------------------------------------------------------
-
-[[flake]]
-test = "dispatch_close_records_cleanup_failure_and_status_filter_lists_it"
-owner = "TASK-X0PV1"
-signature = "cleanup failure close should still append tx"
-evidence = "Measured 2026-08-30 on b00b48bd (and previously on 9413059a): full-workspace certification suite red at crates/orgasmic-cli/tests/dispatch.rs assertion 'cleanup failure close should still append tx'; run-tests.sh isolation rerun green both rounds. Same-family entries above measure the shared-daemon/tmux contention trigger."
-filed = "2026-08-30"
-
-[[flake]]
-test = "dispatch_timeout_requests_daemon_cleanup"
-owner = "TASK-X0PV1"
-signature = "daemon cleanup should remove branch after CLI timeout"
-evidence = "Measured 2026-08-30 on b00b48bd (and previously on 9413059a): full-workspace certification suite red at crates/orgasmic-cli/tests/dispatch.rs assertion 'daemon cleanup should remove branch after CLI timeout'; run-tests.sh isolation rerun green both rounds."
-filed = "2026-08-30"
 
 # --------------------------------------------------------------------------
 # Deliberately NOT registered. Each of these is a failure somebody could excuse
