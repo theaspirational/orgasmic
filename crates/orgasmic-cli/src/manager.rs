@@ -3287,7 +3287,7 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 .unwrap_or_default(),
             // Only when there is something to say: an admitted-but-unchecked
             // dispatch is the one a post-mortem needs flagged (TASK-AP298).
-            unchecked_preflight_annotation(&record)
+            unchecked_preflight_annotation(record)
                 .map(|annotation| format!(" {annotation}"))
                 .unwrap_or_default()
         );
