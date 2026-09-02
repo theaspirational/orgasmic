@@ -63,8 +63,8 @@ struct ViewsMigration {
 }
 
 impl ViewsMigration {
-    fn plan(root: &Path) -> Result<Self> {
-        let tracked = if git_ok(root, &["rev-parse", "--is-inside-work-tree"]) {
+    fn plan(root: &Path, is_git_work_tree: bool) -> Result<Self> {
+        let tracked = if is_git_work_tree {
             git_capture(root, &["ls-files", "--", ".orgasmic/views"])
                 .unwrap_or_default()
                 .lines()
@@ -153,13 +153,32 @@ pub(crate) fn run(home: &Home, dry_run: bool, to_branch: bool) -> Result<()> {
 
 fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()> {
     let migration = plan(root)?;
-    let views = ViewsMigration::plan(root)?;
+    let is_git_work_tree = git_ok(root, &["rev-parse", "--is-inside-work-tree"]);
+    let views = ViewsMigration::plan(root, is_git_work_tree)?;
     if to_branch
         && migration.old_files.is_empty()
         && views.is_clean()
         && is_ledger_root(home, root, &migration.project_source)?
     {
         println!("already migrated");
+        return Ok(());
+    }
+    if !is_git_work_tree {
+        // dec_XH2XY: with no VCS there is nothing to recover from, so only the
+        // views cleanup is safe here; the v1→v2 rewrite and --to-branch are
+        // refused up front instead of dying mid-rewrite with inert git hints.
+        let views_applied = if dry_run { false } else { views.apply(root)? };
+        if to_branch || !migration.old_files.is_empty() {
+            bail!(
+                "{} is not a git work tree; the v1→v2 rewrite and --to-branch need a repository to recover from — init git or back up .orgasmic first",
+                root.display()
+            );
+        }
+        if views.is_clean() {
+            println!("already migrated");
+            return Ok(());
+        }
+        print_summary(&migration, &views, views_applied, dry_run);
         return Ok(());
     }
     refuse_dirty_tree(root)?;
@@ -174,19 +193,7 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
     } else if !dry_run {
         apply_with_recovery(root, &migration)?;
     }
-    println!("{}", if dry_run { "DRY RUN" } else { "MIGRATED" });
-    for (collection, count) in &migration.headings {
-        println!("  {collection}.nodes {count}");
-    }
-    println!(
-        "  nodes {}",
-        migration.nodes.len() + migration.in_place_nodes
-    );
-    println!("  bytes {}", migration.bytes);
-    println!("  heading_round_trip byte-for-byte");
-    for line in views_summary_lines(&views, views_applied, dry_run) {
-        println!("{line}");
-    }
+    print_summary(&migration, &views, views_applied, dry_run);
     if to_branch {
         println!("  target orphan branch orgasmic");
         if !dry_run {
@@ -212,13 +219,32 @@ fn run_at(home: &Home, root: &Path, dry_run: bool, to_branch: bool) -> Result<()
     Ok(())
 }
 
+fn print_summary(
+    migration: &Migration,
+    views: &ViewsMigration,
+    views_applied: bool,
+    dry_run: bool,
+) {
+    println!("{}", if dry_run { "DRY RUN" } else { "MIGRATED" });
+    for (collection, count) in &migration.headings {
+        println!("  {collection}.nodes {count}");
+    }
+    println!(
+        "  nodes {}",
+        migration.nodes.len() + migration.in_place_nodes
+    );
+    println!("  bytes {}", migration.bytes);
+    println!("  heading_round_trip byte-for-byte");
+    for line in views_summary_lines(views, views_applied, dry_run) {
+        println!("{line}");
+    }
+}
+
 fn refuse_dirty_tree(root: &Path) -> Result<()> {
     // `.orgasmic/views/` is exempt: a migrate run untracks and deletes it, and
     // the operator commits that deletion afterwards, so a re-run before the
-    // commit must still count as clean (idempotency).
-    if !git_ok(root, &["rev-parse", "--is-inside-work-tree"]) {
-        return Ok(());
-    }
+    // commit must still count as clean (idempotency). Only called on roots
+    // already probed to be git work trees (`run_at`).
     let output = Command::new("git")
         .args([
             "status",
@@ -830,6 +856,95 @@ mod tests {
         assert!(!dotorg.join("views").exists());
         assert!(dotorg.join("project.org").is_file());
         assert!(views_warns(&home).is_empty());
+    }
+
+    #[test]
+    fn non_git_v1_root_deletes_views_then_refuses_rewrite_keeping_v1_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        let root = tmp.path().join("plain");
+        let dotorg = root.join(".orgasmic");
+        std::fs::create_dir_all(dotorg.join("tasks")).unwrap();
+        std::fs::create_dir_all(dotorg.join("views")).unwrap();
+        let v1_project =
+            "#+orgasmic_version: 1\n\n* PROJECT plainv1\n:PROPERTIES:\n:ID: plainv1\n:END:\n";
+        std::fs::write(dotorg.join("project.org"), v1_project).unwrap();
+        for state in TASK_STATES {
+            let body = if state == "todo" {
+                "* TODO TASK-A title\n:PROPERTIES:\n:ID: TASK-A\n:END:\n"
+            } else {
+                "#+title: empty\n"
+            };
+            std::fs::write(dotorg.join("tasks").join(format!("{state}.org")), body).unwrap();
+        }
+        let v1_task = "* TODO TASK-A title\n:PROPERTIES:\n:ID: TASK-A\n:END:\n";
+        std::fs::write(
+            dotorg.join("decisions.org"),
+            "* dec_A choice\n:PROPERTIES:\n:ID: dec_A\n:END:\n",
+        )
+        .unwrap();
+        std::fs::write(dotorg.join("glossary.org"), "#+title: empty\n").unwrap();
+        std::fs::write(dotorg.join("views/board.org"), "#+title: derived\n").unwrap();
+        projects::register_project(&home, &root, "plainv1", "main").unwrap();
+        assert!(!git_ok(&root, &["rev-parse", "--is-inside-work-tree"]));
+        let views_plan = ViewsMigration::plan(&root, false).unwrap();
+
+        let error = run_at(&home, &root, false, false).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("is not a git work tree"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("init git or back up .orgasmic first"),
+            "{message}"
+        );
+        assert!(!message.contains("git checkout"), "{message}");
+
+        // Views cleanup ran; the v1 rewrite did not.
+        assert!(!dotorg.join("views").exists());
+        assert_eq!(
+            views_summary_lines(&views_plan, true, false),
+            vec!["  views directory removed".to_string()]
+        );
+        assert_eq!(
+            std::fs::read_to_string(dotorg.join("project.org")).unwrap(),
+            v1_project
+        );
+        assert_eq!(
+            std::fs::read_to_string(dotorg.join("tasks/todo.org")).unwrap(),
+            v1_task
+        );
+        assert!(!dotorg.join("tasks/TASK-A").exists());
+        assert!(dotorg.join("decisions.org").is_file());
+    }
+
+    #[test]
+    fn non_git_to_branch_refused_before_any_repo_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        let root = tmp.path().join("plain");
+        let dotorg = root.join(".orgasmic");
+        std::fs::create_dir_all(dotorg.join("views")).unwrap();
+        std::fs::write(
+            dotorg.join("project.org"),
+            "#+orgasmic_version: 2\n\n* PROJECT plainbr\n:PROPERTIES:\n:ID: plainbr\n:END:\n",
+        )
+        .unwrap();
+        std::fs::write(dotorg.join("views/board.org"), "#+title: derived\n").unwrap();
+        projects::register_project(&home, &root, "plainbr", "main").unwrap();
+        assert!(!git_ok(&root, &["rev-parse", "--is-inside-work-tree"]));
+
+        let error = run_at(&home, &root, false, true).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("is not a git work tree"),
+            "unexpected error: {message}"
+        );
+        assert!(!message.contains("branch cutover"), "{message}");
+        assert!(!message.contains("not a git repository"), "{message}");
+        assert!(!dotorg.join("views").exists());
+        assert!(dotorg.join("project.org").is_file());
     }
 
     #[test]
