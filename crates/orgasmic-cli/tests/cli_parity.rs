@@ -29,7 +29,10 @@ const MINIMUM_SHIPPED_INVOCATIONS: usize = 100;
 /// orgasmic:TASK-RQ270.5.1 — `MINIMUM_SHIPPED_INVOCATIONS` alone was green while
 /// the gate compared only 5 values (compact-layout help only). Assert against
 /// comparisons, not invocation count, so a broken extractor goes red.
-const MINIMUM_ENUM_VALUE_COMPARISONS: usize = 6;
+///
+/// TASK-RQ270.6 measured 18 after reaching the fragment and wrapped classes;
+/// 12 still trips if either class goes dark while leaving room for prose edits.
+const MINIMUM_ENUM_VALUE_COMPARISONS: usize = 12;
 
 #[test]
 fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
@@ -445,6 +448,10 @@ fn shipped_value_enum_arguments_match_clap_possible_values() {
 
     let mut failures = Vec::new();
     let mut compared = 0usize;
+    // Every `source flag value` actually compared, printed when the floor
+    // trips so "the parser broke" and "a prose edit removed a site" can be
+    // told apart in one read (TASK-RQ270.6 F2).
+    let mut sites = BTreeSet::new();
     for invocation in &invocations {
         if invocation.enum_values.is_empty() {
             continue;
@@ -482,6 +489,7 @@ fn shipped_value_enum_arguments_match_clap_possible_values() {
                                 continue;
                             }
                             compared += 1;
+                            sites.insert(format!("{} {flag} {value}", invocation.source));
                             if !allowed.iter().any(|a| a == value) {
                                 failures.push(format!(
                                     "{}: `{} {} {}` is not in clap possible values {:?} for {}",
@@ -500,16 +508,42 @@ fn shipped_value_enum_arguments_match_clap_possible_values() {
         }
     }
 
-    assert!(
-        compared >= MINIMUM_ENUM_VALUE_COMPARISONS,
-        "only {compared} value-enum comparisons ran against clap possible_values \
-         (expected at least {MINIMUM_ENUM_VALUE_COMPARISONS}); the extractor or \
-         help-entry parser is broken, not the prose"
-    );
+    // TASK-RQ270.6 F1: the FRAGMENT class. Prose that names a flag and a value
+    // without respelling the command (`close with =--status aborted=`) has no
+    // leaf to resolve against, so the value is checked against the UNION of
+    // that flag's possible values over every leaf declaring it — still enough
+    // to catch a retired class or an invented persona.
+    let union = enum_value_union();
+    for (source, flag, value_token) in shipped_enum_fragments() {
+        let Some(allowed) = union.get(&flag) else {
+            continue; // free-string everywhere (e.g. `--mode`)
+        };
+        for value in value_token.split('|') {
+            compared += 1;
+            sites.insert(format!("{source} {flag} {value}"));
+            if !allowed.contains(value) {
+                failures.push(format!(
+                    "{source}: `{flag} {value}` is not in clap possible values {allowed:?} for \
+                     {flag} on any command"
+                ));
+            }
+        }
+    }
+
+    // Values first (TASK-RQ270.6 F5): a bad value must never hide behind the
+    // count floor.
     assert!(
         failures.is_empty(),
         "shipped prose names value-enum arguments the CLI rejects:\n  {}",
         failures.join("\n  ")
+    );
+    assert!(
+        compared >= MINIMUM_ENUM_VALUE_COMPARISONS,
+        "only {compared} value-enum comparisons ran against clap possible_values (expected \
+         at least {MINIMUM_ENUM_VALUE_COMPARISONS}). Either the extractor / help-entry parser \
+         broke, or a prose edit removed a site: compare the sites still reached below \
+         against `git diff shipped/` before touching the floor.\n  {}",
+        sites.iter().cloned().collect::<Vec<_>>().join("\n  ")
     );
 }
 
@@ -848,7 +882,9 @@ fn split_help_entry(line: &str) -> Option<(usize, &str, &str)> {
 /// Left hand-maintained (TASK-RQ270.5.1): deriving it from the binary's help
 /// is possible now that entry parsing works, but would widen this fix; the
 /// Absent-vs-FreeString split already stops silent skip on unknown flags.
-const VALUE_ENUM_FLAGS: &[&str] = &["--class", "--kind", "--status", "--mode"];
+/// `--verdict` added by TASK-RQ270.6: it is a real clap enum on
+/// `dispatch-close`, and a `--verdict approvedd` typo yielded 0 failures.
+const VALUE_ENUM_FLAGS: &[&str] = &["--class", "--kind", "--status", "--mode", "--verdict"];
 
 #[test]
 fn enum_values_in_tokens_accepts_equals_form() {
@@ -930,6 +966,51 @@ impl EntryInvocation {
 }
 
 fn shipped_entry_invocations() -> Vec<EntryInvocation> {
+    shipped_spans()
+        .iter()
+        .flat_map(|(file, span)| invocations_in_span(file, span))
+        .collect()
+}
+
+/// `(source, flag, value-token)` for every code span that names a
+/// [`VALUE_ENUM_FLAGS`] flag with a concrete value but no `orgasmic` token —
+/// the fragment class TASK-RQ270.6 found unreachable (4 of 9 sites).
+fn shipped_enum_fragments() -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for (file, span) in shipped_spans() {
+        let tokens = span.split_whitespace().collect::<Vec<_>>();
+        if tokens.contains(&"orgasmic") {
+            continue;
+        }
+        for (flag, value) in enum_values_in_tokens(&tokens) {
+            out.push((format!("{file}: `{}`", span.trim()), flag, value));
+        }
+    }
+    out
+}
+
+/// Union of clap `[possible values: …]` per [`VALUE_ENUM_FLAGS`] flag over
+/// every leaf command; flags no leaf renders a bracket for are absent.
+fn enum_value_union() -> std::collections::BTreeMap<String, BTreeSet<String>> {
+    let mut union: std::collections::BTreeMap<String, BTreeSet<String>> = Default::default();
+    for leaf in clap_leaf_paths() {
+        let path = leaf
+            .split_whitespace()
+            .skip(1) // the `orgasmic` prefix `format_command_path` adds
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let help = help_for(&path);
+        for flag in VALUE_ENUM_FLAGS {
+            if let FlagValueEnum::Values(values) = possible_values_for_flag(&help, flag) {
+                union.entry((*flag).to_string()).or_default().extend(values);
+            }
+        }
+    }
+    union
+}
+
+/// Every code span under `shipped/`, as `(file, span)`.
+fn shipped_spans() -> Vec<(String, String)> {
     let root = repo_root().join(SHIPPED_DIR);
     let mut out = Vec::new();
     for path in shipped_prose_files(&root) {
@@ -941,9 +1022,11 @@ fn shipped_entry_invocations() -> Vec<EntryInvocation> {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
         let org = path.extension().and_then(|e| e.to_str()) == Some("org");
-        for span in code_spans(&name, &text, org) {
-            out.extend(invocations_in_span(&name, &span));
-        }
+        out.extend(
+            code_spans(&name, &text, org)
+                .into_iter()
+                .map(|span| (name.clone(), span)),
+        );
     }
     out
 }
@@ -1069,20 +1152,48 @@ fn code_spans(name: &str, text: &str, org: bool) -> Vec<String> {
         }
     }
 
-    // (3) Org `=verbatim=` / `~code~`, matched pairwise per LINE. Unbalanced
-    // `=` is ordinary in org prose (`KEY=VALUE`), so a span is taken only when
-    // the delimiter actually CLOSES on the same line — otherwise a wrapped
-    // command would be read as a truncated one and blamed for a flag it never
-    // finished spelling.
+    // (3) Org `=verbatim=` / `~code~`. A delimiter only OPENS at a word start
+    // and only CLOSES at a word end, so `--class=architecture` inside a span
+    // stays whole (TASK-RQ270.6 F3) and `KEY=VALUE` in prose opens nothing.
+    // A span left open at the end of a line is dropped — unless it already
+    // names `orgasmic`, in which case it is a wrapped command and continues on
+    // the next line (TASK-RQ270.6 F1, the wrapped class).
     if org {
-        for line in text.lines() {
-            for delimiter in ['=', '~'] {
-                let parts = line.split(delimiter).collect::<Vec<_>>();
-                for (index, part) in parts.iter().enumerate() {
-                    if index % 2 == 1 && index + 1 < parts.len() {
-                        out.push((*part).to_string());
+        let opens = |prev: Option<char>, next: Option<char>, delimiter: char| {
+            prev.is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '[' | '"' | '\''))
+                && next.is_some_and(|c| !c.is_whitespace() && c != delimiter)
+        };
+        let closes = |prev: Option<char>, next: Option<char>| {
+            prev.is_some_and(|c| !c.is_whitespace())
+                && next.is_none_or(|c| {
+                    c.is_whitespace() || matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']')
+                })
+        };
+        for delimiter in ['=', '~'] {
+            let mut open: Option<String> = None;
+            for line in text.lines() {
+                let chars = line.chars().collect::<Vec<_>>();
+                for (index, &c) in chars.iter().enumerate() {
+                    let (prev, next) = (
+                        index.checked_sub(1).map(|i| chars[i]),
+                        chars.get(index + 1).copied(),
+                    );
+                    match open.as_mut() {
+                        None if c == delimiter && opens(prev, next, delimiter) => {
+                            open = Some(String::new());
+                        }
+                        None => {}
+                        Some(span) if c == delimiter && closes(prev, next) => {
+                            out.push(std::mem::take(span));
+                            open = None;
+                        }
+                        Some(span) => span.push(c),
                     }
                 }
+                open = open
+                    .take()
+                    .filter(|span| span.split_whitespace().any(|t| t == "orgasmic"))
+                    .map(|span| span + " ");
             }
         }
     }
