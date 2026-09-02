@@ -18,6 +18,7 @@ use std::process::{Command, Output};
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
+use orgasmic_core::{task_node_file_path, OrgFile, TaskHeading};
 
 /// The drivers-suite test that spawns a real provider turn and bills real
 /// money. Every stored command touching that suite must skip it, and this
@@ -37,7 +38,7 @@ const SCRUBBED_ENV: &[&str] = &["ORGASMIC_RUN_ID", "ORGASMIC_HOME"];
 const DAEMON_OWNED_PREFIX: &str = ".orgasmic/";
 
 pub const VERIFY_AFTER_HELP: &str = "\
-Artifact layout (default `<repo>/verify/<TASK-ID>/`, override with --artifact):
+Artifact layout (task `:VERIFY_ARTIFACT:`, then `<repo>/verify/<TASK-ID>/`, override with --artifact):
 
   injection.patch   git patch that REINTRODUCES the defect onto the fixed tree.
                     Authored while the defect still reproduced — normally the
@@ -86,7 +87,7 @@ pub struct VerifyArgs {
     /// Task id whose injection proof to replay (e.g. TASK-R74E8).
     #[arg(required_unless_present = "all")]
     pub task: Option<String>,
-    /// Artifact directory; defaults to `<repo>/verify/<TASK-ID>`.
+    /// Artifact directory; overrides :VERIFY_ARTIFACT: and the path convention.
     #[arg(long)]
     pub artifact: Option<PathBuf>,
     /// Emit a machine-readable result instead of narrating.
@@ -107,9 +108,13 @@ pub fn cmd_verify(args: VerifyArgs) -> Result<()> {
         artifacts_under(&repo.join("verify"))?
     } else {
         let task = args.task.expect("clap requires a task without --all");
-        let dir = args
-            .artifact
-            .unwrap_or_else(|| repo.join("verify").join(&task));
+        let dir = match args.artifact {
+            Some(dir) => dir,
+            None => match crate::manager::find_project_root() {
+                Ok(project_root) => task_artifact(&repo, &project_root, &task)?,
+                Err(_) => repo.join("verify").join(&task),
+            },
+        };
         vec![(task, dir)]
     };
     let mode = if args.check {
@@ -118,6 +123,50 @@ pub fn cmd_verify(args: VerifyArgs) -> Result<()> {
         Mode::Replay
     };
     run_targets(&repo, &targets, mode, args.json, args.all)
+}
+
+/// Resolve a task's claimed artifact before falling back to the historical
+/// `<repo>/verify/<TASK-ID>` convention.
+pub(crate) fn task_artifact(repo: &Path, project_root: &Path, task: &str) -> Result<PathBuf> {
+    Ok(claimed_task_artifact(repo, project_root, task)?
+        .unwrap_or_else(|| repo.join("verify").join(task)))
+}
+
+/// Load a claimed artifact without replaying it. `dispatch-close` uses this
+/// before a done close so a task cannot name a missing or malformed proof.
+pub(crate) fn validate_claimed_task_artifact(
+    repo: &Path,
+    project_root: &Path,
+    task: &str,
+) -> Result<()> {
+    let Some(dir) = claimed_task_artifact(repo, project_root, task)? else {
+        return Ok(());
+    };
+    Artifact::load(&dir)
+        .with_context(|| format!("task {task} claims verify artifact {}", dir.display()))?;
+    Ok(())
+}
+
+fn claimed_task_artifact(repo: &Path, project_root: &Path, task: &str) -> Result<Option<PathBuf>> {
+    let path = task_node_file_path(project_root, task);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let source = std::fs::read_to_string(&path)
+        .with_context(|| format!("read task {task} at {}", path.display()))?;
+    let file = OrgFile::parse(source, path.to_string_lossy())?;
+    let heading = file
+        .find_by_id(task)
+        .with_context(|| format!("{} does not contain task {task}", path.display()))?;
+    let task = TaskHeading::from_heading(&file, heading, path.to_string_lossy().as_ref())?;
+    Ok(task.verify_artifact.map(|value| {
+        let path = PathBuf::from(value);
+        if path.is_absolute() {
+            path
+        } else {
+            repo.join(path)
+        }
+    }))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -728,6 +777,21 @@ mod tests {
         RedSignature::parse(raw, Path::new("expect-red")).unwrap()
     }
 
+    fn write_task(project_root: &Path, task: &str, artifact: Option<&Path>) {
+        let path = task_node_file_path(project_root, task);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let property = artifact
+            .map(|path| format!(":VERIFY_ARTIFACT: {}\n", path.display()))
+            .unwrap_or_default();
+        std::fs::write(
+            path,
+            format!(
+                "#+title: task\n\n* IN_PROGRESS {task} Verify me\n:PROPERTIES:\n:ID: {task}\n{property}:END:\n"
+            ),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn signature_without_any_output_pin_is_rejected() {
         let err = RedSignature::parse("exit: nonzero\n", Path::new("expect-red")).unwrap_err();
@@ -930,6 +994,53 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(ids, ["TASK-GOOD", "TASK-NOPATCH", "TASK-STALE"]);
+    }
+
+    #[test]
+    fn task_property_wins_over_the_path_convention() {
+        let fixture = Fixture::new();
+        let project = fixture._tmp.path().join("project");
+        write_task(&project, "TASK-FIXTURE", Some(&fixture.artifact));
+        assert_eq!(
+            task_artifact(&fixture.repo, &project, "TASK-FIXTURE").unwrap(),
+            fixture.artifact
+        );
+
+        write_task(&project, "TASK-FALLBACK", None);
+        assert_eq!(
+            task_artifact(&fixture.repo, &project, "TASK-FALLBACK").unwrap(),
+            fixture.repo.join("verify/TASK-FALLBACK")
+        );
+        validate_claimed_task_artifact(&fixture.repo, &project, "TASK-FALLBACK")
+            .expect("a task without the property has no close-time gate");
+    }
+
+    #[test]
+    fn claimed_artifact_must_load() {
+        let fixture = Fixture::new();
+        let project = fixture._tmp.path().join("project");
+        let missing = fixture._tmp.path().join("missing-proof");
+        write_task(&project, "TASK-MISSING", Some(&missing));
+        let err =
+            validate_claimed_task_artifact(&fixture.repo, &project, "TASK-MISSING").unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("TASK-MISSING"), "{message}");
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "{message}"
+        );
+
+        fixture.write("expect-red", "exit: nonzero\n");
+        write_task(&project, "TASK-UNLOADABLE", Some(&fixture.artifact));
+        let err =
+            validate_claimed_task_artifact(&fixture.repo, &project, "TASK-UNLOADABLE").unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("TASK-UNLOADABLE"), "{message}");
+        assert!(
+            message.contains(&fixture.artifact.display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("pins no output"), "{message}");
     }
 
     /// The cheap sweep: a moved patch and a missing patch both surface, the
