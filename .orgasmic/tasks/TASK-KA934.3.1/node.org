@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-KA934.3.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-KA934.3.1 Hoist the :ACTOR: namespace guard into the shared tx append path :e01mc:chain-review:
+* IN_REVIEW TASK-KA934.3.1 Hoist the :ACTOR: namespace guard into the shared tx append path :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-KA934.3.1
 :IMPLEMENTS: dec_Q78QN
@@ -16,3 +16,5 @@ Fix round for the KA934.3 review (opus-5, tx-bfe6e70a; merged 9f6874f0). MEDIUM:
 - [ ] Test: admin POST /tx type=comment with actor == member name is refused 403; member session comments still work; the three comment handlers have no local guard copy.
 - [ ] warn! on members.org read failure; doc sentence added.
 - [ ] cargo test -p orgasmic-daemon --lib -- comment member identity authz tx_append; clippy -D; fmt.
+** Evidence
+Worker commit 14314e66 (opencode zai-coding-plan/glm-5.3-flash variant max) merged to main as 2be9f0a0 (--no-ff, on top of e290d7fb). Manager gates on merged main 2026-09-02: cargo test -p orgasmic-daemon --lib -- comment member identity authz tx_append post_tx org_file = 70 passed 0 failed (/private/tmp/claude-501/-Users-aspirational-Documents-code-tools-orgasmic/25219e20-4403-4221-9eb2-cd596e21be27/scratchpad/gates-KA934.3.1-daemon.log); clippy -p orgasmic-daemon --all-targets -D warnings rc=0; fmt rc=0. Worker gates matched (63 on its filter). Manager pre-check: one primitive, three choke points (prepare_tx_append_request, prepare_api_tx_as, comment_mutation_actor), three handler copies deleted, fallback actor still covered via choose_actor; scope widened to every journal-routed admin tx (reviewer asked to check producers).
