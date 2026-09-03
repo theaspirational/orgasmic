@@ -140,3 +140,34 @@
 :NODE_ID: TASK-X0PV1
 :EVENT_ID: 23e8ae54-93e7-46fe-8f64-a694db2f798f
 :END:
+
+* tx-20260903-orgasmic-16ef4847-db21-4323-97bf-2d9d9a29a92d task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260903-orgasmic-16ef4847-db21-4323-97bf-2d9d9a29a92d
+:TIME:    [2026-09-03 Thu 15:06:40]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-X0PV1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-X0PV1/node.org
+:REASON: edited task node TASK-X0PV1
+:NODE_ID: TASK-X0PV1
+:EVENT_ID: 41358bec-bf62-4629-a1e2-3059d315efcd
+:END:
+
+* tx-20260903-orgasmic-362bcb37-acdf-43b2-9ff4-90aa9eb1f378 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260903-orgasmic-362bcb37-acdf-43b2-9ff4-90aa9eb1f378
+:TIME:    [2026-09-03 Thu 15:06:46]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-X0PV1
+:TARGET: .orgasmic/tasks/TASK-X0PV1/node.org
+:REASON: All four owned flake-registry entries resolved: three retired on 2026-09-02 measurement, the fourth transferred to open owner TASK-STWVB (merge 0bf80eb0). registry --check green with no X0PV1 owner.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: ba40046f-d87e-4536-bbd6-0f8d1a936da9
+:END:

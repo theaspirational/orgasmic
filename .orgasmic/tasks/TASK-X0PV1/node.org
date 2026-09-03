@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-X0PV1
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-X0PV1 own the four TASK-STWVB daemon-parallelism flake-registry entries :testing:daemon:flake:
+* DONE TASK-X0PV1 own the four TASK-STWVB daemon-parallelism flake-registry entries :testing:daemon:flake:
 :PROPERTIES:
 :ID: TASK-X0PV1
 :PRIORITY: P2
@@ -70,4 +70,23 @@ Manager sprint 2026-09-02 (no dispatch): subagent commit cfd1e83b on sprint/FLAK
 - LIMITATION, recorded honestly: the original evidence for both entries was full-workspace parallelism, i.e. shared-daemon and tmux contention with OTHER test binaries. The retirement sample applied CPU pressure to these two tests only, which is NOT the same trigger, so this is weaker than a same-trigger reproduction. Accepted because deletion is the fail-LOUD direction: either mode recurring is now reported REAL rather than silently excused.
 - The worker CORRECTED the manager's brief: the brief said two entries remained, but three were owned. The third, supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling, was re-evidenced earlier today and still stands. TASK STAYS OPEN - closing it would trip the owner-lifecycle guard.
 - Manager gate (not the worker's own): rebuilt orgasmic-cli --test dispatch in a fresh private target dir (1.4G, binary timestamped 18:18, so a real compile) and ran both named tests green; tomllib parse confirms 1 entry.
+2026-09-03 manager close (no dispatch). The last remaining entry,
+=supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling=
+/ "fake cursor-agent did not start children", was TRANSFERRED to TASK-STWVB
+rather than deleted, and X0PV1 is now closable. Merge 0bf80eb0 on main (worker
+commit f9ca0bc8). Rationale: the mode's measured mechanism is a machine-wide
+process-spawn stall, not this test, and the answer the entry's own registry
+comment names — the =run-tests.sh= host-state stamp plus the C interlock that
+reads it — is TASK-STWVB's deliverable, which is open. The entry follows the
+fix. Ordering is the inverse of the 2026-08-07 mistake this task was filed to
+repair: the entry moves to an open owner FIRST, the owner closes SECOND, which
+is what =check_owner_lifecycle= asks for. NOT deleted, deliberately: the
+2026-09-02 stall was real and measured (41.5s and 43.4s wall against a 0.3s
+norm), so deletion would report the next occurrence REAL, and the interlock
+only labels it LOAD-SENSITIVE when that run's own host stamp reads degraded,
+whose syspolicyd half is known dead (TASK-STWVB). Gate: =scripts/run-tests.sh
+--check= reports "registry: OK — 1 entries in verify/flake-registry.toml, every
+owner open". LIMITATION recorded honestly: the overall rc of that command is 2,
+but on the artifacts check (39 stale verify/ injection patches across ~40 other
+tasks), which is pre-existing and untouched by this round.
 
