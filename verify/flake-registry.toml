@@ -32,9 +32,10 @@
 # — grep it before you trust it.
 
 # --------------------------------------------------------------------------
-# TASK-X0PV1 — daemon tests that fail under full-suite parallelism, pass alone
-# (owned by TASK-STWVB until 2026-08-07; transferred when that round closed with
-# these modes still unfixed, rather than deleting live entries to green --check)
+# TASK-STWVB — daemon tests that fail under full-suite parallelism, pass alone
+# (owned by TASK-STWVB until 2026-08-07, then by TASK-X0PV1 while that round
+# closed with these modes unfixed, rather than deleting live entries to green
+# --check; returned to TASK-STWVB on 2026-09-03, see the transfer note below)
 #
 # Re-evaluated 2026-09-02 at 7c85f177 (worktree FLAKES), each of the three
 # tests run 20 times as two concurrent copies of one daemon --lib binary under
@@ -74,11 +75,29 @@
 # kind the run-tests.sh host-state stamp exists to label. The registered mode
 # is that stall landing on the first phase. Raising the deadline moves the
 # threshold and proves nothing; the interlock is the answer.
+#
+# TRANSFER 2026-09-03, TASK-X0PV1 -> TASK-STWVB. X0PV1 was filed to be the
+# accountable owner of four entries; three are retired on measurement and this
+# one is not X0PV1's to fix. Its mechanism is the host, and the answer named
+# above — the run-tests.sh host-state stamp and the C interlock that reads it —
+# is TASK-STWVB's deliverable, which is open. So the entry follows the fix, and
+# X0PV1 closes. This is NOT the 2026-08-07 mistake in reverse: that one closed
+# an owner and left its entries behind, whereas this one moves the entry to an
+# open task first and closes second, which is exactly what the owner-lifecycle
+# guard asks for.
+#
+# It is deliberately NOT deleted. The 2026-09-02 stall was real and measured
+# (41.5s and 43.4s wall against a 0.3s norm), so deletion would report the next
+# occurrence REAL. The interlock only labels it LOAD-SENSITIVE when this run's
+# own host stamp reads degraded; a stall on a host that measures calm — and the
+# syspolicyd half of that stamp is known dead, see TASK-STWVB — would still be
+# called REAL. Delete this entry when the interlock can be shown to catch the
+# mode without it, not before.
 # --------------------------------------------------------------------------
 
 [[flake]]
 test = "supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling"
-owner = "TASK-X0PV1"
+owner = "TASK-STWVB"
 signature = "fake cursor-agent did not start children"
 evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, full daemon --lib: 528 passed / 5 failed, this among them. Assertion is crates/orgasmic-daemon/src/supervisor.rs (the 30s `ready` deadline). Green alone 2026-07-28; NOT reproduced in 6 runs then. Re-measured 2026-09-02 at 7c85f177: 20/20 green as two concurrent copies under 8 cpu hogs, but two concurrent runs each took ~42s wall (12:48:46-12:49:28, same release second) against a 0.3s norm — a host-wide spawn stall, the same class as the registered mode."
 filed = "2026-07-28"
