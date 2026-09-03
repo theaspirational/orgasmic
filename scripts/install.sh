@@ -347,6 +347,14 @@ link_agent_skill() {
         echo "error: $skill_dest exists and is not an orgasmic skill; leaving it untouched" >&2
         exit 1
     fi
+    # Claude Code loads personal skills only from ~/.claude/skills, not ~/.agents/skills.
+    local claude_dest="$HOME/.claude/skills/orgasmic"
+    if [[ -L "$claude_dest" || ! -e "$claude_dest" ]]; then
+        replace_symlink "$skill_dest" "$claude_dest"
+        echo "→ claude skill linked: $claude_dest -> $skill_dest"
+    else
+        echo "warning: $claude_dest exists and is not a symlink; leaving it untouched" >&2
+    fi
 }
 
 link_source_content_root() {
