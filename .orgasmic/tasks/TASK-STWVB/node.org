@@ -693,6 +693,23 @@ the run: all three samples read =syspolicyd_cpu=0.0= while load ran 12.95 ->
 for this whole task (586% syspolicyd) is the signal that is dead. Merged anyway
 because it is fail-SAFE — it can only under-report degradation, never invent it,
 and load average still tripped INCONCLUSIVE correctly on the gate run.
+2026-09-03: this task now OWNS one verify/flake-registry.toml entry again —
+=supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling=,
+signature "fake cursor-agent did not start children", filed 2026-07-28,
+re-evidenced 2026-09-02 at 7c85f177. Transferred here from TASK-X0PV1 (merge
+0bf80eb0) when that task closed, because the mode's measured mechanism is a
+machine-wide process-spawn stall (41.5s and 43.4s wall against a 0.3s norm,
+both concurrent copies released in the same second, inside the 30s =ready=
+deadline) and the answer is this task's own deliverable: the =run-tests.sh=
+host-state stamp plus the C interlock that reads it. TWO CONSEQUENCES. First,
+closing TASK-STWVB will trip =check_owner_lifecycle= until this entry is
+deleted or re-transferred — that is the guard working, not a surprise. Second,
+the entry is the concrete acceptance test for the interlock: delete it when the
+interlock can be SHOWN to label this mode LOAD-SENSITIVE without it. Today it
+cannot be relied on to, because the syspolicyd half of the host stamp is dead
+(comm truncates to 16 chars, so the sampler reads a measured 0.0), leaving load
+average alone — and a spawn stall on a host that measures calm would still be
+reported REAL.
 ** How to fix it — design [2026-08-05]
 The classification machinery ALREADY EXISTS and is good. =scripts/run-tests.sh=
 (654 lines) runs the suite, reruns every failure IN ISOLATION, and matches panic
