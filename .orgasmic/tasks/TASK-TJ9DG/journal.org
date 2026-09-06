@@ -63,3 +63,49 @@
 :TO_STATE: in_progress
 :EVENT_ID: 886a25ec-3342-4781-a1f9-8b7cfe3046f5
 :END:
+
+* tx-20260906-orgasmic-431f77b0-31f8-495f-987e-088bfe4c23af task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-431f77b0-31f8-495f-987e-088bfe4c23af
+:TIME:    [2026-09-06 Sun 20:42:37]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TJ9DG
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-TJ9DG/node.org
+:REASON: edited task node TASK-TJ9DG
+:NODE_ID: TASK-TJ9DG
+:EVENT_ID: 2d7b3c0b-a3a4-4d55-92c3-2c0da75d3e1c
+:END:
+
+* tx-20260906-orgasmic-69481fb9-0c6f-4861-aca5-7528493360b0 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-69481fb9-0c6f-4861-aca5-7528493360b0
+:TIME:    [2026-09-06 Sun 20:42:37]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TJ9DG
+:TARGET: .orgasmic/tasks/TASK-TJ9DG/node.org
+:REASON: Durable reconciliation and historical evidence recorded
+:PRODUCES: dec_C60CM
+:EVENT_ID: 38879012-dc7c-4a9e-b408-b29f9f22a48f
+:END:
+
+* tx-20260906-orgasmic-dee2f6cf-f226-4851-a40a-da77cbbd5d69 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-dee2f6cf-f226-4851-a40a-da77cbbd5d69
+:TIME:    [2026-09-06 Sun 20:42:50]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TJ9DG
+:TARGET: .orgasmic/tasks/TASK-TJ9DG/node.org
+:REASON: Decision body reviewed against original section 6 and current source; five clock checks passed
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 1922be9f-236d-4904-bd1e-f580d1ada150
+:END:
