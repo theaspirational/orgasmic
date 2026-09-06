@@ -1404,6 +1404,9 @@ fn systemd_unescape(value: &str) -> Result<String> {
             if i + 3 >= bytes.len() {
                 bail!("incomplete systemd \\x escape");
             }
+            if !bytes[i + 2..i + 4].iter().all(u8::is_ascii_hexdigit) {
+                bail!("invalid systemd \\x escape");
+            }
             let hex =
                 std::str::from_utf8(&bytes[i + 2..i + 4]).context("invalid systemd \\x escape")?;
             let byte = u8::from_str_radix(hex, 16).context("invalid systemd \\x escape")?;
@@ -2178,6 +2181,7 @@ Environment=PATH=/usr/bin ORGASMIC_HOME=/srv/orgasmic\x20home ORGASMIC_LOG_MIRRO
         assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\x4"#).is_err());
         assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\xzz"#).is_err());
         assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\x4g"#).is_err());
+        assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\x+4"#).is_err());
     }
 
     #[test]
