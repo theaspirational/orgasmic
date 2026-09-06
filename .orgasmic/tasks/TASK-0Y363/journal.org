@@ -121,3 +121,65 @@
 :NODE_ID: TASK-0Y363
 :EVENT_ID: 027c14a0-024f-49d9-8aba-862d78ab8dd3
 :END:
+
+* tx-20260906-orgasmic-87e55a64-6099-4cad-a534-c2a52f276c78 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-87e55a64-6099-4cad-a534-c2a52f276c78
+:TIME:    [2026-09-06 Sun 20:55:54]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-0Y363
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-0Y363/node.org
+:REASON: edited task node TASK-0Y363
+:NODE_ID: TASK-0Y363
+:EVENT_ID: edcf86a2-fa39-4568-a605-96e6a80b5150
+:END:
+
+* tx-20260906-orgasmic-d61853c5-0792-4c03-be67-9892c20a17e6 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-d61853c5-0792-4c03-be67-9892c20a17e6
+:TIME:    [2026-09-06 Sun 20:56:13]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-0Y363
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-0Y363/node.org
+:REASON: edited task node TASK-0Y363
+:NODE_ID: TASK-0Y363
+:EVENT_ID: 7185842f-61ef-4f6c-9dcb-24225567ad86
+:END:
+
+* tx-20260906-orgasmic-86ce1e1f-2b50-4b77-b5f6-500e31a36cef task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-86ce1e1f-2b50-4b77-b5f6-500e31a36cef
+:TIME:    [2026-09-06 Sun 20:56:14]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-0Y363
+:TARGET: .orgasmic/tasks/TASK-0Y363/node.org
+:REASON: Review completed against real CLI child-only pressure/restart evidence and policy
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 7c6d55af-abca-4d1e-a357-57481ffdaaf5
+:END:
+
+* tx-20260906-orgasmic-e76265c0-8306-4b95-85fb-12033adbe1b3 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-e76265c0-8306-4b95-85fb-12033adbe1b3
+:TIME:    [2026-09-06 Sun 20:56:14]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-0Y363
+:TARGET: .orgasmic/tasks/TASK-0Y363/node.org
+:REASON: Selected preserve-instance/explicit-restart policy verified end-to-end; diagnostics implemented
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: ba869e1e-59e3-43da-96fb-59bcf8121fb1
+:END:
