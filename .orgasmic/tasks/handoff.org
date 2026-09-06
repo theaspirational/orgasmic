@@ -31,10 +31,7 @@ Operator scope: reconcile completed work, repair malformed IDs through supported
 6. Existing TODO: STWVB must prove classification of the remaining process-spawn flake; TJ9DG needs a superseding decision for retired architecture assumptions. No release or push is scheduled by this handoff.
 
 ** In flight
-- No live/reattached worker runs; no open dispatches reported by installed CLI. No tasks in_progress or in_review.
-- Indexed board: 2 todo, 92 backlog, 700 done, 31 cancelled. Backlog: P0=1, P1=7, P2=36, P3=44, missing=3, medium=1.
-- Three additional DONE nodes (CLM6W, IXPD4, LBRX7) are omitted from listings because their identities are malformed; they can still be read individually.
-- Retained historical worktrees and 75 ambiguous historical run records are not active execution. No pruning was performed.
+2026-09-06 continuation: TASK-ZZ2S4 is in_progress in native Codex subagent id_repair_impl, isolated branch codex/zz2s4-id-repair at /Users/aspirational/.orgasmic/worktrees/orgasmic/codex-zz2s4-id-repair (base 0bf80eb0). Risky tier declared; plan reviewed before implementation. No orgasmic worker generation exists because this is native delegation. Current change: explicit offline project repair-task-ids CLI, exclusive daemon lock, persisted interruption fence, preserved journal bytes and durable ID mapping. Implementation and tests underway; no live migration or runtime restart has occurred. Parent must inspect committed diff, obtain independent review, stage updated daemon through managed runtime path, then apply and verify zero ID parse errors. P0 health-starvation discriminator plan is recorded but not executed.
 
 ** Divergence / Risks
 - ID repair remains unfulfilled, with precise blocker and scope on TASK-ZZ2S4. The three nodes contain journals; references also exist in TASK-8DWJP, dec_EWY0K, claims and historical transactions. A text-only rename would strand history.

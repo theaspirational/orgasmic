@@ -8061,3 +8061,17 @@
 :TRIGGERS:     blast_radius, breadth
 :EVENT_ID:     c3217c26-5821-4319-8697-d2fd0f80f253
 :END:
+
+* TX 2026-09-06 Sun 15:20:39 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-b5c5d76e-e373-466b-a954-d1c9c3655a1a
+:TIME:         [2026-09-06 Sun 15:20:39]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     13d51a3e-4f13-4f97-ba0a-3b305d0860af
+:END:
