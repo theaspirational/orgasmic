@@ -225,14 +225,17 @@ pub(crate) fn persistence_status(home: &Home) -> PersistenceStatus {
 pub(crate) fn start(home: &Home) -> Result<ServiceStart> {
     match selected_adapter_kind() {
         AdapterKind::MacosLaunchAgent => {
+            refuse_shared_service_owner_mutation(home, "start the local daemon")?;
             start_macos_launch_agent(home)?;
             Ok(ServiceStart::Persistent)
         }
         AdapterKind::LinuxSystemdUser => {
+            refuse_shared_service_owner_mutation(home, "start the local daemon")?;
             start_linux_systemd(home)?;
             Ok(ServiceStart::Persistent)
         }
         AdapterKind::WindowsScheduledTask => {
+            refuse_shared_service_owner_mutation(home, "start the local daemon")?;
             start_windows_scheduled_task(home)?;
             Ok(ServiceStart::Persistent)
         }
@@ -244,9 +247,29 @@ pub(crate) fn start(home: &Home) -> Result<ServiceStart> {
 
 pub(crate) fn stop(home: &Home) -> Result<()> {
     match selected_adapter_kind() {
-        AdapterKind::MacosLaunchAgent => stop_macos_launch_agent(home),
-        AdapterKind::LinuxSystemdUser => stop_linux_systemd(home),
-        AdapterKind::WindowsScheduledTask => stop_windows_scheduled_task(home),
+        AdapterKind::MacosLaunchAgent => {
+            refuse_shared_service_owner_mutation(home, "stop the local daemon")?;
+            stop_macos_launch_agent(home)
+        }
+        AdapterKind::LinuxSystemdUser => {
+            refuse_shared_service_owner_mutation(home, "stop the local daemon")?;
+            stop_linux_systemd(home)
+        }
+        AdapterKind::WindowsScheduledTask => {
+            refuse_shared_service_owner_mutation(home, "stop the local daemon")?;
+            stop_windows_scheduled_task(home)
+        }
+        AdapterKind::LinuxDetachedFallback | AdapterKind::GenericDetachedProcess => Ok(()),
+    }
+}
+
+pub(crate) fn refuse_shared_service_owner_mutation(home: &Home, action: &str) -> Result<()> {
+    match selected_adapter_kind() {
+        AdapterKind::MacosLaunchAgent
+        | AdapterKind::LinuxSystemdUser
+        | AdapterKind::WindowsScheduledTask => {
+            ensure_service_owner_allows(home, action, installed_service_owner(home)?)
+        }
         AdapterKind::LinuxDetachedFallback | AdapterKind::GenericDetachedProcess => Ok(()),
     }
 }
@@ -273,6 +296,12 @@ fn test_adapter_override() -> Option<AdapterKind> {
         .as_str()
     {
         "detached" => Some(AdapterKind::GenericDetachedProcess),
+        #[cfg(test)]
+        "macos" => Some(AdapterKind::MacosLaunchAgent),
+        #[cfg(test)]
+        "systemd" => Some(AdapterKind::LinuxSystemdUser),
+        #[cfg(test)]
+        "windows" => Some(AdapterKind::WindowsScheduledTask),
         _ => None,
     }
 }
@@ -498,7 +527,200 @@ fn stop_macos_launch_agent(_home: &Home) -> Result<()> {
 }
 
 fn macos_service_loaded(service: &str) -> bool {
-    command_success("launchctl", &["print", service])
+    matches!(query_macos_service(service), MacosServiceQuery::Loaded(_))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MacosServiceQuery {
+    Loaded(String),
+    Absent,
+    Unknown(String),
+}
+
+fn query_macos_service(service: &str) -> MacosServiceQuery {
+    #[cfg(test)]
+    if let Some(value) = std::env::var_os("ORGASMIC_TEST_MACOS_SERVICE_QUERY") {
+        let value = value.to_string_lossy();
+        if value == "absent" {
+            return MacosServiceQuery::Absent;
+        }
+        if let Some(message) = value.strip_prefix("error:") {
+            return MacosServiceQuery::Unknown(message.to_string());
+        }
+        if let Some(home) = value.strip_prefix("loaded:") {
+            return MacosServiceQuery::Loaded(format!("ORGASMIC_HOME => {home}\n"));
+        }
+    }
+
+    let output = match Command::new("launchctl")
+        .args(["print", service])
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => return MacosServiceQuery::Unknown(format!("run launchctl print: {error}")),
+    };
+    if output.status.success() {
+        return MacosServiceQuery::Loaded(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if macos_query_reports_service_absent(&text) {
+        MacosServiceQuery::Absent
+    } else {
+        MacosServiceQuery::Unknown(format!(
+            "launchctl print {service} failed with {}",
+            output.status
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ServiceOwner {
+    Absent,
+    Owned(PathBuf),
+    Unknown(String),
+}
+
+fn installed_service_owner(home: &Home) -> Result<ServiceOwner> {
+    match selected_adapter_kind() {
+        AdapterKind::MacosLaunchAgent => installed_macos_owner(),
+        AdapterKind::LinuxSystemdUser => installed_systemd_owner(home),
+        AdapterKind::WindowsScheduledTask => installed_windows_owner(),
+        AdapterKind::LinuxDetachedFallback | AdapterKind::GenericDetachedProcess => {
+            Ok(ServiceOwner::Absent)
+        }
+    }
+}
+
+fn ensure_service_owner_allows(home: &Home, action: &str, owner: ServiceOwner) -> Result<()> {
+    match owner {
+        ServiceOwner::Absent => Ok(()),
+        ServiceOwner::Owned(owner) if same_path(&owner, &home.root) => Ok(()),
+        ServiceOwner::Owned(owner) => bail!(
+            "refusing to {action}: installed orgasmic daemon service is owned by ORGASMIC_HOME={} but this command was asked to use {}; daemon lifecycle is per-user, not per-home, so rewriting the per-user service can kill every live run",
+            owner.display(),
+            home.root.display()
+        ),
+        ServiceOwner::Unknown(reason) => bail!(
+            "refusing to {action}: installed orgasmic daemon service ownership is unknown ({reason}); daemon lifecycle is per-user, not per-home, so mutating the per-user service is unsafe"
+        ),
+    }
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    comparable_path(left) == comparable_path(right)
+}
+
+fn comparable_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn installed_macos_owner() -> Result<ServiceOwner> {
+    let plist = match macos_plist_path() {
+        Ok(path) => path,
+        Err(error) => return Ok(ServiceOwner::Unknown(error.to_string())),
+    };
+    let uid = current_uid();
+    let service = format!("gui/{uid}/{MACOS_LABEL}");
+    let loaded_owner = match query_macos_service(&service) {
+        MacosServiceQuery::Loaded(raw) => Some(match parse_macos_launchctl_owner_home(&raw) {
+            Ok(home) => home,
+            Err(error) => {
+                return Ok(ServiceOwner::Unknown(format!(
+                    "loaded LaunchAgent {service}: {error}"
+                )));
+            }
+        }),
+        MacosServiceQuery::Absent => None,
+        MacosServiceQuery::Unknown(reason) => return Ok(ServiceOwner::Unknown(reason)),
+    };
+    if !plist.exists() {
+        return Ok(match loaded_owner {
+            Some(_) => ServiceOwner::Unknown(format!(
+                "LaunchAgent {service} is loaded but {} is missing",
+                plist.display()
+            )),
+            None => ServiceOwner::Absent,
+        });
+    }
+    let raw = match std::fs::read_to_string(&plist) {
+        Ok(raw) => raw,
+        Err(error) => {
+            return Ok(ServiceOwner::Unknown(format!(
+                "read LaunchAgent {}: {error}",
+                plist.display()
+            )));
+        }
+    };
+    if raw.trim().is_empty() {
+        return Ok(ServiceOwner::Unknown(format!(
+            "LaunchAgent {} is empty",
+            plist.display()
+        )));
+    }
+    if raw.matches("<key>ORGASMIC_HOME</key>").count() > 1 {
+        return Ok(ServiceOwner::Unknown(format!(
+            "LaunchAgent {} has ambiguous ORGASMIC_HOME keys",
+            plist.display()
+        )));
+    }
+    let disk_owner = match read_macos_owner_home(&plist) {
+        Ok(home) => home,
+        Err(error) => {
+            return Ok(ServiceOwner::Unknown(format!(
+                "LaunchAgent {}: {error}",
+                plist.display()
+            )));
+        }
+    };
+    if let Some(loaded_owner) = loaded_owner {
+        if !same_path(&loaded_owner, &disk_owner) {
+            return Ok(ServiceOwner::Unknown(format!(
+                "loaded LaunchAgent {service} uses ORGASMIC_HOME={} but disk plist {} uses {}",
+                loaded_owner.display(),
+                plist.display(),
+                disk_owner.display()
+            )));
+        }
+        return Ok(ServiceOwner::Owned(loaded_owner));
+    }
+    Ok(ServiceOwner::Owned(disk_owner))
+}
+
+fn read_macos_owner_home(plist: &Path) -> Result<PathBuf> {
+    let output = Command::new("/usr/bin/plutil")
+        .args([
+            "-extract",
+            "EnvironmentVariables.ORGASMIC_HOME",
+            "raw",
+            "-expect",
+            "string",
+            "-o",
+            "-",
+            plist.to_string_lossy().as_ref(),
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .context("run plutil")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "plutil could not read EnvironmentVariables.ORGASMIC_HOME: {}",
+            stderr.trim()
+        );
+    }
+    let home = String::from_utf8(output.stdout)
+        .context("plutil returned non-utf8 ORGASMIC_HOME")?
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+    if home.trim().is_empty() {
+        bail!("EnvironmentVariables.ORGASMIC_HOME is empty");
+    }
+    Ok(PathBuf::from(home))
 }
 
 /// Poll `is_loaded` until it reports false or `timeout` elapses. Takes a
@@ -539,6 +761,10 @@ fn macos_status(_home: &Home) -> PersistenceStatus {
 }
 
 fn macos_plist_path() -> Result<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("ORGASMIC_TEST_MACOS_PLIST") {
+        return Ok(PathBuf::from(path));
+    }
     let home = std::env::var_os("HOME").context("HOME is required for LaunchAgent path")?;
     Ok(PathBuf::from(home)
         .join("Library")
@@ -605,6 +831,43 @@ fn linux_systemd_config_dir(home: &Home) -> PathBuf {
     home.root.join("user").join("systemd")
 }
 
+fn installed_systemd_owner(home: &Home) -> Result<ServiceOwner> {
+    let unit = linux_systemd_unit_path(home);
+    let output = match Command::new("systemctl")
+        .args([
+            "--user",
+            "show",
+            SYSTEMD_UNIT_NAME,
+            "--property=LoadState",
+            "--property=Environment",
+            "--no-pager",
+        ])
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return Ok(ServiceOwner::Unknown(format!(
+                "query systemd user unit owner: {error}"
+            )));
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        return Ok(ServiceOwner::Unknown(format!(
+            "systemctl --user show {SYSTEMD_UNIT_NAME} failed with {}",
+            output.status
+        )));
+    }
+    if stdout.lines().any(|line| line == "LoadState=not-found") && !unit.exists() {
+        return Ok(ServiceOwner::Absent);
+    }
+    Ok(match parse_systemd_owner_home(&stdout) {
+        Ok(home) => ServiceOwner::Owned(home),
+        Err(error) => ServiceOwner::Unknown(format!("systemd unit {SYSTEMD_UNIT_NAME}: {error}")),
+    })
+}
+
 fn start_windows_scheduled_task(home: &Home) -> Result<()> {
     let spec = service_spec(home)?;
     let service_dir = windows_service_dir(home);
@@ -663,6 +926,61 @@ fn windows_status(home: &Home) -> PersistenceStatus {
 
 fn windows_service_dir(home: &Home) -> PathBuf {
     home.state().join("service")
+}
+
+fn installed_windows_owner() -> Result<ServiceOwner> {
+    let output = match Command::new("schtasks")
+        .args(["/Query", "/TN", WINDOWS_TASK_NAME, "/XML"])
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return Ok(ServiceOwner::Unknown(format!(
+                "query scheduled task owner: {error}"
+            )));
+        }
+    };
+    if !output.status.success() {
+        let query_text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return Ok(if windows_query_reports_task_absent(&query_text) {
+            ServiceOwner::Absent
+        } else {
+            ServiceOwner::Unknown(format!(
+                "schtasks /Query /TN {WINDOWS_TASK_NAME} /XML failed with {}",
+                output.status
+            ))
+        });
+    }
+    let xml = String::from_utf8_lossy(&output.stdout);
+    let wrapper = match parse_windows_task_wrapper(&xml) {
+        Ok(path) => path,
+        Err(error) => {
+            return Ok(ServiceOwner::Unknown(format!(
+                "scheduled task {WINDOWS_TASK_NAME}: {error}"
+            )));
+        }
+    };
+    let raw = match std::fs::read_to_string(&wrapper) {
+        Ok(raw) => raw,
+        Err(error) => {
+            return Ok(ServiceOwner::Unknown(format!(
+                "read scheduled task wrapper {}: {error}",
+                wrapper.display()
+            )));
+        }
+    };
+    Ok(match parse_windows_wrapper_owner_home(&raw) {
+        Ok(home) => ServiceOwner::Owned(home),
+        Err(error) => ServiceOwner::Unknown(format!(
+            "scheduled task wrapper {}: {error}",
+            wrapper.display()
+        )),
+    })
 }
 
 /// Slack between the daemon's shutdown budget and the service manager's kill.
@@ -755,6 +1073,19 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
         stdout = xml_escape_path(&spec.stdout),
         stderr = xml_escape_path(&spec.stderr),
     )
+}
+
+#[cfg(test)]
+pub(crate) fn render_test_macos_launch_agent_for_home(home: &Path) -> String {
+    render_macos_launch_agent(&ServiceSpec {
+        exe: PathBuf::from("/tmp/orgasmic"),
+        home: home.to_path_buf(),
+        cwd: home.to_path_buf(),
+        stdout: home.join("logs/daemon.stdout.log"),
+        stderr: home.join("logs/daemon.err.log"),
+        path: "/usr/bin:/bin".to_string(),
+        project_scan_timeout: None,
+    })
 }
 
 fn render_linux_systemd_unit(spec: &ServiceSpec) -> String {
@@ -858,6 +1189,148 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+fn parse_systemd_owner_home(raw: &str) -> Result<PathBuf> {
+    let mut homes = Vec::new();
+    for line in raw.lines() {
+        let Some(mut rest) = line.trim_start().strip_prefix("Environment=") else {
+            continue;
+        };
+        loop {
+            rest = rest.trim_start();
+            if rest.is_empty() {
+                break;
+            }
+            let (token, next) = take_systemd_token(rest);
+            if let Some(home) = token.strip_prefix("ORGASMIC_HOME=") {
+                homes.push(systemd_unescape(home));
+            }
+            rest = next;
+        }
+    }
+    exactly_one_home("systemd ORGASMIC_HOME", homes)
+}
+
+fn take_systemd_token(rest: &str) -> (String, &str) {
+    if let Some(quoted) = rest.strip_prefix('"') {
+        let mut escaped = false;
+        for (idx, ch) in quoted.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => return (systemd_unescape(&quoted[..idx]), &quoted[idx + 1..]),
+                _ => {}
+            }
+        }
+        return (systemd_unescape(quoted), "");
+    }
+    match rest.find(char::is_whitespace) {
+        Some(idx) => (systemd_unescape(&rest[..idx]), &rest[idx..]),
+        None => (systemd_unescape(rest), ""),
+    }
+}
+
+fn parse_windows_task_wrapper(raw: &str) -> Result<PathBuf> {
+    exactly_one_home("scheduled task Command", xml_tag_values(raw, "Command"))
+}
+
+fn parse_windows_wrapper_owner_home(raw: &str) -> Result<PathBuf> {
+    let mut homes = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if let Some(value) = line
+            .strip_prefix("set \"ORGASMIC_HOME=")
+            .and_then(|value| value.strip_suffix('"'))
+        {
+            homes.push(value.replace("\"\"", "\"").replace("%%", "%"));
+        }
+    }
+    exactly_one_home("scheduled task wrapper ORGASMIC_HOME", homes)
+}
+
+fn parse_macos_launchctl_owner_home(raw: &str) -> Result<PathBuf> {
+    let homes: Vec<String> = raw
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("ORGASMIC_HOME =>")
+                .map(|value| value.trim().to_string())
+        })
+        .collect();
+    exactly_one_home("loaded LaunchAgent ORGASMIC_HOME", homes)
+}
+
+fn macos_query_reports_service_absent(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("could not find service") || text.contains("service is not loaded")
+}
+
+fn windows_query_reports_task_absent(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("cannot find") || text.contains("does not exist")
+}
+
+fn xml_tag_values(raw: &str, tag: &str) -> Vec<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let mut values = Vec::new();
+    let mut rest = raw;
+    while let Some(offset) = rest.find(&open) {
+        let after_open = &rest[offset + open.len()..];
+        let Some(end) = after_open.find(&close) else {
+            break;
+        };
+        values.push(xml_unescape(&after_open[..end]));
+        rest = &after_open[end + close.len()..];
+    }
+    values
+}
+
+fn exactly_one_home(label: &str, homes: Vec<String>) -> Result<PathBuf> {
+    match homes.as_slice() {
+        [home] if !home.trim().is_empty() => Ok(PathBuf::from(home)),
+        [] => bail!("{label} is missing"),
+        [_] => bail!("{label} is empty"),
+        _ => bail!("{label} is ambiguous"),
+    }
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+fn systemd_unescape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let bytes = value.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 3 < bytes.len() && bytes[i + 1] == b'x' {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 2..i + 4]) {
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    out.push(byte as char);
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            out.push(bytes[i + 1] as char);
+            i += 2;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
 fn systemd_quote_env(key: &str, value: &str) -> String {
     systemd_quote_arg(&format!("{key}={value}"))
 }
@@ -871,6 +1344,17 @@ fn cmd_escape(value: &str) -> String {
 }
 
 fn run_command(program: &str, args: &[&str]) -> Result<()> {
+    #[cfg(test)]
+    if let Some(log) = std::env::var_os("ORGASMIC_TEST_SERVICE_COMMAND_LOG") {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .context("open test service command log")?;
+        writeln!(file, "{program} {}", args.join(" ")).context("write test service command log")?;
+        return Ok(());
+    }
     let status = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -885,6 +1369,12 @@ fn run_command(program: &str, args: &[&str]) -> Result<()> {
 }
 
 fn command_success(program: &str, args: &[&str]) -> bool {
+    #[cfg(test)]
+    if program == "launchctl" && args.first() == Some(&"print") {
+        if let Some(value) = std::env::var_os("ORGASMIC_TEST_SERVICE_LOADED") {
+            return value == "1";
+        }
+    }
     Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -919,6 +1409,7 @@ fn current_uid() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{env_guard, ScopedEnv};
 
     fn spec() -> ServiceSpec {
         ServiceSpec {
@@ -1198,6 +1689,242 @@ mod tests {
         assert!(std::fs::read_to_string(&plist)
             .unwrap()
             .contains("<key>ThrottleInterval</key>"));
+    }
+
+    #[test]
+    fn service_owner_guard_refuses_foreign_home_and_unknown_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let requested = Home::at(tmp.path().join("requested"));
+        requested.ensure().unwrap();
+        let owner = tmp.path().join("owner");
+        std::fs::create_dir_all(&owner).unwrap();
+
+        let err = ensure_service_owner_allows(
+            &requested,
+            "start the local daemon",
+            ServiceOwner::Owned(owner.clone()),
+        )
+        .expect_err("foreign owner must refuse");
+        assert!(
+            err.to_string().contains(&owner.display().to_string()),
+            "{err}"
+        );
+        assert!(err.to_string().contains("per-user service"), "{err}");
+
+        let err = ensure_service_owner_allows(
+            &requested,
+            "start the local daemon",
+            ServiceOwner::Unknown("malformed LaunchAgent".to_string()),
+        )
+        .expect_err("unknown owner must refuse");
+        assert!(err.to_string().contains("malformed LaunchAgent"), "{err}");
+    }
+
+    #[test]
+    fn service_owner_guard_allows_matching_alias_and_absent_service() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let requested_path = tmp.path().join("alias");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &requested_path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&real, &requested_path).unwrap();
+        let requested = Home::at(requested_path);
+
+        ensure_service_owner_allows(
+            &requested,
+            "start the local daemon",
+            ServiceOwner::Owned(real),
+        )
+        .expect("symlink alias of owner should be allowed");
+        ensure_service_owner_allows(&requested, "start the local daemon", ServiceOwner::Absent)
+            .expect("first install should be allowed");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_plist_owner_is_read_from_environment_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("orgasmic.daemon.plist");
+        std::fs::write(&plist, render_macos_launch_agent(&spec())).unwrap();
+        assert_eq!(
+            read_macos_owner_home(&plist).unwrap(),
+            PathBuf::from("/Users/tester/Orgasmic Home")
+        );
+
+        std::fs::write(
+            &plist,
+            "<plist><dict><!-- <key>EnvironmentVariables</key><dict><key>ORGASMIC_HOME</key><string>/commented</string></dict> --></dict></plist>",
+        )
+        .unwrap();
+        assert!(
+            read_macos_owner_home(&plist)
+                .unwrap_err()
+                .to_string()
+                .contains("plutil could not read"),
+            "commented/missing EnvironmentVariables.ORGASMIC_HOME must be unknown"
+        );
+
+        std::fs::write(&plist, "<plist><dict><key>ORGASMIC_HOME</key>").unwrap();
+        assert!(read_macos_owner_home(&plist).is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn loaded_macos_service_with_missing_plist_is_unknown_not_absent() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("missing.plist");
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_TEST_SERVICE_ADAPTER", "macos"),
+            ("ORGASMIC_TEST_MACOS_PLIST", plist.to_str().unwrap()),
+            ("ORGASMIC_TEST_MACOS_SERVICE_QUERY", "loaded:/tmp/owner"),
+        ]);
+
+        let owner = installed_service_owner(&Home::at(tmp.path().join("home"))).unwrap();
+
+        assert!(
+            matches!(owner, ServiceOwner::Unknown(reason) if reason.contains("loaded") && reason.contains("missing"))
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn duplicate_macos_home_keys_are_unknown_not_silently_chosen() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("orgasmic.daemon.plist");
+        std::fs::write(
+            &plist,
+            format!(
+                "{}{}",
+                render_test_macos_launch_agent_for_home(Path::new("/tmp/one")),
+                render_test_macos_launch_agent_for_home(Path::new("/tmp/two"))
+            ),
+        )
+        .unwrap();
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_TEST_SERVICE_ADAPTER", "macos"),
+            ("ORGASMIC_TEST_MACOS_PLIST", plist.to_str().unwrap()),
+            ("ORGASMIC_TEST_MACOS_SERVICE_QUERY", "absent"),
+        ]);
+
+        let owner = installed_service_owner(&Home::at(tmp.path().join("home"))).unwrap();
+
+        assert!(matches!(owner, ServiceOwner::Unknown(reason) if reason.contains("ambiguous")));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_launchctl_query_error_is_unknown_not_absent() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("missing.plist");
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_TEST_SERVICE_ADAPTER", "macos"),
+            ("ORGASMIC_TEST_MACOS_PLIST", plist.to_str().unwrap()),
+            (
+                "ORGASMIC_TEST_MACOS_SERVICE_QUERY",
+                "error:launchctl denied",
+            ),
+        ]);
+
+        let owner = installed_service_owner(&Home::at(tmp.path().join("home"))).unwrap();
+
+        assert!(
+            matches!(owner, ServiceOwner::Unknown(reason) if reason.contains("launchctl denied"))
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_first_install_requires_positive_absent_service_evidence() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("missing.plist");
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_TEST_SERVICE_ADAPTER", "macos"),
+            ("ORGASMIC_TEST_MACOS_PLIST", plist.to_str().unwrap()),
+            ("ORGASMIC_TEST_MACOS_SERVICE_QUERY", "absent"),
+        ]);
+
+        let owner = installed_service_owner(&Home::at(tmp.path().join("home"))).unwrap();
+
+        assert_eq!(owner, ServiceOwner::Absent);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn loaded_macos_owner_conflicting_with_disk_plist_is_unknown() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("orgasmic.daemon.plist");
+        std::fs::write(
+            &plist,
+            render_test_macos_launch_agent_for_home(Path::new("/tmp/disk-owner")),
+        )
+        .unwrap();
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_TEST_SERVICE_ADAPTER", "macos"),
+            ("ORGASMIC_TEST_MACOS_PLIST", plist.to_str().unwrap()),
+            (
+                "ORGASMIC_TEST_MACOS_SERVICE_QUERY",
+                "loaded:/tmp/loaded-owner",
+            ),
+        ]);
+
+        let owner = installed_service_owner(&Home::at(tmp.path().join("home"))).unwrap();
+
+        assert!(
+            matches!(owner, ServiceOwner::Unknown(reason) if reason.contains("loaded") && reason.contains("disk plist"))
+        );
+    }
+
+    #[test]
+    fn systemd_owner_is_read_from_effective_environment() {
+        let unit = render_linux_systemd_unit(&spec());
+        assert_eq!(
+            parse_systemd_owner_home(&unit).unwrap(),
+            PathBuf::from("/Users/tester/Orgasmic Home")
+        );
+        assert_eq!(
+            parse_systemd_owner_home(
+                r#"LoadState=loaded
+Environment=PATH=/usr/bin ORGASMIC_HOME=/srv/orgasmic\x20home ORGASMIC_LOG_MIRROR=off
+"#
+            )
+            .unwrap(),
+            PathBuf::from("/srv/orgasmic home")
+        );
+    }
+
+    #[test]
+    fn windows_owner_is_read_from_task_referenced_wrapper() {
+        let wrapper =
+            PathBuf::from(r"C:\Users\tester\AppData\Local\orgasmic\service\orgasmic-daemon.cmd");
+        let xml = render_windows_scheduled_task(&spec(), &wrapper);
+        assert_eq!(parse_windows_task_wrapper(&xml).unwrap(), wrapper);
+        assert_eq!(
+            parse_windows_wrapper_owner_home(&render_windows_wrapper(&spec())).unwrap(),
+            PathBuf::from(r"/Users/tester/Orgasmic Home")
+        );
+    }
+
+    #[test]
+    fn windows_failed_query_distinguishes_absent_from_unknown() {
+        assert!(windows_query_reports_task_absent(
+            "ERROR: The system cannot find the file specified."
+        ));
+        assert!(windows_query_reports_task_absent(
+            "ERROR: The task image does not exist."
+        ));
+        assert!(!windows_query_reports_task_absent(
+            "ERROR: Access is denied."
+        ));
+        assert!(!windows_query_reports_task_absent(
+            "ERROR: The Task Scheduler service is not available."
+        ));
     }
 
     /// orgasmic:TASK-Q07Y5 — the derivation itself, not just the rendering.

@@ -73,6 +73,38 @@ fn daemon_status_reports_adapter_and_persistence_for_external_target() {
 }
 
 #[test]
+fn worker_restart_refuses_before_runtime_override_preparation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let override_path = home.state().join("daemon-runtime-override.json");
+    std::fs::create_dir_all(home.state()).unwrap();
+    let before = br#"{"keep":"me"}"#;
+    std::fs::write(&override_path, before).unwrap();
+
+    let output = orgasmic_command()
+        .args(["daemon", "restart", "--clear-runtime-override"])
+        .env("ORGASMIC_HOME", &home.root)
+        .env("ORGASMIC_RUN_ID", "run-worker")
+        .env("ORGASMIC_TEST_SERVICE_ADAPTER", "detached")
+        .output()
+        .expect("run orgasmic daemon restart");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "worker restart unexpectedly succeeded\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(stderr.contains("kill every live run"), "{stderr}");
+    assert_eq!(
+        std::fs::read(&override_path).unwrap(),
+        before,
+        "runtime override was changed before lifecycle refusal"
+    );
+}
+
+#[test]
 fn second_serve_exits_zero_when_healthy_incumbent_owns_home_lock() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));

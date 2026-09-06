@@ -2909,6 +2909,7 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
 }
 
 fn cmd_daemon_restart(home: &Home, args: DaemonRestartArgs) -> Result<()> {
+    daemon_lifecycle::refuse_lifecycle_mutation(home, "restart the local daemon")?;
     let changes_runtime = args.clear_runtime_override || args.from_source.is_some();
     let runtime_snapshot = changes_runtime
         .then(|| daemon_runtime::RuntimeSnapshot::capture(home))
