@@ -1277,7 +1277,7 @@ fn parse_systemd_owner_home(raw: &str) -> Result<PathBuf> {
             }
             let (token, next) = take_systemd_token(rest)?;
             if let Some(home) = token.strip_prefix("ORGASMIC_HOME=") {
-                homes.push(systemd_unescape(home)?);
+                homes.push(home.to_string());
             }
             rest = next;
         }
@@ -1299,7 +1299,7 @@ fn take_systemd_token(rest: &str) -> Result<(String, &str)> {
                 _ => {}
             }
         }
-        return Ok((systemd_unescape(quoted)?, ""));
+        bail!("unterminated quoted systemd token");
     }
     Ok(match rest.find(char::is_whitespace) {
         Some(idx) => (systemd_unescape(&rest[..idx])?, &rest[idx..]),
@@ -2099,6 +2099,12 @@ Environment=PATH=/usr/bin ORGASMIC_HOME=/srv/orgasmic\x20home ORGASMIC_LOG_MIRRO
             .expect_err("foreign on-disk systemd unit owner must refuse");
         assert!(err.to_string().contains("per-user service"), "{err}");
 
+        std::fs::write(&unit, "Environment=\"ORGASMIC_HOME=/tmp/no-close\n").unwrap();
+        let err = refuse_shared_service_owner_mutation(&requested, "start the local daemon")
+            .expect_err("malformed on-disk systemd unit owner must refuse");
+        assert!(err.to_string().contains("ownership is unknown"), "{err}");
+        assert!(err.to_string().contains("unterminated quoted"), "{err}");
+
         std::fs::write(&unit, [0xff]).unwrap();
         assert!(
             matches!(installed_service_owner(&requested).unwrap(), ServiceOwner::Unknown(reason) if reason.contains("stream did not contain valid UTF-8"))
@@ -2137,6 +2143,12 @@ Environment=PATH=/usr/bin ORGASMIC_HOME=/srv/orgasmic\x20home ORGASMIC_LOG_MIRRO
             .unwrap(),
             PathBuf::from("/tmp/Łódź")
         );
+        let literal = PathBuf::from(r"/tmp/literal\x41");
+        let unit = render_linux_systemd_unit(&ServiceSpec {
+            home: literal.clone(),
+            ..spec()
+        });
+        assert_eq!(parse_systemd_owner_home(&unit).unwrap(), literal);
         assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\xff"#).is_err());
     }
 
