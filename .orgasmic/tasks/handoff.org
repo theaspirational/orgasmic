@@ -11,8 +11,7 @@
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
 :END:
 
-Reconciled 2026-09-06 from live CLI state and source main 0bf80eb0. This is the current digest; do not act on superseded instructions from older handoffs. Historical narrative remains in ledger Git history and the local handoff-before.org backup at /Users/aspirational/.codex/artifacts/orgasmic-status-20260906/.
-Operator scope: reconcile completed work, repair malformed IDs through supported daemon operations, and triage P0/P1 backlog. No implementation worker is running. No new feature work or runtime deployment was performed in this pass.
+Reconciled 2026-09-06 from live CLI state and local main 18d170d2. The requested reconciliation, malformed-ID repair, and P0/P1 triage are complete. This is the current digest; older handoff instructions are superseded. Original handoff backup and triage artifacts: /Users/aspirational/.codex/artifacts/orgasmic-status-20260906/. Repair evidence: /Users/aspirational/.codex/artifacts/orgasmic-id-repair-20260906/.
 
 ** Done so far
 - TASK-D6N77.1 closed DONE: merge 0423ae5 is in main; independent Sol/high PASS already recorded. Current UI typecheck and runDockLabels tests (24/24) close the previous UI execution gap. Existing backend gates remain historical merge-time evidence.
