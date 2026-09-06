@@ -122,3 +122,50 @@
 :NODE_ID: TASK-ADHWZ
 :EVENT_ID: 1f4892e0-8180-4fc8-9c6e-54f8f7d8f030
 :END:
+
+* tx-20260906-orgasmic-9f99a098-b1a1-4e1c-b8be-a1b4bd5752f9 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-9f99a098-b1a1-4e1c-b8be-a1b4bd5752f9
+:TIME:    [2026-09-06 Sun 23:11:53]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ADHWZ
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-ADHWZ/node.org
+:REASON: edited task node TASK-ADHWZ
+:NODE_ID: TASK-ADHWZ
+:EVENT_ID: 1fd470db-e292-454c-b4ea-0c30e994b601
+:END:
+
+* tx-20260906-orgasmic-a20d5f12-a596-477e-8af0-4b3e0a9b6322 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-a20d5f12-a596-477e-8af0-4b3e0a9b6322
+:TIME:    [2026-09-06 Sun 23:11:53]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ADHWZ
+:TARGET: .orgasmic/tasks/TASK-ADHWZ/node.org
+:REASON: Acceptance audit passed on local source f7481eb9: concurrency, uncertain sync, and durable restart replay; 64 focused tests and lint checks green. Runtime unchanged.
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: e366c267-ddd7-44ff-a380-c1a6350692d3
+:END:
+
+* tx-20260906-orgasmic-466cfa2c-a65b-4a33-af7f-683234a12894 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-466cfa2c-a65b-4a33-af7f-683234a12894
+:TIME:    [2026-09-06 Sun 23:11:53]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ADHWZ
+:TARGET: .orgasmic/tasks/TASK-ADHWZ/node.org
+:REASON: Source implementation and acceptance evidence complete at f7481eb9. No runtime install or operator restart; P0 restart remains explicit.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 63bf4415-e62f-4b93-9c09-7b39f75e8a7d
+:END:
