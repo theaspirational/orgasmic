@@ -23,6 +23,8 @@
 #   scripts/run-tests.sh -p orgasmic-daemon --lib scoped, same classification
 #   scripts/run-tests.sh --check                  registry hygiene + verify artifact sweep
 #   scripts/run-tests.sh --classify <log>         re-read an existing cargo log
+#   scripts/run-tests.sh --repeat-test <name> <N> -p <crate> --test <target>
+#                                                run one exact test N times (2-100), require N/N
 #   scripts/run-tests.sh --registry <path> ...    use a different registry
 #   scripts/run-tests.sh --verify-dir <path> ...  sweep a different verify/ (self-test)
 #   scripts/run-tests.sh --help
@@ -167,6 +169,8 @@ VERIFY_DIR="$REPO/verify"
 CLASSIFY_LOG=""
 CHECK_ONLY=0
 WORK=""
+REPEAT_NAME=""
+REPEAT_TOTAL=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -193,6 +197,20 @@ while [ $# -gt 0 ]; do
             CLASSIFY_LOG="$2"
             shift 2
             ;;
+        --repeat-test)
+            [ $# -ge 3 ] || die "--repeat-test needs an exact test name and count (2-100)"
+            [ -z "$REPEAT_NAME" ] || die "name one repeated test per invocation"
+            REPEAT_NAME="$2"
+            REPEAT_TOTAL="$3"
+            case "$REPEAT_NAME" in
+                '' | *[!A-Za-z0-9_:]* | *"$BILLED_TEST"*) die "invalid or billed repeated test name" ;;
+            esac
+            case "$REPEAT_TOTAL" in
+                '' | *[!0-9]*) die "repeat count must be 2-100" ;;
+            esac
+            [ "$REPEAT_TOTAL" -ge 2 ] && [ "$REPEAT_TOTAL" -le 100 ] || die "repeat count must be 2-100"
+            shift 3
+            ;;
         --work-dir)
             # Where logs and parsed failure detail land. Defaults to a temp
             # directory; the self-test pins it so it can read the artifacts.
@@ -211,6 +229,22 @@ while [ $# -gt 0 ]; do
 done
 
 CARGO_ARGS=("$@")
+if [ -n "$REPEAT_NAME" ]; then
+    [ -z "$CLASSIFY_LOG" ] && [ "$CHECK_ONLY" -eq 0 ] && [ "$SAMPLE_HOST_ONLY" -eq 0 ] || die "--repeat-test is a live test run"
+    [ ${#CARGO_ARGS[@]} -gt 0 ] || die "--repeat-test needs an explicit cargo target"
+    repeat_packages=0
+    repeat_targets=0
+    for arg in "${CARGO_ARGS[@]}"; do
+        case "$arg" in
+            --workspace | --all | --all-targets | --tests | --bins | --benches | --examples | --doc | --)
+                die "--repeat-test needs a scoped cargo target, without a libtest separator" ;;
+            -p | --package | -p=* | --package=*) repeat_packages=$((repeat_packages + 1)) ;;
+            --lib | --test | --bin | --test=* | --bin=*) repeat_targets=$((repeat_targets + 1)) ;;
+        esac
+    done
+    [ "$repeat_packages" -eq 1 ] && [ "$repeat_targets" -eq 1 ] ||
+        die "--repeat-test needs one package (-p) and one target (--lib, --test, or --bin)"
+fi
 if [ ${#CARGO_ARGS[@]} -eq 0 ]; then
     CARGO_ARGS=(--workspace)
 fi
@@ -845,6 +879,44 @@ WATCHDOG_DETAIL=""
 
 SUITE_LOG="$WORK/suite.log"
 
+# TASK-P4XKT: one watchdog owns the entire sequence, including gaps between
+# invocations. Keep each attempt and the score in the durable suite log so
+# reclassification cannot erase a failure after an initially green run.
+run_requested_tests() {
+    if [ -z "$REPEAT_NAME" ]; then
+        exec "${SCRUB[@]}" cargo test "${CARGO_ARGS[@]}" --no-fail-fast -- --skip "$BILLED_TEST"
+    fi
+    local attempt=0 passed=0 status=0 code log
+    printf '# orgasmic-repeat-plan: %s %s\n' "$REPEAT_NAME" "$REPEAT_TOTAL"
+    while [ "$attempt" -lt "$REPEAT_TOTAL" ]; do
+        attempt=$((attempt + 1))
+        log="$WORK/repeat-$attempt.log"
+        "${SCRUB[@]}" cargo test "${CARGO_ARGS[@]}" "$REPEAT_NAME" --no-fail-fast -- \
+            --exact --test-threads=1 --skip "$BILLED_TEST" > "$log" 2>&1
+        code=$?
+        printf '# orgasmic-repeat-attempt: %s exit=%s\n' "$attempt" "$code"
+        cat "$log"
+        if [ "$code" -eq 0 ] && \
+            [ "$(grep -Fxc "test $REPEAT_NAME ... ok" "$log")" = 1 ] && \
+            grep -q '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$log"; then
+            passed=$((passed + 1))
+        else
+            status=101
+        fi
+        if [ "$code" -ne 0 ] && [ "$code" -ne 101 ]; then
+            status=$code
+            break
+        fi
+    done
+    printf '# orgasmic-repeat-result: %s %s %s\n' "$REPEAT_NAME" "$attempt" "$passed"
+    return "$status"
+}
+
+SUITE_CMD="cargo test ${CARGO_ARGS[*]} --no-fail-fast -- --skip $BILLED_TEST"
+if [ -n "$REPEAT_NAME" ]; then
+    SUITE_CMD="repeat $REPEAT_TOTAL: cargo test ${CARGO_ARGS[*]} $REPEAT_NAME --no-fail-fast -- --exact --test-threads=1 --skip $BILLED_TEST"
+fi
+
 if [ -n "$CLASSIFY_LOG" ]; then
     [ -f "$CLASSIFY_LOG" ] || die "no such log: $CLASSIFY_LOG"
     cp "$CLASSIFY_LOG" "$SUITE_LOG" || die "cannot copy $CLASSIFY_LOG"
@@ -878,12 +950,10 @@ elif [ -n "${ORGASMIC_HOST_STATE_SAMPLE-}" ]; then
     HOST_JUDGMENT=$(sample_host_state_injected)
     HOST_BEFORE=$(printf 'load=%s syspolicyd_time=injected' "$(host_field_or_unknown "$HOST_JUDGMENT" load)")
     HOST_AFTER=$HOST_BEFORE
-    SUITE_CMD="cargo test ${CARGO_ARGS[*]} --no-fail-fast -- --skip $BILLED_TEST"
     printf 'run-tests: %s\n' "$SUITE_CMD"
     printf 'run-tests: log %s\n' "$SUITE_LOG"
     printf 'run-tests: host sample injected via %s\n' "$HOST_STATE_ENV"
-    run_cargo_command_with_watchdog "$SUITE_LOG" \
-        "${SCRUB[@]}" cargo test "${CARGO_ARGS[@]}" --no-fail-fast -- --skip "$BILLED_TEST"
+    run_cargo_command_with_watchdog "$SUITE_LOG" run_requested_tests
     write_suite_exit_stamp "$SUITE_LOG" "$SUITE_EXIT"
     write_host_stamp "$SUITE_LOG" "$HOST_BEFORE" "$HOST_AFTER" "$HOST_JUDGMENT"
     if host_is_degraded "$HOST_JUDGMENT"; then
@@ -897,11 +967,9 @@ else
     # suite has already passed (.orgasmic/gotchas.org).
     local_wall0=$(date +%s)
     HOST_BEFORE=$(sample_host_snapshot_live)
-    SUITE_CMD="cargo test ${CARGO_ARGS[*]} --no-fail-fast -- --skip $BILLED_TEST"
     printf 'run-tests: %s\n' "$SUITE_CMD"
     printf 'run-tests: log %s\n' "$SUITE_LOG"
-    run_cargo_command_with_watchdog "$SUITE_LOG" \
-        "${SCRUB[@]}" cargo test "${CARGO_ARGS[@]}" --no-fail-fast -- --skip "$BILLED_TEST"
+    run_cargo_command_with_watchdog "$SUITE_LOG" run_requested_tests
     HOST_AFTER=$(sample_host_snapshot_live)
     local_wall1=$(date +%s)
     # Do not clamp sub-second windows up to 1: a 0.3 s delta divided by 1
@@ -921,6 +989,32 @@ fi
 # fabricated test verdict.
 if [ "$WATCHDOG_TRIPPED" -eq 1 ]; then
     watchdog_inconclusive "$SUITE_CMD" "$SUITE_LOG"
+fi
+
+REPEAT_SUMMARY=""
+REPEAT_FAILED=0
+if grep -q '^# orgasmic-repeat-\(plan\|result\):' "$SUITE_LOG"; then
+    if repeat_score=$(awk '
+        $1 == "#" && $2 == "orgasmic-repeat-plan:" {
+            plans++; name=$3; total=$4; if (NF != 4) invalid=1
+        }
+        $1 == "#" && $2 == "orgasmic-repeat-result:" {
+            results++; result_name=$3; attempted=$4; passed=$5; if (NF != 5) invalid=1
+        }
+        END {
+            if (invalid || plans != 1 || results != 1 || name !~ /^[A-Za-z0-9_:]+$/ ||
+                name != result_name || total !~ /^[0-9]+$/ || total < 2 || total > 100 ||
+                attempted !~ /^[0-9]+$/ || passed !~ /^[0-9]+$/ ||
+                attempted > total || passed > attempted) exit 1
+            print name, total, attempted, passed
+        }' "$SUITE_LOG"); then
+        read -r repeat_name repeat_total repeat_attempted repeat_passed <<< "$repeat_score"
+        REPEAT_SUMMARY="$repeat_name — $repeat_passed/$repeat_total passed; $repeat_attempted attempted (100% required)"
+        [ "$repeat_passed" -eq "$repeat_total" ] || REPEAT_FAILED=1
+    else
+        REPEAT_SUMMARY="invalid or incomplete repeat score"
+        REPEAT_FAILED=1
+    fi
 fi
 
 # The skip is a default, not a promise. Assert it held.
@@ -1502,6 +1596,7 @@ printf 'VERDICT\n'
 printf '%s\n' "$RULE"
 printf '  suite    : %s\n' "$SUITE_CMD"
 printf '  log      : %s\n' "$SUITE_LOG"
+[ -z "$REPEAT_SUMMARY" ] || printf '  repeat   : %s\n' "$REPEAT_SUMMARY"
 printf '  registry : %s (%s entries, every owner open)\n' "${REGISTRY#$REPO/}" "$REGISTRY_COUNT"
 if [ "$BILLED_RAN" -eq 0 ]; then
     printf '  billed   : %s — NOT RUN (--skip applied to every invocation)\n' "$BILLED_TEST"
@@ -1691,6 +1786,11 @@ elif [ "$REAL_COUNT" -gt 0 ]; then
     # F4: an alone-red failure is a code fact whatever the host was doing.
     # The host stamp above is reported alongside this verdict, not instead of it.
     printf '\nverdict: RED — %s real failure(s). This red means something.\n' "$REAL_COUNT"
+    STATUS=$EXIT_REAL
+elif [ "$REPEAT_FAILED" -eq 1 ] && [ "$HOST_DEGRADED" -eq 0 ]; then
+    # A degraded host retains the existing INCONCLUSIVE verdict below;
+    # neither a repeat score nor a registry entry can make that run green.
+    printf '\nverdict: RED — repeated test did not meet its required pass count.\n'
     STATUS=$EXIT_REAL
 elif [ "$LOAD_COUNT" -gt 0 ] && [ "$HOST_DEGRADED" -eq 0 ]; then
     # Unreachable when the C interlock holds: LOAD-SENSITIVE requires a

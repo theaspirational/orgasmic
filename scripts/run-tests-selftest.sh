@@ -1436,6 +1436,130 @@ fi
 
 # ---------------------------------------------------------------------------
 
+# TASK-P4XKT: a green first execution followed by a deterministic failure.
+mkdir -p "$TMP/repeat-bin"
+cat > "$TMP/repeat-bin/cargo" <<'EOF'
+#!/bin/bash
+root=$REPEAT_FIXTURE_ROOT
+n=$(cat "$root/repeat-count" 2>/dev/null || printf 0)
+n=$((n + 1))
+printf '%s\n' "$n" > "$root/repeat-count"
+[ -z "${ORGASMIC_HOME-}${ORGASMIC_RUN_ID-}" ] || exit 97
+printf '     Running unittests src/lib.rs (%s/green)\n\nrunning 1 test\n' "$root"
+if [ "$n" = "${REPEAT_FIXTURE_FAIL_ON:-0}" ]; then
+    cat <<'LOG'
+test tests::repeat_canary ... FAILED
+
+failures:
+
+---- tests::repeat_canary stdout ----
+thread 'tests::repeat_canary' panicked at fixture.rs:1:1:
+intermittent second execution
+
+failures:
+    tests::repeat_canary
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+error: test failed, to rerun pass `-p orgasmic-daemon --lib`
+LOG
+    exit 101
+fi
+printf 'test %s ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n' "${REPEAT_FIXTURE_NAME:-tests::repeat_canary}"
+EOF
+chmod +x "$TMP/repeat-bin/cargo"
+repeat_run() {
+    rm -rf "$TMP/repeat-work"
+    printf '0\n' > "$TMP/repeat-count"
+    PATH="$TMP/repeat-bin:$PATH" REPEAT_FIXTURE_ROOT="$TMP" \
+        ORGASMIC_HOME=must-be-scrubbed ORGASMIC_RUN_ID=must-be-scrubbed \
+        ORGASMIC_HOST_STATE_SAMPLE="${REPEAT_FIXTURE_HOST:-load=0.5,syspolicyd_cpu=5,wall_s=100}" \
+        "$RUNNER" --registry "$TMP/registry.toml" --verify-dir "$TMP/verify" \
+        --work-dir "$TMP/repeat-work" "$@" > "$TMP/out.txt" 2>&1
+    RUN_EXIT=$?
+}
+registry
+export REPEAT_FIXTURE_FAIL_ON=2
+start "P4XKT control: a single green run misses the intermittent defect"
+repeat_run -p orgasmic-daemon --lib
+check 0 "$RUN_EXIT" "$TMP/out.txt" 'verdict: GREEN'
+
+start "P4XKT: initially green canary repeats and scores a later failure RED"
+repeat_run --repeat-test tests::repeat_canary 3 -p orgasmic-daemon --lib
+check 1 "$RUN_EXIT" "$TMP/out.txt" 'repeat   : tests::repeat_canary — 2/3 passed; 3 attempted' 'verdict: RED'
+cp "$TMP/repeat-work/suite.log" "$TMP/repeated-failure.log"
+
+start "P4XKT: reclassification preserves the failed repeat score"
+run --classify "$TMP/repeated-failure.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" 'repeat   : tests::repeat_canary — 2/3 passed; 3 attempted' 'verdict: RED'
+
+export REPEAT_FIXTURE_FAIL_ON=0
+start "P4XKT: a repeated green canary reports every execution"
+repeat_run --repeat-test tests::repeat_canary 3 -p orgasmic-daemon --lib
+check 0 "$RUN_EXIT" "$TMP/out.txt" 'repeat   : tests::repeat_canary — 3/3 passed; 3 attempted' 'verdict: GREEN'
+cp "$TMP/repeat-work/suite.log" "$TMP/repeated-green.log"
+start "P4XKT: an incomplete repeat record cannot reclassify green"
+sed '/^# orgasmic-repeat-result:/d' "$TMP/repeated-green.log" > "$TMP/repeated-incomplete.log"
+run --classify "$TMP/repeated-incomplete.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" 'repeat   : invalid or incomplete repeat score' 'verdict: RED'
+
+start "P4XKT: a different passing test cannot satisfy the selected canary"
+export REPEAT_FIXTURE_NAME=tests::some_other_test
+repeat_run --repeat-test tests::repeat_canary 3 -p orgasmic-daemon --lib
+check 1 "$RUN_EXIT" "$TMP/out.txt" 'repeat   : tests::repeat_canary — 0/3 passed; 3 attempted' 'verdict: RED'
+unset REPEAT_FIXTURE_NAME
+
+start "P4XKT: a registered intermittent failure still fails the repeat threshold"
+registry '[[flake]]' 'test = "tests::repeat_canary"' "owner = \"$FIXTURE_OWNER\"" \
+    'signature = "intermittent second execution"' 'evidence = "repeat control"' 'filed = "2026-09-07"'
+export REPEAT_FIXTURE_FAIL_ON=2
+repeat_run --repeat-test tests::repeat_canary 3 -p orgasmic-daemon --lib
+check 1 "$RUN_EXIT" "$TMP/out.txt" 'FLAKE (1)' 'repeat   : tests::repeat_canary — 2/3 passed' \
+    'verdict: RED — repeated test did not meet its required pass count.'
+
+start "P4XKT: degraded host keeps a registered repeat failure inconclusive"
+export REPEAT_FIXTURE_HOST='load=0.5,syspolicyd_cpu=200,wall_s=100'
+repeat_run --repeat-test tests::repeat_canary 3 -p orgasmic-daemon --lib
+check 4 "$RUN_EXIT" "$TMP/out.txt" 'repeat   : tests::repeat_canary — 2/3 passed' 'verdict: INCONCLUSIVE'
+unset REPEAT_FIXTURE_HOST
+
+start "P4XKT: the billed test cannot be selected through the repeat flag"
+repeat_run --repeat-test legacy_drivers_and_explicit_pairs_emit_equivalent_start_events 3 -p orgasmic-daemon --lib
+check 3 "$RUN_EXIT" "$TMP/out.txt" 'invalid or billed repeated test name'
+
+start "P4XKT: repeating a workspace is refused before execution"
+repeat_run --repeat-test tests::repeat_canary 3 --workspace
+check 3 "$RUN_EXIT" "$TMP/out.txt" '--repeat-test needs a scoped cargo target'
+start "P4XKT: a build flag alone does not select a scoped test target"
+repeat_run --repeat-test tests::repeat_canary 3 --release
+check 3 "$RUN_EXIT" "$TMP/out.txt" '--repeat-test needs one package (-p) and one target'
+
+start "P4XKT: a single execution is not accepted as repetition"
+repeat_run --repeat-test tests::repeat_canary 1 -p orgasmic-daemon --lib
+check 3 "$RUN_EXIT" "$TMP/out.txt" 'repeat count must be 2-100'
+
+start "P4XKT: watchdog covers the entire repeated command"
+install_stub_cargo_watchdog_target
+# Preserve the real descendant walk: repetition has a shell coordinating cargo.
+cat > "$TMP/bin/pgrep" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-x" ] && [ "$2" = "syspolicyd" ]; then
+    echo 4242
+    exit 0
+fi
+exec /usr/bin/pgrep "$@"
+EOF
+PATH="$TMP/bin:$PATH" \
+    ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=5.0,wall_s=100' \
+    ORGASMIC_RUN_TESTS_WATCHDOG_TEST_FAST=1 \
+    "$RUNNER" --registry "$TMP/registry.toml" --verify-dir "$TMP/verify" \
+    --work-dir "$TMP/work" --repeat-test tests::repeat_canary 3 -p orgasmic-daemon --lib \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+check 4 "$RUN_EXIT" "$TMP/out.txt" 'suite    : repeat 3:' \
+    'verdict: INCONCLUSIVE — host safety watchdog stopped the suite'
+rm -rf "$TMP/work"
+unset REPEAT_FIXTURE_FAIL_ON
+
 printf '\n%s passed, %s failed\n' "$PASSED" "$FAILED"
 # R-5: a case that stops running must not be able to look like a pass.
 # F-6: the expectation is the number of `start` calls in this file, so adding
