@@ -108,6 +108,20 @@ pub enum HarnessRequest {
     },
 }
 
+impl HarnessRequest {
+    /// The supervisor assigns this path. An unassigned run clears any inherited
+    /// report destination so a nested worker cannot overwrite its parent's report.
+    pub(crate) fn with_report_path(mut self, config: &DriverConfig) -> Self {
+        if let Self::Subprocess { env, .. } = &mut self {
+            env.insert(
+                "ORGASMIC_REPORT_PATH".into(),
+                config.0["report_path"].as_str().unwrap_or_default().into(),
+            );
+        }
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsProtocol {
     JsonRpc,

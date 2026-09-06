@@ -8032,7 +8032,6 @@ struct DispatchCompletion {
     run_id: String,
     provider: String,
     session_path: PathBuf,
-    #[allow(dead_code)] // artifact paths; worker finalize writes directly
     last_path: PathBuf,
     #[allow(dead_code)]
     stdout_path: PathBuf,
@@ -8118,7 +8117,7 @@ impl SessionTail {
 
 /// Follow the run while the supervisor holds it live, then classify its
 /// persisted release. Worker finalize owns all success artifacts; this watcher
-/// only records failed/orphaned termination and never scrapes a report.
+/// records failed/orphaned termination and preserves Hermes partial output.
 ///
 /// The supervisor snapshot is the cheap lifecycle fact and is consulted first;
 /// the session file is touched only after release, and then incrementally
@@ -8177,9 +8176,19 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 return;
             }
             // dec_3M7M0 / TASK-ZB90M: only worker finalize may author
-            // completion artifacts. Any tombstone with finalized_by_worker=false
-            // is orphan — never synthesize last.txt/stdout.log from driver events.
+            // success artifacts. A Hermes partial report is rescue evidence;
+            // it does not satisfy the worker-finalize contract (TASK-ZMYEN).
             if dispatch_release_without_worker_finalize(envelopes) {
+                if completion.provider == "hermes"
+                    && dispatch_release_requires_orphan_signal(envelopes)
+                    && dispatch_release_reason(envelopes).as_deref()
+                        == Some("protocol_end_without_finalize")
+                {
+                    if let Err(error) = write_hermes_partial_report(&completion) {
+                        tracing::warn!(run_id = %completion.run_id, error = %error,
+                            "could not preserve Hermes partial report");
+                    }
+                }
                 if dispatch_release_requires_orphan_signal(envelopes) {
                     tracing::warn!(
                         run_id = %completion.run_id,
@@ -8489,6 +8498,42 @@ async fn record_dispatch_orphaned(state: &ApiState, completion: &DispatchComplet
             "manager.dispatch_orphaned tx failed"
         );
     }
+}
+
+// The CLI reserves an empty last.txt before launch. Nonempty worker output
+// always wins; only that empty reservation (or an absent file) needs recovery.
+fn write_hermes_partial_report(completion: &DispatchCompletion) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    // ponytail: one full scan on failure; stream it if session size becomes a memory problem.
+    let envelopes = read_session_file(&completion.session_path)?;
+    let text: String = envelopes
+        .iter()
+        .filter(|envelope| {
+            envelope.run_id == completion.run_id
+                && envelope.kind == SessionEventKind::DriverEvent
+                && envelope.event["type"] == "text_chunk"
+                && envelope.event["stream"] == "assistant"
+        })
+        .filter_map(|envelope| envelope.event["chunk"].as_str())
+        .collect();
+    if text.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = completion.last_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&completion.last_path)?;
+    if file.metadata()?.len() == 0 {
+        file.write_all("PARTIAL — protocol_end_without_finalize\n\n".as_bytes())?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+    }
+    Ok(())
 }
 
 #[allow(dead_code)] // retained for unit tests of dispatch_last_summary_from_session
@@ -30326,6 +30371,128 @@ pub(crate) mod tests {
         let _ = deadline;
     }
 
+    #[tokio::test]
+    async fn hermes_partial_report_preserves_text_and_worker_file_without_finalizing() {
+        use orgasmic_drivers::HarnessEventAdapter;
+        for (existing, transport_completed) in [
+            (None, false),
+            (Some(""), true),
+            (Some("worker-authored report\n"), true),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = Home::at(tmp.path().join("home"));
+            home.ensure().unwrap();
+            seed_project(&home, &tmp.path().join("project"), "proj-dispatch");
+            let state = direct_stage_test_state(home).await;
+            let session_path = tmp.path().join("session.jsonl");
+            let last_path = tmp.path().join("report-last.txt");
+            if let Some(body) = existing {
+                std::fs::write(&last_path, body).unwrap();
+            }
+            let identity = RuntimeIdentity::new("run-hermes-partial", "boot-test");
+            let mut writer =
+                orgasmic_core::SessionWriter::open(&session_path, identity.clone()).unwrap();
+            let mut adapter = orgasmic_drivers::adapters::HermesAdapter::new();
+            // More than the old summary tail limit: preserve all available chunks.
+            let mut chunks = vec!["analysis α\n".repeat(64); 64];
+            chunks.insert(0, "Review begins\n".to_string());
+            let first = chunks.concat();
+            for chunk in chunks {
+                for event in adapter
+                    .parse_event(json!({"type": "text", "text": chunk}))
+                    .await
+                {
+                    writer
+                        .append(
+                            SessionEventKind::DriverEvent,
+                            serde_json::to_value(event).unwrap(),
+                        )
+                        .unwrap();
+                }
+            }
+            for raw in [
+                json!({"type": "usage.snapshot", "tokens": 12}),
+                json!({"tokens": 12}),
+                json!({"type": "text", "text": "Review ends\n"}),
+            ] {
+                for event in adapter.parse_event(raw).await {
+                    writer
+                        .append(
+                            SessionEventKind::DriverEvent,
+                            serde_json::to_value(event).unwrap(),
+                        )
+                        .unwrap();
+                }
+            }
+            // Neither diagnostics nor a transport summary may replace assistant text.
+            writer.append(SessionEventKind::DriverEvent, json!({"type":"text_chunk", "stream":"stderr", "chunk":"diagnostic only", "seq":99})).unwrap();
+            if transport_completed {
+                writer
+                    .append(
+                        SessionEventKind::DriverEvent,
+                        json!({"type":"run_complete", "summary":"transport summary"}),
+                    )
+                    .unwrap();
+            }
+            writer
+                .append(
+                    SessionEventKind::Lifecycle,
+                    serde_json::to_value(Lifecycle::Release {
+                        reason: "protocol_end_without_finalize".into(),
+                        outcome: ReleaseOutcome::Failed,
+                        finalized_by_worker: false,
+                        exit: None,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+            drop(writer);
+            spawn_dispatch_completion_watcher(
+                state.clone(),
+                DispatchCompletion {
+                    project_id: "proj-dispatch".into(),
+                    task_id: "TASK-ZMYEN".into(),
+                    run_id: identity.run_id,
+                    provider: "hermes".into(),
+                    session_path: session_path.clone(),
+                    last_path: last_path.clone(),
+                    stdout_path: tmp.path().join("stdout.log"),
+                    worktree_path: tmp.path().to_path_buf(),
+                },
+            );
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let tx = std::fs::read_to_string(&state.default_tx_path).unwrap_or_default();
+                if tx.contains("manager.dispatch_orphaned") {
+                    assert!(!tx.contains("manager.dispatch_completed"));
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "missing orphan transaction"
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            let report =
+                std::fs::read_to_string(&last_path).expect("partial report survives protocol end");
+            if existing.is_some_and(|s| !s.is_empty()) {
+                assert_eq!(report, existing.unwrap());
+            } else {
+                assert_eq!(
+                    report,
+                    format!("PARTIAL — protocol_end_without_finalize\n\n{first}Review ends\n")
+                );
+            }
+            let envelopes = read_session_file(&session_path).unwrap();
+            assert_eq!(
+                dispatch_release_outcome(&envelopes),
+                Some(ReleaseOutcome::Failed)
+            );
+            assert!(!dispatch_release_finalized_by_worker(&envelopes));
+            assert!(!tmp.path().join("stdout.log").exists());
+        }
+    }
+
     /// Worker finalize tombstone: watcher must never overwrite worker-authored
     /// artifacts even when invoked directly.
     #[tokio::test]
@@ -30404,7 +30571,12 @@ pub(crate) mod tests {
     /// completion.
     #[tokio::test]
     async fn manual_release_without_worker_finalize_does_not_flag_orphan() {
-        assert_cancelled_without_finalize_emits_no_orphan("run released").await;
+        assert_cancelled_without_finalize_emits_no_orphan("run released", "claude").await;
+        assert_cancelled_without_finalize_emits_no_orphan(
+            "protocol_end_without_finalize",
+            "hermes",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -30435,7 +30607,10 @@ pub(crate) mod tests {
         assert_timeout_without_finalize_flags_orphan("max_run_duration_exceeded").await;
     }
 
-    async fn assert_cancelled_without_finalize_emits_no_orphan(release_reason: &str) {
+    async fn assert_cancelled_without_finalize_emits_no_orphan(
+        release_reason: &str,
+        provider: &str,
+    ) {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -30455,6 +30630,7 @@ pub(crate) mod tests {
         };
         let mut writer =
             orgasmic_core::SessionWriter::open(&session_path, identity.clone()).unwrap();
+        writer.append(SessionEventKind::DriverEvent, json!({"type":"text_chunk", "stream":"assistant", "chunk":"unfinished work", "seq":0})).unwrap();
         writer
             .append(
                 SessionEventKind::Lifecycle,
@@ -30473,7 +30649,7 @@ pub(crate) mod tests {
             project_id: "proj-dispatch".into(),
             task_id: "TASK-CANCEL".into(),
             run_id: identity.run_id.clone(),
-            provider: "claude".into(),
+            provider: provider.into(),
             session_path: session_path.clone(),
             last_path: last_path.clone(),
             stdout_path: stdout_path.clone(),

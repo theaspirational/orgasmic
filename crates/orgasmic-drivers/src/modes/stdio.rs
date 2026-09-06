@@ -461,7 +461,9 @@ impl WorkerDriver for StdioDriver {
             jsonrpc_session_init: None,
         };
         compose.validate_config(&config)?;
-        let request = compose.compose_request(&ctx, &config)?;
+        let request = compose
+            .compose_request(&ctx, &config)?
+            .with_report_path(&config);
         // Read straight after composing: the adapter pins the native session id
         // while it builds the argv, and `compose.inner` is moved below.
         let native_runtime = compose.native_runtime();

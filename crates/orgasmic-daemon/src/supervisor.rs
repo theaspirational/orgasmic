@@ -1684,6 +1684,20 @@ impl Supervisor {
         let mut persisted_driver_config = req.driver_config.clone();
         if let Some(object) = persisted_driver_config.0.as_object_mut() {
             object.remove("manager_terminal_capability");
+            object.remove("report_path");
+        }
+        if let Some(path) = req.last_path.as_ref() {
+            let path = path.to_str().ok_or_else(|| {
+                SupervisorError::Driver(DriverError::InvalidConfig(
+                    "report path must be UTF-8".into(),
+                ))
+            })?;
+            let object = persisted_driver_config.0.as_object_mut().ok_or_else(|| {
+                SupervisorError::Driver(DriverError::InvalidConfig(
+                    "a run with a report path requires an object driver config".into(),
+                ))
+            })?;
+            object.insert("report_path".into(), serde_json::Value::String(path.into()));
         }
         // The dispatch path writes its preflight verdict onto the config it
         // hands over (`api::spawn_worker_run`); lift it into the run's own
@@ -9308,6 +9322,94 @@ mod tests {
             1,
             "exactly one Failed tombstone after breaching max turns: {outcomes:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn dispatched_subprocess_exports_its_authoritative_report_path() {
+        use orgasmic_drivers::{
+            HarnessEventAdapter, HarnessRequest, StdioDriver, SubprocessStreamJsonDriver,
+        };
+        struct ReportAdapter;
+        #[async_trait::async_trait]
+        impl HarnessEventAdapter for ReportAdapter {
+            fn harness(&self) -> &'static str {
+                "report-fixture"
+            }
+            fn clone_box(&self) -> Box<dyn HarnessEventAdapter> {
+                Box::new(Self)
+            }
+            async fn parse_event(&mut self, raw: serde_json::Value) -> Vec<DriverEvent> {
+                vec![serde_json::from_value(raw).unwrap()]
+            }
+            fn compose_request(
+                &mut self,
+                _ctx: &DriverContext,
+                config: &DriverConfig,
+            ) -> Result<HarnessRequest, DriverError> {
+                Ok(HarnessRequest::Subprocess {
+                    binary: "/bin/sh".into(),
+                    args: vec![
+                        "-c".into(),
+                        r#"printf '%s' "$ORGASMIC_REPORT_PATH" > "$REPORT_FIXTURE_OBSERVATION"
+if [ -n "$ORGASMIC_REPORT_PATH" ]; then
+    printf 'worker report: %s' "$ORGASMIC_REPORT_PATH" > "$ORGASMIC_REPORT_PATH"
+fi
+printf '%s\n' '{"type":"text_chunk","stream":"assistant","chunk":"transport text","seq":0}'
+"#
+                        .into(),
+                    ],
+                    env: [
+                        ("ORGASMIC_REPORT_PATH".into(), "wrong inherited path".into()),
+                        (
+                            "REPORT_FIXTURE_OBSERVATION".into(),
+                            config.0["observation_path"].as_str().unwrap().into(),
+                        ),
+                    ]
+                    .into(),
+                    cwd: None,
+                    stdin_payload: None,
+                    close_stdin: true,
+                })
+            }
+        }
+        for driver in [
+            Box::new(StdioDriver::new(Box::new(ReportAdapter))) as Box<dyn WorkerDriver>,
+            Box::new(SubprocessStreamJsonDriver::new(Box::new(ReportAdapter))),
+        ] {
+            for assigned in [true, false] {
+                let (sup, dir, _writer) = make_supervisor();
+                let mut req = dispatch_impl_req("TASK-REPORT-ENV", dir.path());
+                let report_path = dir.path().join("report with spaces ' α.txt");
+                req.last_path = assigned.then(|| report_path.clone());
+                let observed = dir.path().join("observed-env.txt");
+                req.driver_config = DriverConfig::from_value(
+                    json!({"report_path": "/not-the-assigned-report", "observation_path": observed}),
+                );
+                let response = sup.acquire(driver.as_ref(), req).await.unwrap();
+                wait_for_run_release(&sup, &response.run_id, Duration::from_secs(5)).await;
+                assert_eq!(
+                    std::fs::read_to_string(observed).unwrap(),
+                    if assigned {
+                        report_path.to_str().unwrap()
+                    } else {
+                        ""
+                    }
+                );
+                if assigned {
+                    assert_eq!(
+                        std::fs::read_to_string(&report_path)
+                            .expect("worker can write its assigned report"),
+                        format!("worker report: {}", report_path.display())
+                    );
+                    assert_release_reason(
+                        &dir.path().join("TASK-REPORT-ENV.jsonl"),
+                        "protocol_end_without_finalize",
+                    );
+                } else {
+                    assert!(!report_path.exists());
+                }
+            }
+        }
     }
 
     /// CLI-dispatch-shaped acquire: artifact paths present so the run

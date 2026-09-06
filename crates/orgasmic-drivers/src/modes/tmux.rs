@@ -64,6 +64,8 @@ struct TmuxTuiConfig {
     #[serde(default)]
     manager_terminal_capability: Option<String>,
     #[serde(default)]
+    report_path: Option<String>,
+    #[serde(default)]
     command: Option<String>,
     #[serde(default)]
     args: Vec<String>,
@@ -1250,7 +1252,13 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         runtime_id: ctx.identity.runtime_id.clone(),
         boot_id: ctx.identity.boot_id.clone(),
         manager_terminal_capability: cfg.manager_terminal_capability.clone(),
-        harness_env: harness_launch_env(harness),
+        harness_env: harness_launch_env(harness)
+            .into_iter()
+            .chain(std::iter::once((
+                "ORGASMIC_REPORT_PATH".into(),
+                cfg.report_path.clone().unwrap_or_default(),
+            )))
+            .collect(),
         native_resume_mode: cfg.native_resume_mode,
         trusted_provider_identity: cfg.trusted_provider_identity.clone(),
         pinned_executable: cfg.pinned_executable.clone(),
@@ -4363,7 +4371,13 @@ mod tests {
                 ..TmuxTuiConfig::default()
             };
             let plan = build_spawn_plan(&cfg, &ctx("run-other", RunKind::Worker), harness);
-            assert!(plan.harness_env.is_empty(), "{harness} needs no stamp");
+            assert!(!plan
+                .harness_env
+                .iter()
+                .any(|(key, _)| key == crate::CODEX_ORIGINATOR_ENV));
+            assert!(plan
+                .harness_env
+                .contains(&("ORGASMIC_REPORT_PATH".into(), String::new())));
         }
     }
 
@@ -5665,10 +5679,12 @@ mod tests {
         }
         let out_dir = tempfile::tempdir().unwrap();
         let out_path = out_dir.path().join("run-id.txt");
+        let report_path = out_dir.path().join("report with spaces ' α.txt");
         let d = driver();
         let cfg = DriverConfig::from_value(json!({
             "command": "sh",
-            "args": ["-c", format!("printf '%s' \"$ORGASMIC_RUN_ID\" > {}", out_path.display())],
+            "report_path": report_path,
+            "args": ["-c", format!("printf '%s' \"$ORGASMIC_RUN_ID\" > {}; printf '%s' \"$ORGASMIC_REPORT_PATH\" > \"$ORGASMIC_REPORT_PATH\"", out_path.display())],
         }));
         let s = d
             .acquire(ctx("run-env-export-test", RunKind::Worker), cfg)
@@ -5680,7 +5696,9 @@ mod tests {
         let mut body = String::new();
         while std::time::Instant::now() < deadline {
             if let Ok(contents) = std::fs::read_to_string(&out_path) {
-                if !contents.is_empty() {
+                if !contents.is_empty()
+                    && std::fs::read_to_string(&report_path).is_ok_and(|s| !s.is_empty())
+                {
                     body = contents;
                     break;
                 }
@@ -5688,6 +5706,10 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert_eq!(body, "run-env-export-test");
+        assert_eq!(
+            std::fs::read_to_string(&report_path).unwrap(),
+            report_path.to_str().unwrap()
+        );
     }
 
     #[tokio::test]

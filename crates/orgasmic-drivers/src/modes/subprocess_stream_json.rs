@@ -94,7 +94,9 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
         config: DriverConfig,
     ) -> Result<DriverSession, DriverError> {
         let mut adapter = self.adapter.clone_box();
-        let request = adapter.compose_request(&ctx, &config)?;
+        let request = adapter
+            .compose_request(&ctx, &config)?
+            .with_report_path(&config);
         // Read straight after composing, before `adapter` is moved into the
         // control below. The adapter pins its harness-native session id while
         // building the argv; this used to be hardcoded `None` here, so a run
