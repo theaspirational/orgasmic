@@ -710,6 +710,15 @@ cannot be relied on to, because the syspolicyd half of the host stamp is dead
 (comm truncates to 16 chars, so the sampler reads a measured 0.0), leaving load
 average alone — and a spawn stall on a host that measures calm would still be
 reported REAL.
+Failure-evidence slice delivered locally at 5d88689075e5d388210a964f710ae4cf96ef5e83. The 30-second readiness panic now captures only its owned process group: PID, parent PID, group, state, cumulative CPU time, and executable. The ps future has a 2-second budget and kill-on-drop; missing/failed observations are explicitly unavailable. Success incurs no snapshot. Original panic signature, readiness deadline, registry, classifier policy, and process-group cleanup remain unchanged.
+
+Controlled proof: a temporary /bin/sh fixture that stops itself with SIGSTOP drove the real readiness deadline. Captured wrapper PID 45893, state T, CPU 0:00.00; expected test failure after 30.11s and no live group survivors. This is deterministic fault injection, not a reproduced Gatekeeper stall. Source was restored in a finally block. Four fixture tests passed (including stopped/exited distinction and unwind cleanup), and the restored exact readiness test passed. The real run-tests.sh classifier consumed the captured failure log, matched the existing TASK-STWVB signature, reran the restored test successfully, and returned GREEN modulo one registered flake. Host remained unknown for that unstamped log; no LOAD-SENSITIVE claim was made.
+
+An initial external SIGSTOP observer caught the wrapper after readiness and did not create a failure; retained as an unsuccessful control. A --nocapture failure log correctly failed closed in classification because no per-test panic block was captured. The final control uses the runner's standard captured log format. Both limitations are retained in artifacts rather than treated as successful evidence.
+
+Artifacts and runnable fault injection: /Users/aspirational/.codex/artifacts/orgasmic-stwvb-diagnostic-20260907/outcome.md, inject-stopped-wrapper.py, injection.log, injected-readiness-failure.log, fixtures.log, normal-readiness-final.log, classifier-final.log, fmt.log. cargo fmt --check and git diff --check passed. Test-only source changes; no push, installation, operator restart, provider call, full suite, host scan storm, or threshold relaxation. Operator daemon checked at PID 39114 / boot 019f72b5-9e79-4536-905c-a95dff391ac7.
+
+TASK-STWVB stays IN_PROGRESS with its registry exception. The remaining acceptance still requires a naturally occurring readiness failure paired with contemporaneous host evidence; the new snapshot preserves the child side of that evidence when it recurs. Next independent P1 slice: TASK-P4XKT, a bounded opt-in repeated crash-recovery canary with a visible scored verdict and an intermittent negative control.
 ** How to fix it — design [2026-08-05]
 The classification machinery ALREADY EXISTS and is good. =scripts/run-tests.sh=
 (654 lines) runs the suite, reruns every failure IN ISOLATION, and matches panic
