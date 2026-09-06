@@ -47,3 +47,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: 293b1d33-bf1c-4379-900d-c23e361bc6c2
 :END:
+
+* tx-20260906-orgasmic-3a6a2003-2e53-4c57-85a2-180da7c39f6b task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-3a6a2003-2e53-4c57-85a2-180da7c39f6b
+:TIME:    [2026-09-06 Sun 21:35:54]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-P4XKT
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-P4XKT/node.org
+:REASON: edited task node TASK-P4XKT
+:NODE_ID: TASK-P4XKT
+:EVENT_ID: 83066d30-1978-4c3a-9203-cfbb95b4bd0d
+:END:
+
+* tx-20260906-orgasmic-251ae160-1054-411c-a7dd-6aa2f5a4af49 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-251ae160-1054-411c-a7dd-6aa2f5a4af49
+:TIME:    [2026-09-06 Sun 21:35:54]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-P4XKT
+:TARGET: .orgasmic/tasks/TASK-P4XKT/node.org
+:REASON: Reviewed scoped runner diff; 79 self-tests, real 3/3 crash-recovery canary, reclassification agreement, and measured host cost verified.
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: f1e831ad-de49-41f5-ae68-e53f7de4e103
+:END:

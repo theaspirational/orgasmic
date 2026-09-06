@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-P4XKT
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-P4XKT a test that passes is never repeated, so an intermittent defect merges green and a one-run-per-commit bisect looks conclusive :testing:ci:
+* IN_REVIEW TASK-P4XKT a test that passes is never repeated, so an intermittent defect merges green and a one-run-per-commit bisect looks conclusive :testing:ci:
 :PROPERTIES:
 :ID: TASK-P4XKT
 :PRIORITY: P1
@@ -67,4 +67,16 @@ Start narrow and measured, not with a workspace-wide repeat policy:
   task's repetition makes more urgent rather than less.
 ** Status 2026-09-06
 Source/ledger triage at main 0bf80eb0. P1 retained. scripts/run-tests.sh still reruns failing cases for classification; no initially-green repeated canary/pass-rate verdict found. .github/workflows/nightly-soak.yml is manual workflow_dispatch and holds a daemon under traffic; it does not satisfy repeated crash-recovery test/pass-rate acceptance. The old ci.yml path no longer exists. Keep the first slice narrow and measured; no suite repetition was run.
+** Evidence
+Complete at d1c67344050d06f47faf68466c0b85e11b63c142 (local main; not pushed). scripts/run-tests.sh now accepts --repeat-test NAME N (2-100), requires one explicit package and target, runs that exact test sequentially with one test thread, and requires N/N observed passes. A missing/different/ignored test cannot satisfy the score. Each attempt and the plan/result are retained in the suite log; --classify preserves the scored verdict and rejects incomplete records. No default CI/workspace repetition was added.
+
+The existing whole-command syspolicyd watchdog covers the entire sequence, not a fresh per-attempt window. ORGASMIC_HOME and ORGASMIC_RUN_ID are scrubbed for every invocation; the billed test remains forbidden/skipped. Registered failures cannot excuse a failed repeat on a usable host. Existing degraded-host INCONCLUSIVE policy is retained; known real failures still red independently. Normal non-repeated invocations retain their prior command and verdict behavior.
+
+Acceptance 1: executed scripts/run-tests.sh --work-dir /Users/aspirational/.codex/artifacts/orgasmic-p4xkt-20260907/canary --repeat-test recovery_faults_kill_real_daemon_and_preserve_original_pane 3 -p orgasmic-daemon --test recovery_fault_restart. Real crash-recovery fault matrix passed 3/3, shown in VERDICT, zero failures/ignored. It runs real disposable daemon processes and owned tmux panes with a fake provider. Reclassification of this real suite.log preserves 3/3 and the same host stamp/verdict.
+
+Acceptance 2: before implementation, the self-test's one-run control passed while the new repeat expectations failed (red.log: 67 passed, 3 failed). The deterministic fake cargo test passes first, fails second, passes third. After implementation the single-run control remains green, while repetition reports 2/3 and RED. The same score remains RED after reclassification and when the failure matches a registered flake. Additional controls cover incomplete records, a wrong test, forbidden billed target, missing scope, insufficient count, degraded-host policy, and watchdog cancellation. Final self-test: 79 passed, 0 failed. bash -n and git diff --check passed.
+
+Acceptance 3: individual real executions took 9.93s, 10.05s, and 9.77s (29.75s test time total). The two added executions cost 19.82s beyond the first. Full repeat window was 30s. Host stamp measured syspolicyd +0.2 CPU seconds, rate 0.0067 CPU seconds / wall second, below 1.50. Prebuilding the integration binary took 29.57s separately; that setup is excluded from the repeat-window measurement. Three observed passes do not establish a zero flake rate.
+
+Artifacts: /Users/aspirational/.codex/artifacts/orgasmic-p4xkt-20260907 (red.log, final-selftest.log, build.log, canary-verdict.log, canary/repeat-1.log through repeat-3.log, canary/suite.log, reclassified-verdict.log). Operator daemon remains PID 39114 / boot 019f72b5-9e79-4536-905c-a95dff391ac7. No operator restart, installation, provider call, full workspace test, scheduled job, or release. TASK-STWVB's separate natural-stall acceptance remains open.
 
