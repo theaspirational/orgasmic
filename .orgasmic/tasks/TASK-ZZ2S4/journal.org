@@ -29,3 +29,50 @@
 :NODE_ID: TASK-ZZ2S4
 :EVENT_ID: 1f9b003a-442d-44f2-8934-eb7903befed6
 :END:
+
+* tx-20260906-orgasmic-f3abe780-487b-47ae-8a18-de17ae81d263 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-f3abe780-487b-47ae-8a18-de17ae81d263
+:TIME:    [2026-09-06 Sun 15:15:38]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: edited task node TASK-ZZ2S4
+:NODE_ID: TASK-ZZ2S4
+:EVENT_ID: 9b504a24-59df-4216-a78f-7aa26b465bf2
+:END:
+
+* tx-20260906-orgasmic-2efddd67-f425-439d-b3d1-58bc7858c375 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-2efddd67-f425-439d-b3d1-58bc7858c375
+:TIME:    [2026-09-06 Sun 15:15:38]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: .orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: Native Codex implementation of explicit offline CLI ID migration in codex/zz2s4-id-repair; risky tier declared.
+:FROM_STATE: backlog
+:TO_STATE: todo
+:EVENT_ID: 6b33513e-09e1-4840-b4cf-d5cd2d8005cd
+:END:
+
+* tx-20260906-orgasmic-623f9e3b-0e10-46f4-b93c-6dbe8005e2d9 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-623f9e3b-0e10-46f4-b93c-6dbe8005e2d9
+:TIME:    [2026-09-06 Sun 15:15:38]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: .orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: Native Codex implementation of explicit offline CLI ID migration in codex/zz2s4-id-repair; risky tier declared.
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: fb8b4b6f-eb7d-4f8f-a61f-5519dbc3aa93
+:END:
