@@ -30,3 +30,35 @@
 :NODE_ID: TASK-ADHWZ
 :EVENT_ID: f4e7fb77-542d-46b7-abd6-d4ecac93d8d6
 :END:
+
+* tx-20260906-orgasmic-21b08237-aca0-43be-b684-beb193cc0085 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-21b08237-aca0-43be-b684-beb193cc0085
+:TIME:    [2026-09-06 Sun 21:39:08]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ADHWZ
+:TARGET: .orgasmic/tasks/TASK-ADHWZ/node.org
+:REASON: Auditing mixed writes and restart durability against current node files; existing create/property regressions retained.
+:FROM_STATE: backlog
+:TO_STATE: todo
+:EVENT_ID: a115033c-5f8e-4e94-ba71-9f0063a853c8
+:END:
+
+* tx-20260906-orgasmic-01c5336d-d327-4524-8257-0ef9c77c0f44 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-01c5336d-d327-4524-8257-0ef9c77c0f44
+:TIME:    [2026-09-06 Sun 21:39:08]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ADHWZ
+:TARGET: .orgasmic/tasks/TASK-ADHWZ/node.org
+:REASON: Investigating a lifecycle replacement prepared before serialized writer execution; adding deterministic mixed-write proof.
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: 603e5758-0977-44e5-a536-bf40f651df7d
+:END:

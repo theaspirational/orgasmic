@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-ADHWZ
 #+orgasmic_version: 2
 
-* BACKLOG TASK-ADHWZ Verify remaining concurrent-write acceptance after node-directory and writer fixes
+* IN_PROGRESS TASK-ADHWZ Verify remaining concurrent-write acceptance after node-directory and writer fixes
 :PROPERTIES:
 :ID: TASK-ADHWZ
 :PRIORITY: P1
