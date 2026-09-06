@@ -30,3 +30,19 @@
 :NODE_ID: TASK-ZMYEN
 :EVENT_ID: 340978e3-941a-4e56-8778-a8920af959f2
 :END:
+
+* tx-20260906-orgasmic-d09d28ec-cca1-4cc0-b909-9edd715a1ff9 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-d09d28ec-cca1-4cc0-b909-9edd715a1ff9
+:TIME:    [2026-09-06 Sun 23:17:01]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZMYEN
+:TARGET: .orgasmic/tasks/TASK-ZMYEN/node.org
+:REASON: Next source slice: preserve Hermes protocol-end partial report without changing failed/orphan lifecycle; export per-run report path through launch modes. Offline fixtures only; preserve operator daemon and active runs.
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: fef0b662-c5cf-4b88-a07b-ab0bd96fd791
+:END:

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-ZMYEN
 #+orgasmic_version: 2
 
-* BACKLOG TASK-ZMYEN Preserve Hermes partial reports and support ORGASMIC_REPORT_PATH    :vscode-orsl-letter:
+* IN_PROGRESS TASK-ZMYEN Preserve Hermes partial reports and support ORGASMIC_REPORT_PATH :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-ZMYEN
 :PRIORITY: P1
