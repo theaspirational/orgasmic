@@ -252,6 +252,7 @@ pub fn local_lifecycle_externally_owned() -> bool {
 
 pub fn start(home: &Home) -> Result<DaemonStartOutcome> {
     refuse_explicit_daemon_url()?;
+    refuse_dispatch_lifecycle("start the local daemon")?;
     start_local(home, true)
 }
 
@@ -285,7 +286,13 @@ pub fn restart_with_force(home: &Home, force: bool) -> Result<DaemonStartOutcome
 pub fn repair_unauthorized_local_daemon(home: &Home) -> Result<AuthRepairOutcome> {
     refuse_explicit_daemon_url()?;
     match probe_local(home)? {
-        LocalDaemonState::Unauthorized => {}
+        LocalDaemonState::Unauthorized => {
+            refuse_dispatch_lifecycle("repair daemon auth by restarting the local daemon")?;
+            daemon_service::refuse_shared_service_owner_mutation(
+                home,
+                "repair daemon auth by restarting the local daemon",
+            )?;
+        }
         LocalDaemonState::Running(_) | LocalDaemonState::Starting(_) | LocalDaemonState::Down => {
             return Ok(AuthRepairOutcome::NotNeeded);
         }
@@ -308,6 +315,8 @@ fn stop_inner(
     protect_live_manager: bool,
 ) -> Result<Option<DaemonStatus>> {
     refuse_explicit_daemon_url()?;
+    refuse_dispatch_lifecycle("stop the local daemon")?;
+    daemon_service::refuse_shared_service_owner_mutation(home, "stop the local daemon")?;
     match probe_local(home)? {
         LocalDaemonState::Running(status) => {
             if protect_live_manager && !force {
@@ -441,7 +450,23 @@ fn refuse_explicit_daemon_url() -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn refuse_lifecycle_mutation(home: &Home, action: &str) -> Result<()> {
+    refuse_explicit_daemon_url()?;
+    refuse_dispatch_lifecycle(action)?;
+    daemon_service::refuse_shared_service_owner_mutation(home, action)
+}
+
+fn refuse_dispatch_lifecycle(action: &str) -> Result<()> {
+    if std::env::var_os("ORGASMIC_RUN_ID").is_some() {
+        bail!(
+            "refusing to {action} from inside a dispatched worker: it can restart the operator daemon and kill every live run, including your own"
+        );
+    }
+    Ok(())
+}
+
 fn start_via_selected_adapter(home: &Home) -> Result<Option<u32>> {
+    refuse_dispatch_lifecycle("start the local daemon")?;
     match daemon_service::start(home)? {
         ServiceStart::Persistent => Ok(None),
         ServiceStart::DetachedFallback => spawn_detached(home).map(Some),
@@ -1314,6 +1339,29 @@ mod tests {
         home
     }
 
+    fn running_daemon(path: &str) -> Option<(u16, String)> {
+        (path == "/api/daemon/status").then(|| {
+            (
+                200,
+                format!(
+                    r#"{{"boot_id":"boot-test","pid":{},"ledger_sync":{{}}}}"#,
+                    std::process::id()
+                ),
+            )
+        })
+    }
+
+    fn unauthorized_daemon(path: &str) -> Option<(u16, String)> {
+        (path == "/api/daemon/status").then(|| (401, r#"{"error":"unauthorized"}"#.to_string()))
+    }
+
+    fn write_owner_plist(path: &std::path::Path, owner: &std::path::Path) -> Vec<u8> {
+        let bytes =
+            crate::daemon_service::render_test_macos_launch_agent_for_home(owner).into_bytes();
+        std::fs::write(path, &bytes).unwrap();
+        bytes
+    }
+
     // orgasmic:task_6HJYT
     /// The stop/restart fence answers from the live source, so a board whose
     /// durable recovery history cannot be read at all still refuses correctly.
@@ -1748,6 +1796,153 @@ mod tests {
             err.to_string()
                 .contains("local daemon lifecycle is externally owned"),
             "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn dispatch_worker_explicit_lifecycle_refuses_with_consequence() {
+        let _guard = env_guard();
+        let _clear = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_RUN_ID", "run-worker"),
+            ("ORGASMIC_TEST_SERVICE_ADAPTER", "detached"),
+        ]);
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+
+        let err = start(&home).expect_err("worker lifecycle mutation must refuse");
+
+        assert!(err.to_string().contains("start the local daemon"), "{err}");
+        assert!(err.to_string().contains("kill every live run"), "{err}");
+        assert!(err.to_string().contains("including your own"), "{err}");
+    }
+
+    #[test]
+    fn ordinary_operator_lifecycle_is_not_refused_as_dispatch_worker() {
+        let _guard = env_guard();
+        let _env = ScopedEnv::clear(&["ORGASMIC_RUN_ID", "ORGASMIC_DAEMON_URL"]);
+        let _adapter = ScopedEnv::set(&[("ORGASMIC_TEST_SERVICE_ADAPTER", "detached")]);
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+
+        refuse_lifecycle_mutation(&home, "start the local daemon")
+            .expect("ordinary operator invocation must not hit dispatch-worker fence");
+    }
+
+    #[test]
+    fn worker_read_against_existing_daemon_does_not_refuse() {
+        let _guard = env_guard();
+        let _clear = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
+        let _run = ScopedEnv::set(&[("ORGASMIC_RUN_ID", "run-worker")]);
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon = RecordingDaemon::start(running_daemon);
+        let home = home_pointing_at(tmp.path(), &daemon);
+
+        ensure_running(&home).expect("worker read against running daemon should not mutate");
+
+        assert_eq!(daemon.paths(), vec!["/api/daemon/status".to_string()]);
+    }
+
+    #[test]
+    fn explicit_daemon_url_bypasses_worker_autostart_refusal() {
+        let _guard = env_guard();
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_RUN_ID", "run-worker"),
+            ("ORGASMIC_DAEMON_URL", "http://127.0.0.1:9"),
+        ]);
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+
+        ensure_running(&home).expect("explicit daemon URL should keep worker reads read-only");
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { ensure_running_async(&home).await })
+            .expect("explicit daemon URL should bypass async autostart too");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn foreign_installed_service_refuses_sync_and_async_autostart_without_mutation() {
+        let _guard = env_guard();
+        let _clear = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL", "ORGASMIC_RUN_ID"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let requested = Home::at(tmp.path().join("requested"));
+        requested.ensure().unwrap();
+        let owner = tmp.path().join("owner");
+        std::fs::create_dir_all(&owner).unwrap();
+        let plist = tmp.path().join("orgasmic.daemon.plist");
+        let before = write_owner_plist(&plist, &owner);
+        let log = tmp.path().join("commands.log");
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_TEST_SERVICE_ADAPTER", "macos"),
+            ("ORGASMIC_TEST_MACOS_PLIST", plist.to_str().unwrap()),
+            ("ORGASMIC_TEST_MACOS_SERVICE_QUERY", "absent"),
+            ("ORGASMIC_TEST_SERVICE_COMMAND_LOG", log.to_str().unwrap()),
+        ]);
+
+        let err = ensure_running(&requested).expect_err("sync autostart must refuse foreign owner");
+        assert!(err.to_string().contains("per-user service"), "{err}");
+        assert_eq!(std::fs::read(&plist).unwrap(), before);
+        assert!(
+            !log.exists(),
+            "adapter command ran despite refused sync start"
+        );
+
+        let err = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { ensure_running_async(&requested).await })
+            .expect_err("async autostart must refuse foreign owner");
+        assert!(err.to_string().contains("per-user service"), "{err}");
+        assert_eq!(std::fs::read(&plist).unwrap(), before);
+        assert!(
+            !log.exists(),
+            "adapter command ran despite refused async start"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn foreign_installed_service_refuses_stop_restart_force_and_repair_before_drain() {
+        let _guard = env_guard();
+        let _clear = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL", "ORGASMIC_RUN_ID"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon = RecordingDaemon::start(unauthorized_daemon);
+        let requested = home_pointing_at(tmp.path(), &daemon);
+        let owner = tmp.path().join("owner");
+        std::fs::create_dir_all(&owner).unwrap();
+        let plist = tmp.path().join("orgasmic.daemon.plist");
+        let before = write_owner_plist(&plist, &owner);
+        let log = tmp.path().join("commands.log");
+        let _env = ScopedEnv::set(&[
+            ("ORGASMIC_TEST_SERVICE_ADAPTER", "macos"),
+            ("ORGASMIC_TEST_MACOS_PLIST", plist.to_str().unwrap()),
+            ("ORGASMIC_TEST_MACOS_SERVICE_QUERY", "absent"),
+            ("ORGASMIC_TEST_SERVICE_COMMAND_LOG", log.to_str().unwrap()),
+        ]);
+
+        for (name, result) in [
+            ("stop", stop_with_force(&requested, false).map(|_| ())),
+            (
+                "stop --force",
+                stop_with_force(&requested, true).map(|_| ()),
+            ),
+            ("restart", restart_with_force(&requested, false).map(|_| ())),
+        ] {
+            let err = result.expect_err(name);
+            assert!(
+                err.to_string().contains("per-user service"),
+                "{name}: {err}"
+            );
+        }
+        let err = repair_unauthorized_local_daemon(&requested).expect_err("repair must refuse");
+        assert!(err.to_string().contains("per-user service"), "{err}");
+
+        assert_eq!(std::fs::read(&plist).unwrap(), before);
+        assert!(!log.exists(), "service adapter command ran despite refusal");
+        assert!(
+            !daemon.paths().contains(&"/api/daemon/restart".to_string()),
+            "pre-stop drain was called before refusal: {:?}",
+            daemon.paths()
         );
     }
 

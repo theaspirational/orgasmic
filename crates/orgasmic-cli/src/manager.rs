@@ -70,7 +70,14 @@ Examples:
     --brief /path/to/brief.md --mode stdio --harness cursor-agent
 
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
-    --brief /path/to/brief.md --mode stdio --harness opencode --dry-run")]
+    --brief /path/to/brief.md --mode stdio --harness opencode --dry-run
+
+Safe shipped-content verification for worker briefs:
+  Do not ask workers to stage ORGASMIC_HOME and run daemon-backed commands.
+  Use daemon-free checks instead: cargo test -p orgasmic-core --test fixtures,
+  cargo test -p orgasmic-cli --test cli_parity, or inspect shipped files directly.
+  If a rendered entry artifact is needed, stage files and run that worktree's
+  target/debug/orgasmic entry only; do not start or auto-start a daemon.")]
 pub struct DispatchArgs {
     /// Task id to dispatch, e.g. `TASK-XXXXX`; repeatable to send one worker
     /// at several tasks. The task must be in BACKLOG or TODO — a dispatch from

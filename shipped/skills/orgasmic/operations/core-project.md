@@ -22,6 +22,7 @@ aliases:
 - orgasmic project list
 - orgasmic project remove
 - orgasmic project migrate
+- orgasmic project repair-task-ids
 sources:
 - cli-help/init.txt
 - cli-help/entry.txt
@@ -72,6 +73,7 @@ Canonical commands in this family:
 - `orgasmic project list`
 - `orgasmic project remove` (board registration only; previews unless `--yes`)
 - `orgasmic project migrate`
+- `orgasmic project repair-task-ids` (offline malformed terminal task-ID repair; previews unless `--apply`)
 
 ## Parameters
 
