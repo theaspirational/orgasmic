@@ -1,0 +1,23 @@
+{
+  "event_count": 888,
+  "tool_call_count": 20,
+  "unparsed_events": 4,
+  "bounded_events": 4,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-48SFW-reviewer-20260906T191719.jsonl",
+    "size_bytes": 1047118
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the delta and the summary the brief names.Everything checks out. Writing the report."
+    }
+  ],
+  "narrative_truncated": false
+}
