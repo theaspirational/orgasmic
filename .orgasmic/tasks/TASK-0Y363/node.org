@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-0Y363
 #+orgasmic_version: 2
 
-* BACKLOG TASK-0Y363 Daemon leaked one session-log fd per dispatch and died at macOS default 256; fix shipped in 8bd8287, health-starvation leftover    :vscode-orsl-letter:
+* BACKLOG TASK-0Y363 Resolve health-probe starvation recovery after the shipped session-handle leak fix    :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-0Y363
 :PRIORITY: P0

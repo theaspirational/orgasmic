@@ -15,3 +15,51 @@
 :NODE_ID: TASK-TWCP9
 :EVENT_ID: ff39bd40-0a02-47de-816e-394839429344
 :END:
+
+* tx-20260906-orgasmic-2a723977-6a5b-4915-9a3f-890599f6ab67 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-2a723977-6a5b-4915-9a3f-890599f6ab67
+:TIME:    [2026-09-06 Sun 13:24:34]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TWCP9
+:TARGET: .orgasmic/tasks/TASK-TWCP9/node.org
+:REASON: Historical decision/placement reconciliation: owner FINAL decision, chain 543782d7 merged/reviewed, live orphan ledger verified; D2DM3 separately deferred. No live worker.
+:FROM_STATE: backlog
+:TO_STATE: todo
+:EVENT_ID: b10ca776-1458-4141-8987-0253a867d759
+:END:
+
+* tx-20260906-orgasmic-3c7ceed1-7614-4638-9615-a98384f0b8c1 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-3c7ceed1-7614-4638-9615-a98384f0b8c1
+:TIME:    [2026-09-06 Sun 13:24:34]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TWCP9
+:TARGET: .orgasmic/tasks/TASK-TWCP9/node.org
+:REASON: Historical decision/placement reconciliation: owner FINAL decision, chain 543782d7 merged/reviewed, live orphan ledger verified; D2DM3 separately deferred. No live worker.
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: 50b1f015-3f03-4a24-a932-08d496dca95d
+:END:
+
+* tx-20260906-orgasmic-8ec6c956-0422-4e2a-87a0-cd06f88e94dd task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-8ec6c956-0422-4e2a-87a0-cd06f88e94dd
+:TIME:    [2026-09-06 Sun 13:24:35]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TWCP9
+:TARGET: .orgasmic/tasks/TASK-TWCP9/node.org
+:REASON: Historical decision/placement reconciliation: owner FINAL decision, chain 543782d7 merged/reviewed, live orphan ledger verified; D2DM3 separately deferred. No live worker.
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 52909a24-be3f-4108-907b-4f9c74bcc7f8
+:END:

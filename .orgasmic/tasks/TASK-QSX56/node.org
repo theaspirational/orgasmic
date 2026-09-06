@@ -1,10 +1,10 @@
 #+title: orgasmic task TASK-QSX56
 #+orgasmic_version: 2
 
-* BACKLOG TASK-QSX56 Cursor ACP must authorize scoped project workflow commands and finalize :drivers:cursor:acp:hardening:
+* BACKLOG TASK-QSX56 Complete independent review and live workflow proof of the Cursor ACP permission fix    :drivers:cursor:acp:hardening:
 :PROPERTIES:
 :ID: TASK-QSX56
-:PRIORITY: high
+:PRIORITY: P1
 :RELATES_TO: TASK-2YZDJ
 :END:
 

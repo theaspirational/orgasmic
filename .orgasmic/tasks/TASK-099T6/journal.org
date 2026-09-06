@@ -15,3 +15,33 @@
 :NODE_ID: TASK-099T6
 :EVENT_ID: aecb998b-3965-458e-8173-102b2a54ceee
 :END:
+
+* tx-20260906-orgasmic-7d7eeac8-2638-4d84-af83-2647c38ac2d7 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-7d7eeac8-2638-4d84-af83-2647c38ac2d7
+:TIME:    [2026-09-06 Sun 13:24:33]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-099T6
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-099T6/node.org
+:REASON: edited task node TASK-099T6
+:NODE_ID: TASK-099T6
+:EVENT_ID: 024f4cd5-24c8-4c6e-9d1e-4cbcf9e492f4
+:END:
+
+* tx-20260906-orgasmic-9114bc73-4736-4fae-b798-b444014c28f8 task.property_updated
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-9114bc73-4736-4fae-b798-b444014c28f8
+:TIME:    [2026-09-06 Sun 13:24:34]
+:TYPE:    task.property_updated
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-099T6
+:TARGET: .orgasmic/tasks/TASK-099T6/node.org
+:REASON: See Status 2026-09-06 source triage: default billing fixed; opt-in collision P2; normalize high to P1.
+:PRIORITY: P2
+:EVENT_ID: 300dffad-d614-4834-a655-e8fc78b41066
+:END:

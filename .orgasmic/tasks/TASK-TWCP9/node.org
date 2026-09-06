@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-TWCP9
 #+orgasmic_version: 2
 
-* BACKLOG TASK-TWCP9 DECISION: keep the live ledger out of the worked tree — sibling dir / ledger branch / own worktree; workers never carry .orgasmic churn    :vscode-orsl-letter:
+* IN_REVIEW TASK-TWCP9 DECISION: keep the live ledger out of the worked tree — sibling dir / ledger branch / own worktree; workers never carry .orgasmic churn :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-TWCP9
 :PRIORITY: P1

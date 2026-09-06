@@ -1,10 +1,10 @@
 #+title: orgasmic task TASK-099T6
 #+orgasmic_version: 2
 
-* BACKLOG TASK-099T6 driver_modes equivalence test spawns real claude twice on one session id and now collides    :drivers:test:claude:bug:
+* BACKLOG TASK-099T6 Repair shared-session collision in the opt-in billed driver equivalence test    :drivers:test:claude:bug:
 :PROPERTIES:
 :ID: TASK-099T6
-:PRIORITY: P1
+:PRIORITY: P2
 :END:
 
 Found 2026-07-26 running the TASK-8W30B merge gates on main (433fef1 + merge).

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-48SFW
 #+orgasmic_version: 2
 
-* BACKLOG TASK-48SFW Any orgasmic verb run against a staged ORGASMIC_HOME restarts the real daemon and kills every live dispatch    :dispatch:daemon:runtime:
+* BACKLOG TASK-48SFW Refuse foreign-home daemon auto-start that rewrites the per-user service    :dispatch:daemon:runtime:
 :PROPERTIES:
 :ID: TASK-48SFW
 :PRIORITY: P1

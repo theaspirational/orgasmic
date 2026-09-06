@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-ZMYEN
 #+orgasmic_version: 2
 
-* BACKLOG TASK-ZMYEN Hermes stdio: unknown event type must log-and-skip, protocol_end_without_finalize reassembles text_chunks, ORGASMIC_REPORT_PATH is the report    :vscode-orsl-letter:
+* BACKLOG TASK-ZMYEN Preserve Hermes partial reports and support ORGASMIC_REPORT_PATH    :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-ZMYEN
 :PRIORITY: P1

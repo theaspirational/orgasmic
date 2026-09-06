@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-VD0VB
 #+orgasmic_version: 2
 
-* BACKLOG TASK-VD0VB tmux/cursor-agent parks on two interactive prompts before first execution, so an unattended dispatch dies at the 600s stall release    :drivers:cursor:dispatch:hardening:
+* BACKLOG TASK-VD0VB Resolve Cursor command-allowlist startup and prove fresh-worktree unattended execution    :drivers:cursor:dispatch:hardening:
 :PROPERTIES:
 :ID: TASK-VD0VB
 :PRIORITY: P1
