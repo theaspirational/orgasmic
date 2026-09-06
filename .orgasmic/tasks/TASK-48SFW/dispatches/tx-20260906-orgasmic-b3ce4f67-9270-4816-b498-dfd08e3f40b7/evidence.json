@@ -1,0 +1,23 @@
+{
+  "event_count": 218,
+  "tool_call_count": 13,
+  "unparsed_events": 1,
+  "bounded_events": 1,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-48SFW-reviewer-20260906T192421.jsonl",
+    "size_bytes": 357794
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll look at the exact commit and the code around it."
+    }
+  ],
+  "narrative_truncated": false
+}
