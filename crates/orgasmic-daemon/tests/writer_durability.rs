@@ -649,7 +649,7 @@ async fn task_create_sync_retry_projects_the_original_node() {
     )
     .unwrap();
     orgasmic_core::projects::register_project(&home, &project, "orgasmic", "main").unwrap();
-    let running = orgasmic_daemon::Daemon::run(
+    let mut running = orgasmic_daemon::Daemon::run(
         home.clone(),
         orgasmic_daemon::DaemonOptions {
             bind_override: Some("127.0.0.1".parse().unwrap()),
@@ -665,7 +665,7 @@ async fn task_create_sync_retry_projects_the_original_node() {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap();
-    let url = format!("http://{}/api/projects/orgasmic/tasks", running.addr);
+    let mut url = format!("http://{}/api/projects/orgasmic/tasks", running.addr);
     let request = serde_json::json!({"title": "Sync recovery", "request_id": "create-sync-retry"});
     test_hooks::fail_next_sync(1);
     let first = client
@@ -693,6 +693,22 @@ async fn task_create_sync_retry_projects_the_original_node() {
     )
     .unwrap();
     assert_eq!(entries.len(), 1);
+    // The first daemon returned sync-uncertain. Recovery in a fresh daemon
+    // must resync its journal evidence and return the original create.
+    running.shutdown.send(()).unwrap();
+    running.join.await.unwrap();
+    running = orgasmic_daemon::Daemon::run(
+        home.clone(),
+        orgasmic_daemon::DaemonOptions {
+            bind_override: Some("127.0.0.1".parse().unwrap()),
+            port_override: Some(0),
+            fs_watcher_enabled: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    url = format!("http://{}/api/projects/orgasmic/tasks", running.addr);
     let retry = client
         .post(&url)
         .bearer_auth(token.trim())
@@ -722,6 +738,7 @@ async fn task_create_sync_retry_projects_the_original_node() {
         1
     );
     assert_eq!(std::fs::read(journal).unwrap(), bytes);
+    let mut graph_replays = Vec::new();
     for (collection, id) in [("decisions", "dec_A1B2C"), ("glossary", "term_A1B2C")] {
         let endpoint = format!("http://{}/api/{collection}", running.addr);
         let request = serde_json::json!({"project": "orgasmic", "id": id,
@@ -766,8 +783,38 @@ async fn task_create_sync_retry_projects_the_original_node() {
         let body: serde_json::Value = recovered.json().await.unwrap();
         assert!(status.is_success(), "{collection}: {body}");
         assert_eq!(body["id"], id);
-        let repeated: serde_json::Value = call(request).await.unwrap().json().await.unwrap();
+        let repeated: serde_json::Value =
+            call(request.clone()).await.unwrap().json().await.unwrap();
         assert_eq!(repeated["tx_id"], body["tx_id"]);
+        assert_eq!(std::fs::read(node.join("journal.org")).unwrap(), journal);
+        assert_eq!(std::fs::read(node.join("node.org")).unwrap(), source);
+        graph_replays.push((collection, request, body, node, journal, source));
+    }
+    running.shutdown.send(()).unwrap();
+    running.join.await.unwrap();
+    running = orgasmic_daemon::Daemon::run(
+        home.clone(),
+        orgasmic_daemon::DaemonOptions {
+            bind_override: Some("127.0.0.1".parse().unwrap()),
+            port_override: Some(0),
+            fs_watcher_enabled: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    for (collection, request, original, node, journal, source) in graph_replays {
+        let response = client
+            .post(format!("http://{}/api/{collection}", running.addr))
+            .bearer_auth(token.trim())
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let recovered: serde_json::Value = response.json().await.unwrap();
+        assert!(status.is_success(), "{recovered}");
+        assert_eq!(recovered, original);
         assert_eq!(std::fs::read(node.join("journal.org")).unwrap(), journal);
         assert_eq!(std::fs::read(node.join("node.org")).unwrap(), source);
     }
@@ -822,4 +869,43 @@ async fn sync_retry_refuses_a_reopened_unrelated_ledger() {
     assert_eq!(std::fs::read(&retained).unwrap(), original);
     assert_eq!(std::fs::read(&tx_path).unwrap(), replacement);
     assert_eq!(std::fs::read_to_string(target).unwrap(), "committed\n");
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn callers_cannot_supply_durable_replay_metadata() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let tx_path = tmp.path().join("tx.org");
+    let target = tmp.path().join("node.org");
+    let writer = spawn_writer(EventBus::new());
+    for key in ["REQUEST_REPLAY_V1", "REQUEST_REPLAY_V99"] {
+        let mut tx = minted_tx_append(tx_path.clone(), "supplied", key);
+        tx.entry.extra.push((key.into(), "{}".into()));
+        let rewrites = vec![FileRewrite {
+            path: target.clone(),
+            new_contents: b"must not write\n".to_vec(),
+        }];
+        assert!(writer
+            .append_tx(tx.clone(), None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("reserved replay"));
+        assert!(writer
+            .transaction(rewrites.clone(), tx.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("reserved replay"));
+        assert!(writer
+            .transaction_multi(rewrites, vec![tx])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("reserved replay"));
+        assert!(!tx_path.exists());
+        assert!(!target.exists());
+    }
 }

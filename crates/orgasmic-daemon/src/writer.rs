@@ -12,6 +12,9 @@
 //! same `request_id` is replayed (CLI retry, manager retry), the writer
 //! returns the cached response instead of double-applying the change.
 //! Closes AC #4 (stable request IDs for retriable mutations).
+//! Index-backed single transactions also retain replay metadata in their ledger
+//! append. A new writer recovers registered history before accepting semantic
+//! transactions; new project registrations are discovered on the next request.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
@@ -30,6 +33,7 @@ use orgasmic_core::session::{RuntimeIdentity, SessionEventKind, SessionWriter};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxWriter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{error, warn};
 use uuid::Uuid;
@@ -409,11 +413,11 @@ struct TransactionMutateRequest {
 /// Semantic scope retained by the writer for a retriable mutation. Keeping it
 /// with the cached result prevents replay recovery from consulting a lagging
 /// index snapshot.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutationIdentity {
     pub operation: String,
     pub project_id: String,
-    pub payload: String,
+    pub payload_sha256: String,
 }
 
 impl MutationIdentity {
@@ -425,7 +429,7 @@ impl MutationIdentity {
         Self {
             operation: operation.into(),
             project_id: project_id.into(),
-            payload: payload.into(),
+            payload_sha256: format!("{:x}", Sha256::digest(payload.into().as_bytes())),
         }
     }
 }
@@ -526,6 +530,7 @@ impl WriterShutdownOutcome {
 pub struct WriterHandle {
     tx: mpsc::Sender<WriterCommand>,
     idempotency: Arc<Mutex<HashMap<String, CachedResponse>>>,
+    replay_roots: Arc<Mutex<HashSet<crate::index::ReplayRoot>>>,
     /// Head-of-line write, published by the writer task so a shutdown that
     /// gives up can name what it gave up on.
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
@@ -699,6 +704,36 @@ enum CachedResponse {
     Rewrite,
 }
 
+const REPLAY_PROPERTY: &str = "REQUEST_REPLAY_V1";
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayPath {
+    project: Option<String>,
+    relative: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TransactionReplay {
+    request_id: String,
+    mutation: MutationIdentity,
+    mutation_id: Option<String>,
+    written_paths: Vec<ReplayPath>,
+}
+
+fn reject_supplied_replay(tx: &TxAppend) -> Result<()> {
+    if tx
+        .entry
+        .extra
+        .iter()
+        .any(|(key, _)| key.to_ascii_uppercase().starts_with("REQUEST_REPLAY_"))
+    {
+        bail!("transaction contains reserved replay metadata");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransactionDurability {
     Durable,
@@ -771,6 +806,37 @@ fn cached_mutation_from_map(
         tx_id: result.tx_id.clone(),
         mutation_id,
     }))
+}
+
+fn validate_recovered_replay(prior: &CachedResponse, recovered: &CachedResponse) -> Result<()> {
+    match (prior, recovered) {
+        (
+            CachedResponse::Tx {
+                result: a,
+                mutation: am,
+                mutation_id: ai,
+                written_paths: ap,
+                event: ae,
+                ..
+            },
+            CachedResponse::Tx {
+                result: b,
+                mutation: bm,
+                mutation_id: bi,
+                written_paths: bp,
+                event: be,
+                ..
+            },
+        ) if a.tx_id == b.tx_id
+            && am == bm
+            && ai == bi
+            && ap == bp
+            && serde_json::to_string(ae)? == serde_json::to_string(be)? =>
+        {
+            Ok(())
+        }
+        _ => bail!("conflicting durable replay records"),
+    }
 }
 
 fn transaction_identity(tx: &TxAppend, rewrites: &[FileRewrite]) -> MutationIdentity {
@@ -909,6 +975,148 @@ fn cached_transaction_from_map(
 }
 
 impl WriterHandle {
+    async fn recover_transaction_history(&self) -> Result<()> {
+        let Some(index) = &self.index else {
+            return Ok(());
+        };
+        let roots = index.replay_roots().await;
+        let mut loaded = self.replay_roots.lock().await;
+        let pending: Vec<_> = roots
+            .iter()
+            .filter(|root| !loaded.contains(*root))
+            .cloned()
+            .collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let scan_roots = pending.clone();
+        // ponytail: scan each registered ledger once per writer; a derived
+        // replay index is warranted only if measured cold recovery is too slow.
+        let records = self
+            .run_barrier(move || crate::index::Index::durable_replay_records(&scan_roots))
+            .await??;
+        let mut recovered: HashMap<String, CachedResponse> = HashMap::new();
+        for record in records {
+            let mut replay_fields = record
+                .entry
+                .extra
+                .iter()
+                .filter(|(key, _)| key.to_ascii_uppercase().starts_with("REQUEST_REPLAY_"));
+            let Some((key, value)) = replay_fields.next() else {
+                continue;
+            };
+            if key != REPLAY_PROPERTY || replay_fields.next().is_some() {
+                bail!("unsupported or ambiguous durable replay metadata");
+            }
+            let replay: TransactionReplay =
+                serde_json::from_str(value).context("invalid durable replay metadata")?;
+            if replay.request_id.is_empty()
+                || replay.mutation.payload_sha256.len() != 64
+                || !replay
+                    .mutation
+                    .payload_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit())
+            {
+                bail!("invalid durable replay identity");
+            }
+            if record
+                .project_id
+                .as_deref()
+                .is_some_and(|project| project != replay.mutation.project_id)
+            {
+                bail!("durable replay project does not match its ledger entry");
+            }
+            let mut paths = Vec::new();
+            for path in replay.written_paths {
+                if path.relative.as_os_str().is_empty()
+                    || path
+                        .relative
+                        .components()
+                        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+                {
+                    bail!("invalid durable replay path");
+                }
+                let root = roots
+                    .iter()
+                    .find(|(_, project)| project == &path.project)
+                    .ok_or_else(|| anyhow!("durable replay references an unregistered project"))?;
+                paths.push(root.0.join(path.relative));
+            }
+            if paths.is_empty() {
+                bail!("durable replay has no written paths");
+            }
+            let response = CachedResponse::Tx {
+                result: TxAppendResult {
+                    tx_id: record.entry.tx_id.clone(),
+                    tx_path: record.source_path,
+                },
+                mutation: Some(replay.mutation),
+                mutation_id: replay.mutation_id,
+                written_paths: paths,
+                event: Some(Box::new(EventPayload::TxAppended {
+                    project_id: record.project_id,
+                    tx_id: record.entry.tx_id,
+                    ty: record.entry.ty,
+                })),
+                durability: TransactionDurability::Durable,
+            };
+            if let Some(prior) = recovered.get(&replay.request_id) {
+                validate_recovered_replay(prior, &response)?;
+            } else {
+                recovered.insert(replay.request_id, response);
+            }
+        }
+        let mut cache = self.idempotency.lock().await;
+        // Validate the whole batch before publishing any of it.
+        for (key, response) in &recovered {
+            if let Some(prior) = cache.get(key) {
+                validate_recovered_replay(prior, response)?;
+            }
+        }
+        for (key, response) in recovered {
+            cache.entry(key).or_insert(response);
+        }
+        loaded.extend(pending);
+        Ok(())
+    }
+
+    async fn retain_transaction_replay(
+        &self,
+        tx: &mut TxAppend,
+        mutation: &MutationIdentity,
+        mutation_id: Option<&str>,
+        paths: impl IntoIterator<Item = &PathBuf>,
+    ) -> Result<()> {
+        reject_supplied_replay(tx)?;
+        let (Some(index), Some(request_id)) = (&self.index, &tx.request_id) else {
+            return Ok(());
+        };
+        let mut roots = index.replay_roots().await;
+        roots.sort_by_key(|(root, _)| std::cmp::Reverse(root.components().count()));
+        let mut written_paths = Vec::new();
+        for path in paths {
+            let (root, project) = roots
+                .iter()
+                .find(|(root, _)| path.starts_with(root))
+                .ok_or_else(|| anyhow!("transaction replay path is outside registered roots"))?;
+            written_paths.push(ReplayPath {
+                project: project.clone(),
+                relative: path.strip_prefix(root)?.into(),
+            });
+        }
+        let replay = TransactionReplay {
+            request_id: request_id.clone(),
+            mutation: mutation.clone(),
+            mutation_id: mutation_id.map(str::to_string),
+            written_paths,
+        };
+        tx.entry
+            .extra
+            .push((REPLAY_PROPERTY.into(), serde_json::to_string(&replay)?));
+        Ok(())
+    }
+
     pub(crate) fn applies_own_writes(&self) -> bool {
         self.index.is_some()
     }
@@ -1038,6 +1246,7 @@ impl WriterHandle {
         req: TxAppend,
         request_id: Option<String>,
     ) -> Result<TxAppendResult> {
+        reject_supplied_replay(&req)?;
         let written_path = req.tx_path.clone();
         self.guard_node_paths([written_path.as_path()])?;
         let request_id = request_id
@@ -1105,6 +1314,7 @@ impl WriterHandle {
         request_id: &str,
         expected: &MutationIdentity,
     ) -> Result<Option<CachedMutation>> {
+        self.recover_transaction_history().await?;
         let cache = self.idempotency.lock().await;
         cached_mutation_from_map(&cache, request_id, expected)
     }
@@ -1116,6 +1326,7 @@ impl WriterHandle {
         request_id: &str,
         expected: &MutationIdentity,
     ) -> Result<Option<CachedMutation>> {
+        self.recover_transaction_history().await?;
         {
             let cache = self.idempotency.lock().await;
             if !cache.contains_key(request_id) {
@@ -1139,7 +1350,12 @@ impl WriterHandle {
         Ok(result)
     }
 
-    pub async fn transaction(&self, rewrites: Vec<FileRewrite>, tx: TxAppend) -> Result<String> {
+    pub async fn transaction(
+        &self,
+        rewrites: Vec<FileRewrite>,
+        mut tx: TxAppend,
+    ) -> Result<String> {
+        self.recover_transaction_history().await?;
         self.guard_node_paths(
             rewrites
                 .iter()
@@ -1164,6 +1380,17 @@ impl WriterHandle {
             self.publish_transaction(&request_id, &result.tx_id).await?;
             return Ok(result.tx_id);
         }
+        let journal_path = tx.tx_path.clone();
+        self.retain_transaction_replay(
+            &mut tx,
+            &mutation,
+            None,
+            rewrites
+                .iter()
+                .map(|rewrite| &rewrite.path)
+                .chain(std::iter::once(&journal_path)),
+        )
+        .await?;
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::Transaction {
@@ -1192,6 +1419,10 @@ impl WriterHandle {
         rewrites: Vec<FileRewrite>,
         txs: Vec<TxAppend>,
     ) -> Result<Vec<TxAppendResult>> {
+        for tx in &txs {
+            reject_supplied_replay(tx)?;
+        }
+        self.recover_transaction_history().await?;
         self.guard_node_paths(
             rewrites
                 .iter()
@@ -1253,9 +1484,10 @@ impl WriterHandle {
     pub async fn transaction_mutate_file(
         &self,
         file: FileMutate,
-        tx: TxAppend,
+        mut tx: TxAppend,
         mutation: MutationIdentity,
     ) -> Result<String> {
+        self.recover_transaction_history().await?;
         self.guard_node_paths([file.path.as_path(), tx.tx_path.as_path()])?;
         let request_id = tx
             .request_id
@@ -1269,6 +1501,14 @@ impl WriterHandle {
             self.publish_transaction(&request_id, &result.tx_id).await?;
             return Ok(result.tx_id);
         }
+        let journal_path = tx.tx_path.clone();
+        self.retain_transaction_replay(
+            &mut tx,
+            &mutation,
+            None,
+            std::iter::once(&file.path).chain(std::iter::once(&journal_path)),
+        )
+        .await?;
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::TransactionMutate {
@@ -1294,7 +1534,7 @@ impl WriterHandle {
     pub async fn transaction_mutate_file_mutation(
         &self,
         file: FileMutate,
-        tx: TxAppend,
+        mut tx: TxAppend,
         mutation: MutationIdentity,
         mutation_id: String,
     ) -> Result<CachedMutation> {
@@ -1307,6 +1547,14 @@ impl WriterHandle {
             self.publish_transaction(&request_id, &cached.tx_id).await?;
             return Ok(cached);
         }
+        let journal_path = tx.tx_path.clone();
+        self.retain_transaction_replay(
+            &mut tx,
+            &mutation,
+            Some(&mutation_id),
+            std::iter::once(&file.path).chain(std::iter::once(&journal_path)),
+        )
+        .await?;
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::TransactionMutate {
@@ -1331,7 +1579,7 @@ impl WriterHandle {
     pub async fn transaction_mutation(
         &self,
         rewrites: Vec<FileRewrite>,
-        tx: TxAppend,
+        mut tx: TxAppend,
         mutation: MutationIdentity,
         mutation_id: String,
     ) -> Result<CachedMutation> {
@@ -1349,6 +1597,17 @@ impl WriterHandle {
             self.publish_transaction(&request_id, &cached.tx_id).await?;
             return Ok(cached);
         }
+        let journal_path = tx.tx_path.clone();
+        self.retain_transaction_replay(
+            &mut tx,
+            &mutation,
+            Some(&mutation_id),
+            rewrites
+                .iter()
+                .map(|rewrite| &rewrite.path)
+                .chain(std::iter::once(&journal_path)),
+        )
+        .await?;
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::Transaction {
@@ -1886,6 +2145,7 @@ pub(crate) fn spawn_with_catalog_index_and_machine(
         Arc::clone(&deferred_appends),
     ));
     WriterHandle {
+        replay_roots: Arc::new(Mutex::new(HashSet::new())),
         tx,
         idempotency,
         in_flight,

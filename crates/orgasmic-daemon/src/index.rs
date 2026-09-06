@@ -32,6 +32,8 @@ use tracing::warn;
 
 use crate::artifacts::{load_artifact, load_project_artifacts, ArtifactSummary};
 
+pub(crate) type ReplayRoot = (PathBuf, Option<String>);
+
 /// One project's materialized state.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectIndex {
@@ -842,6 +844,82 @@ impl Index {
             #[cfg(test)]
             refresh_test_hooks: Arc::new(RefreshTestHooks::default()),
         }
+    }
+
+    pub(crate) async fn replay_roots(&self) -> Vec<ReplayRoot> {
+        let mut roots = vec![(self.home.root.clone(), None)];
+        roots.extend(
+            self.inner
+                .read()
+                .await
+                .board
+                .iter()
+                .map(|entry| (entry.path.clone(), Some(entry.id.clone()))),
+        );
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    /// Thin history recovery: does not materialize ProjectIndex or run Git.
+    pub(crate) fn durable_replay_records(roots: &[ReplayRoot]) -> anyhow::Result<Vec<TxRecord>> {
+        use std::io::Read;
+        let mut snap = IndexSnapshot::default();
+        for (root, project) in roots {
+            if !std::fs::metadata(root)?.is_dir() {
+                anyhow::bail!("replay root is not a directory");
+            }
+            if let Some(project) = project {
+                for dir in project_tx_dirs(&root.join(".orgasmic"), &mut snap) {
+                    collect_tx_dir(&dir, Some(project), &mut snap);
+                }
+                collect_project_journals(root, project, &mut snap);
+            } else {
+                collect_tx_dir(&Home::at(root.clone()).tx(), None, &mut snap);
+            }
+        }
+        if let Some(error) = snap.first_historical_tx_parse_error() {
+            anyhow::bail!(
+                "cannot recover transaction history from {}: {}",
+                error.path.display(),
+                error.message
+            );
+        }
+        // An earlier daemon may have returned sync-uncertain. Bind the proof
+        // to the same bytes and descriptor we sync, not a reopened pathname.
+        for (path, source) in &snap.file_contents {
+            if !source.contains("REQUEST_REPLAY_") {
+                continue;
+            }
+            let mut file = std::fs::File::open(path)?;
+            let mut current = String::new();
+            file.read_to_string(&mut current)?;
+            if &current != source {
+                anyhow::bail!("transaction history changed during replay recovery");
+            }
+            file.sync_all()?;
+            if path.file_name().and_then(|name| name.to_str()) != Some("journal.org") {
+                // Ordinary projections deduplicate EVENT_IDs; replay must also
+                // inspect conflicting copies that projection folding hides.
+                snap.tx.retain(|record| record.source_path != *path);
+                let owner = roots
+                    .iter()
+                    .find(|(root, project)| {
+                        project.is_some() && path.starts_with(root.join(".orgasmic"))
+                    })
+                    .and_then(|(_, project)| project.clone());
+                snap.tx.extend(
+                    parse_tx_file(source, &path.to_string_lossy())?
+                        .into_iter()
+                        .map(|entry| TxRecord {
+                            project_id: owner.clone(),
+                            source_path: path.clone(),
+                            entry,
+                        }),
+                );
+            }
+        }
+        Ok(snap.tx)
     }
 
     pub async fn snapshot(&self) -> IndexSnapshot {
@@ -2976,7 +3054,7 @@ impl Index {
         load_task_graph(&mut project);
         lint_dangling_graph_edges(&project, snap);
         let dotorg = board_entry.path.join(".orgasmic");
-        for project_tx_dir in project_tx_dirs(&dotorg) {
+        for project_tx_dir in project_tx_dirs(&dotorg, snap) {
             collect_tx_dir(&project_tx_dir, Some(board_entry.id.as_str()), snap);
         }
         collect_claim_files(&dotorg, board_entry.id.as_str(), snap);
@@ -3596,11 +3674,48 @@ fn looks_like_structured_node_id(value: &str) -> bool {
         || value.starts_with("term:")
 }
 
+fn historical_io_error(path: &Path, error: std::io::Error, snap: &mut IndexSnapshot) {
+    snap.parse_errors.push(ParseError {
+        path: path.into(),
+        kind: ParseErrorKind::HistoricalTx,
+        message: error.to_string(),
+        line: None,
+        at: Utc::now(),
+    });
+}
+
+fn historical_entries(path: &Path, snap: &mut IndexSnapshot) -> Vec<std::fs::DirEntry> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => entries
+            .filter_map(|entry| match entry {
+                Ok(entry) => Some(entry),
+                Err(error) => {
+                    historical_io_error(path, error, snap);
+                    None
+                }
+            })
+            .collect(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => {
+            historical_io_error(path, error, snap);
+            Vec::new()
+        }
+    }
+}
+
+fn historical_metadata(path: &Path, snap: &mut IndexSnapshot) -> Option<std::fs::Metadata> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            historical_io_error(path, error, snap);
+            None
+        }
+    }
+}
+
 fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot) {
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in read.flatten() {
+    for entry in historical_entries(dir, snap) {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("org") {
             collect_tx_file(&path, project_id, snap);
@@ -3666,29 +3781,30 @@ fn collect_tx_file(path: &Path, project_id: Option<&str>, snap: &mut IndexSnapsh
 }
 
 fn collect_project_journals(project_root: &Path, project_id: &str, snap: &mut IndexSnapshot) {
-    let dotorg = project_root.join(".orgasmic");
-    let Ok(collections) = std::fs::read_dir(dotorg) else {
-        return;
-    };
-    for collection in collections.flatten() {
-        let collection_path = collection.path();
-        // `machines/` holds per-machine tx ledgers (TASK-MSYN4), not nodes;
-        // `project_tx_dirs` collects those.
-        if !collection_path.is_dir()
-            || matches!(
-                collection.file_name().to_str(),
-                Some("tx" | "tmp" | "views" | "machines")
-            )
+    for collection in historical_entries(&project_root.join(".orgasmic"), snap) {
+        let path = collection.path();
+        if matches!(
+            collection.file_name().to_str(),
+            Some("tx" | "tmp" | "views" | "machines")
+        ) || !historical_metadata(&path, snap).is_some_and(|m| m.is_dir())
         {
             continue;
         }
-        let Ok(nodes) = std::fs::read_dir(collection_path) else {
-            continue;
-        };
-        for node in nodes.flatten() {
+        for node in historical_entries(&path, snap) {
+            if !historical_metadata(&node.path(), snap).is_some_and(|m| m.is_dir()) {
+                continue;
+            }
             let journal = node.path().join(orgasmic_core::node_kernel::JOURNAL_FILE);
-            if journal.is_file() {
-                collect_journal_file(&journal, project_id, snap);
+            if let Some(metadata) = historical_metadata(&journal, snap) {
+                if metadata.is_file() {
+                    collect_journal_file(&journal, project_id, snap);
+                } else {
+                    historical_io_error(
+                        &journal,
+                        std::io::Error::other("journal is not a file"),
+                        snap,
+                    );
+                }
             }
         }
     }
@@ -3771,19 +3887,12 @@ fn escape_property_value(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\n', "\\n")
 }
 
-fn project_tx_dirs(dotorg: &Path) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    let legacy = dotorg.join("tx");
-    if legacy.is_dir() {
-        dirs.push(legacy);
-    }
-    if let Ok(machines) = std::fs::read_dir(dotorg.join("machines")) {
-        dirs.extend(
-            machines
-                .flatten()
-                .map(|machine| machine.path().join("tx"))
-                .filter(|tx| tx.is_dir()),
-        );
+fn project_tx_dirs(dotorg: &Path, snap: &mut IndexSnapshot) -> Vec<PathBuf> {
+    let mut dirs = vec![dotorg.join("tx")];
+    for machine in historical_entries(&dotorg.join("machines"), snap) {
+        if historical_metadata(&machine.path(), snap).is_some_and(|m| m.is_dir()) {
+            dirs.push(machine.path().join("tx"));
+        }
     }
     dirs.sort();
     dirs

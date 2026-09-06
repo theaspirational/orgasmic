@@ -35148,6 +35148,15 @@ pub(crate) mod tests {
         let project_root = tmp.path().join("proj");
         seed_project(&home, &project_root, "orgasmic");
 
+        let second_root = tmp.path().join("second");
+        let late_root = tmp.path().join("late");
+        for (id, root) in [("second", &second_root), ("late", &late_root)] {
+            write(
+                root.join(".orgasmic/project.org"),
+                &format!("#+orgasmic_version: 1\n* PROJECT {id}\n:PROPERTIES:\n:ID: {id}\n:END:\n"),
+            );
+            register_project(&home, root, id, "main").unwrap();
+        }
         let running = crate::Daemon::run(home.clone(), test_options())
             .await
             .expect("boot daemon");
@@ -35158,6 +35167,16 @@ pub(crate) mod tests {
             .unwrap();
         let base = format!("http://{}", running.addr);
 
+        let late_request = json!({"title": "Late discovery", "request_id": "late-replay"});
+        let response = client
+            .post(format!("{base}/api/projects/late/tasks"))
+            .bearer_auth(&token)
+            .json(&late_request)
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let late_created: Value = response.json().await.unwrap();
         let mut writes = tokio::task::JoinSet::new();
         for number in 0..N {
             let client = client.clone();
@@ -35297,9 +35316,85 @@ pub(crate) mod tests {
             .collect();
         let _ = running.shutdown.send(());
         running.join.await.unwrap();
+        orgasmic_core::projects::unregister_project(&home, "late").unwrap();
         let restarted = crate::Daemon::run(home.clone(), test_options())
             .await
             .unwrap();
+        let restart_base = format!("http://{}", restarted.addr);
+        // The original project is still unloaded when the foreign request arrives.
+        let conflict = client
+            .post(format!("{restart_base}/api/projects/second/tasks"))
+            .bearer_auth(&token)
+            .json(
+                &json!({"title": "Concurrent task 00", "request_id": "task-create-concurrent-00"}),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            conflict.status(),
+            StatusCode::CONFLICT,
+            "{}",
+            conflict.text().await.unwrap()
+        );
+        for title in ["Changed payload", "Concurrent task 00"] {
+            let response = client
+                .post(format!("{restart_base}/api/projects/orgasmic/tasks"))
+                .bearer_auth(&token)
+                .json(&json!({"title": title, "request_id": "task-create-concurrent-00"}))
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let retry: Value = response.json().await.unwrap();
+            if title == "Changed payload" {
+                assert_eq!(status, StatusCode::CONFLICT, "{retry}");
+            } else {
+                assert!(status.is_success(), "{retry}");
+                assert_eq!(retry["id"], created[&0].0);
+                assert_eq!(retry["tx_id"], created[&0].1);
+            }
+        }
+        let wrong_operation = client.post(format!("{restart_base}/api/decisions"))
+            .bearer_auth(&token).json(&json!({"project": "orgasmic", "title": "Concurrent task 00", "request_id": "task-create-concurrent-00"}))
+            .send().await.unwrap();
+        assert_eq!(wrong_operation.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            std::fs::read_dir(project_root.join(".orgasmic/tasks"))
+                .unwrap()
+                .count(),
+            N + 1
+        );
+        // Registration after history was recovered must discover this ledger too.
+        let added = client
+            .post(format!("{restart_base}/api/projects"))
+            .bearer_auth(&token)
+            .json(&json!({"path": late_root}))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            added.status().is_success(),
+            "{}",
+            added.text().await.unwrap()
+        );
+        let response = client
+            .post(format!("{restart_base}/api/projects/late/tasks"))
+            .bearer_auth(&token)
+            .json(&late_request)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let recovered: Value = response.json().await.unwrap();
+        assert!(status.is_success(), "{recovered}");
+        assert_eq!(recovered, late_created);
+        assert_eq!(
+            std::fs::read_dir(late_root.join(".orgasmic/tasks"))
+                .unwrap()
+                .count(),
+            1
+        );
         for id in ids {
             let response = client
                 .get(format!(
@@ -35327,6 +35422,176 @@ pub(crate) mod tests {
         }
         let _ = restarted.shutdown.send(());
         restarted.join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn durable_replay_refuses_bad_history_and_retries_after_repair() {
+        for fault in [
+            "malformed",
+            "conflicting",
+            "escaping",
+            "directory",
+            "version",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = Home::at(tmp.path().join("home"));
+            home.ensure().unwrap();
+            let root = tmp.path().join("project");
+            seed_project(&home, &root, "orgasmic");
+            let mut first = direct_stage_test_state(home.clone()).await;
+            first.tx_commit_to_project = true;
+            let created = post_task_create(
+                State(first.clone()),
+                Path("orgasmic".into()),
+                Json(task_create_request("TASK-R3P41", "durable-repair")),
+            )
+            .await
+            .unwrap()
+            .0;
+            first.writer.shutdown().await;
+            let node = task_node_file_path(&root, &created.id);
+            let node_bytes = std::fs::read(&node).unwrap();
+            let journal = node.with_file_name(JOURNAL_FILE);
+            let original = std::fs::read_to_string(&journal).unwrap();
+            let mut state = direct_stage_test_state(home.clone()).await;
+            state.tx_commit_to_project = true;
+            let mut entries =
+                orgasmic_core::node_kernel::parse_journal(&original, "journal.org").unwrap();
+            let original_entry = entries[0].clone();
+            if fault == "directory" {
+                // A directory read failure must not be mistaken for no history.
+                std::fs::write(root.join(".orgasmic/tx"), "not a directory").unwrap();
+            } else {
+                if fault == "conflicting" {
+                    let mut duplicate = original_entry.clone();
+                    duplicate.entry_id = "tx-conflicting-replay".into();
+                    entries.push(duplicate);
+                } else if fault == "version" {
+                    entries[0]
+                        .extras
+                        .iter_mut()
+                        .find(|(key, _)| key == "REQUEST_REPLAY_V1")
+                        .unwrap()
+                        .0 = "REQUEST_REPLAY_V99".into();
+                } else {
+                    let value = &mut entries[0]
+                        .extras
+                        .iter_mut()
+                        .find(|(key, _)| key == "REQUEST_REPLAY_V1")
+                        .unwrap()
+                        .1;
+                    if fault == "malformed" {
+                        *value = "invalid JSON".into();
+                    } else {
+                        let mut replay: Value = serde_json::from_str(value).unwrap();
+                        replay["written_paths"][0]["relative"] = "../outside".into();
+                        *value = replay.to_string();
+                    }
+                }
+                let damaged = orgasmic_core::node_kernel::journal_header(&created.id)
+                    + &entries
+                        .iter()
+                        .map(orgasmic_core::node_kernel::journal_entry_block)
+                        .collect::<String>();
+                std::fs::write(&journal, damaged).unwrap();
+            }
+            for (id, key) in [
+                ("TASK-R3P41", "durable-repair"),
+                ("TASK-N3W41", "fresh-request"),
+            ] {
+                let error = post_task_create(
+                    State(state.clone()),
+                    Path("orgasmic".into()),
+                    Json(task_create_request(id, key)),
+                )
+                .await
+                .expect_err("bad history must fail closed");
+                assert!(error.status.is_server_error(), "{fault}: {error:?}");
+                assert_eq!(
+                    std::fs::read_dir(root.join(".orgasmic/tasks"))
+                        .unwrap()
+                        .count(),
+                    2
+                );
+            }
+            if fault == "directory" {
+                std::fs::remove_file(root.join(".orgasmic/tx")).unwrap();
+            } else {
+                std::fs::write(&journal, &original).unwrap();
+            }
+            let repaired = post_task_create(
+                State(state.clone()),
+                Path("orgasmic".into()),
+                Json(task_create_request("TASK-R3P41", "durable-repair")),
+            )
+            .await
+            .unwrap()
+            .0;
+            assert_eq!(repaired.id, created.id);
+            assert_eq!(repaired.tx_id, created.tx_id);
+            assert_eq!(std::fs::read(node).unwrap(), node_bytes);
+            assert_eq!(std::fs::read_to_string(journal).unwrap(), original);
+            state.writer.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_replay_checks_home_ledger_copies_before_deduplication() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = tmp.path().join("project");
+        seed_project(&home, &root, "orgasmic");
+        let first = direct_stage_test_state(home.clone()).await;
+        assert!(!first.tx_commit_to_project);
+        let created = post_task_create(
+            State(first.clone()),
+            Path("orgasmic".into()),
+            Json(task_create_request("TASK-R3P41", "home-replay")),
+        )
+        .await
+        .unwrap()
+        .0;
+        first.writer.shutdown().await;
+        let tx_path = crate::default_home_tx_path(&home);
+        let original = std::fs::read_to_string(&tx_path).unwrap();
+        let mut duplicate = parse_tx_file(&original, "home tx")
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.tx_id == created.tx_id)
+            .unwrap();
+        duplicate.tx_id = "tx-conflicting-home-copy".into();
+        // Keep the same EVENT_ID: ordinary projection folding suppresses this
+        // copy, but replay authority must reject its conflicting transaction ID.
+        std::fs::write(&tx_path, original.clone() + &duplicate.render()).unwrap();
+        let state = direct_stage_test_state(home.clone()).await;
+        let error = post_task_create(
+            State(state.clone()),
+            Path("orgasmic".into()),
+            Json(task_create_request("TASK-R3P41", "home-replay")),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.status.is_server_error());
+        std::fs::write(&tx_path, &original).unwrap();
+        let recovered = post_task_create(
+            State(state.clone()),
+            Path("orgasmic".into()),
+            Json(task_create_request("TASK-R3P41", "home-replay")),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(recovered.id, created.id);
+        assert_eq!(recovered.tx_id, created.tx_id);
+        assert_eq!(std::fs::read_to_string(tx_path).unwrap(), original);
+        assert_eq!(
+            std::fs::read_dir(root.join(".orgasmic/tasks"))
+                .unwrap()
+                .count(),
+            2
+        );
+        state.writer.shutdown().await;
     }
 
     #[tokio::test]
@@ -35609,6 +35874,14 @@ pub(crate) mod tests {
         state: &ApiState,
         bodies: [Value; 2],
     ) -> Vec<Result<Value, ApiError>> {
+        state
+            .writer
+            .recover_mutation(
+                "test-history-warmup",
+                &MutationIdentity::new("test", "orgasmic", ""),
+            )
+            .await
+            .unwrap();
         let writer = state.writer.clone();
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
