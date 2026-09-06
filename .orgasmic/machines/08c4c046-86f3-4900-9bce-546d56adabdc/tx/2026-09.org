@@ -8594,3 +8594,60 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-0Y363/dispatches/tx-20260906-orgasmic-6a8117c6-a90f-4929-8e08-8bad80b6f1a6/report.md
 :EVENT_ID:     eec49be3-b53e-4a09-b2a2-3f86e35feca7
 :END:
+
+
+* TX 2026-09-06 Sun 18:45:39 manager.dispatch_started TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-7789579d-171f-47a8-ba51-a54fa9248c79
+:TIME:         [2026-09-06 Sun 18:45:39]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-48sfw-service-owner-20260906
+:BRANCH:       task-48sfw-owner-fixes-20260906
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/p1-fix/p1-fix-brief.md
+:STARTED_AT:   [2026-09-06 Sun 18:45:39]
+:LIVENESS:     4cc676cdb8d3f98856f0e7847699aace5baaf687
+:NEXT:         fix-implementer-watch-then-integrate
+:PREFLIGHT:    ok
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: Address independent-review legitimate-owner lockout findings F1-F3 plus Unicode reader corruption and matching-owner regression evidence
+:EVENT_ID:     86de5437-2bff-4d2f-a02c-9fcb16c698e2
+:END:
+
+* TX 2026-09-06 Sun 18:45:39 run.created TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-89281006-a789-46b8-9fc4-c5bb6048539c
+:TIME:         [2026-09-06 Sun 18:45:39]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-48SFW-implementer-20260906T184538.jsonl
+:REASON:       Address independent-review legitimate-owner lockout findings F1-F3 plus Unicode reader corruption and matching-owner regression evidence
+:RUN_ID:       run-01M1W0MND22KVXPKAZVJR09RZ0
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-48sfw-service-owner-20260906
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/p1-fix/p1-fix-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/p1-fix/p1-fix-5a06bb69da3343f29cb45ba1e5f90690-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/p1-fix/p1-fix-5a06bb69da3343f29cb45ba1e5f90690-stdout.log
+:DISPATCH_ATTEMPT: 5a06bb69da3343f29cb45ba1e5f90690
+:PID:          43213
+:DISPATCH_TX:  tx-20260906-orgasmic-7789579d-171f-47a8-ba51-a54fa9248c79
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     a3ba89bb-9245-4ee6-9cff-4fda1c36ff34
+:END:
