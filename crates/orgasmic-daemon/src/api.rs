@@ -15894,9 +15894,9 @@ async fn create_graph_heading(
     if let Some(request_id) = transaction_request_key(req.request_id.as_deref()) {
         if let Some(cached) = state
             .writer
-            .cached_mutation(&request_id, &mutation)
+            .recover_mutation(&request_id, &mutation)
             .await
-            .map_err(|error| ApiError::bad_request(error.to_string()))?
+            .map_err(writer_transaction_error)?
         {
             refresh_after_project_mutation(
                 state,
@@ -18313,9 +18313,9 @@ async fn post_task_create(
     if let Some(request_id) = transaction_request_key(req.request_id.as_deref()) {
         if let Some(cached) = state
             .writer
-            .cached_mutation(&request_id, &mutation)
+            .recover_mutation(&request_id, &mutation)
             .await
-            .map_err(|error| ApiError::bad_request(error.to_string()))?
+            .map_err(writer_transaction_error)?
         {
             refresh_after_project_mutation(
                 &state,

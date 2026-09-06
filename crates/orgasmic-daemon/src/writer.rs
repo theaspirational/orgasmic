@@ -353,6 +353,11 @@ enum WriterCommand {
         req: TransactionMutateRequest,
         reply: oneshot::Sender<Result<TxAppendResult>>,
     },
+    RecoverMutation {
+        request_id: String,
+        mutation: MutationIdentity,
+        reply: oneshot::Sender<Result<Option<CachedMutation>>>,
+    },
     /// Take an exclusive hold on a set of session paths
     /// (orgasmic:TASK-FZB6T.3 finding 1). Drops each path's cached append
     /// handle and marks it held; every later append for a held path is DEFERRED
@@ -683,6 +688,7 @@ enum CachedResponse {
         mutation: Option<MutationIdentity>,
         mutation_id: Option<String>,
         written_paths: Vec<PathBuf>,
+        event: Option<Box<EventPayload>>,
         durability: TransactionDurability,
     },
     Multi {
@@ -1068,6 +1074,7 @@ impl WriterHandle {
                 mutation: None,
                 mutation_id: None,
                 written_paths: vec![written_path.clone()],
+                event: None,
                 durability: TransactionDurability::Durable,
             },
         );
@@ -1100,6 +1107,36 @@ impl WriterHandle {
     ) -> Result<Option<CachedMutation>> {
         let cache = self.idempotency.lock().await;
         cached_mutation_from_map(&cache, request_id, expected)
+    }
+
+    /// Recover a prior create before caller-side existence/reference guards.
+    /// Pending sync runs in the writer queue; a cache lookup alone cannot ack it.
+    pub async fn recover_mutation(
+        &self,
+        request_id: &str,
+        expected: &MutationIdentity,
+    ) -> Result<Option<CachedMutation>> {
+        {
+            let cache = self.idempotency.lock().await;
+            if !cache.contains_key(request_id) {
+                return Ok(None);
+            }
+            cached_mutation_from_map(&cache, request_id, expected)?;
+        }
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(WriterCommand::RecoverMutation {
+                request_id: request_id.into(),
+                mutation: expected.clone(),
+                reply,
+            })
+            .await
+            .map_err(|_| anyhow!("writer task is gone"))?;
+        let result = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        if let Some(cached) = &result {
+            self.publish_transaction(request_id, &cached.tx_id).await?;
+        }
+        Ok(result)
     }
 
     pub async fn transaction(&self, rewrites: Vec<FileRewrite>, tx: TxAppend) -> Result<String> {
@@ -2021,6 +2058,12 @@ fn describe_command(cmd: &WriterCommand) -> PendingWrite {
             tx_type: Some(req.tx.entry.ty.clone()),
             path: Some(req.file.path.clone()),
         },
+        WriterCommand::RecoverMutation { mutation, .. } => PendingWrite {
+            kind: "transaction_replay".into(),
+            run_id: None,
+            tx_type: Some(mutation.operation.clone()),
+            path: None,
+        },
         WriterCommand::Rewrite { req, .. } => PendingWrite {
             kind: "rewrite".to_string(),
             run_id: None,
@@ -2221,7 +2264,7 @@ async fn writer_loop(
                             &mut *idempotency.lock().await,
                             &tx_handles,
                             &events,
-                            (&req.tx, &req.request_id),
+                            &req.request_id,
                             mutation,
                             req.mutation_id.is_some(),
                         ),
@@ -2370,7 +2413,7 @@ async fn writer_loop(
                         &mut *idempotency.lock().await,
                         &tx_handles,
                         &events,
-                        (&req.tx, &req.request_id),
+                        &req.request_id,
                         &req.mutation,
                         req.mutation_id.is_some(),
                     );
@@ -2413,6 +2456,24 @@ async fn writer_loop(
                         command_failed = result.is_err();
                         let _ = reply.take().expect("writer reply available").send(result);
                     }
+                }
+                WriterCommand::RecoverMutation {
+                    request_id,
+                    mutation,
+                    reply,
+                } => {
+                    let mut cache = idempotency.lock().await;
+                    let result = retry_single_transaction(
+                        &mut cache,
+                        &tx_handles,
+                        &events,
+                        &request_id,
+                        &mutation,
+                        true,
+                    )
+                    .and_then(|_| cached_mutation_from_map(&cache, &request_id, &mutation));
+                    command_failed = result.is_err();
+                    let _ = reply.send(result);
                 }
                 WriterCommand::LeaseSessions { paths, reply } => {
                     // Two transactions holding the same path would each believe it
@@ -2687,31 +2748,32 @@ fn retry_single_transaction(
     cache: &mut HashMap<String, CachedResponse>,
     handles: &HashMap<PathBuf, CachedTxWriter>,
     events: &EventBus,
-    request: (&TxAppend, &str),
+    request_id: &str,
     mutation: &MutationIdentity,
     needs_mutation_id: bool,
 ) -> Result<Option<TxAppendResult>> {
-    let (tx, request_id) = request;
     if needs_mutation_id {
         cached_mutation_from_map(cache, request_id, mutation)?;
     } else {
         cached_transaction_from_map(cache, request_id, mutation)?;
     }
     let Some(CachedResponse::Tx {
-        result, durability, ..
+        result,
+        durability,
+        event,
+        ..
     }) = cache.get_mut(request_id)
     else {
         return Ok(None);
     };
     if *durability == TransactionDurability::SyncUncertain {
+        let event = event
+            .as_ref()
+            .ok_or_else(|| anyhow!("pending transaction lacks its event"))?;
         sync_committed_tx(handles, result)
             .map_err(|error| anyhow!(CommittedSyncUncertainError::retry(error)))?;
         *durability = TransactionDurability::Durable;
-        publish_multi_events(
-            events,
-            std::slice::from_ref(tx),
-            std::slice::from_ref(result),
-        );
+        events.publish(Topic::Daemon, event.as_ref().clone());
     }
     Ok(Some(result.clone()))
 }
@@ -2738,6 +2800,11 @@ fn finish_single_transaction(
             mutation,
             mutation_id,
             written_paths,
+            event: Some(Box::new(EventPayload::TxAppended {
+                project_id: tx.project_id.clone(),
+                tx_id: result.tx_id.clone(),
+                ty: tx.entry.ty.clone(),
+            })),
             durability: if error.is_some() {
                 TransactionDurability::SyncUncertain
             } else {
@@ -2777,6 +2844,7 @@ async fn cache_durable_multi(
                         .map(|r| r.path.clone())
                         .chain(std::iter::once(tx.tx_path.clone()))
                         .collect(),
+                    event: None,
                     durability: TransactionDurability::Durable,
                 },
             );

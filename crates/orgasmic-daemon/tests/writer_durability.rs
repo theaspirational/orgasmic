@@ -113,7 +113,9 @@ async fn single_transaction_sync_retry_preserves_committed_bytes_and_identity() 
         let tx_path = tmp.path().join("tx/2026-08.org");
         let retained_path = tmp.path().join("retained.org");
         std::fs::write(&target, "before\n").unwrap();
-        let handle = spawn_writer(EventBus::new());
+        let bus = EventBus::new();
+        let mut events = bus.subscribe();
+        let handle = spawn_writer(bus);
         let transforms = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let call = |payload: &'static str| {
             let handle = handle.clone();
@@ -193,8 +195,45 @@ async fn single_transaction_sync_retry_preserves_committed_bytes_and_identity() 
             error.to_string().contains("durability remains uncertain"),
             "{error}"
         );
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+        if mode == 1 || mode == 3 {
+            let recovered = handle
+                .recover_mutation(
+                    "req-single-sync",
+                    &MutationIdentity::new("task.created", "orgasmic", "after\n"),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(recovered.tx_id, id);
+            assert_eq!(recovered.mutation_id, "TASK-SYNC");
+        } else {
+            assert_eq!(call("after\n").await.unwrap(), id);
+        }
+        match events.try_recv().unwrap().payload {
+            orgasmic_daemon::events::EventPayload::TxAppended {
+                project_id,
+                tx_id,
+                ty,
+            } => {
+                assert_eq!(project_id.as_deref(), Some("orgasmic"));
+                assert_eq!(tx_id, id);
+                assert_eq!(
+                    ty, "manager.action",
+                    "publish the original tx type, not the caller identity label"
+                );
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+
         assert_eq!(call("after\n").await.unwrap(), id);
-        assert_eq!(call("after\n").await.unwrap(), id);
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
         assert_eq!(test_hooks::sync_attempt_count(), 3);
         assert_eq!(test_hooks::sync_count(), 1);
         assert_eq!(std::fs::read(&retained_path).unwrap(), bytes);
@@ -683,6 +722,55 @@ async fn task_create_sync_retry_projects_the_original_node() {
         1
     );
     assert_eq!(std::fs::read(journal).unwrap(), bytes);
+    for (collection, id) in [("decisions", "dec_A1B2C"), ("glossary", "term_A1B2C")] {
+        let endpoint = format!("http://{}/api/{collection}", running.addr);
+        let request = serde_json::json!({"project": "orgasmic", "id": id,
+            "title": "Recovery example", "request_id": format!("recover-{collection}")});
+        let call = |request: serde_json::Value| {
+            client
+                .post(&endpoint)
+                .bearer_auth(token.trim())
+                .json(&request)
+                .send()
+        };
+        test_hooks::fail_next_sync(1);
+        let first = call(request.clone()).await.unwrap();
+        let status = first.status();
+        let body: serde_json::Value = first.json().await.unwrap();
+        assert_eq!(
+            status,
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            "{collection}: {body}"
+        );
+        let node = project.join(".orgasmic").join(collection).join(id);
+        let journal = std::fs::read(node.join("journal.org")).unwrap();
+        let source = std::fs::read(node.join("node.org")).unwrap();
+        test_hooks::fail_next_sync(1);
+        let again = call(request.clone()).await.unwrap();
+        let status = again.status();
+        let body: serde_json::Value = again.json().await.unwrap();
+        assert_eq!(
+            status,
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            "pending recovery must precede the existing-node guard: {body}"
+        );
+        assert_eq!(body["durability"], "uncertain");
+        let mut changed = request.clone();
+        changed["title"] = "Different payload".into();
+        assert_eq!(
+            call(changed).await.unwrap().status(),
+            reqwest::StatusCode::CONFLICT
+        );
+        let recovered = call(request.clone()).await.unwrap();
+        let status = recovered.status();
+        let body: serde_json::Value = recovered.json().await.unwrap();
+        assert!(status.is_success(), "{collection}: {body}");
+        assert_eq!(body["id"], id);
+        let repeated: serde_json::Value = call(request).await.unwrap().json().await.unwrap();
+        assert_eq!(repeated["tx_id"], body["tx_id"]);
+        assert_eq!(std::fs::read(node.join("journal.org")).unwrap(), journal);
+        assert_eq!(std::fs::read(node.join("node.org")).unwrap(), source);
+    }
     running.shutdown.send(()).unwrap();
     running.join.await.unwrap();
 }
