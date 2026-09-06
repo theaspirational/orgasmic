@@ -8651,3 +8651,17 @@
 :EFFORT_OVERRIDE: high
 :EVENT_ID:     a3ba89bb-9245-4ee6-9cff-4fda1c36ff34
 :END:
+
+* TX 2026-09-06 Sun 18:46:45 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-9a6d7400-d692-4443-bb2a-5f096edfbc6c
+:TIME:         [2026-09-06 Sun 18:46:45]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     d426fc9a-ce4f-4fc4-8a2d-ae49e7c6776b
+:END:
