@@ -65,6 +65,10 @@ impl Home {
     pub fn state(&self) -> PathBuf {
         self.root.join("state")
     }
+    /// Durable offline task-ID repair plan. Its presence fences daemon boot.
+    pub fn task_id_repair_plan(&self) -> PathBuf {
+        self.root.join("task-id-repair.json")
+    }
     pub fn tx(&self) -> PathBuf {
         self.state().join("tx")
     }

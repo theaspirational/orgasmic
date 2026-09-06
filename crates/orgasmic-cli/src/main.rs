@@ -28,6 +28,7 @@ mod member;
 mod node;
 mod path_env;
 mod project_migrate;
+mod project_repair_ids;
 mod sequencer_markers;
 #[cfg(test)]
 mod test_support;
@@ -446,6 +447,15 @@ enum PathCmd {
 
 #[derive(Subcommand, Debug)]
 enum ProjectCmd {
+    /// Repair malformed terminal task IDs offline, retaining historical journals.
+    RepairTaskIds {
+        /// Preview without changing the ledger (the default).
+        #[arg(long, conflicts_with = "apply")]
+        dry_run: bool,
+        /// Apply or resume the recorded repair; requires a stopped daemon.
+        #[arg(long)]
+        apply: bool,
+    },
     /// Scaffold `.orgasmic/` in a repo and register it on the global board.
     #[command(after_help = "\
 	Examples:
@@ -1513,6 +1523,9 @@ fn main() -> Result<()> {
         } => update::run(&home, &branch, !no_build, channel),
         Cmd::Forum(args) => forum::run(&home, args),
         Cmd::Project { cmd } => match cmd {
+            ProjectCmd::RepairTaskIds { dry_run: _, apply } => {
+                project_repair_ids::run(&home, apply)
+            }
             ProjectCmd::Init {
                 path,
                 name,

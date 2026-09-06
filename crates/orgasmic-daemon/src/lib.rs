@@ -919,12 +919,42 @@ mod fd_limit_tests {
 
 pub struct Daemon;
 
+fn refuse_task_id_maintenance(home: &Home) -> Result<()> {
+    match std::fs::symlink_metadata(home.task_id_repair_plan()) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => anyhow::bail!(
+            "offline task-ID repair pending at {}; resume `orgasmic project repair-task-ids --apply` before starting the daemon",
+            home.task_id_repair_plan().display()
+        ),
+    }
+}
+
+#[cfg(test)]
+mod task_id_maintenance_tests {
+    #[tokio::test]
+    async fn task_id_repair_plan_refuses_daemon_boot() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = orgasmic_core::Home::at(dir.path());
+        std::fs::write(home.task_id_repair_plan(), b"interrupted repair").unwrap();
+        let error = super::Daemon::run(home.clone(), super::DaemonOptions::default())
+            .await
+            .err()
+            .expect("maintenance must refuse boot");
+        assert!(error.to_string().contains("offline task-ID repair pending"));
+        assert!(!home.root.join("daemon.lock").exists());
+        assert!(!home.config().exists());
+    }
+}
+
 impl Daemon {
     pub async fn run(home: Home, opts: DaemonOptions) -> Result<RunningDaemon> {
+        refuse_task_id_maintenance(&home)?;
         let instance_lock = match acquire_daemon_lock(&home, &opts).await? {
             Ok(lock) => lock,
             Err(incumbent) => return Err(incumbent.into()),
         };
+        refuse_task_id_maintenance(&home)?;
         // Lock ownership precedes boot work: publish heartbeat before any slow
         // pre-bind phase so the CLI can distinguish progress from death.
         let mut boot_progress = boot_state::BootProgress::start(&home, "loading config")?;
