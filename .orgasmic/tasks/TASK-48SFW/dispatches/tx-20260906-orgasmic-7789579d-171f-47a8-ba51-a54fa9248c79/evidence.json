@@ -1,0 +1,25 @@
+{
+  "event_count": 439,
+  "tool_call_count": 169,
+  "unparsed_events": 0,
+  "bounded_events": 1,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-48SFW-implementer-20260906T184538.jsonl",
+    "size_bytes": 728553
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/06/rollout-2026-09-06T21-45-39-01a0780a-58d1-7940-aaa8-9baaf29298dd.jsonl",
+    "session_id": "01a0780a-58d1-7940-aaa8-9baaf29298dd",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "Using ponytail for shortest safe diff, and orgasmic only for the required dispatch finalization/workflow.Understood. I’ll replace the earlier “RED” with behavioral RED from the old reader logic only, then restore the final fix and rerun GREEN.The lifecycle check attempt with three Cargo filters was wrapper misuse (`cargo test` accepts one filter); I’m not counting it as evidence. Re-running one valid module filter.Fixing only that decoder double-unescape and its round-trip assertion.Fixing only the unterminated quoted-token refusal.Focused wrapper passed; committing the two parser-inspection fixes now, then finalizing.Preparing the finalize report and using the worktree binary against the ambient home only."
+    }
+  ],
+  "narrative_truncated": false
+}
