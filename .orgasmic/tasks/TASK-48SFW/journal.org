@@ -110,3 +110,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: a3df8aad-9542-4029-884e-97b22fdb72e7
 :END:
+
+* tx-20260906-orgasmic-8f75f07f-f223-4bf9-bb4d-b1927f6eccb0 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-8f75f07f-f223-4bf9-bb4d-b1927f6eccb0
+:TIME:    [2026-09-06 Sun 19:23:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-48SFW
+:TARGET: .orgasmic/tasks/TASK-48SFW/node.org
+:REASON: Manager applied exact final review correction in integration commit14561065; focused regression/fmt passed; requesting independent confirmation of four-line delta.
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: a9d16f5e-f7cc-42ad-b2c5-adacbb3fd104
+:END:
