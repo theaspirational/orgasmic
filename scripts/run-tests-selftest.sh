@@ -193,43 +193,21 @@ run() {
 LOAD_PANIC='assertion failed: waited for the atomic claim commit'
 OTHER_PANIC='resume_native_fork recover: 500'
 
-# orgasmic:TASK-STWVB.1.1.1.1
-# The healthy-registry fixtures need an owner `check_owner_lifecycle` accepts:
-# a task that exists and is neither done nor cancelled. A hardcoded id rots —
-# this fixture named TASK-STWVB until that task closed, at which point every
-# case using it failed `registry: REJECTED` / exit 2 and the whole gate went
-# red for a reason that has nothing to do with the classifier under test.
-# Resolve an open one at startup instead, so the self-test measures the
-# classifier and not the task board.
-open_owner() {
-    # Mirror run-tests.sh `orgasmic_tasks_dir`: the 2026-08-27 ledger cutover
-    # moved the committed task nodes to ~/.orgasmic/ledgers/<project>.
-    local tasks="$REPO/.orgasmic/tasks" f id
-    if [ ! -d "$tasks" ] && [ -d "$HOME/.orgasmic/ledgers/$(basename "$REPO")/.orgasmic/tasks" ]; then
-        tasks="$HOME/.orgasmic/ledgers/$(basename "$REPO")/.orgasmic/tasks"
-    fi
-    for f in "$tasks"/*/node.org; do
-        [ -f "$f" ] || continue
-        grep -Eq '^\*+[ \t]+(DONE|CANCELLED)[ \t]+' "$f" && continue
-        while read -r id; do
-            [ -n "$id" ] || continue
-            printf '%s\n' "$id"
-            return 0
-        done <<EOF
-$(awk 'match($0, /^[ \t]*:ID:[ \t]+TASK-[A-Z0-9.]+[ \t]*$/) {
-        id = $2
-        print id
-    }' "$f")
-EOF
-    done
-    return 1
-}
-
-FIXTURE_OWNER=$(open_owner) || {
-    printf 'FAIL setup: no open task in %s (or the ledger checkout) to own the fixture registry entries\n' \
-        "$REPO/.orgasmic/tasks"
-    exit 1
-}
+# Keep owner lifecycle checks real, but make the board synthetic. Choosing a
+# live open task still couples this self-test to ledger availability and task
+# transitions; a second hardcoded owner already rotted when TASK-QCG6J closed.
+# All runner calls inherit this disposable Git root, so neither the real repo
+# nor its external ledger supplies fixture state.
+git init -q "$TMP/repo" || exit 3
+cd "$TMP/repo" || exit 3
+FIXTURE_OWNER=TASK-OPEN1
+for owner in "$FIXTURE_OWNER" TASK-QCG6J TASK-5HBST; do
+    mkdir -p ".orgasmic/tasks/$owner"
+    state=TODO
+    [ "$owner" != TASK-5HBST ] || state=DONE
+    printf '* %s Fixture owner\n:PROPERTIES:\n:ID: %s\n:END:\n' "$state" "$owner" \
+        > ".orgasmic/tasks/$owner/node.org"
+done
 
 KNOWN_FLAKE_ENTRY=(
     '[[flake]]'
