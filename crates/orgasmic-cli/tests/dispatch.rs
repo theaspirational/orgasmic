@@ -12143,14 +12143,14 @@ async fn worktree_prune_refuses_an_unreadable_descendant_before_deletion() {
         "the refusal must name the worktree, unreadable descendant, and full OS error chain\n{all}"
     );
     assert!(
-        all.contains("the whole worktree was skipped and nothing within it was deleted"),
+        all.contains("worktree-prune keeps the whole worktree and deletes nothing within it"),
         "the refusal must guarantee that classification authorized no deletion anywhere in the \
          worktree\n{all}"
     );
     assert!(
         all.contains("make the offending descendant readable")
             && all.contains("chmod")
-            && all.contains("remove it by hand, then re-run")
+            && all.contains("remove it by hand")
             && all.contains("no `--force` override"),
         "the refusal must give the safe remedies and say that no force escape exists\n{all}"
     );
