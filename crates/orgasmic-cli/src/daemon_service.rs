@@ -750,6 +750,10 @@ fn read_macos_plist_for_owner_scan(plist: &Path) -> Result<String> {
     match std::fs::read_to_string(plist) {
         Ok(raw) => Ok(raw),
         Err(text_error) => {
+            let bytes = std::fs::read(plist).context("read plist bytes")?;
+            if !bytes.starts_with(b"bplist00") {
+                bail!("read as UTF-8 failed ({text_error}); plist is not a binary plist");
+            }
             let output = Command::new("/usr/bin/plutil")
                 .args([
                     "-convert",
@@ -1396,14 +1400,16 @@ fn systemd_unescape(value: &str) -> Result<String> {
     let bytes = value.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 3 < bytes.len() && bytes[i + 1] == b'x' {
-            if let Ok(hex) = std::str::from_utf8(&bytes[i + 2..i + 4]) {
-                if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte);
-                    i += 4;
-                    continue;
-                }
+        if bytes[i] == b'\\' && i + 1 < bytes.len() && bytes[i + 1] == b'x' {
+            if i + 3 >= bytes.len() {
+                bail!("incomplete systemd \\x escape");
             }
+            let hex =
+                std::str::from_utf8(&bytes[i + 2..i + 4]).context("invalid systemd \\x escape")?;
+            let byte = u8::from_str_radix(hex, 16).context("invalid systemd \\x escape")?;
+            out.push(byte);
+            i += 4;
+            continue;
         }
         if bytes[i] == b'\\' && i + 1 < bytes.len() {
             let ch = value[i + 1..].chars().next().expect("checked next byte");
@@ -2026,6 +2032,24 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
+    fn non_utf8_xml_macos_plist_is_not_normalized_for_owner_scan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("orgasmic.daemon.plist");
+        let xml = r#"<?xml version="1.0" encoding="UTF-16"?><plist version="1.0"><dict><key>EnvironmentVariables</key><dict><key>ORGASMIC_HOME</key><string>/tmp/one</string><key>ORGASMIC_HOME</key><string>/tmp/two</string></dict></dict></plist>"#;
+        let mut bytes = vec![0xff, 0xfe];
+        for unit in xml.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        std::fs::write(&plist, bytes).unwrap();
+
+        let err = read_macos_plist_for_owner_scan(&plist)
+            .expect_err("non-UTF-8 XML must not be normalized before duplicate-key scan")
+            .to_string();
+        assert!(err.contains("not a binary plist"), "{err}");
+    }
+
+    #[test]
     fn systemd_owner_is_read_from_effective_environment() {
         let unit = render_linux_systemd_unit(&spec());
         assert_eq!(
@@ -2150,6 +2174,10 @@ Environment=PATH=/usr/bin ORGASMIC_HOME=/srv/orgasmic\x20home ORGASMIC_LOG_MIRRO
         });
         assert_eq!(parse_systemd_owner_home(&unit).unwrap(), literal);
         assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\xff"#).is_err());
+        assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\x"#).is_err());
+        assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\x4"#).is_err());
+        assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\xzz"#).is_err());
+        assert!(parse_systemd_owner_home(r#"Environment=ORGASMIC_HOME=/tmp/\x4g"#).is_err());
     }
 
     #[test]
