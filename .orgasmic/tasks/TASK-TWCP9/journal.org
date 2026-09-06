@@ -63,3 +63,34 @@
 :TO_STATE: in_review
 :EVENT_ID: 52909a24-be3f-4108-907b-4f9c74bcc7f8
 :END:
+
+* tx-20260906-orgasmic-1494312c-e1e2-4d89-9fe0-609662d8da33 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-1494312c-e1e2-4d89-9fe0-609662d8da33
+:TIME:    [2026-09-06 Sun 13:24:57]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TWCP9
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-TWCP9/node.org
+:REASON: edited task node TASK-TWCP9
+:NODE_ID: TASK-TWCP9
+:EVENT_ID: 40cbbee7-2175-4ae9-be0a-9e307f81ca7e
+:END:
+
+* tx-20260906-orgasmic-3eecbe3e-5ab0-4b32-8557-f38d5b7bfb53 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-3eecbe3e-5ab0-4b32-8557-f38d5b7bfb53
+:TIME:    [2026-09-06 Sun 13:24:57]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TWCP9
+:TARGET: .orgasmic/tasks/TASK-TWCP9/node.org
+:REASON: Recorded placement, owner decision and chain review evidence; D2DM3 stays separately deferred.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: ddc18ce7-71c1-4f5e-b9d4-d305f016cfba
+:END:
