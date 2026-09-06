@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-CQM2X.1
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-CQM2X.1 Resolve external-ledger worktree identity in run catalog and recovery
+:PROPERTIES:
+:ID: TASK-CQM2X.1
+:PRIORITY: P1
+:END:
+
+** Description
+Current live run run-01M1W0MND22KVXPKAZVJR09RZ0 is ambiguous with RunMeta project does not match containing registered project, although recorded/containing IDs are orgasmic and its source worktree shares the ledger Git common directory. The code checkout has no .orgasmic/project.org after ledger migration. run_catalog::verify_worktree_authority and API recovery_origin_authority still require that old in-checkout file. Recorded terminal outcome is failed with finalized_by_worker=true; preserve that fact and do not relabel it as successful completion.
+
+** Acceptance
+Accept an existing code worktree belonging to the registered project through the same Git repository as its external ledger, without requiring a ledger copy in source. Share that authority check between catalog and recovery. Still reject a foreign repository, malformed/conflicting local project marker, or non-worktree path; preserve pruned-worktree tombstones and exact session-file authority. Invalidate stale derived catalog classifications when semantics change; never rewrite source session history or the durable tombstone ledger to clear this incident. Reproduce with a real linked-worktree fixture, prove negative controls, and inspect production-shaped run lookup against a disposable daemon/home.
+
+** Scope
+Bounded child of TASK-CQM2X: project/worktree identity only. No retention/GC/retro feature, provider call, live recovery, installation, or daemon restart. Prior P0 work is complete; this is the next user-authorized logical slice.

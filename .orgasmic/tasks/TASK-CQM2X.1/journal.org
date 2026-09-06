@@ -1,0 +1,48 @@
+#+title: orgasmic journal TASK-CQM2X.1
+#+orgasmic_version: 2
+
+* tx-20260906-orgasmic-67dc269d-c02f-4e54-9058-4252a917d5de task.created
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-67dc269d-c02f-4e54-9058-4252a917d5de
+:TIME:    [2026-09-06 Sun 20:59:46]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CQM2X.1
+:TARGET: .orgasmic/tasks/TASK-CQM2X.1/node.org
+:REASON: created task TASK-CQM2X.1
+:EVENT_ID: ab455e26-6369-4abf-bdad-e653d933ba9c
+:END:
+
+* tx-20260906-orgasmic-a3595972-8121-4a24-8de3-614fa0fb2f2a task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-a3595972-8121-4a24-8de3-614fa0fb2f2a
+:TIME:    [2026-09-06 Sun 20:59:46]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CQM2X.1
+:TARGET: .orgasmic/tasks/TASK-CQM2X.1/node.org
+:REASON: Next bounded slice selected under continuous work authorization
+:FROM_STATE: backlog
+:TO_STATE: todo
+:EVENT_ID: ad69f37d-ef9d-4ae0-9ef2-fa96fa8df427
+:END:
+
+* tx-20260906-orgasmic-80f40642-7833-43f8-9774-1c65ea99e404 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-80f40642-7833-43f8-9774-1c65ea99e404
+:TIME:    [2026-09-06 Sun 20:59:46]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CQM2X.1
+:TARGET: .orgasmic/tasks/TASK-CQM2X.1/node.org
+:REASON: Reproduced live lookup and traced missing in-checkout marker to catalog/recovery authority
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: 79cffab8-e158-49f6-8d8d-db680beaa4d5
+:END:
