@@ -1,0 +1,16 @@
+#+title: orgasmic journal dec_C60CM
+#+orgasmic_version: 2
+
+* tx-20260906-orgasmic-80f1e243-2b2d-4b20-8c1b-4a3da9f4dff0 graph.decision.created
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-80f1e243-2b2d-4b20-8c1b-4a3da9f4dff0
+:TIME:    [2026-09-06 Sun 20:42:09]
+:TYPE:    graph.decision.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/decisions/dec_C60CM/node.org
+:REASON: created graph node dec_C60CM
+:NODE_ID: dec_C60CM
+:EVENT_ID: 01d285cd-9732-4356-a84c-d57a666feeb1
+:END:

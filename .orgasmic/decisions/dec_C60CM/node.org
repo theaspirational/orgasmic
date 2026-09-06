@@ -1,0 +1,65 @@
+#+title: orgasmic decision dec_C60CM
+#+orgasmic_version: 2
+
+* dec_C60CM The stall clock measures work evidence; partially supersede arch_EAVPP
+:PROPERTIES:
+:DECIDED_AT: 2026-09-06
+:ID: dec_C60CM
+:RELATES_TO: dec_HBK6A
+:SOURCE: TASK-TJ9DG; TASK-JK66P report sections 4.3 and 6; e7f907e3; a0caf362
+:END:
+
+** Context
+arch_EAVPP (TASK-41B0T, accepted design at source 07a5b5a) assumed that stall_timeout remained a transport-liveness clock and proposed a separate opt-in semantic-progress deadline. TASK-JK66P and TASK-VZMZE measured opposite failures of that clock: heartbeats kept a wedged worker alive, while a healthy worker running a quiet build was released after ten minutes. Implementation e7f907e3, merged a0caf362, changed the existing stall clock to read evidence of work.
+
+** Decision
+Partially supersede arch_EAVPP sections 2.1–2.4, R2, and the blanket pane-exclusion rationale in R11/section 2.2 wherever they conflict with the existing evidence-of-work stall clock. This is a reconciliation of implemented behavior, not implementation of arch_EAVPP's semantic-progress proposal.
+
+last_driver_event_at records transport activity; last_progress_at records the latest qualifying event or positive work observation and drives stall_timeout. Heartbeat, Ready, DriverError and stderr do not reset the stall clock. PaneActivity remains a qualifying event, distinct from the early-exit predicate that asks whether the worker did any work. At an expired stall deadline, a bounded probe can credit positive work evidence; missing or unknown evidence does not grant credit. Absolute duration, idle-input semantics, terminal/finalize/cancel authority and revalidation after the probe remain separate constraints.
+
+Pane process-tree observability is established: the historical rmux probe resolved session identity to pane PID and traversed its children. Current source supports the corresponding tmux/tmux-tui path; this does not assert that a historical rmux adapter is still present. Process-tree observation is not a normalized mapping from a yielded tool token to its owned PID, nor proof of semantic advancement. Thus the stronger StaleYield, progress-key deduplication, bounded permission-wait and checkpoint claims of EAVPP are not satisfied by this implementation.
+
+Do not add a second clock or progress_stall_timeout_secs under this reconciliation. Those types and configuration remain unimplemented. If a measured need revives that proposal, rebase its design on the existing last_progress_at and single timeout-candidate/release path, explicitly resolving its stronger evidence predicate and compatibility before implementing it. Retain the current rule that a positive work probe rescues only a stall candidate, never an absolute ceiling.
+
+** Record authority and disposition
+The user delegated routine engineering choices and selected continued logical slices on 2026-09-06. This decision ratifies the previously provisional TASK-TJ9DG reconciliation.
+
+Per dec_HBK6A, the architecture layer was removed and history is not rewritten. arch_EAVPP is recoverable at git a0caf362:.orgasmic/architecture.org; its historical accepted status describes that historical design only. This decision is its current partial-supersession notice. TASK-TJ9DG's instruction to edit the retired architecture record is replaced by this decision and a task backlink; no architecture write API or hand edit is required.
+
+** Evidence and verification
+Read original TASK-JK66P report sections 4.3 and 6 at .orgasmic/tmp/dispatch/task-jk66p/report.md in the orgasmic ledger. Section 4.3 records the historical session lookup yielding PID 19312 and five subtree processes at 5.5 percent CPU; its limits and observer effects are retained in report section 7. Those are historical measurements, not newly replayed live-session observations.
+
+Verified current source main 62c0a5d7: supervisor.rs RunRecord clocks, apply_driver_event_to_record, driver_event_advances_stall_clock, timed_out_run, release_first_timed_out_run_after_candidate, work_probe_root_pid and ProcessSubtreeCpuProbe. Current pane observations also account for recognized open provider-turn statuslines after TASK-JQ8AV. Source search found no progress_stall_timeout_secs, ActivityClass enum or ProgressCheckpoint implementation.
+
+Five exact checks passed on the current daemon library binary: a_silent_pane_with_live_work_under_it_is_never_stalled; heartbeats_are_liveness_not_work_so_a_wedged_run_still_stalls; a_heartbeat_refreshes_liveness_but_not_the_work_clock; an_unobservable_run_still_stalls_on_the_bare_reason; the_stall_clock_advances_only_on_evidence_of_work. Each ran one test with zero ignored. These validate clock decisions, not live mux observation or full-suite health. Evidence copies and logs: /Users/aspirational/.codex/artifacts/orgasmic-tj9dg-20260906/.
+
+** Original JK66P report section 6
+The following is the original report's historical discussion, preserved verbatim; statements about HEAD/base and transports refer to that July report, not the current tree.
+
+`.orgasmic/architecture.org` contains **arch_EAVPP** ("Provider-agnostic progress
+detection contract", TASK-41B0T, status `accepted`, `REVIEW_VERDICT:
+SHIP_WITH_FIXES_CLOSED`). It is a **design record with no implementation** —
+`grep` for `progress_stall_timeout_secs`, `last_progress_at`, `ActivityClass`,
+`ProgressEvidenceKey` across `crates/` returns nothing at base.
+
+It occupies the same conceptual space and its §2 assumes something this change
+alters:
+
+- EAVPP keeps `stall_timeout` as a pure **transport-liveness** clock and adds a
+  **separate, opt-in** `progress_stall_timeout_secs` for structured transports
+  only. Its R2 says "same traffic, default config → today's behavior unchanged",
+  and its R11 explicitly **excludes** rmux/tmux from progress enforcement.
+- This change instead redefines the *existing* stall clock as an evidence clock
+  for every transport, and gives the pane transports the second channel EAVPP's
+  §2.2 says they cannot have ("cannot observe the yielded child PID"). The
+  measured 2026-07-29 incidents are the counter-evidence: the pane's child
+  process tree **is** observable from the daemon, via the mux, and separates the
+  two incidents cleanly.
+
+I did not implement EAVPP (cross-crate, four crates, checkpoint schema,
+`ActivityClass` envelope — far outside this task) and I did not edit the
+architecture record (not in scope, and the brief did not ask for one). **The
+manager should decide whether EAVPP is superseded in part, or revised to sit on
+top of what shipped.** Filed as a new-task candidate in §8.
+
+---
