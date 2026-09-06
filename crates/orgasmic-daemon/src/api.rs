@@ -1867,6 +1867,18 @@ fn content_error(error: ContentLoadError, artifact: &'static str) -> ApiError {
 }
 
 fn writer_transaction_error(error: anyhow::Error) -> ApiError {
+    if error
+        .downcast_ref::<CommittedSyncUncertainError>()
+        .is_some()
+    {
+        let message = error.to_string();
+        tracing::error!(error = %message, "transaction committed with uncertain durability");
+        return ApiError::service_unavailable(json!({
+            "error": message,
+            "committed": true,
+            "durability": "uncertain",
+        }));
+    }
     // orgasmic:TASK-BX5SR.2 — a request-id reused across the transaction and
     // mutation writer APIs is the caller's key collision, not a daemon fault:
     // 409 with the colliding id, and the next independent write is unaffected.
@@ -1880,22 +1892,6 @@ fn writer_transaction_error(error: anyhow::Error) -> ApiError {
     }
     tracing::error!(error = %error, "writer transaction failed");
     ApiError::internal("failed to apply changes")
-}
-
-fn dispatch_close_writer_error(error: anyhow::Error) -> ApiError {
-    if error
-        .downcast_ref::<CommittedSyncUncertainError>()
-        .is_some()
-    {
-        let message = error.to_string();
-        tracing::error!(error = %message, "dispatch close committed with uncertain durability");
-        return ApiError::service_unavailable(json!({
-            "error": message,
-            "committed": true,
-            "durability": "uncertain",
-        }));
-    }
-    writer_transaction_error(error)
 }
 
 // orgasmic:task_HQ970
@@ -19150,7 +19146,7 @@ async fn post_task_dispatch_close_commit(
         .writer
         .transaction_multi(rewrites, vec![close_tx])
         .await
-        .map_err(dispatch_close_writer_error)?;
+        .map_err(writer_transaction_error)?;
     let close_result = results.first().ok_or_else(|| {
         ApiError::internal("dispatch close writer returned no terminal transaction")
     })?;
@@ -23595,8 +23591,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn dispatch_close_uncertain_durability_uses_typed_writer_error() {
-        let error = dispatch_close_writer_error(anyhow::Error::new(
+    fn transaction_uncertain_durability_uses_typed_writer_error() {
+        let error = writer_transaction_error(anyhow::Error::new(
             CommittedSyncUncertainError::initial("injected sync failure"),
         ));
         assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
@@ -23604,7 +23600,7 @@ pub(crate) mod tests {
         assert_eq!(body["committed"], true);
         assert_eq!(body["durability"], "uncertain");
 
-        let impostor = dispatch_close_writer_error(anyhow::anyhow!(
+        let impostor = writer_transaction_error(anyhow::anyhow!(
             "multi transaction committed but durability is uncertain"
         ));
         assert_eq!(

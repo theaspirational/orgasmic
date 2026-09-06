@@ -52,7 +52,7 @@ impl CommentMutationActor {
     }
 }
 
-/// The multi-tx append reached the ledger, but the writer could not confirm
+/// The transaction append reached the ledger, but the writer could not confirm
 /// that the retained descriptor was synced. Callers must distinguish this
 /// committed outcome from an ordinary failed transaction without parsing its
 /// human-readable text.
@@ -83,14 +83,14 @@ impl std::fmt::Display for CommittedSyncUncertainError {
         if self.retry {
             write!(
                 f,
-                "multi transaction committed but durability remains uncertain; retained ledger \
+                "transaction committed but durability remains uncertain; retained ledger \
                  descriptor could not be synced: {}",
                 self.source
             )
         } else {
             write!(
                 f,
-                "multi transaction committed but durability is uncertain; retry the same \
+                "transaction committed but durability is uncertain; retry the same \
                  request_id to sync the retained ledger descriptor without appending again: {}",
                 self.source
             )
@@ -682,17 +682,19 @@ enum CachedResponse {
         result: TxAppendResult,
         mutation: Option<MutationIdentity>,
         mutation_id: Option<String>,
+        written_paths: Vec<PathBuf>,
+        durability: TransactionDurability,
     },
     Multi {
         results: Vec<TxAppendResult>,
         mutation: MutationIdentity,
-        durability: MultiDurability,
+        durability: TransactionDurability,
     },
     Rewrite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MultiDurability {
+enum TransactionDurability {
     Durable,
     SyncUncertain,
 }
@@ -736,6 +738,8 @@ fn cached_mutation_from_map(
         result,
         mutation,
         mutation_id,
+        durability,
+        ..
     } = cached
     else {
         return Err(RequestIdReuseConflict {
@@ -754,6 +758,9 @@ fn cached_mutation_from_map(
             request_id: request_id.to_string(),
         })
     })?;
+    if *durability == TransactionDurability::SyncUncertain {
+        return Ok(None);
+    }
     Ok(Some(CachedMutation {
         tx_id: result.tx_id.clone(),
         mutation_id,
@@ -839,7 +846,7 @@ fn cached_multi_from_map(
     cache_key: &str,
     request_id: &str,
     expected: &MutationIdentity,
-) -> Result<Option<(Vec<TxAppendResult>, MultiDurability)>> {
+) -> Result<Option<(Vec<TxAppendResult>, TransactionDurability)>> {
     let Some(cached) = cache.get(cache_key) else {
         return Ok(None);
     };
@@ -872,7 +879,10 @@ fn cached_transaction_from_map(
         return Ok(None);
     };
     let CachedResponse::Tx {
-        result, mutation, ..
+        result,
+        mutation,
+        durability,
+        ..
     } = cached
     else {
         return Err(RequestIdReuseConflict {
@@ -885,6 +895,9 @@ fn cached_transaction_from_map(
             request_id: request_id.to_string(),
         }
         .into());
+    }
+    if *durability == TransactionDurability::SyncUncertain {
+        return Ok(None);
     }
     Ok(Some(result.clone()))
 }
@@ -915,6 +928,17 @@ impl WriterHandle {
         result_rx
             .await
             .map_err(|_| anyhow!("writer barrier result dropped"))
+    }
+
+    async fn publish_transaction(&self, request_id: &str, tx_id: &str) -> Result<()> {
+        let paths = {
+            let cache = self.idempotency.lock().await;
+            match cache.get(request_id) {
+                Some(CachedResponse::Tx { written_paths, .. }) => written_paths.clone(),
+                _ => bail!("writer did not retain committed transaction paths"),
+            }
+        };
+        self.publish_paths(Some(tx_id), paths).await
     }
 
     /// Apply the paths this write just produced to the live projection.
@@ -1016,6 +1040,12 @@ impl WriterHandle {
         let cached = {
             let cache = self.idempotency.lock().await;
             match cache.get(&request_id) {
+                Some(CachedResponse::Tx {
+                    durability: TransactionDurability::SyncUncertain,
+                    ..
+                }) => {
+                    return Err(RequestIdReuseConflict { request_id }.into());
+                }
                 Some(CachedResponse::Tx { result, .. }) => Some(result.clone()),
                 _ => None,
             }
@@ -1037,6 +1067,8 @@ impl WriterHandle {
                 result: res.clone(),
                 mutation: None,
                 mutation_id: None,
+                written_paths: vec![written_path.clone()],
+                durability: TransactionDurability::Durable,
             },
         );
         self.publish_paths(Some(&res.tx_id), [written_path]).await?;
@@ -1049,7 +1081,11 @@ impl WriterHandle {
     pub async fn cached_tx_id(&self, request_id: &str) -> Option<String> {
         let cache = self.idempotency.lock().await;
         match cache.get(request_id) {
-            Some(CachedResponse::Tx { result, .. }) => Some(result.tx_id.clone()),
+            Some(CachedResponse::Tx {
+                result,
+                durability: TransactionDurability::Durable,
+                ..
+            }) => Some(result.tx_id.clone()),
             _ => None,
         }
     }
@@ -1073,11 +1109,6 @@ impl WriterHandle {
                 .map(|rewrite| rewrite.path.as_path())
                 .chain(std::iter::once(tx.tx_path.as_path())),
         )?;
-        let written_paths = rewrites
-            .iter()
-            .map(|rewrite| rewrite.path.clone())
-            .chain(std::iter::once(tx.tx_path.clone()))
-            .collect::<Vec<_>>();
         #[cfg(test)]
         if let Some(gate) = self.transaction_gate.lock().await.take() {
             gate.entered.notify_one();
@@ -1093,8 +1124,7 @@ impl WriterHandle {
             cached_transaction_from_map(&cache, &request_id, &mutation)?
         };
         if let Some(result) = cached {
-            self.publish_paths(Some(&result.tx_id), written_paths)
-                .await?;
+            self.publish_transaction(&request_id, &result.tx_id).await?;
             return Ok(result.tx_id);
         }
         let (reply, rx) = oneshot::channel();
@@ -1112,7 +1142,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(Some(&res.tx_id), written_paths).await?;
+        self.publish_transaction(&request_id, &res.tx_id).await?;
         Ok(res.tx_id)
     }
 
@@ -1149,7 +1179,7 @@ impl WriterHandle {
             let cache = self.idempotency.lock().await;
             cached_multi_from_map(&cache, &cache_key, &request_id, &mutation)?
         };
-        if let Some((results, MultiDurability::Durable)) = cached {
+        if let Some((results, TransactionDurability::Durable)) = cached {
             let owner = results
                 .first()
                 .ok_or_else(|| anyhow!("writer returned no transactions"))?;
@@ -1190,7 +1220,6 @@ impl WriterHandle {
         mutation: MutationIdentity,
     ) -> Result<String> {
         self.guard_node_paths([file.path.as_path(), tx.tx_path.as_path()])?;
-        let written_paths = [file.path.clone(), tx.tx_path.clone()];
         let request_id = tx
             .request_id
             .clone()
@@ -1200,8 +1229,7 @@ impl WriterHandle {
             cached_transaction_from_map(&cache, &request_id, &mutation)?
         };
         if let Some(result) = cached {
-            self.publish_paths(Some(&result.tx_id), written_paths)
-                .await?;
+            self.publish_transaction(&request_id, &result.tx_id).await?;
             return Ok(result.tx_id);
         }
         let (reply, rx) = oneshot::channel();
@@ -1210,7 +1238,7 @@ impl WriterHandle {
                 req: TransactionMutateRequest {
                     file,
                     tx,
-                    request_id,
+                    request_id: request_id.clone(),
                     mutation,
                     mutation_id: None,
                 },
@@ -1219,7 +1247,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(Some(&res.tx_id), written_paths).await?;
+        self.publish_transaction(&request_id, &res.tx_id).await?;
         Ok(res.tx_id)
     }
 
@@ -1234,14 +1262,12 @@ impl WriterHandle {
         mutation_id: String,
     ) -> Result<CachedMutation> {
         self.guard_node_paths([file.path.as_path(), tx.tx_path.as_path()])?;
-        let written_paths = [file.path.clone(), tx.tx_path.clone()];
         let request_id = tx
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
-            self.publish_paths(Some(&cached.tx_id), written_paths)
-                .await?;
+            self.publish_transaction(&request_id, &cached.tx_id).await?;
             return Ok(cached);
         }
         let (reply, rx) = oneshot::channel();
@@ -1259,8 +1285,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let result = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(Some(&result.tx_id), written_paths)
-            .await?;
+        self.publish_transaction(&request_id, &result.tx_id).await?;
         self.cached_mutation(&request_id, &mutation)
             .await?
             .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
@@ -1279,18 +1304,12 @@ impl WriterHandle {
                 .map(|rewrite| rewrite.path.as_path())
                 .chain(std::iter::once(tx.tx_path.as_path())),
         )?;
-        let written_paths = rewrites
-            .iter()
-            .map(|rewrite| rewrite.path.clone())
-            .chain(std::iter::once(tx.tx_path.clone()))
-            .collect::<Vec<_>>();
         let request_id = tx
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
-            self.publish_paths(Some(&cached.tx_id), written_paths)
-                .await?;
+            self.publish_transaction(&request_id, &cached.tx_id).await?;
             return Ok(cached);
         }
         let (reply, rx) = oneshot::channel();
@@ -1308,8 +1327,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let result = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        self.publish_paths(Some(&result.tx_id), written_paths)
-            .await?;
+        self.publish_transaction(&request_id, &result.tx_id).await?;
         self.cached_mutation(&request_id, &mutation)
             .await?
             .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
@@ -2198,30 +2216,16 @@ async fn writer_loop(
                     let _ = reply.send(result);
                 }
                 WriterCommand::Transaction { req, reply } => {
-                    let cached = {
-                        let cache = idempotency.lock().await;
-                        match (req.mutation.as_ref(), req.mutation_id.as_ref()) {
-                            // orgasmic:TASK-BX5SR.2 — a plain `transaction` never
-                            // records a mutation id, so its queued duplicate
-                            // (the 2026-08-02 shape: a retry enqueued before the
-                            // first attempt cached) replays on identity alone.
-                            (Some(mutation), None) => {
-                                cached_transaction_from_map(&cache, &req.request_id, mutation)
-                            }
-                            (Some(mutation), Some(_)) => {
-                                cached_mutation_from_map(&cache, &req.request_id, mutation).map(
-                                    |cached| {
-                                        cached.map(|cached| TxAppendResult {
-                                            tx_id: cached.tx_id,
-                                            tx_path: req.tx.tx_path.clone(),
-                                        })
-                                    },
-                                )
-                            }
-                            (None, _) => {
-                                Err(anyhow!("writer transaction lacks a mutation identity"))
-                            }
-                        }
+                    let cached = match req.mutation.as_ref() {
+                        Some(mutation) => retry_single_transaction(
+                            &mut *idempotency.lock().await,
+                            &tx_handles,
+                            &events,
+                            (&req.tx, &req.request_id),
+                            mutation,
+                            req.mutation_id.is_some(),
+                        ),
+                        None => Err(anyhow!("writer transaction lacks a mutation identity")),
                     };
                     let mut reply = Some(reply);
                     let execute = match cached {
@@ -2250,27 +2254,20 @@ async fn writer_loop(
                             &req.request_id,
                             || Ok(()),
                         );
+                        let result = finish_single_transaction(
+                            &mut *idempotency.lock().await,
+                            &events,
+                            (&req.tx, &req.request_id),
+                            req.mutation.clone(),
+                            req.mutation_id.clone(),
+                            req.rewrites
+                                .iter()
+                                .map(|r| r.path.clone())
+                                .chain(std::iter::once(req.tx.tx_path.clone()))
+                                .collect(),
+                            result,
+                        );
                         command_failed = result.is_err();
-                        if let Ok(ref ok) = result {
-                            let mut cache = idempotency.lock().await;
-                            cache.insert(
-                                req.request_id.clone(),
-                                CachedResponse::Tx {
-                                    result: ok.clone(),
-                                    mutation: req.mutation.clone(),
-                                    mutation_id: req.mutation_id.clone(),
-                                },
-                            );
-                            drop(cache);
-                            events.publish(
-                                Topic::Daemon,
-                                EventPayload::TxAppended {
-                                    project_id: req.tx.project_id.clone(),
-                                    tx_id: ok.tx_id.clone(),
-                                    ty: req.tx.entry.ty.clone(),
-                                },
-                            );
-                        }
                         let _ = reply.take().expect("writer reply available").send(result);
                     }
                 }
@@ -2302,14 +2299,14 @@ async fn writer_loop(
                         }
                     };
                     match cached {
-                        Ok(Some((results, MultiDurability::Durable))) => {
+                        Ok(Some((results, TransactionDurability::Durable))) => {
                             let _ = reply.send(Ok(results));
                         }
-                        Ok(Some((results, MultiDurability::SyncUncertain))) => {
+                        Ok(Some((results, TransactionDurability::SyncUncertain))) => {
                             let sync = results
                                 .first()
                                 .ok_or_else(|| anyhow!("cached multi transaction has no results"))
-                                .and_then(|result| sync_tx_writer(&tx_handles, &result.tx_path));
+                                .and_then(|result| sync_committed_tx(&tx_handles, result));
                             match sync {
                                 Ok(()) => {
                                     cache_durable_multi(&idempotency, &cache_key, &req, &results)
@@ -2335,7 +2332,6 @@ async fn writer_loop(
                                 &req.rewrites,
                                 &req.txs,
                                 &req.request_id,
-                                true,
                                 test_hooks::before_multi_commit,
                             );
                             match result {
@@ -2353,7 +2349,7 @@ async fn writer_loop(
                                         CachedResponse::Multi {
                                             results,
                                             mutation: req.mutation.clone(),
-                                            durability: MultiDurability::SyncUncertain,
+                                            durability: TransactionDurability::SyncUncertain,
                                         },
                                     );
                                     drop(cache);
@@ -2370,10 +2366,14 @@ async fn writer_loop(
                     }
                 }
                 WriterCommand::TransactionMutate { req, reply } => {
-                    let cached = {
-                        let cache = idempotency.lock().await;
-                        cached_transaction_from_map(&cache, &req.request_id, &req.mutation)
-                    };
+                    let cached = retry_single_transaction(
+                        &mut *idempotency.lock().await,
+                        &tx_handles,
+                        &events,
+                        (&req.tx, &req.request_id),
+                        &req.mutation,
+                        req.mutation_id.is_some(),
+                    );
                     let mut reply = Some(reply);
                     let execute = match cached {
                         Ok(Some(result)) => {
@@ -2394,33 +2394,23 @@ async fn writer_loop(
                         Ok(None) => true,
                     };
                     if execute {
+                        let written_paths = vec![req.file.path.clone(), req.tx.tx_path.clone()];
                         let result = transaction_mutate_file_inner(
                             &mut tx_handles,
                             req.file,
                             req.tx.clone(),
                             &req.request_id,
                         );
+                        let result = finish_single_transaction(
+                            &mut *idempotency.lock().await,
+                            &events,
+                            (&req.tx, &req.request_id),
+                            Some(req.mutation.clone()),
+                            req.mutation_id.clone(),
+                            written_paths,
+                            result,
+                        );
                         command_failed = result.is_err();
-                        if let Ok(ref ok) = result {
-                            let mut cache = idempotency.lock().await;
-                            cache.insert(
-                                req.request_id.clone(),
-                                CachedResponse::Tx {
-                                    result: ok.clone(),
-                                    mutation: Some(req.mutation.clone()),
-                                    mutation_id: req.mutation_id.clone(),
-                                },
-                            );
-                            drop(cache);
-                            events.publish(
-                                Topic::Daemon,
-                                EventPayload::TxAppended {
-                                    project_id: req.tx.project_id.clone(),
-                                    tx_id: ok.tx_id.clone(),
-                                    ty: req.tx.entry.ty.clone(),
-                                },
-                            );
-                        }
                         let _ = reply.take().expect("writer reply available").send(result);
                     }
                 }
@@ -2691,6 +2681,81 @@ struct PendingTxBatchItem {
     result: Result<TxAppendResult>,
 }
 
+// The API fast path deliberately misses uncertain entries. Only the writer
+// owns the retained descriptor and may turn a sync retry into an acknowledgement.
+fn retry_single_transaction(
+    cache: &mut HashMap<String, CachedResponse>,
+    handles: &HashMap<PathBuf, CachedTxWriter>,
+    events: &EventBus,
+    request: (&TxAppend, &str),
+    mutation: &MutationIdentity,
+    needs_mutation_id: bool,
+) -> Result<Option<TxAppendResult>> {
+    let (tx, request_id) = request;
+    if needs_mutation_id {
+        cached_mutation_from_map(cache, request_id, mutation)?;
+    } else {
+        cached_transaction_from_map(cache, request_id, mutation)?;
+    }
+    let Some(CachedResponse::Tx {
+        result, durability, ..
+    }) = cache.get_mut(request_id)
+    else {
+        return Ok(None);
+    };
+    if *durability == TransactionDurability::SyncUncertain {
+        sync_committed_tx(handles, result)
+            .map_err(|error| anyhow!(CommittedSyncUncertainError::retry(error)))?;
+        *durability = TransactionDurability::Durable;
+        publish_multi_events(
+            events,
+            std::slice::from_ref(tx),
+            std::slice::from_ref(result),
+        );
+    }
+    Ok(Some(result.clone()))
+}
+
+fn finish_single_transaction(
+    cache: &mut HashMap<String, CachedResponse>,
+    events: &EventBus,
+    request: (&TxAppend, &str),
+    mutation: Option<MutationIdentity>,
+    mutation_id: Option<String>,
+    written_paths: Vec<PathBuf>,
+    outcome: Result<MultiTransactionCommit>,
+) -> Result<TxAppendResult> {
+    let (tx, request_id) = request;
+    let (mut results, error) = match outcome? {
+        MultiTransactionCommit::Durable(results) => (results, None),
+        MultiTransactionCommit::SyncUncertain { results, error } => (results, Some(error)),
+    };
+    let result = results.remove(0);
+    cache.insert(
+        request_id.into(),
+        CachedResponse::Tx {
+            result: result.clone(),
+            mutation,
+            mutation_id,
+            written_paths,
+            durability: if error.is_some() {
+                TransactionDurability::SyncUncertain
+            } else {
+                TransactionDurability::Durable
+            },
+        },
+    );
+    if let Some(error) = error {
+        return Err(anyhow!(CommittedSyncUncertainError::initial(error)));
+    }
+    publish_multi_events(
+        events,
+        std::slice::from_ref(tx),
+        std::slice::from_ref(&result),
+    );
+    Ok(result)
+}
+
 async fn cache_durable_multi(
     idempotency: &Mutex<HashMap<String, CachedResponse>>,
     cache_key: &str,
@@ -2706,6 +2771,13 @@ async fn cache_durable_multi(
                     result: result.clone(),
                     mutation: Some(transaction_identity(tx, &req.rewrites)),
                     mutation_id: None,
+                    written_paths: req
+                        .rewrites
+                        .iter()
+                        .map(|r| r.path.clone())
+                        .chain(std::iter::once(tx.tx_path.clone()))
+                        .collect(),
+                    durability: TransactionDurability::Durable,
                 },
             );
         }
@@ -2715,7 +2787,7 @@ async fn cache_durable_multi(
         CachedResponse::Multi {
             results: results.to_vec(),
             mutation: req.mutation.clone(),
-            durability: MultiDurability::Durable,
+            durability: TransactionDurability::Durable,
         },
     );
 }
@@ -3066,6 +3138,24 @@ fn write_tx_append(
     })
 }
 
+fn sync_committed_tx(
+    handles: &HashMap<PathBuf, CachedTxWriter>,
+    result: &TxAppendResult,
+) -> Result<()> {
+    // A later append can reopen a replacement inode at the same pathname.
+    // Syncing that unrelated file cannot acknowledge the earlier transaction.
+    if !handles
+        .get(&result.tx_path)
+        .is_some_and(|writer| writer.event_ids.values().any(|id| id == &result.tx_id))
+    {
+        bail!(
+            "retained ledger descriptor no longer contains transaction {}",
+            result.tx_id
+        );
+    }
+    sync_tx_writer(handles, &result.tx_path)
+}
+
 fn sync_tx_writer(handles: &HashMap<PathBuf, CachedTxWriter>, path: &Path) -> Result<()> {
     test_hooks::before_sync(path)?;
     let writer = handles
@@ -3249,6 +3339,7 @@ struct StagedRewrite {
     backup: Option<PathBuf>,
 }
 
+#[derive(Debug)]
 enum MultiTransactionCommit {
     Durable(Vec<TxAppendResult>),
     SyncUncertain {
@@ -3263,24 +3354,17 @@ fn transaction_inner<F>(
     tx: TxAppend,
     request_id: &str,
     verify_before_commit: F,
-) -> Result<TxAppendResult>
+) -> Result<MultiTransactionCommit>
 where
     F: FnOnce() -> Result<()>,
 {
-    let mut results = transaction_multi_inner(
+    transaction_multi_inner(
         handles,
         rewrites,
         std::slice::from_ref(&tx),
         request_id,
-        false,
         verify_before_commit,
-    )?;
-    match &mut results {
-        MultiTransactionCommit::Durable(results) => Ok(results.remove(0)),
-        MultiTransactionCommit::SyncUncertain { .. } => Err(anyhow!(
-            "single transaction unexpectedly retained after sync failure"
-        )),
-    }
+    )
 }
 
 fn transaction_multi_inner<F>(
@@ -3288,7 +3372,6 @@ fn transaction_multi_inner<F>(
     rewrites: &[FileRewrite],
     txs: &[TxAppend],
     request_id: &str,
-    retain_rewrites_after_append: bool,
     verify_before_commit: F,
 ) -> Result<MultiTransactionCommit>
 where
@@ -3329,14 +3412,7 @@ where
         Ok(())
     })();
     let result = locked.and_then(|()| {
-        transaction_multi_locked_inner(
-            handles,
-            rewrites,
-            txs,
-            request_id,
-            retain_rewrites_after_append,
-            verify_before_commit,
-        )
+        transaction_multi_locked_inner(handles, rewrites, txs, request_id, verify_before_commit)
     });
     for (path, file) in locks {
         if let Err(error) = FileExt::unlock(&file) {
@@ -3351,7 +3427,7 @@ fn transaction_mutate_file_inner(
     req: FileMutate,
     tx: TxAppend,
     request_id: &str,
-) -> Result<TxAppendResult> {
+) -> Result<MultiTransactionCommit> {
     validate_rewrite_path(&req.path)?;
     if let Some(parent) = req.path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -3365,7 +3441,7 @@ fn transaction_mutate_file_inner(
         .with_context(|| format!("open {}", req.path.display()))?;
     FileExt::try_lock_exclusive(&file)
         .with_context(|| format!("flock contention on {}", req.path.display()))?;
-    let result = (|| -> Result<TxAppendResult> {
+    let result = (|| -> Result<MultiTransactionCommit> {
         let source = std::fs::read_to_string(&req.path)
             .with_context(|| format!("read {}", req.path.display()))?;
         let rewrite = FileRewrite {
@@ -3392,24 +3468,17 @@ fn transaction_locked_inner<F>(
     tx: TxAppend,
     request_id: &str,
     verify_before_commit: F,
-) -> Result<TxAppendResult>
+) -> Result<MultiTransactionCommit>
 where
     F: FnOnce() -> Result<()>,
 {
-    let mut results = transaction_multi_locked_inner(
+    transaction_multi_locked_inner(
         handles,
         rewrites,
         std::slice::from_ref(&tx),
         request_id,
-        false,
         verify_before_commit,
-    )?;
-    match &mut results {
-        MultiTransactionCommit::Durable(results) => Ok(results.remove(0)),
-        MultiTransactionCommit::SyncUncertain { .. } => Err(anyhow!(
-            "single transaction unexpectedly retained after sync failure"
-        )),
-    }
+    )
 }
 
 fn transaction_multi_locked_inner<F>(
@@ -3417,7 +3486,6 @@ fn transaction_multi_locked_inner<F>(
     rewrites: &[FileRewrite],
     txs: &[TxAppend],
     request_id: &str,
-    retain_rewrites_after_append: bool,
     verify_before_commit: F,
 ) -> Result<MultiTransactionCommit>
 where
@@ -3490,14 +3558,12 @@ where
             }
         };
         if let Err(error) = sync_tx_writer(handles, &appended[0].tx_path) {
-            if retain_rewrites_after_append {
-                return Ok(MultiTransactionCommit::SyncUncertain {
-                    results: appended,
-                    error,
-                });
-            }
-            rollback_renamed_rewrites(&staged, &renamed);
-            return Err(error);
+            // The append may already be durable. Rolling nodes back here would
+            // leave a journal event claiming a mutation that no longer exists.
+            return Ok(MultiTransactionCommit::SyncUncertain {
+                results: appended,
+                error,
+            });
         }
         Ok(MultiTransactionCommit::Durable(appended))
     })();

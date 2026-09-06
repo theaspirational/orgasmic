@@ -14,7 +14,8 @@ fn hook_test_lock() -> std::sync::MutexGuard<'static, ()> {
 use orgasmic_core::tx::{parse_tx_file, TxEntry};
 use orgasmic_daemon::events::EventBus;
 use orgasmic_daemon::writer::{
-    spawn as spawn_writer, test_hooks, FileRewrite, TxAppend, TxIdPolicy,
+    spawn as spawn_writer, test_hooks, CommittedSyncUncertainError, FileMutate, FileRewrite,
+    MutationIdentity, RequestIdReuseConflict, TxAppend, TxIdPolicy,
 };
 use tokio::task::JoinSet;
 
@@ -103,37 +104,110 @@ async fn tx_append_acks_only_after_fsync() {
 
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
-async fn rewrite_transaction_rolls_back_when_tx_sync_fails() {
+async fn single_transaction_sync_retry_preserves_committed_bytes_and_identity() {
     let _guard = hook_test_lock();
-    test_hooks::reset();
-    let tmp = tempfile::tempdir().unwrap();
-    let target = tmp.path().join("tasks.org");
-    let tx_path = tmp.path().join("tx").join("2026-08.org");
-    std::fs::write(&target, "before\n").unwrap();
-    let handle = spawn_writer(EventBus::new());
+    for mode in 0..4 {
+        test_hooks::reset();
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("node.org");
+        let tx_path = tmp.path().join("tx/2026-08.org");
+        let retained_path = tmp.path().join("retained.org");
+        std::fs::write(&target, "before\n").unwrap();
+        let handle = spawn_writer(EventBus::new());
+        let transforms = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let call = |payload: &'static str| {
+            let handle = handle.clone();
+            let target = target.clone();
+            let tx = minted_tx_append(tx_path.clone(), "placeholder", "req-single-sync");
+            let transforms = transforms.clone();
+            async move {
+                let mutation = MutationIdentity::new("task.created", "orgasmic", payload);
+                let rewrites = vec![FileRewrite {
+                    path: target.clone(),
+                    new_contents: payload.as_bytes().to_vec(),
+                }];
+                let file = FileMutate {
+                    path: target,
+                    transform: Box::new(move |_| {
+                        transforms.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(payload.as_bytes().to_vec())
+                    }),
+                };
+                match mode {
+                    0 => handle.transaction(rewrites, tx).await,
+                    1 => handle
+                        .transaction_mutation(rewrites, tx, mutation, "TASK-SYNC".into())
+                        .await
+                        .map(|r| r.tx_id),
+                    2 => handle.transaction_mutate_file(file, tx, mutation).await,
+                    _ => handle
+                        .transaction_mutate_file_mutation(file, tx, mutation, "TASK-SYNC".into())
+                        .await
+                        .map(|r| {
+                            assert_eq!(r.mutation_id, "TASK-SYNC");
+                            r.tx_id
+                        }),
+                }
+            }
+        };
+        test_hooks::fail_next_sync(1);
+        let error = call("after\n").await.unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<CommittedSyncUncertainError>()
+                .is_some(),
+            "mode {mode}: {error}"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "after\n");
+        assert_eq!(test_hooks::sync_count(), 0);
+        assert!(handle.cached_tx_id("req-single-sync").await.is_none());
+        let wrong_api = handle
+            .append_tx(
+                minted_tx_append(tx_path.clone(), "placeholder", "req-single-sync"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(wrong_api.downcast_ref::<RequestIdReuseConflict>().is_some());
+        let bytes = std::fs::read(&tx_path).unwrap();
+        let entries = parse_tx_file(std::str::from_utf8(&bytes).unwrap(), "tx").unwrap();
+        assert_eq!(entries.len(), 1);
+        let id = entries[0].tx_id.clone();
+        let collision = call("different\n").await.unwrap_err();
+        assert!(
+            collision.downcast_ref::<RequestIdReuseConflict>().is_some(),
+            "{collision}"
+        );
+        assert_eq!(
+            test_hooks::sync_attempt_count(),
+            1,
+            "collision must not sync"
+        );
 
-    test_hooks::fail_next_sync(1);
-    let err = handle
-        .transaction(
-            vec![FileRewrite {
-                path: target.clone(),
-                new_contents: b"after\n".to_vec(),
-            }],
-            TxAppend {
-                tx_path,
-                entry: sample_entry("tx-rewrite-sync-fail"),
-                project_id: Some("orgasmic".into()),
-                tx_id_policy: TxIdPolicy::Preserve,
-                request_id: Some("req-rewrite-sync-fail".into()),
-            },
-        )
-        .await
-        .expect_err("injected tx sync failure must reject the transaction");
-
-    assert!(err.to_string().contains("fsync"), "unexpected error: {err}");
-    assert_eq!(std::fs::read_to_string(target).unwrap(), "before\n");
-    assert_eq!(test_hooks::sync_attempt_count(), 1);
-    assert_eq!(test_hooks::sync_count(), 0);
+        // A pathname replacement must not redirect the retained-descriptor retry.
+        std::fs::rename(&tx_path, &retained_path).unwrap();
+        std::fs::write(&tx_path, "foreign replacement\n").unwrap();
+        test_hooks::fail_next_sync(1);
+        let error = call("after\n").await.unwrap_err();
+        assert!(
+            error.to_string().contains("durability remains uncertain"),
+            "{error}"
+        );
+        assert_eq!(call("after\n").await.unwrap(), id);
+        assert_eq!(call("after\n").await.unwrap(), id);
+        assert_eq!(test_hooks::sync_attempt_count(), 3);
+        assert_eq!(test_hooks::sync_count(), 1);
+        assert_eq!(std::fs::read(&retained_path).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read_to_string(&tx_path).unwrap(),
+            "foreign replacement\n"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "after\n");
+        assert_eq!(
+            transforms.load(std::sync::atomic::Ordering::SeqCst),
+            usize::from(mode >= 2)
+        );
+    }
 }
 
 #[tokio::test]
@@ -366,14 +440,14 @@ async fn multi_transaction_request_id_collisions_fail_closed_on_semantic_changes
         .await
         .expect_err("rewrite collision must fail closed");
     assert!(rewrite_error
-        .to_string()
-        .contains("different multi-transaction"));
+        .downcast_ref::<RequestIdReuseConflict>()
+        .is_some());
 
     let tx_error = handle
         .transaction_multi(original_rewrite, make_txs("different"))
         .await
         .expect_err("tx semantic collision must fail closed");
-    assert!(tx_error.to_string().contains("different multi-transaction"));
+    assert!(tx_error.downcast_ref::<RequestIdReuseConflict>().is_some());
     let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
     assert_eq!(entries.len(), 2, "collisions must not append anything");
 }
@@ -518,4 +592,146 @@ async fn tx_append_reopens_after_path_inode_swap() {
         !source.contains(&format!(":TX_ID:        {}", first.tx_id)),
         "post-swap append must land in the replacement file at the path, not the orphaned inode"
     );
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn task_create_sync_retry_projects_the_original_node() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = orgasmic_core::Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project = tmp.path().join("project");
+    std::fs::create_dir_all(project.join(".orgasmic")).unwrap();
+    std::fs::write(
+        project.join(".orgasmic/project.org"),
+        "#+orgasmic_version: 1\n* PROJECT orgasmic\n:PROPERTIES:\n:ID: orgasmic\n:END:\n",
+    )
+    .unwrap();
+    orgasmic_core::projects::register_project(&home, &project, "orgasmic", "main").unwrap();
+    let running = orgasmic_daemon::Daemon::run(
+        home.clone(),
+        orgasmic_daemon::DaemonOptions {
+            bind_override: Some("127.0.0.1".parse().unwrap()),
+            port_override: Some(0),
+            fs_watcher_enabled: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let token = std::fs::read_to_string(home.auth_token()).unwrap();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let url = format!("http://{}/api/projects/orgasmic/tasks", running.addr);
+    let request = serde_json::json!({"title": "Sync recovery", "request_id": "create-sync-retry"});
+    test_hooks::fail_next_sync(1);
+    let first = client
+        .post(&url)
+        .bearer_auth(token.trim())
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    let first: serde_json::Value = first.json().await.unwrap();
+    assert_eq!(first["committed"], true);
+    assert_eq!(first["durability"], "uncertain");
+    let nodes: Vec<_> = std::fs::read_dir(project.join(".orgasmic/tasks"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(nodes.len(), 1);
+    let id = nodes[0].file_name().unwrap().to_str().unwrap();
+    let journal = nodes[0].join("journal.org");
+    let bytes = std::fs::read(&journal).unwrap();
+    let entries = orgasmic_core::node_kernel::parse_journal(
+        std::str::from_utf8(&bytes).unwrap(),
+        "journal.org",
+    )
+    .unwrap();
+    assert_eq!(entries.len(), 1);
+    let retry = client
+        .post(&url)
+        .bearer_auth(token.trim())
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    let status = retry.status();
+    let retry: serde_json::Value = retry.json().await.unwrap();
+    assert!(status.is_success(), "{status}: {retry}");
+    assert_eq!(retry["id"], id);
+    assert_eq!(retry["tx_id"], entries[0].entry_id);
+    let visible = client
+        .get(format!("{url}/{id}"))
+        .bearer_auth(token.trim())
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        visible.status().is_success(),
+        "retry must project the original generated node"
+    );
+    assert_eq!(
+        std::fs::read_dir(project.join(".orgasmic/tasks"))
+            .unwrap()
+            .count(),
+        1
+    );
+    assert_eq!(std::fs::read(journal).unwrap(), bytes);
+    running.shutdown.send(()).unwrap();
+    running.join.await.unwrap();
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn sync_retry_refuses_a_reopened_unrelated_ledger() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("node.org");
+    let tx_path = tmp.path().join("2026-08.org");
+    let retained = tmp.path().join("retained.org");
+    let handle = spawn_writer(EventBus::new());
+    let rewrites = vec![FileRewrite {
+        path: target.clone(),
+        new_contents: b"committed\n".to_vec(),
+    }];
+    let tx = minted_tx_append(tx_path.clone(), "original", "original-request");
+    test_hooks::fail_next_sync(1);
+    assert!(handle
+        .transaction(rewrites.clone(), tx.clone())
+        .await
+        .is_err());
+    let original = std::fs::read(&tx_path).unwrap();
+    std::fs::rename(&tx_path, &retained).unwrap();
+    handle
+        .append_tx(
+            minted_tx_append(tx_path.clone(), "foreign", "foreign-request"),
+            None,
+        )
+        .await
+        .unwrap();
+    let replacement = std::fs::read(&tx_path).unwrap();
+    let syncs = test_hooks::sync_count();
+    let error = handle.transaction(rewrites, tx).await.unwrap_err();
+    assert!(error
+        .downcast_ref::<CommittedSyncUncertainError>()
+        .is_some());
+    assert!(
+        error.to_string().contains("no longer contains transaction"),
+        "{error}"
+    );
+    assert_eq!(
+        test_hooks::sync_count(),
+        syncs,
+        "must not sync an unrelated ledger as proof"
+    );
+    assert_eq!(std::fs::read(&retained).unwrap(), original);
+    assert_eq!(std::fs::read(&tx_path).unwrap(), replacement);
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "committed\n");
 }
