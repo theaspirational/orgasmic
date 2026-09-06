@@ -1,0 +1,25 @@
+{
+  "event_count": 214,
+  "tool_call_count": 83,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-48SFW-implementer-20260906T190942.jsonl",
+    "size_bytes": 361899
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/06/rollout-2026-09-06T22-09-44-01a07820-648a-7e50-835e-7596f1634a95.jsonl",
+    "session_id": "01a07820-648a-7e50-835e-7596f1634a95",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "Using memory quick-pass + Ponytail because this is an Orgasmic repo code task with active minimal-change mode.Using the Orgasmic skill for the dispatch/finalize lifecycle; code change stays in the narrow file scope.Correcting to the bin target; the earlier `--lib` probe was invalid for this test location."
+    }
+  ],
+  "narrative_truncated": false
+}
