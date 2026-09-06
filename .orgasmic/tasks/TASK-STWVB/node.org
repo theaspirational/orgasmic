@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-STWVB
 #+orgasmic_version: 2
 
-* TODO TASK-STWVB The daemon suite has no trustworthy full-run signal on this host, so its gate cannot return a verdict :testing:daemon:flake:
+* IN_PROGRESS TASK-STWVB The daemon suite has no trustworthy full-run signal on this host, so its gate cannot return a verdict :testing:daemon:flake:
 :PROPERTIES:
 :ID: TASK-STWVB
 :PRIORITY: P2
@@ -876,4 +876,6 @@ suite — further evidence the red is environmental rather than a property of th
 tree.
 ** Status 2026-09-06
 Source/ledger triage at main 0bf80eb0. Correction to the 2026-09-03 note: current scripts/run-tests.sh:496-514 locates syspolicyd with pgrep -x and reads ps -o time=; it does NOT use the obsolete truncated comm matcher. The rate-based host stamp and watchdog already exist. Remaining ownership is the poll_direct_child_pid_prefers_worker_server_over_generic_sibling registry entry transferred by 0bf80eb0; classification of measured process-spawn stalls still needs evidence. Do not implement the already-fixed comm sampler again.
+** Current slice 2026-09-06
+User selected this next. Measure the remaining poll_direct_child_pid_prefers_worker_server_over_generic_sibling flake with bounded exact-test runs and contemporaneous host evidence; inspect the existing runner classifier. Fix only a demonstrated gap. Retire the registry exception only with evidence; preserve real-failure classification. Existing rate sampler/watchdog are already implemented. No full workspace test or live daemon lifecycle action.
 

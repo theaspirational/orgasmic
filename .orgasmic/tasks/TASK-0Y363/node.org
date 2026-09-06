@@ -24,4 +24,6 @@ Source/ledger triage at main 0bf80eb0. P0 retained for the remaining health-star
 Diagnostic commit e464ff13 is independently accepted and now merged to source main14561065. Two child-only EMFILE/release cycles showed warm health/status exchanges succeeding, fresh requests timing out, and the PID plus daemon lock remaining live. Fresh requests recovered after descriptor release. Actual EMFILE was observed on child filler opens; accept-loop starvation is an inference, not a measured accept() event.
 
 The production recovery criterion remains unmet, so this P0 task stays IN_PROGRESS. No production FD reserve, lock takeover, automatic restart or recovery policy was added. A failed fresh health probe cannot prove a held lock owner is dead. Optional recovery-policy question remains unanswered; no automatic recovery authorization is inferred. Diagnostic report and observations are under ~/.codex/artifacts/orgasmic-recovery-20260906/. No open dispatch remains for this task.
+** Recovery policy confirmed 2026-09-06
+User explicitly selected: preserve active runs and require an explicit restart. Implement recovery guidance within that policy; do not automatically drain/restart or infer lock takeover authority from failed health probes. TASK-STWVB is the next selected work slice; production P0 implementation remains open.
 
