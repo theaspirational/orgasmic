@@ -15,4 +15,6 @@ Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches
 - `/status` carries `open_fds`/`fd_limit`; `orgasmic daemon status` prints `fds: N/limit (writer session handles: H)`.
 ** Leftover (d)
 The exhausted daemon could not accept the health probe socket, so the supervisor logged `incumbent is not healthy … Refusing to start a competing daemon` and the sick daemon stayed up. Either answer health before the spawn path can starve it, or treat a held lock whose owner cannot answer health as dead.
+** Status 2026-09-06
+Source/ledger triage at main 0bf80eb0. P0 retained for the remaining health-starvation recovery question. The original session-handle leak is already fixed. Current crates/orgasmic-daemon/src/lib.rs:120-175 distinguishes NotDeparting and StuckPredecessor and still refuses to replace a holder that cannot answer health. A missed health response alone is not proof the process is dead; preserve single-daemon exclusion. No FD-exhaustion/live-daemon reproduction was run. Next: isolated exhaustion/health proof before choosing a recovery change.
 

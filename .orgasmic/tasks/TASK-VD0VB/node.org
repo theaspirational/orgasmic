@@ -176,4 +176,6 @@ demonstrated failure. Record it as such; do not repeat the hypothesis as fact.
 WORKAROUND AVAILABLE MEANWHILE: =harness_args= rides along for any real harness
 CLI, not only =custom= (=tmux.rs:969=), so
 =manager dispatch --harness-arg -a --harness-arg never= reaches codex today.
+** Status 2026-09-06
+Source/ledger triage at main 0bf80eb0. Partially implemented, P1 retained for command allowlist/unattended proof. Current tmux.rs:300-328 invokes startup-only accept_cursor_workspace_trust; bounded path-matching/frame tests exist around 4518-4926. The harness argv still starts cursor-agent with no default trust/allowlist flags (1963). The old claim that no trust handler exists is false; focus remaining work on the second command-approval prompt and fresh-worktree end-to-end evidence. No live Cursor turn was run.
 

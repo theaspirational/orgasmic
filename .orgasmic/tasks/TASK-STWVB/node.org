@@ -874,4 +874,6 @@ part of why its red gets waved through rather than read.
 appear in run 3's failures, so a genuinely new test lands green inside a red
 suite — further evidence the red is environmental rather than a property of the
 tree.
+** Status 2026-09-06
+Source/ledger triage at main 0bf80eb0. Correction to the 2026-09-03 note: current scripts/run-tests.sh:496-514 locates syspolicyd with pgrep -x and reads ps -o time=; it does NOT use the obsolete truncated comm matcher. The rate-based host stamp and watchdog already exist. Remaining ownership is the poll_direct_child_pid_prefers_worker_server_over_generic_sibling registry entry transferred by 0bf80eb0; classification of measured process-spawn stalls still needs evidence. Do not implement the already-fixed comm sampler again.
 

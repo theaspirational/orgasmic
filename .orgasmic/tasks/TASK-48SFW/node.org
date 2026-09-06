@@ -299,4 +299,6 @@ lost the next two workers the same way.
   find it.
 - A regression proves the refusal fires when the dispatch environment is present
   and does not fire for an ordinary operator invocation.
+** Status 2026-09-06
+Source/ledger triage at main 0bf80eb0. P1 retained; source still supports the foreign-home/per-user-service hazard. daemon_lifecycle.rs:176-240 routes Down to start_via_selected_adapter; daemon_service.rs:389-410 rewrites the one macOS plist then bootout/bootstrap without checking the home already served. Explicit ORGASMIC_DAEMON_URL returns before that path; daemon-free verbs are not affected, so the old ANY verb title was too broad. No live service mutation or hazardous reproduction was performed. First implementation candidate: guard the shared service-start boundary and test with a temporary service adapter.
 

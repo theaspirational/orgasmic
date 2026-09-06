@@ -44,4 +44,6 @@ write loss at the daemon's structured state authority boundary.
 The manager observed the three successful CLI responses directly, then verified
 the raw task files with =rg=. Sequential restore txs are
 =tx-20260729-orgasmic-3950= and =tx-20260729-orgasmic-3952=.
+** Status 2026-09-06
+Source/ledger triage at main 0bf80eb0. Original sibling-heading loss targets aggregate backlog.org, which is retired. Current tasks have separate node directories, writer FileMutate supports central read/transform/write, and api.rs has concurrent_task_creates_preserve_every_heading (16 creates, durable journals, idempotent replay) plus concurrent_task_property_updates_preserve_every_write (16 updates/replay). The named mechanism and regressions already exist; do not reimplement them. Leave open pending a focused acceptance audit of create/update interleavings and restart durability; these Rust tests were inspected, not executed in this status pass.
 

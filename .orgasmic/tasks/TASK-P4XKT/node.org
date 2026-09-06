@@ -65,4 +65,6 @@ Start narrow and measured, not with a workspace-wide repeat policy:
   ownership of KNOWN flakes; this is DISCOVERY.
 - TASK-4BBA6 moves the syspolicyd watchdog inside =run-tests.sh=, which this
   task's repetition makes more urgent rather than less.
+** Status 2026-09-06
+Source/ledger triage at main 0bf80eb0. P1 retained. scripts/run-tests.sh still reruns failing cases for classification; no initially-green repeated canary/pass-rate verdict found. .github/workflows/nightly-soak.yml is manual workflow_dispatch and holds a daemon under traffic; it does not satisfy repeated crash-recovery test/pass-rate acceptance. The old ci.yml path no longer exists. Keep the first slice narrow and measured; no suite repetition was run.
 

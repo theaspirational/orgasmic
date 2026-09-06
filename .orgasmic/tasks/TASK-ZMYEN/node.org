@@ -18,4 +18,6 @@ Code: crates/orgasmic-daemon/src/drivers/hermes.rs — `hermes event missing typ
 - Fixture: hermes stream with an unknown event mid-run still yields the report; fixture: stream cut before finalize yields a PARTIAL -last.txt; env var visible in a dispatched worker.
 ** Progress
 (a) shipped in 5033cce: HermesAdapter::parse_event warns and skips unknown/untyped events (test hermes_unknown_and_untyped_events_are_skipped_not_fatal). Open: (b) partial -last.txt reassembly on protocol_end_without_finalize, (c) ORGASMIC_REPORT_PATH.
+** Status 2026-09-06
+Source/ledger triage at main 0bf80eb0. Part (a) is implemented: adapters/hermes.rs:272-290 warns/skips unrecognized events and its regression remains. ORGASMIC_REPORT_PATH is absent from current crates; protocol_end_without_finalize still fails in supervisor. Partial-report reassembly and report-file precedence remain open. Keep P1 on preserving completed work, and do not rebuild event skipping.
 

@@ -33,4 +33,6 @@ Orphan `orgasmic` ledger branch in the same repo (not a sibling dir, not a separ
 - Watch-outs: exclude the `orgasmic` branch from CI triggers; periodic checkpoint/squash so tiny commits don't bloat the repo.
 ** Implementation chain (filed 2026-08-26)
 Extends the AP971 chain as items 12-15: TASK-LBRX7 (branch extraction ← SRBGS) → TASK-MSYN4 (machine identity + sync ← LBRX7, EPG6H) → TASK-CLM6W (claims + multi-machine fold ← MSYN4, 8AV8B) → TASK-D2DM3 (daemon-to-daemon live messaging ← CLM6W, P2/deferred).
+** Status 2026-09-06
+Source/ledger triage at main 0bf80eb0. Decision and primary ledger-placement delivery are complete. Owner FINAL decision is already in Description; main contains chain merge 543782d7. Live orgasmic entry resolves ~/.orgasmic/ledgers/orgasmic, git ls-files .orgasmic is empty, and main and orgasmic have no merge-base (orphan ledger branch). MSYN4/CLM6W/LBRX7 implementation evidence records whole-chain review. D2DM3 messaging is explicitly deferred in the original decision and remains its own backlog item. Closing this decision/placement task does not close that deferred feature or unrelated chain follow-ups.
 
