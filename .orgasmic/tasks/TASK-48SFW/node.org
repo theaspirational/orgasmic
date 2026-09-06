@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-48SFW
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-48SFW Refuse foreign-home daemon auto-start that rewrites the per-user service :dispatch:daemon:runtime:
+* IN_REVIEW TASK-48SFW Refuse foreign-home daemon auto-start that rewrites the per-user service :dispatch:daemon:runtime:
 :PROPERTIES:
 :ID: TASK-48SFW
 :PRIORITY: P1
