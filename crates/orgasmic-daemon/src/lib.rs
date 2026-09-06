@@ -1662,6 +1662,401 @@ mod tests {
         );
     }
 
+    /// TASK-0Y363 baseline discriminator: a live daemon whose descriptor table
+    /// is filled to EMFILE can keep serving already-accepted warm connections,
+    /// while fresh health/status probes cannot complete until descriptors are
+    /// released. The held instance lock and child PID stay live throughout, so
+    /// this is transport starvation, not proof that the lock owner is dead.
+    #[cfg(unix)]
+    #[test]
+    fn fd_exhaustion_starves_fresh_health_but_not_warm_connections_until_release() {
+        use fs2::FileExt as _;
+        use std::io::{Read, Write};
+        use std::process::{Command, Stdio};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct ChildGuard(Option<std::process::Child>);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                if let Some(child) = &mut self.0 {
+                    if child.try_wait().ok().flatten().is_none() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
+            }
+        }
+
+        fn read_protocol_line(
+            rx: &mpsc::Receiver<String>,
+            timeout: Duration,
+            prefix: &str,
+        ) -> String {
+            let deadline = std::time::Instant::now() + timeout;
+            while std::time::Instant::now() < deadline {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                let line = rx
+                    .recv_timeout(left)
+                    .unwrap_or_else(|_| panic!("timed out waiting for child {prefix}"));
+                if let Some(at) = line.find(prefix) {
+                    return line[at..].to_string();
+                }
+            }
+            panic!("timed out waiting for child {prefix}");
+        }
+
+        fn write_child(child: &mut std::process::Child, line: &str) {
+            let stdin = child.stdin.as_mut().expect("child stdin");
+            stdin.write_all(line.as_bytes()).unwrap();
+            stdin.write_all(b"\n").unwrap();
+            stdin.flush().unwrap();
+        }
+
+        fn http_exchange(stream: &mut std::net::TcpStream, request: &str) -> String {
+            stream.write_all(request.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut buf).unwrap();
+                if n == 0 {
+                    return String::from_utf8_lossy(&raw).into_owned();
+                }
+                raw.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&raw);
+                let Some(headers_end) = text.find("\r\n\r\n") else {
+                    continue;
+                };
+                let len = text[..headers_end]
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':').and_then(|(name, value)| {
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                    })
+                    .unwrap_or(0);
+                if raw.len() >= headers_end + 4 + len {
+                    return text.into_owned();
+                }
+            }
+        }
+
+        fn fresh_get(addr: &str, path: &str, token: Option<&str>) -> std::io::Result<String> {
+            let addr: std::net::SocketAddr = addr.parse().unwrap();
+            let mut stream =
+                std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(250))?;
+            stream.set_read_timeout(Some(Duration::from_millis(500)))?;
+            let auth = token
+                .map(|token| format!("Authorization: Bearer {token}\r\n"))
+                .unwrap_or_default();
+            stream.write_all(
+                format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\n{auth}Connection: close\r\n\r\n")
+                    .as_bytes(),
+            )?;
+            let mut raw = String::new();
+            stream.read_to_string(&mut raw)?;
+            Ok(raw)
+        }
+
+        fn eventually_fresh_ok(addr: &str, path: &str, token: Option<&str>) -> String {
+            let deadline = std::time::Instant::now() + Duration::from_secs(6);
+            let mut last = String::new();
+            while std::time::Instant::now() < deadline {
+                match fresh_get(addr, path, token) {
+                    Ok(raw) if raw.starts_with("HTTP/1.1 200") => return raw,
+                    Ok(raw) => last = raw.lines().next().unwrap_or("").to_string(),
+                    Err(error) => last = error.to_string(),
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            panic!("fresh {path} did not recover under fd exhaustion; last: {last}");
+        }
+
+        fn fresh_cannot_exchange_while_exhausted(
+            addr: &str,
+            path: &str,
+            token: Option<&str>,
+        ) -> String {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let mut last = String::new();
+            while std::time::Instant::now() < deadline {
+                match fresh_get(addr, path, token) {
+                    Ok(raw) if raw.starts_with("HTTP/1.1 ") => {
+                        panic!(
+                            "fresh {path} unexpectedly got an HTTP response during EMFILE: {raw}"
+                        )
+                    }
+                    Ok(raw) => last = raw.lines().next().unwrap_or("").to_string(),
+                    Err(error) => last = error.to_string(),
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            last
+        }
+
+        fn assert_alive_and_locked(child: &mut std::process::Child, home: &Home) {
+            let lock = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(daemon_lock_path(home))
+                .unwrap();
+            assert!(
+                lock.try_lock_exclusive().is_err(),
+                "child daemon lock was not held"
+            );
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "child daemon exited during fd exhaustion"
+            );
+        }
+
+        fn note(report: &Option<PathBuf>, line: impl AsRef<str>) {
+            if let Some(path) = report {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap();
+                writeln!(file, "{}", line.as_ref()).unwrap();
+            }
+        }
+
+        let report = std::env::var_os("ORGASMIC_FD_EXHAUSTION_OBSERVATIONS").map(PathBuf::from);
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("tests::fd_exhaustion_child_daemon")
+            .arg("--nocapture")
+            .env("ORGASMIC_FD_EXHAUSTION_CHILD", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (line_tx, line_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::BufRead as _;
+            for line in std::io::BufReader::new(stdout)
+                .lines()
+                .map_while(|line| line.ok())
+            {
+                let _ = line_tx.send(line);
+            }
+        });
+        let mut child = ChildGuard(Some(child));
+        let ready = read_protocol_line(&line_rx, Duration::from_secs(20), "READY");
+        let fields: Vec<_> = ready.split_whitespace().collect();
+        assert_eq!(fields.first(), Some(&"READY"), "{ready}");
+        let addr = fields[1].to_string();
+        let home = Home::at(fields[2]);
+        let token = std::fs::read_to_string(home.auth_token()).unwrap();
+        let token = token.trim().to_string();
+        note(
+            &report,
+            format!("ready addr={addr} home={}", home.root.display()),
+        );
+
+        let mut warm_health = std::net::TcpStream::connect(&addr).unwrap();
+        let mut warm_status = std::net::TcpStream::connect(&addr).unwrap();
+        let warm = http_exchange(
+            &mut warm_health,
+            "GET /api/healthz HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n",
+        );
+        assert!(warm.starts_with("HTTP/1.1 200"), "{warm}");
+        let warm = http_exchange(
+            &mut warm_status,
+            &format!(
+                "GET /api/daemon/status HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: keep-alive\r\n\r\n"
+            ),
+        );
+        assert!(warm.starts_with("HTTP/1.1 200"), "{warm}");
+        note(&report, "baseline warm health/status ok");
+        eventually_fresh_ok(&addr, "/api/healthz", None);
+        eventually_fresh_ok(&addr, "/api/daemon/status", Some(&token));
+        note(&report, "baseline fresh health/status ok");
+
+        for cycle in 1..=2 {
+            write_child(child.0.as_mut().unwrap(), "EXHAUST");
+            let exhausted = read_protocol_line(&line_rx, Duration::from_secs(10), "EXHAUSTED");
+            assert!(exhausted.starts_with("EXHAUSTED "), "{exhausted}");
+            note(&report, format!("cycle {cycle}: {exhausted}"));
+            assert_alive_and_locked(child.0.as_mut().unwrap(), &home);
+            note(
+                &report,
+                format!("cycle {cycle}: child alive and daemon lock held"),
+            );
+
+            let warm = http_exchange(
+                &mut warm_health,
+                "GET /api/healthz HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n",
+            );
+            assert!(warm.starts_with("HTTP/1.1 200"), "cycle {cycle}: {warm}");
+            let warm = http_exchange(
+                &mut warm_status,
+                &format!(
+                    "GET /api/daemon/status HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: keep-alive\r\n\r\n"
+                ),
+            );
+            assert!(warm.starts_with("HTTP/1.1 200"), "cycle {cycle}: {warm}");
+            note(
+                &report,
+                format!("cycle {cycle}: warm health/status ok under EMFILE"),
+            );
+
+            let fresh_health = fresh_cannot_exchange_while_exhausted(&addr, "/api/healthz", None);
+            let fresh_status =
+                fresh_cannot_exchange_while_exhausted(&addr, "/api/daemon/status", Some(&token));
+            assert!(
+                !fresh_health.is_empty() && !fresh_status.is_empty(),
+                "cycle {cycle}: fresh failures were not observed"
+            );
+            note(
+                &report,
+                format!(
+                    "cycle {cycle}: fresh health/status failed under EMFILE: health={fresh_health:?} status={fresh_status:?}"
+                ),
+            );
+
+            write_child(child.0.as_mut().unwrap(), "RELEASE");
+            let released = read_protocol_line(&line_rx, Duration::from_secs(10), "RELEASED");
+            assert!(released.starts_with("RELEASED "), "{released}");
+            note(&report, format!("cycle {cycle}: {released}"));
+            eventually_fresh_ok(&addr, "/api/healthz", None);
+            eventually_fresh_ok(&addr, "/api/daemon/status", Some(&token));
+            note(
+                &report,
+                format!("cycle {cycle}: fresh health/status recovered after release"),
+            );
+        }
+
+        write_child(child.0.as_mut().unwrap(), "STOP");
+        let mut done = child.0.take().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = done.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = done.kill();
+                let _ = done.wait();
+                panic!("child did not exit after STOP");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(status.success(), "child exited {status}");
+        note(&report, format!("child stopped status={status}"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fd_exhaustion_child_daemon() {
+        if std::env::var_os("ORGASMIC_FD_EXHAUSTION_CHILD").is_none() {
+            return;
+        }
+
+        fn get_limit() -> libc::rlimit {
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+                0
+            );
+            limit
+        }
+
+        fn set_limit(limit: libc::rlimit) {
+            assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+        }
+
+        fn open_count() -> usize {
+            std::fs::read_dir("/dev/fd").unwrap().count()
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async move {
+            let running = Daemon::run(
+                home.clone(),
+                DaemonOptions {
+                    bind_override: Some("127.0.0.1".parse().unwrap()),
+                    port_override: Some(0),
+                    fs_watcher_enabled: false,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            println!("READY {} {}", running.addr, home.root.display());
+            std::io::stdout().flush().unwrap();
+
+            let shutdown = running.shutdown;
+            let commands = std::thread::spawn(move || {
+                use std::io::BufRead as _;
+                let original = get_limit();
+                let mut fillers = Vec::<File>::new();
+                let mut shutdown = Some(shutdown);
+                for line in std::io::stdin().lock().lines().map_while(|line| line.ok()) {
+                    match line.as_str() {
+                        "EXHAUST" => {
+                            let before = open_count() as u64;
+                            let target = (before + 32).min(original.rlim_max);
+                            assert!(target > before, "not enough rlimit room: {before}/{target}");
+                            let mut low = original;
+                            low.rlim_cur = target;
+                            set_limit(low);
+                            loop {
+                                match File::open("/dev/null") {
+                                    Ok(file) => fillers.push(file),
+                                    Err(error) if error.raw_os_error() == Some(libc::EMFILE) => {
+                                        println!("EXHAUSTED {} {}", fillers.len(), target);
+                                        std::io::stdout().flush().unwrap();
+                                        break;
+                                    }
+                                    Err(error) => panic!("unexpected filler open error: {error}"),
+                                }
+                            }
+                        }
+                        "RELEASE" => {
+                            let released = fillers.len();
+                            fillers.clear();
+                            set_limit(original);
+                            println!("RELEASED {released}");
+                            std::io::stdout().flush().unwrap();
+                        }
+                        "STOP" => {
+                            if let Some(shutdown) = shutdown.take() {
+                                let _ = shutdown.send(());
+                            }
+                            break;
+                        }
+                        other => panic!("unknown child command {other:?}"),
+                    }
+                }
+                if let Some(shutdown) = shutdown.take() {
+                    let _ = shutdown.send(());
+                }
+            });
+            running.join.await.unwrap();
+            commands.join().unwrap();
+        });
+    }
+
     /// orgasmic:TASK-R74E8 — the other side of the same coin: moving the budget
     /// off the server future must not have made the drain unbounded again.
     ///
