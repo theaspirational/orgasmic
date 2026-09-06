@@ -8104,3 +8104,102 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     37c22adb-50ec-49c2-86dd-47fc9be1b3eb
 :END:
+
+* TX 2026-09-06 Sun 15:42:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-17211d9e-9e11-4c44-920b-c1eead5290ba
+:TIME:         [2026-09-06 Sun 15:42:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     4aa29c26-1f88-481a-958c-dd9978ca2c64
+:END:
+
+* TX 2026-09-06 Sun 15:42:43 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-90113ae8-ae76-46cb-946c-e128bf0c9251
+:TIME:         [2026-09-06 Sun 15:42:43]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     93d7b3bb-1e94-459b-ac7e-c83c6ea3f378
+:END:
+
+* TX 2026-09-06 Sun 15:42:43 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-3996e161-725b-4b85-bbe1-da96e5c289b4
+:TIME:         [2026-09-06 Sun 15:42:43]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     5c7e0c00-5c3c-4911-bd4b-84d6a00b9373
+:END:
+
+* TX 2026-09-06 Sun 15:42:44 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-bfe7adcd-6b20-4882-ae49-35a62a8ccd93
+:TIME:         [2026-09-06 Sun 15:42:44]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     74dfad2d-6104-440d-a6d8-59fe86acdc0d
+:END:
+
+* TX 2026-09-06 Sun 15:42:44 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-eae131c0-5d35-4182-8d86-09b047d762bc
+:TIME:         [2026-09-06 Sun 15:42:44]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     b7eff237-e889-433f-a1ad-c50bf14090b1
+:END:
+
+* TX 2026-09-06 Sun 15:42:45 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-cfe401c9-d887-4a64-a5b7-8ca9b529c40d
+:TIME:         [2026-09-06 Sun 15:42:45]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     0538139e-9464-4c82-aa04-9690e072145c
+:END:
+
+
+* TX 2026-09-06 Sun 15:42:46 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-80a5f092-6d9f-4500-b2a3-0273f99a0617
+:TIME:         [2026-09-06 Sun 15:42:46]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:EVENT_ID:     1d6f8611-6337-4fbf-988d-4c86e570a524
+:END:

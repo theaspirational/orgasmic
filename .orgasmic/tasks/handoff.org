@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         0bf80eb0
+:LIVENESS:         18d170d2
 :LIVENESS_AT:      [2026-09-06 Sun]
 :UPDATED_AT:       [2026-09-06 Sun]
 :GOAL_ID:          goal-20260826-finalise-the-e01mc-twcp9
@@ -14,29 +14,29 @@
 Reconciled 2026-09-06 from live CLI state and local main 18d170d2. The requested reconciliation, malformed-ID repair, and P0/P1 triage are complete. This is the current digest; older handoff instructions are superseded. Original handoff backup and triage artifacts: /Users/aspirational/.codex/artifacts/orgasmic-status-20260906/. Repair evidence: /Users/aspirational/.codex/artifacts/orgasmic-id-repair-20260906/.
 
 ** Done so far
-- TASK-D6N77.1 closed DONE: merge 0423ae5 is in main; independent Sol/high PASS already recorded. Current UI typecheck and runDockLabels tests (24/24) close the previous UI execution gap. Existing backend gates remain historical merge-time evidence.
-- TASK-TWCP9 closed DONE: owner FINAL decision and chain 543782d7 delivered the orphan ledger branch. Live entry resolves the separate ledger worktree; main tracks no .orgasmic files. D2DM3 messaging remains separately deferred.
-- TASK-X0PV1 was already DONE: merge 0bf80eb0 transferred its last flake entry to TASK-STWVB.
-- Triage recorded as Status 2026-09-06 on all P0/P1/high backlog items, plus STWVB and ZZ2S4. Seven titles now name remaining work. 099T6 moved P1 to P2 because default billing protection already shipped; QSX56 high normalized to P1.
-- Corrected STWVB's stale sampler diagnosis: current run-tests.sh uses pgrep -x plus ps time and rate-based classification; do not rebuild the old comm-truncation fix.
-- Source checkout clean at 0bf80eb0. Cached origin/main matches; remote and release channel were not refreshed.
+- TASK-D6N77.1 closed DONE: merge 0423ae5 is in main and independent Sol/high PASS already recorded; current UI typecheck and 24 runDockLabels tests passed.
+- TASK-TWCP9 closed DONE based on owner FINAL decision and delivered orphan-ledger chain. TASK-D2DM3 messaging remains deferred.
+- TASK-ZZ2S4 closed DONE after reviewed source 7f6deeaf + 18d170d2, CLI 4/4, daemon-fence 1/1, production UI/release builds, and actual live apply. Local main is 18d170d2, clean; source not pushed or publicly released.
+- Repair a26c2070 maps CLM6W->3HHN0, IXPD4->0T7WE, LBRX7->1QE9T (TASK- prefix). Current references remapped; all 2702 original tracked files independently verified and 1010 journals unchanged. Durable mapping/checkpoint: .orgasmic/repairs/task-ids-8300120c-d7e3-40ea-bc42-767f2a36c267.json.
+- All P0/P1/high backlog entries triaged against current source; seven titles and two priorities corrected. STWVB sampler diagnosis corrected: pgrep/ps rate classification already exists; remaining transferred flake stays open.
 
 ** Next likely actions
-1. TASK-ZZ2S4 is the unresolved requested repair. Existing CLI cannot safely rename malformed task identities. Implement and independently review a daemon-owned migration before applying it: inventory current references, preserve journals and historical event references, record old/new identity mapping, and prove interruption/retry safety in an isolated ledger. Do not create duplicate replacement tasks or use doctor collision repair as a substitute.
-2. P0 TASK-0Y363: isolate the remaining health-starvation recovery case; original FD leak is fixed. A failed health probe is not authority to kill or replace a live lock owner. Define the safe response from isolated evidence.
-3. P1 TASK-48SFW: highest-priority concrete implementation candidate after P0/ID repair. Foreign-home auto-start still rewrites the per-user service. Guard the shared service-start boundary and verify with a temporary adapter.
-4. TASK-ADHWZ: audit remaining mixed create/update and restart acceptance; node directories, serialized mutation, and concurrent-create/update regressions already exist.
-5. P1 residuals: VD0VB command allowlist/fresh-worktree proof; ZMYEN partial report and report-file support; QSX56 independent review/live workflow proof; P4XKT measured repeated canary; VBSG2 materialization/manual retro.
-6. Existing TODO: STWVB must prove classification of the remaining process-spawn flake; TJ9DG needs a superseding decision for retired architecture assumptions. No release or push is scheduled by this handoff.
+1. P0 TASK-0Y363: run the recorded isolated child-daemon FD-exhaustion discriminator. Original handle leak is fixed; compare warm versus fresh health/status connections, then release held FDs and verify recovery. Never infer that a live lock owner is dead from a missed probe. This is planned, not reproduced or fixed yet.
+2. P1 TASK-48SFW: guard foreign-home/per-user-service auto-start at the shared boundary with isolated adapter evidence. Remains unimplemented.
+3. TASK-ADHWZ: verify residual mixed-write/restart acceptance against delivered node-directory/writer mechanisms before closing.
+4. Other P1 gaps remain recorded on QSX56, VD0VB, ZMYEN, P4XKT and VBSG2. Todo remains STWVB and TJ9DG.
+No additional dispatch, source push, public release, or pruning is scheduled by this handoff.
 
 ** In flight
-TASK-ZZ2S4 is in_progress in native subagent id_repair_impl, branch codex/zz2s4-id-repair at /Users/aspirational/.orgasmic/worktrees/orgasmic/codex-zz2s4-id-repair. Candidate 7f6deeaf passed 3 CLI fixtures, daemon-fence test, live dry-run (exactly 3 IDs), and release/UI build. Independent native high-effort review found one blocker: orphan temporary files before atomic persist prevent resume. Narrow fix underway; then re-review, rebuild, managed runtime staging, offline CLI apply and post-restart verification. No live ledger repair or daemon restart yet. No orgasmic worker generation exists; do not prune this active native worktree. P0/48SFW remain triaged backlog, with isolated P0 discriminator plan recorded.
+- No live native implementation or review work remains; no orgasmic dispatch generation was opened for ZZ2S4. All native subagents finished.
+- Live board after closure: 701 done, 31 cancelled, 2 todo, 91 backlog; no in_progress/in_review. Task-list total 825 did not increase during identity repair: the earlier count-exclusion claim was inaccurate.
+- All three renamed tasks are DONE/readable, and global parse_errors=0 after restart.
+- Source worktree retained at /Users/aspirational/.orgasmic/worktrees/orgasmic/codex-zz2s4-id-repair, branch codex/zz2s4-id-repair, exact 18d170d2. It provides provenance for the managed local-source daemon override. Do not mistake retained worktrees or ambiguous historical runs for live execution.
 
 ** Divergence / Risks
-- ID repair remains unfulfilled, with precise blocker and scope on TASK-ZZ2S4. The three nodes contain journals; references also exist in TASK-8DWJP, dec_EWY0K, claims and historical transactions. A text-only rename would strand history.
-- Current daemon boot c301d40a-7b8b-43dd-9994-12e3327d9a6c (pid 64646, status version 0.0.24) remains running; ledger sync succeeded and writer queue is empty. Build/deployment parity with main was not re-certified. Prior handoff reported runtime b1c6ca5f behind main; treat that SHA as historical until verified.
-- Never hand-edit .orgasmic state. Use CLI/daemon writes; no forced identity property changes or duplicate reconstruction.
-- Test/provider calls were limited to UI typecheck and 24 unit tests. No Rust suite, billed harness invocation, live dispatch, service restart, push or release occurred.
-- For subsequent Rust tests use scripts/run-tests.sh and its syspolicyd watchdog; never run cargo test --workspace on this host. Default-safe billing guards already exist; never enable ORGASMIC_ALLOW_BILLED_TESTS for this reconciliation.
-- The foreign-home/per-user-service startup hazard remains in source. Do not stage ORGASMIC_HOME for daemon-dependent probes; an explicit child ORGASMIC_DAEMON_URL routes to an isolated daemon.
-- P0/P1 triage is source inspection, not fresh runtime reproduction. Implemented-looking mechanisms with incomplete acceptance remain open; verify their recorded scope before closing.
+- Managed local-source runtime at /Users/aspirational/.orgasmic/bin/orgasmic-daemon-source was staged with identity enforcement from reviewed 18d170d2. Current boot 019f72b5-9e79-4536-905c-a95dff391ac7, pid 39114; all three projects ready, healthz OK, parse_errors=0, writer queue=0. Orgasmic ledger repair synced.
+- Installed public CLI/release channel remains unchanged. The repair was invoked with the managed source binary above; local main has two unpublished commits. No source push or public release performed.
+- Crash recovery handles recorded intermediate renames, content writes, partial staging, staged index and committed-but-fenced resume. Orphan Git locks deliberately fail closed and require process-exit verification and specific lock recovery. Physical power-loss testing not performed.
+- Historical journals/claims/transactions retain original IDs, explained by the tracked repair mapping; no general alias resolver was added. Never hand-edit ledger state.
+- Rust checks used scripts/run-tests.sh with syspolicyd watchdog and default billing skip. Never cargo test --workspace on this host or enable billed tests for these checks.
+- P0 and remaining P1 notes are source triage and a test plan, not proof those runtime gaps are fixed. Preserve the foreign-home warning until 48SFW lands.
