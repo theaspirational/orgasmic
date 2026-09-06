@@ -77,3 +77,19 @@
 :TO_STATE: in_review
 :EVENT_ID: 533fb255-e3c9-45ea-b6c8-8d8331272e91
 :END:
+
+* tx-20260906-orgasmic-f6eb565d-c990-4455-ae96-2fe92b441ca6 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-f6eb565d-c990-4455-ae96-2fe92b441ca6
+:TIME:    [2026-09-06 Sun 21:09:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CQM2X.1
+:TARGET: .orgasmic/tasks/TASK-CQM2X.1/node.org
+:REASON: Reviewed focused diff and verified catalog, exact HTTP lookup, inert explicit recovery, and authority rejection checks; source complete at 44009d56, runtime rollout separate.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: d94ede28-b90b-4425-820d-dae78081bc9c
+:END:

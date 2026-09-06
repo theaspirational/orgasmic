@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-CQM2X.1
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-CQM2X.1 Resolve external-ledger worktree identity in run catalog and recovery
+* DONE TASK-CQM2X.1 Resolve external-ledger worktree identity in run catalog and recovery
 :PROPERTIES:
 :ID: TASK-CQM2X.1
 :PRIORITY: P1
