@@ -3392,3 +3392,16 @@
 :WRITE_SCOPE:  crates/orgasmic-cli/**, crates/orgasmic-daemon/**
 :EVENT_ID:     9baa0bbf-f4e3-4498-bd5d-53906dde79d9
 :END:
+
+* TX 2026-09-06 Sun 19:02:20.313703 task.claim_released TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260906190220-db79b90f
+:TIME:         [2026-09-06 Sun 19:02:20.313703]
+:TYPE:         task.claim_released
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       .orgasmic/tasks/TASK-48SFW
+:EVENT_ID:     6be19bad-aaa3-4270-bde9-65d68c2ed03b
+:END:
