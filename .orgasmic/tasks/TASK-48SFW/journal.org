@@ -46,3 +46,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 8a871b78-0714-4e18-b710-05d8830ad751
 :END:
+
+* tx-20260906-orgasmic-0375ea88-d9cc-4e84-a867-92de2302cc38 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-0375ea88-d9cc-4e84-a867-92de2302cc38
+:TIME:    [2026-09-06 Sun 18:44:55]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-48SFW
+:TARGET: .orgasmic/tasks/TASK-48SFW/node.org
+:REASON: Requeue for bounded follow-up round addressing independent review F1-F3 and matching-owner regression evidence.
+:FROM_STATE: in_progress
+:TO_STATE: todo
+:EVENT_ID: 12ba7674-a22c-49b5-bc15-a621c24b49ee
+:END:
