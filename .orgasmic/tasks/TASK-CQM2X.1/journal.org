@@ -46,3 +46,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: 79cffab8-e158-49f6-8d8d-db680beaa4d5
 :END:
+
+* tx-20260906-orgasmic-50d8a37a-40c7-4d86-962e-090df4f42224 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-50d8a37a-40c7-4d86-962e-090df4f42224
+:TIME:    [2026-09-06 Sun 21:09:23]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CQM2X.1
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-CQM2X.1/node.org
+:REASON: edited task node TASK-CQM2X.1
+:NODE_ID: TASK-CQM2X.1
+:EVENT_ID: b0fe100b-56be-4e26-8485-e4e388619580
+:END:
+
+* tx-20260906-orgasmic-eda4240f-a2b5-4f09-b88d-53ae9fcc275d task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-eda4240f-a2b5-4f09-b88d-53ae9fcc275d
+:TIME:    [2026-09-06 Sun 21:09:23]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-CQM2X.1
+:TARGET: .orgasmic/tasks/TASK-CQM2X.1/node.org
+:REASON: Shared authority fix committed; red-green reproduction, 36 focused checks, and disposable HTTP recovery verified.
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 533fb255-e3c9-45ea-b6c8-8d8331272e91
+:END:

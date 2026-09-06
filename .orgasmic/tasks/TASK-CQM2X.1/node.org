@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-CQM2X.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-CQM2X.1 Resolve external-ledger worktree identity in run catalog and recovery
+* IN_REVIEW TASK-CQM2X.1 Resolve external-ledger worktree identity in run catalog and recovery
 :PROPERTIES:
 :ID: TASK-CQM2X.1
 :PRIORITY: P1
@@ -15,3 +15,15 @@ Accept an existing code worktree belonging to the registered project through the
 
 ** Scope
 Bounded child of TASK-CQM2X: project/worktree identity only. No retention/GC/retro feature, provider call, live recovery, installation, or daemon restart. Prior P0 work is complete; this is the next user-authorized logical slice.
+** Evidence
+Source complete at 44009d5637f6e1530e4bcd6302bf842c8ee6a418 (local main; not pushed or installed).
+
+Root cause: migrated source worktrees no longer carry .orgasmic/project.org. Catalog classification and explicit recovery now share worktree_belongs_to_project: preserve existing local-marker authority; only when that marker is absent, accept an actual Git checkout root sharing the identified external ledger's canonical Git common directory. Foreign repositories, nested directories, wrong ledger IDs, malformed markers and conflicting markers remain rejected. Catalog version 3 rejects version 2 derived snapshots so old false mismatches rebuild. Durable tombstone precedence and session-file authority are unchanged.
+
+Red/green: external_ledger_worktree_keeps_recorded_terminal_authority failed against the old implementation with Mismatched, then passed with the shared identity check. It preserves the recorded Failed outcome. Catalog suite: 32 passed, including deletion/recreation tombstones, durable tombstones across catalog loss, unreadable tombstone ledger, and previous/next snapshot-version rejection.
+
+Production-shaped HTTP checks on disposable daemon/home and real linked Git worktrees: legacy and external-ledger exact GET /api/runs/run-failed-recover both report failed_recoverable with verified worktree authority; inventory agrees; GET creates no live recovery run. Explicit force_inert POST recovery succeeds, creates a distinct session pinned to the code worktree, and leaves original session bytes unchanged. Two HTTP tests passed. Exact session symlink/rename-swap rejection passed; request-id/durable-claim recovery test passed. Total focused final gates: 36 passed, zero failures/ignored; cargo fmt --check and git diff --check passed.
+
+Artifacts: /Users/aspirational/.codex/artifacts/orgasmic-cqm2x1-20260906 (red.log, green.log, external-ledger.log, catalog-suite.log, http-recovery.log, session-authority.log, recovery-claim.log, fmt.log).
+
+Operator daemon remains PID 39114, boot 019f72b5-9e79-4536-905c-a95dff391ac7. No operator restart, install, live recovery, provider calls, source-history rewrite, or durable-tombstone rewrite. The installed daemon still has the old classification behavior; deployment verification is deferred to an explicit runtime rollout. The recorded live example release remains failed with finalized_by_worker=true; this task does not reinterpret it as success.
