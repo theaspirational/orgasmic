@@ -8704,3 +8704,59 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-48SFW/dispatches/tx-20260906-orgasmic-7789579d-171f-47a8-ba51-a54fa9248c79/report.md
 :EVENT_ID:     71c60a4e-0435-49fc-8664-f35df3528005
 :END:
+
+* TX 2026-09-06 Sun 19:02:41 manager.dispatch_started TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-c6432ffc-ed61-4465-b254-811895d95594
+:TIME:         [2026-09-06 Sun 19:02:41]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/p1-owner-fix-review-20260906
+:BRANCH:       review-p1-owner-fixes-20260906
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/p1-fix-review/p1-fix-review-brief.md
+:STARTED_AT:   [2026-09-06 Sun 19:02:41]
+:LIVENESS:     e15370f746acd1d510d895a715409f13a208e536
+:NEXT:         reviewer-watch-then-fix-or-close
+:PREFLIGHT:    unchecked:inconclusive
+:RUNTIME:      canonical_chat
+:MODEL:        opus
+:EFFORT:       high
+:REASON_INITIAL: Focused independent review of F1-F3 ownership-reader fixes and Unicode/single-decoding corrections against exact committed delta
+:EVENT_ID:     60f4a86f-2fb9-4639-b0d6-41a3b77f65b7
+:END:
+
+* TX 2026-09-06 Sun 19:02:41 run.created TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-a3188b9a-9abd-4258-a073-2feefdaac66d
+:TIME:         [2026-09-06 Sun 19:02:41]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-48SFW-reviewer-20260906T190241.jsonl
+:REASON:       Focused independent review of F1-F3 ownership-reader fixes and Unicode/single-decoding corrections against exact committed delta
+:RUN_ID:       run-01M1W1KWR3ANX8JW6NJNPNH84T
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/p1-owner-fix-review-20260906
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/p1-fix-review/p1-fix-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/p1-fix-review/p1-fix-review-2eae4c56013445ab83b1563fd64b04f0-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/p1-fix-review/p1-fix-review-2eae4c56013445ab83b1563fd64b04f0-stdout.log
+:DISPATCH_ATTEMPT: 2eae4c56013445ab83b1563fd64b04f0
+:PID:          87909
+:DISPATCH_TX:  tx-20260906-orgasmic-c6432ffc-ed61-4465-b254-811895d95594
+:MODEL_OVERRIDE: opus
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     a3d4e2c4-0119-4953-bfc2-1cee504101e2
+:END:
