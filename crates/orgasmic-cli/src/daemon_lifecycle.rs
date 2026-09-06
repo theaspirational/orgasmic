@@ -115,6 +115,10 @@ pub struct WriterFdStatus {
     pub open_session_handles: usize,
 }
 
+// TASK-0Y363: a failed probe plus a local instance does not establish that
+// boot is in progress. Ordinary readiness checks preserve that instance.
+pub(crate) const UNRESPONSIVE_DAEMON_HINT: &str = "A local instance is present, but boot progress is unavailable. Inspect $ORGASMIC_HOME/logs; if recovery is needed, explicitly run `orgasmic daemon restart` from the same home.";
+
 #[derive(Debug, Clone)]
 pub struct DaemonStarting {
     pub pid: Option<u32>,
@@ -845,6 +849,15 @@ fn bail_stale_boot<T>(starting: &DaemonStarting) -> Result<T> {
 }
 
 fn bail_boot_stalled<T>(starting: &DaemonStarting, budget: Duration) -> Result<T> {
+    if starting.phase.is_none() {
+        bail!(
+            "daemon is not responding (pid {}); {UNRESPONSIVE_DAEMON_HINT}",
+            starting
+                .pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "unknown".into())
+        );
+    }
     let phase = starting.phase.as_deref().unwrap_or("unknown");
     let since = starting
         .started_at
@@ -1550,6 +1563,16 @@ mod tests {
                  the lock is the fact, the HTTP status is an observation"
             ),
         }
+
+        // TASK-0Y363: a held lock and failed HTTP request are not evidence of
+        // boot activity. The readiness path must preserve the instance and
+        // explain the explicit recovery route when no boot record exists.
+        let error = wait_until_ready_after_start(&home, None, Duration::ZERO)
+            .expect_err("unresponsive owner cannot satisfy readiness")
+            .to_string();
+        assert!(error.contains("daemon is not responding"), "{error}");
+        assert!(error.contains("orgasmic daemon restart"), "{error}");
+        assert!(!error.contains("boot stalled"), "{error}");
 
         // And the probe left the lock exactly as it found it.
         assert_eq!(

@@ -72,6 +72,58 @@ fn daemon_status_reports_adapter_and_persistence_for_external_target() {
     assert!(stdout.contains("local daemon lifecycle is externally owned"));
 }
 
+/// TASK-0Y363: status and start must not invent boot progress or replace an
+/// instance whose held lock survives a failed health probe.
+#[test]
+fn unresponsive_instance_without_boot_state_has_explicit_recovery_guidance() {
+    use std::io::Write;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let lock_path = home.root.join("daemon.lock");
+    let mut lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&lock).unwrap();
+    writeln!(lock, "{}", std::process::id()).unwrap();
+    let before = std::fs::read(&lock_path).unwrap();
+
+    for verb in ["status", "start"] {
+        let output = orgasmic_command()
+            .args(["daemon", verb])
+            .env("ORGASMIC_HOME", &home.root)
+            .env_remove("ORGASMIC_DAEMON_URL")
+            .env("ORGASMIC_TEST_SERVICE_ADAPTER", "detached")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{verb}: {stdout}; {:?}",
+            output.stderr
+        );
+        assert!(stdout.contains("not responding"), "{stdout}");
+        assert!(stdout.contains("orgasmic daemon restart"), "{stdout}");
+        assert!(!stdout.contains("still booting"), "{stdout}");
+        assert_eq!(std::fs::read(&lock_path).unwrap(), before);
+        let second = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        assert_eq!(
+            fs2::FileExt::try_lock_exclusive(&second)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+}
+
 #[test]
 fn worker_restart_refuses_before_runtime_override_preparation() {
     let tmp = tempfile::tempdir().unwrap();

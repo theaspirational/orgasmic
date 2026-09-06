@@ -2812,7 +2812,10 @@ fn print_start_outcome(home: &Home, outcome: &daemon_lifecycle::DaemonStartOutco
                     );
                 }
                 _ => {
-                    println!("daemon still booting — check `orgasmic daemon status` shortly");
+                    println!(
+                        "daemon is not responding; {}",
+                        daemon_lifecycle::UNRESPONSIVE_DAEMON_HINT
+                    );
                 }
             }
             print_starting_pid(starting);
@@ -2891,7 +2894,10 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
                     println!("starting since {}, phase {phase}", started_at.to_rfc3339());
                 }
                 (Some(phase), None) => println!("starting, phase {phase}"),
-                _ => println!("starting"),
+                _ => println!(
+                    "not responding; {}",
+                    daemon_lifecycle::UNRESPONSIVE_DAEMON_HINT
+                ),
             }
             print_daemon_persistence(home);
             print_starting_pid(&starting);
