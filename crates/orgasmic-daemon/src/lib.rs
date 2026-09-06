@@ -1984,13 +1984,23 @@ mod tests {
         }
 
         let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
+        // The CLI recovery probe owns its home so a graceful child exit cannot
+        // delete the replacement's configuration. The original diagnostic
+        // still uses a child-owned disposable home by default.
+        let home = Home::at(
+            std::env::var_os("ORGASMIC_FD_EXHAUSTION_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| tmp.path().join("home")),
+        );
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .unwrap();
         runtime.block_on(async move {
+            // Arm before READY and before exhaustion, just as `serve` does.
+            let mut interrupt =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
             let running = Daemon::run(
                 home.clone(),
                 DaemonOptions {
@@ -2005,12 +2015,12 @@ mod tests {
             println!("READY {} {}", running.addr, home.root.display());
             std::io::stdout().flush().unwrap();
 
-            let shutdown = running.shutdown;
+            let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
             let commands = std::thread::spawn(move || {
                 use std::io::BufRead as _;
                 let original = get_limit();
                 let mut fillers = Vec::<File>::new();
-                let mut shutdown = Some(shutdown);
+                let mut shutdown = Some(stop_tx);
                 for line in std::io::stdin().lock().lines().map_while(|line| line.ok()) {
                     match line.as_str() {
                         "EXHAUST" => {
@@ -2052,8 +2062,18 @@ mod tests {
                     let _ = shutdown.send(());
                 }
             });
+            let stopped_by_command = tokio::select! {
+                _ = stop_rx => true,
+                _ = interrupt.recv() => false,
+            };
+            let _ = running.shutdown.send(());
             running.join.await.unwrap();
-            commands.join().unwrap();
+            if stopped_by_command {
+                commands.join().unwrap();
+            }
+            // On SIGINT the stdin reader still owns the filler descriptors:
+            // keep pressure through shutdown, without waiting for another
+            // command before this disposable process can exit.
         });
     }
 
