@@ -46,3 +46,50 @@
 :TO_STATE: in_progress
 :EVENT_ID: fef0b662-c5cf-4b88-a07b-ab0bd96fd791
 :END:
+
+* tx-20260906-orgasmic-72fac5ca-5bf0-47dc-8da4-bb46e98617a1 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-72fac5ca-5bf0-47dc-8da4-bb46e98617a1
+:TIME:    [2026-09-06 Sun 23:29:50]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZMYEN
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-ZMYEN/node.org
+:REASON: edited task node TASK-ZMYEN
+:NODE_ID: TASK-ZMYEN
+:EVENT_ID: f9b29886-060b-4140-b4de-e179ace34311
+:END:
+
+* tx-20260906-orgasmic-4dc6c3cb-ce52-4c81-bfc7-36ed617a503e task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-4dc6c3cb-ce52-4c81-bfc7-36ed617a503e
+:TIME:    [2026-09-06 Sun 23:29:50]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZMYEN
+:TARGET: .orgasmic/tasks/TASK-ZMYEN/node.org
+:REASON: Self-review and acceptance complete: 18 focused tests, fmt, clippy with warnings denied; local source only, operator runtime preserved.
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 6641099f-5105-4592-a466-fd3e0059e514
+:END:
+
+* tx-20260906-orgasmic-ca9a6dff-2736-4830-8f87-ed72e7871788 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-ca9a6dff-2736-4830-8f87-ed72e7871788
+:TIME:    [2026-09-06 Sun 23:29:51]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZMYEN
+:TARGET: .orgasmic/tasks/TASK-ZMYEN/node.org
+:REASON: Source complete at 25a19bd6d4eedba66eb82758ae7057182dc15678; fixture acceptance verified, report-file precedence and failed/orphan authority preserved. Runtime adoption remains separate.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 054a6919-c71a-4845-b388-7b95a01f889a
+:END:

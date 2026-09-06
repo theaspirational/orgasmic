@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-ZMYEN
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-ZMYEN Preserve Hermes partial reports and support ORGASMIC_REPORT_PATH :vscode-orsl-letter:
+* DONE TASK-ZMYEN Preserve Hermes partial reports and support ORGASMIC_REPORT_PATH :vscode-orsl-letter:
 :PROPERTIES:
 :ID: TASK-ZMYEN
 :PRIORITY: P1
@@ -20,4 +20,18 @@ Code: crates/orgasmic-daemon/src/drivers/hermes.rs — `hermes event missing typ
 (a) shipped in 5033cce: HermesAdapter::parse_event warns and skips unknown/untyped events (test hermes_unknown_and_untyped_events_are_skipped_not_fatal). Open: (b) partial -last.txt reassembly on protocol_end_without_finalize, (c) ORGASMIC_REPORT_PATH.
 ** Status 2026-09-06
 Source/ledger triage at main 0bf80eb0. Part (a) is implemented: adapters/hermes.rs:272-290 warns/skips unrecognized events and its regression remains. ORGASMIC_REPORT_PATH is absent from current crates; protocol_end_without_finalize still fails in supervisor. Partial-report reassembly and report-file precedence remain open. Keep P1 on preserving completed work, and do not rebuild event skipping.
+** Evidence
+Source complete on local main at 25a19bd6d4eedba66eb82758ae7057182dc15678 (not pushed or installed).
+
+Hermes protocol_end_without_finalize now preserves available assistant text_chunk payloads in last.txt with a PARTIAL header. Recovery happens only for an orphan release, never cancellation or worker-finalized success. The existing incremental completion watcher remains unchanged during live runs; transcript is scanned once after failure. Nonempty worker-authored last.txt wins over transport summaries; empty CLI reservations are filled. No success transaction or finalized_by_worker claim is synthesized.
+
+The supervisor assigns report_path from the run's last_path and clears conflicting config. Local stdio, subprocess-stream-json, and tmux launches export ORGASMIC_REPORT_PATH; unassigned launches clear inherited destinations. The file is the existing per-run report artifact, so worker content already has precedence. Explicit dispatch finalize remains the only success authority.
+
+Acceptance: existing unknown/untyped Hermes event skip regression passes. New adapter-to-session-to-completion-watcher fixture preserves more than 32 KiB across text chunks, including a cut stream without run_complete, unknown/untyped midstream events, an empty reserved report, and a prewritten worker report. Failed/orphan lifecycle and missing stdout artifact are verified. Dispatched real /bin/sh fixtures through stdio and subprocess-stream-json prove assigned path, conflicting config override, inherited-path clearing, and paths containing spaces, quotes, and non-ASCII text. Isolated real tmux fixture proves report-path delivery. Cancellation regression includes Hermes with assistant text and the protocol-end reason.
+
+Verification: 14 daemon tests + 4 driver tests = 18 passed; cargo fmt --check; git diff --check; cargo clippy -p orgasmic-daemon -p orgasmic-drivers --lib --tests -- -D warnings. All passed. Red proof: partial-red.log fails on absent report, env-red.log fails on missing worker report. Final proof: daemon-focused.log, drivers-focused.log, clippy.log, fmt.log, diff-check.log; reproducible commands in checks.py.
+
+Limit: journal payload bounding predates this change and can already truncate an individual large event; partial recovery preserves only the text stored in the journal. Worker-written reports bypass that transcript limit. No remote WebSocket process environment is controlled by the daemon. No provider/billed calls, workspace suite, push, installation, or operator daemon restart. Operator daemon verified unchanged: PID 39114, boot 019f72b5-9e79-4536-905c-a95dff391ac7. P0 restart remains explicitly operator initiated.
+
+Artifacts: /Users/aspirational/.codex/artifacts/orgasmic-zmyen-20260907
 
