@@ -154,3 +154,18 @@
 :TO_STATE: in_review
 :EVENT_ID: e91cbcdb-31b1-457e-a3ef-3a6a90af33bf
 :END:
+
+* tx-20260906-orgasmic-6ba325ec-a488-4461-9027-15dd1e30907e task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-6ba325ec-a488-4461-9027-15dd1e30907e
+:TIME:    [2026-09-06 Sun 15:38:03]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: edited task node TASK-ZZ2S4
+:NODE_ID: TASK-ZZ2S4
+:EVENT_ID: 3d440823-811e-488b-8d11-4ccdd990037f
+:END:
