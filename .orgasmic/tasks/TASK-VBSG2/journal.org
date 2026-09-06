@@ -15,3 +15,19 @@
 :NODE_ID: TASK-VBSG2
 :EVENT_ID: c1496d14-80cd-43c9-9460-451897cbb1fb
 :END:
+
+* tx-20260906-orgasmic-fb7fb47e-c346-4718-98e7-3b722c23766c task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-fb7fb47e-c346-4718-98e7-3b722c23766c
+:TIME:    [2026-09-06 Sun 23:35:32]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-VBSG2
+:TARGET: .orgasmic/tasks/TASK-VBSG2/node.org
+:REASON: Proceed with explicit evidence materialization and manual multi-run retro under dec_PC6T2. Start with end-to-end materializer, retain full Slice B scope; offline fixtures, no provider run or operator daemon restart.
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 4879a580-7b1a-42a5-970e-8c4c7776bf01
+:END:
