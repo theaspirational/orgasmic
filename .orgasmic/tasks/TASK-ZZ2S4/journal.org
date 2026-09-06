@@ -169,3 +169,49 @@
 :NODE_ID: TASK-ZZ2S4
 :EVENT_ID: 3d440823-811e-488b-8d11-4ccdd990037f
 :END:
+
+* tx-20260906-orgasmic-5c6cf333-9cf5-4e68-bc10-5b99b358be41 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-5c6cf333-9cf5-4e68-bc10-5b99b358be41
+:TIME:    [2026-09-06 Sun 15:41:43]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: edited task node TASK-ZZ2S4
+:NODE_ID: TASK-ZZ2S4
+:EVENT_ID: 14fa6d61-70d6-4a75-b7a0-cb6c3f28b008
+:END:
+
+* tx-20260906-orgasmic-242a650a-bc13-4a0a-b099-9debe77b893d task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-242a650a-bc13-4a0a-b099-9debe77b893d
+:TIME:    [2026-09-06 Sun 15:41:43]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: edited task node TASK-ZZ2S4
+:NODE_ID: TASK-ZZ2S4
+:EVENT_ID: 9812b192-8af2-4beb-9644-32ae555359e8
+:END:
+
+* tx-20260906-orgasmic-a910ca52-1ce0-4669-ab8d-df06f387b5de task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-a910ca52-1ce0-4669-ab8d-df06f387b5de
+:TIME:    [2026-09-06 Sun 15:41:44]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: .orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: Reviewed source18d170d2 merged locally, managed runtime updated, live repair committed a26c2070, all2702 tracked original files verified,1010 journals unchanged, all3 renamed tasks DONE and parse_errors=0 after restart.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 041b9e19-6645-4a15-b2c1-631ab0b6108c
+:END:
