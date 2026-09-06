@@ -9,7 +9,7 @@
 :RELATES_TO: TASK-8DWJP
 :END:
 ** Description
-TASK-CLM6W claim-gates node directories, so two machines never write the same
+TASK-3HHN0 claim-gates node directories, so two machines never write the same
 node. It does not cover the files that are not nodes: `.orgasmic/project.org`,
 `tasks/goal.org`, `tasks/handoff.org`, `gotchas.org`, and the generated
 `views/`. Any machine may write those at any time.

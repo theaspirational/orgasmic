@@ -1,11 +1,11 @@
 #+title: orgasmic task TASK-8DWJP
 #+orgasmic_version: 2
 
-* DONE TASK-8DWJP CLM6W H6: claim gate only refuses CLAIMED nodes; every node is unclaimed between dispatches, so two daemons both land — the sync premise is false (fix round for TASK-CLM6W; id grammar refuses TASK-CLM6W.1) :e01mc:chain-review:
+* DONE TASK-8DWJP CLM6W H6: claim gate only refuses CLAIMED nodes; every node is unclaimed between dispatches, so two daemons both land — the sync premise is false (fix round for TASK-3HHN0; id grammar refuses TASK-CLM6W.1) :e01mc:chain-review:
 :PROPERTIES:
 :ID: TASK-8DWJP
 :PRIORITY: P1
-:RELATES_TO: TASK-CLM6W TASK-AS0FS
+:RELATES_TO: TASK-3HHN0 TASK-AS0FS
 :FIX_SUBTASK: t
 :DEPENDS_ON:  TASK-MSYN4.2
 :IMPLEMENTS:  dec_EWY0K

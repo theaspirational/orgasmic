@@ -1,9 +1,9 @@
-#+title: orgasmic task TASK-IXPD4
+#+title: orgasmic task TASK-0T7WE
 #+orgasmic_version: 2
 
-* DONE TASK-IXPD4 Port orgasmic-daemon index tests to node-dir fixtures (left unported by TASK-SRBGS) :e01mc:node_kernel:
+* DONE TASK-0T7WE Port orgasmic-daemon index tests to node-dir fixtures (left unported by TASK-SRBGS) :e01mc:node_kernel:
 :PROPERTIES:
-:ID: TASK-IXPD4
+:ID: TASK-0T7WE
 :PRIORITY: P1
 :END:
 

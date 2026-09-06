@@ -1,9 +1,9 @@
-#+title: orgasmic task TASK-CLM6W
+#+title: orgasmic task TASK-3HHN0
 #+orgasmic_version: 2
 
-* DONE TASK-CLM6W Cross-machine task claims + multi-machine fold :twcp9:distributed:
+* DONE TASK-3HHN0 Cross-machine task claims + multi-machine fold :twcp9:distributed:
 :PROPERTIES:
-:ID: TASK-CLM6W
+:ID: TASK-3HHN0
 :PRIORITY: P1
 :DEPENDS_ON: TASK-MSYN4 TASK-8AV8B
 :END:

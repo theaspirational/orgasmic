@@ -1,9 +1,9 @@
-#+title: orgasmic task TASK-LBRX7
+#+title: orgasmic task TASK-1QE9T
 #+orgasmic_version: 2
 
-* DONE TASK-LBRX7 Ledger branch extraction: orphan `orgasmic` branch, hidden worktree, .orgasmic leaves the main tree :twcp9:distributed:
+* DONE TASK-1QE9T Ledger branch extraction: orphan `orgasmic` branch, hidden worktree, .orgasmic leaves the main tree :twcp9:distributed:
 :PROPERTIES:
-:ID: TASK-LBRX7
+:ID: TASK-1QE9T
 :PRIORITY: P1
 :DEPENDS_ON: TASK-SRBGS
 :END:

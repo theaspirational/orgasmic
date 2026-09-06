@@ -50,9 +50,9 @@ Filed 2026-08-22, dependency-ordered (DEPENDS_ON edges on the tasks; deepest pat
 10. TASK-AN992 CLI verbs over node dirs + shipped content for the layout ← 4
 11. TASK-KA934 UI comments/regenerate, OrgView over views ← 6 9
 Extended 2026-08-26 by the TASK-TWCP9 decision (distributed ledger branch):
-12. TASK-LBRX7 ledger branch extraction: orphan branch, hidden worktree, .orgasmic leaves main ← 4
+12. TASK-1QE9T ledger branch extraction: orphan branch, hidden worktree, .orgasmic leaves main ← 4
 13. TASK-MSYN4 machine identity + ledger sync loop over the git remote ← 12 5
-14. TASK-CLM6W cross-machine claims + multi-machine fold ← 13 6
+14. TASK-3HHN0 cross-machine claims + multi-machine fold ← 13 6
 15. TASK-D2DM3 daemon-to-daemon live messaging (P2, deferred) ← 14
 The map's destination is reached: this chain is implementation-ready. The map stays backlog as the index (wayfinder convention).
 
