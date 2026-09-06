@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-TJ9DG
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-TJ9DG Reconcile arch_EAVPP with the shipped evidence clock: its R2/R11 assumptions are now false in code, with measured cause
+* DONE TASK-TJ9DG Reconcile arch_EAVPP with the shipped evidence clock: its R2/R11 assumptions are now false in code, with measured cause
 :PROPERTIES:
 :ID: TASK-TJ9DG
 :PRIORITY: P2
@@ -17,4 +17,6 @@ Completed reconciliation in dec_C60CM (decision creation tx-20260906-orgasmic-80
 The previously missing report was recovered at .orgasmic/tmp/dispatch/task-jk66p/report.md in the live ledger. Current source 62c0a5d7 and five exact clock checks agree with the decision; 5 passed, 0 failed, 0 ignored. This is a documentation/decision reconciliation, no runtime/source behavior change.
 
 The requested historical arch status/body edit is superseded by dec_HBK6A's explicit history-preservation policy: the architecture layer is retired, so dec_C60CM and this task backlink provide the current disposition. No architecture editor or ledger hand edit was added. Evidence: /Users/aspirational/.codex/artifacts/orgasmic-tj9dg-20260906/.
+** Evidence
+dec_C60CM persisted and read back byte-for-byte; creation tx tx-20260906-orgasmic-80f1e243-2b2d-4b20-8c1b-4a3da9f4dff0. Reviewed original JK66P report sections 4.3/6, archived arch_EAVPP at a0caf362, and supervisor source at 62c0a5d7. Five exact clock tests each ran one test and passed with zero ignored. Logs and source evidence: /Users/aspirational/.codex/artifacts/orgasmic-tj9dg-20260906/. The arch history remains unchanged per dec_HBK6A; the live decision supplies the partial-supersession status.
 

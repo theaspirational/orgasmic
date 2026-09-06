@@ -109,3 +109,34 @@
 :TO_STATE: in_review
 :EVENT_ID: 1922be9f-236d-4904-bd1e-f580d1ada150
 :END:
+
+* tx-20260906-orgasmic-e7ea27a2-df16-4a12-a95d-7ade4549d3b5 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-e7ea27a2-df16-4a12-a95d-7ade4549d3b5
+:TIME:    [2026-09-06 Sun 20:43:06]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TJ9DG
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-TJ9DG/node.org
+:REASON: edited task node TASK-TJ9DG
+:NODE_ID: TASK-TJ9DG
+:EVENT_ID: 32d80649-ce2b-44a4-afa0-211dd9ed0bd5
+:END:
+
+* tx-20260906-orgasmic-8babd26d-6977-4d24-b62f-fb204b2ad0fc task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-8babd26d-6977-4d24-b62f-fb204b2ad0fc
+:TIME:    [2026-09-06 Sun 20:43:06]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-TJ9DG
+:TARGET: .orgasmic/tasks/TASK-TJ9DG/node.org
+:REASON: Recorded decision, source review and five passing exact tests satisfy reconciliation
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 268ce28e-3dd8-42ae-aacf-5abeeedc2777
+:END:
