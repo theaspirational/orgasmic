@@ -99,6 +99,12 @@ fn run_at(home: &Home, root: &Path, apply: bool) -> Result<()> {
         return Ok(());
     }
     if !present(&marker)? {
+        for (path, _) in planned_writes(&plan) {
+            ensure!(
+                !present(&staging_path(&plan, path))?,
+                "repair staging path already exists"
+            );
+        }
         // Install the complete plan and fsync its directory BEFORE moving a
         // source. The daemon checks the marker both before and under its lock.
         atomic_write(&marker, &serde_json::to_vec_pretty(&plan)?, None)?;
@@ -215,7 +221,7 @@ fn no_git_operation(root: &Path) -> Result<()> {
         let value = git(root, &["rev-parse", "--git-path", name])?;
         ensure!(
             !root.join(value.trim()).try_exists()?,
-            "git operation in progress: {name}"
+            "git operation in progress: {name}; if interrupted Git left a lock, verify its process has exited and recover that specific lock before retrying (repair never removes Git locks)"
         );
     }
     ensure!(
@@ -639,6 +645,24 @@ fn verify_state(plan: &Plan, final_state: bool) -> Result<()> {
         actual_index == expected_initial || actual_index == expected_final,
         "index differs from checkpoint or recorded repair"
     );
+    for (path, text) in planned_writes(plan) {
+        let staging = staging_path(plan, path);
+        if present(&staging)? {
+            verify_staging(&staging, text.as_bytes())?;
+            ensure!(
+                !final_state,
+                "unconsumed repair staging file {}",
+                staging.display()
+            );
+            actual_paths.insert(
+                staging
+                    .strip_prefix(&plan.root)?
+                    .to_str()
+                    .context("staging path UTF8")?
+                    .to_owned(),
+            );
+        }
+    }
     let untracked = git(
         &plan.root,
         &["ls-files", "--others", "--exclude-standard", "-z"],
@@ -723,6 +747,77 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: Option<fs::Permissions>) -> Res
     sync_dir(parent)
 }
 
+// The repair UUID and destinations in the durable plan reserve these exact
+// names before mutation. Partial prefixes are valid after a killed write; no
+// unrelated temporary files or mismatched contents are ever removed.
+fn planned_writes(plan: &Plan) -> impl Iterator<Item = (&str, &str)> {
+    plan.files
+        .iter()
+        .filter_map(|file| {
+            file.after
+                .as_deref()
+                .map(|text| (file.target.as_str(), text))
+        })
+        .chain(std::iter::once((
+            plan.record_path.as_str(),
+            plan.record.as_str(),
+        )))
+}
+
+fn staging_path(plan: &Plan, path: &str) -> PathBuf {
+    let path = plan.root.join(path);
+    path.with_file_name(format!(
+        ".orgasmic-repair-{}-{}",
+        &hash(plan.record_path.as_bytes())[..16],
+        path.file_name()
+            .expect("validated repair path")
+            .to_string_lossy()
+    ))
+}
+
+fn verify_staging(path: &Path, bytes: &[u8]) -> Result<()> {
+    safe_absolute(path)?;
+    ensure!(
+        fs::metadata(path)?.is_file() && bytes.starts_with(&fs::read(path)?),
+        "unexpected contents in reserved repair staging file {}",
+        path.display()
+    );
+    Ok(())
+}
+
+fn repair_atomic_write(
+    plan: &Plan,
+    relative: &str,
+    bytes: &[u8],
+    mode: Option<fs::Permissions>,
+    interrupt_before_persist: bool,
+) -> Result<()> {
+    let path = plan.root.join(relative);
+    let staging = staging_path(plan, relative);
+    let mut file = if present(&staging)? {
+        verify_staging(&staging, bytes)?;
+        OpenOptions::new().write(true).open(&staging)?
+    } else {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)?
+    };
+    if let Some(mode) = mode {
+        file.set_permissions(mode)?;
+    }
+    file.set_len(0)?;
+    if interrupt_before_persist {
+        file.write_all(&bytes[..bytes.len() / 2])?;
+        file.sync_all()?;
+        bail!("injected staging interruption before persist");
+    }
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    fs::rename(&staging, &path)?;
+    sync_dir(path.parent().context("write parent")?)
+}
+
 fn apply_plan(plan: &Plan, interrupt_after: Option<usize>) -> Result<()> {
     verify_state(plan, false)?;
     let mut operations = 0;
@@ -741,11 +836,13 @@ fn apply_plan(plan: &Plan, interrupt_after: Option<usize>) -> Result<()> {
     for file in &plan.files {
         if let Some(text) = &file.after {
             let path = plan.root.join(&file.target);
-            if fs::read(&path)? != text.as_bytes() {
-                atomic_write(
-                    &path,
+            if fs::read(&path)? != text.as_bytes() || present(&staging_path(plan, &file.target))? {
+                repair_atomic_write(
+                    plan,
+                    &file.target,
                     text.as_bytes(),
                     Some(fs::metadata(&path)?.permissions()),
+                    false,
                 )?;
             }
             operations += 1;
@@ -762,7 +859,7 @@ fn apply_plan(plan: &Plan, interrupt_after: Option<usize>) -> Result<()> {
         sync_dir(parent.parent().context("record grandparent")?)?;
     }
     safe_absolute(parent)?;
-    if !record.exists() {
+    if !record.exists() || present(&staging_path(plan, &plan.record_path))? {
         #[cfg(unix)]
         let mode = {
             use std::os::unix::fs::PermissionsExt;
@@ -770,7 +867,7 @@ fn apply_plan(plan: &Plan, interrupt_after: Option<usize>) -> Result<()> {
         };
         #[cfg(not(unix))]
         let mode = None;
-        atomic_write(&record, plan.record.as_bytes(), mode)?;
+        repair_atomic_write(plan, &plan.record_path, plan.record.as_bytes(), mode, false)?;
     }
     verify_state(plan, true)?;
     if git(&plan.root, &["rev-parse", "HEAD"])?.trim() == plan.checkpoint {
@@ -976,6 +1073,64 @@ mod tests {
             let head = git(&root, &["rev-parse", "HEAD"]).unwrap();
             run_at(&home, &root, true).unwrap();
             assert_eq!(git(&root, &["rev-parse", "HEAD"]).unwrap(), head);
+        }
+    }
+
+    #[test]
+    fn repair_task_ids_recovers_owned_partial_staging_without_accepting_unrelated_files() {
+        for complete in [false, true] {
+            let (_temp, home, root) = fixture();
+            let repair = plan(&home, &root).unwrap();
+            atomic_write(
+                &home.task_id_repair_plan(),
+                &serde_json::to_vec(&repair).unwrap(),
+                None,
+            )
+            .unwrap();
+            assert!(apply_plan(&repair, Some(1)).is_err());
+            let first = repair.mapping.values().next().unwrap();
+            let relative = format!(".orgasmic/tasks/{first}/node.org");
+            let (_, text) = planned_writes(&repair)
+                .find(|(path, _)| *path == relative)
+                .unwrap();
+            let target = root.join(&relative);
+            let before = fs::read(&target).unwrap();
+            assert!(repair_atomic_write(
+                &repair,
+                &relative,
+                text.as_bytes(),
+                Some(fs::metadata(&target).unwrap().permissions()),
+                true
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("staging interruption"));
+            assert_eq!(fs::read(&target).unwrap(), before);
+            let staging = staging_path(&repair, &relative);
+            let partial = fs::read(&staging).unwrap();
+            assert_eq!(partial, text.as_bytes()[..text.len() / 2]);
+            fs::write(&staging, "not the planned write").unwrap();
+            assert!(run_at(&home, &root, true)
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected contents in reserved"));
+            assert_eq!(fs::read(&staging).unwrap(), b"not the planned write");
+            fs::write(&staging, if complete { text.as_bytes() } else { &partial }).unwrap();
+            let unrelated = root
+                .join(".orgasmic/tasks")
+                .join(first)
+                .join(".orgasmic-repair-unrelated-node.org");
+            fs::write(&unrelated, "do not delete").unwrap();
+            assert!(run_at(&home, &root, true)
+                .unwrap_err()
+                .to_string()
+                .contains("unrelated untracked"));
+            assert_eq!(fs::read(&unrelated).unwrap(), b"do not delete");
+            fs::remove_file(unrelated).unwrap();
+            run_at(&home, &root, true).unwrap();
+            assert!(!staging.exists());
+            assert!(!home.task_id_repair_plan().exists());
+            assert_history(&repair);
         }
     }
 
