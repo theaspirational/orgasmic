@@ -8203,3 +8203,33 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     1d6f8611-6337-4fbf-988d-4c86e570a524
 :END:
+
+* TX 2026-09-06 Sun 17:53:38 manager.tier TASK-0Y363
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-a4dfd98b-07b9-4413-bc24-10c9a24cd430
+:TIME:         [2026-09-06 Sun 17:53:38]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-0Y363
+:REASON:       P0 daemon health and recovery behavior; isolated discriminator first, implementation constrained by evidence, independent different-family review before landing.
+:TIER:         risky
+:TRIGGERS:     priority, blast_radius
+:EVENT_ID:     49c6b7d6-9b70-46f5-b746-16ac5cdf118f
+:END:
+
+* TX 2026-09-06 Sun 17:53:38 manager.tier TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-59aa0b29-28ef-4307-92c7-677e7e3f9bd5
+:TIME:         [2026-09-06 Sun 17:53:38]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:REASON:       P1 shared service ownership and daemon startup safety; read-only plan first, isolated adapter tests, independent review before landing.
+:TIER:         risky
+:TRIGGERS:     priority, blast_radius
+:EVENT_ID:     b2011014-6d56-4eaa-9423-b99747c2503e
+:END:
