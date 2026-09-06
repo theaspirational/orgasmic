@@ -12548,10 +12548,12 @@ mod tests {
         let wrapper_pid = wrapper.id();
         let ready_deadline = Instant::now() + Duration::from_secs(30);
         while !ready.exists() {
-            assert!(
-                Instant::now() < ready_deadline,
-                "fake cursor-agent did not start children"
-            );
+            if Instant::now() >= ready_deadline {
+                panic!(
+                    "fake cursor-agent did not start children; {}",
+                    wrapper.diagnostic().await
+                );
+            }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 

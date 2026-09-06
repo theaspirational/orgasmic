@@ -411,6 +411,40 @@ impl FixtureProcess {
     pub(crate) fn id(&self) -> u32 {
         self.child.id()
     }
+
+    /// TASK-STWVB: retain process state before panic cleanup erases the
+    /// evidence. A stalled `ps` must not turn a failed test into a hung test.
+    pub(crate) async fn diagnostic(&self) -> String {
+        let mut command = tokio::process::Command::new("/bin/ps");
+        command
+            .args(["-A", "-o", "pid=,ppid=,pgid=,stat=,time=,comm="])
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
+        let sample =
+            tokio::time::timeout(std::time::Duration::from_secs(2), command.output()).await;
+        let group = self.id().to_string();
+        let detail = match sample {
+            Ok(Ok(output)) if output.status.success() => {
+                let rows: Vec<_> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter(|line| line.split_whitespace().nth(2) == Some(group.as_str()))
+                    .map(str::to_owned)
+                    .collect();
+                if rows.is_empty() {
+                    "no process group members observed".to_string()
+                } else {
+                    format!(
+                        "pid ppid pgid stat cpu_time executable\n{}",
+                        rows.join("\n")
+                    )
+                }
+            }
+            Ok(Ok(output)) => format!("process state unavailable: ps exited {}", output.status),
+            Ok(Err(error)) => format!("process state unavailable: {error}"),
+            Err(_) => "process state unavailable: ps exceeded 2s".to_string(),
+        };
+        format!("fixture process group {group}: {detail}")
+    }
 }
 
 #[cfg(unix)]
@@ -448,6 +482,41 @@ pub(crate) fn spawn_in_own_process_group(command: &mut Command, what: &str) -> F
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn fixture_diagnostic_distinguishes_stopped_and_exited_processes() {
+        let mut fixture = spawn_in_own_process_group(
+            Command::new("/bin/sleep")
+                .arg("30")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            "diagnostic stopped process",
+        );
+        // This is an owned fixture, never an operator process. SIGSTOP gives
+        // a deterministic control for the state the readiness panic loses.
+        assert_eq!(unsafe { libc::kill(fixture.id() as i32, libc::SIGSTOP) }, 0);
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(fixture.id() as i32, &mut status, libc::WUNTRACED) },
+            fixture.id() as i32
+        );
+        assert!(libc::WIFSTOPPED(status));
+        let stopped = fixture.diagnostic().await;
+        let rows: Vec<_> = stopped.lines().skip(1).collect();
+        assert_eq!(rows.len(), 1, "{stopped}");
+        let fields: Vec<_> = rows[0].split_whitespace().collect();
+        assert_eq!(fields[0], fixture.id().to_string(), "{stopped}");
+        assert!(fields[3].starts_with('T'), "{stopped}");
+        assert!(!fields[4].is_empty(), "CPU time is missing: {stopped}");
+        fixture.child.kill().unwrap();
+        fixture.child.wait().unwrap();
+        let exited = fixture.diagnostic().await;
+        assert!(
+            exited.contains("no process group members observed"),
+            "{exited}"
+        );
+    }
 
     /// Pids in `pgid`'s process group that are still alive and not zombies,
     /// with their command lines — so a failure names the survivor rather than
