@@ -8233,3 +8233,59 @@
 :TRIGGERS:     priority, blast_radius
 :EVENT_ID:     b2011014-6d56-4eaa-9423-b99747c2503e
 :END:
+
+* TX 2026-09-06 Sun 17:54:16 manager.dispatch_started TASK-0Y363
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-62b41264-7678-46b5-9f31-200930a954b0
+:TIME:         [2026-09-06 Sun 17:54:16]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-0Y363
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-0y363-health-20260906
+:BRANCH:       task-0y363-health-20260906
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/p0/p0-brief.md
+:STARTED_AT:   [2026-09-06 Sun 17:54:16]
+:LIVENESS:     18d170d2e62f47fa1f47fa2cf6e21c520d8ea98a
+:NEXT:         fix-implementer-watch-then-integrate
+:PREFLIGHT:    ok
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: User approved next P0 then P1 priorities. Explicit high-effort Codex implementation begins with isolated FD discriminator; different-family Claude review follows. No billed test probes or live daemon stress.
+:EVENT_ID:     91d79861-5263-437d-9c7b-047799e13fbe
+:END:
+
+* TX 2026-09-06 Sun 17:54:16 run.created TASK-0Y363
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-d50a4de2-e5be-45fc-8b41-cc21fb4d4156
+:TIME:         [2026-09-06 Sun 17:54:16]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-0Y363
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-0Y363-implementer-20260906T175414.jsonl
+:REASON:       User approved next P0 then P1 priorities. Explicit high-effort Codex implementation begins with isolated FD discriminator; different-family Claude review follows. No billed test probes or live daemon stress.
+:RUN_ID:       run-01M1VXPHRGNNT94KR1EJAZNCM8
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-chat-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-0y363-health-20260906
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/p0/p0-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/p0/p0-2fe683df30254c4bbf6a833ee82b335a-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/p0/p0-2fe683df30254c4bbf6a833ee82b335a-stdout.log
+:DISPATCH_ATTEMPT: 2fe683df30254c4bbf6a833ee82b335a
+:PID:          28881
+:DISPATCH_TX:  tx-20260906-orgasmic-62b41264-7678-46b5-9f31-200930a954b0
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     31aafa5f-b4e4-4c1e-b754-776a6ba229b7
+:END:
