@@ -28,7 +28,15 @@ Reconciled 2026-09-06 from live CLI state and local main 18d170d2. The requested
 No additional dispatch, source push, public release, or pruning is scheduled by this handoff.
 
 ** In flight
-TASK-0Y363 diagnostic implementer reported/closed exact generation tx-20260906-orgasmic-62b41264-7678-46b5-9f31-200930a954b0. Worker e464ff13 merged to non-default integration751bf2d2; task is in_review pending independent review. Two isolated FD-exhaustion cycles establish fresh connection starvation with responsive warm handlers, live PID/held lock, and recovery after release. No production P0 recovery change; operator recovery-policy question pending (preserve runs/explicit restart recommended). TASK-48SFW implementer remains active: stdio/codex-chat, gpt-5.5, high, run-01M1VXVD0ZDQ4JCGE4TY9CYN8E, started_tx tx-20260906-orgasmic-39bd6537-8590-4a74-bcbd-76b190c06a06, branch/worktree task-48sfw-service-owner-20260906. It is implementing service ownership and worker lifecycle refusal with isolated adapter checks. Parent will review committed combined diff via Claude before main merge; live daemon remains boot019f72b5 and unchanged this turn. Integration worktree recovery-priorities-20260906 must be retained.
+P0 TASK-0Y363 diagnostic e464ff13 and P1 TASK-48SFW protection e0685613 plus baseline repairs 4cc676cd are merged to integration commit 4274d3e0443e2031a8367fcf56a007e56211f38f on codex/recovery-priorities-20260906. Main remains 18d170d2, clean and unpushed. Both implementer generations are reported and closed; tasks are in_review.
+
+Active independent reviewer: stdio/claude requested, actual stdio/claude-sdk, opus, high, native_login. Run run-01M1VZYPPEA9YCM9BN6AYN48J2; started tx tx-20260906-orgasmic-6a8117c6-a90f-4929-8e08-8bad80b6f1a6. Exact range 18d170d2..4274d3e0443e2031a8367fcf56a007e56211f38f. Worktree ~/.orgasmic/worktrees/orgasmic/recovery-priorities-review-20260906. Separate task verdicts required.
+
+P0 is diagnostic only: two isolated child EMFILE/release cycles show warm requests work while fresh requests fail, with PID alive and lock held. No production recovery policy implemented; original task must remain open. Optional policy question pending; preserve active runs and existing behavior unless user chooses otherwise. Never treat missed health as authority to replace a live lock owner.
+
+P1 focused lifecycle/owner checks passed; original full CLI suite RED for command catalog omission and stale prune prose assertion. Separate baseline repair commit fixes both and focused reruns passed. Initial P1 RED was missing-helper compile failure, not incident reproduction. Evidence: ~/.codex/artifacts/orgasmic-recovery-20260906/p1-task-48sfw-final-summary.md and reviewer-brief.md.
+
+Operator daemon unchanged: PID39114, boot019f72b5-9e79-4536-905c-a95dff391ac7. No service mutation, push or deployment. Installed normal CLI remains old; daemon source override is separate. Parent owns reviewed merge and exact-generation closure.
 
 ** Divergence / Risks
 - Managed local-source runtime at /Users/aspirational/.orgasmic/bin/orgasmic-daemon-source was staged with identity enforcement from reviewed 18d170d2. Current boot 019f72b5-9e79-4536-905c-a95dff391ac7, pid 39114; all three projects ready, healthz OK, parse_errors=0, writer queue=0. Orgasmic ledger repair synced.
