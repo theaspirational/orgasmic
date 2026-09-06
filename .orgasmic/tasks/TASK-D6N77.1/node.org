@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-D6N77.1
 #+orgasmic_version: 2
 
-* TODO TASK-D6N77.1 repair rejected manager wake: make claim authority, pane delivery, and generation waiting honest :daemon:cli:manager:hardening:
+* DONE TASK-D6N77.1 repair rejected manager wake: make claim authority, pane delivery, and generation waiting honest :daemon:cli:manager:hardening:
 :PROPERTIES:
 :ID: TASK-D6N77.1
 :PRIORITY: P1
@@ -31,4 +31,5 @@ Move =dispatch-wait= to one daemon-owned generation authority or otherwise make 
 ** Evidence
 *Round-two live evidence.* Terra/xhigh generation =tx-20260809-orgasmic-5609= committed =53d9fc4= (865 insertions / 285 deletions, 10 files) and finalized at 12:40 as =manager.dispatch_aborted= because reattach persistence and the full wait matrix remained. The manager watcher then waited falsely for over an hour: it searched only =dispatch-status= open lines for =[reported]/[run-gone]=; the aborted generation disappeared from that inventory, so an empty match looped forever. This is direct production-shaped proof that generation waiting must query durable daemon-owned terminal state by =started_tx=, including aborted/closed generations, rather than only open-dispatch lines.
 *Native-agent completion.* The operator disabled orgasmic dispatches for the remaining rounds and explicitly retained Terra/xhigh for implementation plus Sol/high for review. Terra implemented the reviewed candidate through commit =2f1bc78=; it was merged to main as =0423ae5=. Sol/high independently reviewed =fcf0825..2f1bc78= and returned PASS with no actionable findings. Guarded final verification passed: =cargo fmt --all -- --check=; =cargo check -p orgasmic-daemon -p orgasmic-drivers -p orgasmic-cli=; scoped WriterHandle failure isolation; malformed-header and lifecycle rollback; crash/restart recovery lineage; Present/Absent/Unobserved tmux recovery behavior; exact raw tmux marker bytes; typed target loss; composer gating; and shipped-router mapping. UI execution remained unavailable because local UI dependencies were absent; static UI contract changes were reviewed and no code defect was found. No live daemon, LaunchAgent, billed test, or external service was touched.
+2026-09-06 status reconciliation at main 0bf80eb0: verified merge 0423ae5 is an ancestor of HEAD and retained the existing independent Sol/high PASS evidence for fcf0825..2f1bc78. Closed the previously recorded UI execution gap on the current tree: npm run typecheck passed; npm test -- src/components/manager/__tests__/runDockLabels.test.ts passed 24/24. Existing backend verification remains the recorded merge-time evidence; no backend suite or billed/live dispatch was rerun. This is lifecycle reconciliation of implemented and reviewed work, not a new implementation or deployment.
 
