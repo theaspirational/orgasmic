@@ -8046,3 +8046,18 @@
 :NODE_ID:      handoff-current
 :EVENT_ID:     b0a9c1ff-afaf-4ebf-8203-da60da581cc4
 :END:
+
+* TX 2026-09-06 Sun 15:14:02 manager.tier TASK-ZZ2S4
+:PROPERTIES:
+:TX_ID:        tx-20260906-orgasmic-42d2ee66-7b06-4f37-b343-4a5a4507956a
+:TIME:         [2026-09-06 Sun 15:14:02]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-ZZ2S4
+:REASON:       Malformed-ID repair changes ledger durability and spans CLI, core, and daemon boundaries; staged plan, delegated implementation, independent review required.
+:TIER:         risky
+:TRIGGERS:     blast_radius, breadth
+:EVENT_ID:     c3217c26-5821-4319-8697-d2fd0f80f253
+:END:
