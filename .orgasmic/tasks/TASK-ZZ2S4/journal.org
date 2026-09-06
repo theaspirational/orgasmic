@@ -122,3 +122,19 @@
 :NODE_ID: TASK-ZZ2S4
 :EVENT_ID: 4fb3a2b8-5171-436d-80e9-7d872bf549fa
 :END:
+
+* tx-20260906-orgasmic-d4b577e9-d32d-4672-932d-f15f6883085d task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-d4b577e9-d32d-4672-932d-f15f6883085d
+:TIME:    [2026-09-06 Sun 15:34:05]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-ZZ2S4
+:TARGET: .orgasmic/tasks/TASK-ZZ2S4/node.org
+:REASON: Independent reviewer blocked candidate 7f6deeaf on anonymous staging-file crash recovery; implementer is fixing that narrow issue before re-review and live apply.
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: c07d6559-8980-4548-95df-fbacb1529580
+:END:
