@@ -1,0 +1,25 @@
+{
+  "event_count": 328,
+  "tool_call_count": 138,
+  "unparsed_events": 0,
+  "bounded_events": 0,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-0Y363-implementer-20260906T175414.jsonl",
+    "size_bytes": 583779
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/06/rollout-2026-09-06T20-54-15-01a077db-4a9a-7742-90e9-596c7e77bde6.jsonl",
+    "session_id": "01a077db-4a9a-7742-90e9-596c7e77bde6",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "Using `ponytail` for smallest safe diff and `orgasmic` for task/dispatch lifecycle.Got it. I’ll back out the premature policy claim and make the diagnostic prove: warm success before exhaustion, fresh baseline before exhaustion, lock held + child alive during exhaustion, repeated pressure, and recovery after releases. Then I’ll either keep only a bounded mitigation with its ceiling documented, or finalize the policy gap."
+    }
+  ],
+  "narrative_truncated": false
+}
