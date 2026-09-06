@@ -301,4 +301,12 @@ lost the next two workers the same way.
   and does not fire for an ordinary operator invocation.
 ** Status 2026-09-06
 Source/ledger triage at main 0bf80eb0. P1 retained; source still supports the foreign-home/per-user-service hazard. daemon_lifecycle.rs:176-240 routes Down to start_via_selected_adapter; daemon_service.rs:389-410 rewrites the one macOS plist then bootout/bootstrap without checking the home already served. Explicit ORGASMIC_DAEMON_URL returns before that path; daemon-free verbs are not affected, so the old ANY verb title was too broad. No live service mutation or hazardous reproduction was performed. First implementation candidate: guard the shared service-start boundary and test with a temporary service adapter.
+** 2026-09-06 outcome
+Implemented, independently reviewed, and merged to source main14561065e6327ba2f87bbe01a6b3703569355a98. Task is DONE. Final reviewer generation tx-20260906-orgasmic-b3ce4f67-9270-4816-b498-dfd08e3f40b7 reported APPROVE with no findings in its exact delta; reviewer close tx-20260906-orgasmic-7a2ab95a-7336-4f81-9287-edccf2c036e2 verified. No open dispatch remains for this task.
+
+The shared service-owner and worker-context guards precede service mutation, drain/auth repair, and runtime override preparation. Matching nondefault homes, native binary plists, valid Unicode and literal escapes remain supported. Foreign, unknown, malformed or ambiguous ownership refuses; no force escape added.
+
+Evidence: ~/.codex/artifacts/orgasmic-recovery-20260906/. Original four reader regressions reproduced RED;39service,28lifecycle and1runtime-refusal checks GREEN. Final decoder filters and valid-binary/non-UTF8-XML checks GREEN; strict-hex-work/suite.log contains the final sign-prefixed escape regression. Independent reports: independent-review.md, p1-fix-independent-review.md, p1-validation-independent-review.md, strict-hex-independent-review.md. The original broad CLI suite was RED for two baseline failures; both were repaired and focused reruns passed. No full suite rerun or Linux/Windows live service mutation was performed.
+
+Publication/deployment: local source main is clean and ahead14 of local origin/main. No push or install performed. Installed normal CLI remains old; this fix is not active there yet. Live daemon PID39114, boot019f72b5-9e79-4536-905c-a95dff391ac7 remained unchanged.
 
