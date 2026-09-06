@@ -18931,11 +18931,15 @@ async fn post_goal_supersede(
     }))
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("task {0} lifecycle or required evidence changed before commit; reload and retry")]
+struct TaskLifecycleConflict(String);
+
 struct TaskLifecycleWriteRequest<'a> {
     state: &'a ApiState,
     project_id: &'a str,
     task_id: &'a str,
-    rewrites: Vec<(PathBuf, String)>,
+    path: PathBuf,
     target_rel: String,
     from_state: LifecycleStage,
     to_state: LifecycleStage,
@@ -18946,10 +18950,18 @@ struct TaskLifecycleWriteRequest<'a> {
 async fn write_task_lifecycle_and_record(
     req: TaskLifecycleWriteRequest<'_>,
 ) -> Result<String, ApiError> {
-    for (path, source) in &req.rewrites {
-        OrgFile::parse(source.clone(), path.to_string_lossy())
-            .map_err(|e| org_parse_bad_request(path, "task file", e))?;
-    }
+    let mutation = MutationIdentity::new(
+        "task.state_transitioned",
+        req.project_id,
+        json!({"task": req.task_id, "state": req.to_state.as_str(), "reason": &req.reason})
+            .to_string(),
+    );
+    let task_id = req.task_id.to_string();
+    let path_display = req.path.to_string_lossy().to_string();
+    // TASK-ADHWZ: keep the transform inside the writer queue so a lifecycle
+    // change cannot replace an earlier property or body edit with stale bytes.
+    let from_state = req.from_state;
+    let to_state = req.to_state;
     let prepared_tx = prepare_api_tx(
         req.state,
         ApiTxRequest {
@@ -18970,20 +18982,43 @@ async fn write_task_lifecycle_and_record(
         },
     )
     .await?;
-    let file_rewrites = req
-        .rewrites
-        .into_iter()
-        .map(|(path, source)| FileRewrite {
-            path,
-            new_contents: source.into_bytes(),
-        })
-        .collect();
     let tx_id = req
         .state
         .writer
-        .transaction(file_rewrites, prepared_tx.tx)
+        .transaction_mutate_file(
+            FileMutate {
+                path: req.path,
+                transform: Box::new(move |source| {
+                    let file = OrgFile::parse(source.to_string(), path_display.clone())?;
+                    let heading = file
+                        .find_by_id(&task_id)
+                        .ok_or_else(|| TaskLifecycleConflict(task_id.clone()))?;
+                    let task =
+                        orgasmic_core::TaskHeading::from_heading(&file, heading, &path_display)?;
+                    if task.lifecycle_stage != from_state
+                        || (to_state == LifecycleStage::Done
+                            && crate::index::parse_task_body(&file, heading)
+                                .evidence
+                                .is_empty())
+                    {
+                        return Err(TaskLifecycleConflict(task_id).into());
+                    }
+                    let mut rw = OrgRewriter::new(&file, path_display);
+                    rw.set_title_line(&task_id, &task_lifecycle_title_line(heading, to_state))?;
+                    Ok(rw.finish().into_bytes())
+                }),
+            },
+            prepared_tx.tx,
+            mutation,
+        )
         .await
-        .map_err(writer_transaction_error)?;
+        .map_err(|error| {
+            if let Some(conflict) = error.downcast_ref::<TaskLifecycleConflict>() {
+                ApiError::conflict(conflict.to_string())
+            } else {
+                writer_transaction_error(error)
+            }
+        })?;
     refresh_after_project_mutation(req.state, req.project_id, prepared_tx.project_tx, &tx_id)
         .await?;
     Ok(tx_id)
@@ -19279,18 +19314,6 @@ async fn update_task_state(
             )));
         }
     }
-    let from_path = task.source_file.clone();
-    let source_display = from_path.to_string_lossy().to_string();
-    let source = read_artifact(&from_path, "task file")?;
-    let file = OrgFile::parse(source.clone(), &source_display)
-        .map_err(|e| org_parse_bad_request(&from_path, "task file", e))?;
-    let mut rw = OrgRewriter::new(&file, &source_display);
-    let heading = file
-        .find_by_id(task_id)
-        .ok_or_else(|| ApiError::not_found(format!("task {task_id}")))?;
-    rw.set_title_line(task_id, &task_lifecycle_title_line(heading, to_state))
-        .map_err(|e| org_rewriter_error("set task lifecycle title", task_id, e))?;
-    let rewrites = vec![(from_path, rw.finish())];
     let reason = req
         .reason
         .filter(|value| !value.trim().is_empty())
@@ -19299,7 +19322,7 @@ async fn update_task_state(
         state,
         project_id,
         task_id,
-        rewrites,
+        path: task.source_file.clone(),
         target_rel: task_node_rel(task_id),
         from_state,
         to_state,
@@ -35145,16 +35168,30 @@ pub(crate) mod tests {
             let token = token.clone();
             let base = base.clone();
             writes.spawn(async move {
-                let response = client
+                let request = json!({
+                    "title": format!("Concurrent task {number:02}"),
+                    "request_id": format!("task-create-concurrent-{number:02}"),
+                });
+                let mut response = client
                     .post(format!("{base}/api/projects/orgasmic/tasks"))
-                    .bearer_auth(token)
-                    .json(&json!({
-                        "title": format!("Concurrent task {number:02}"),
-                        "request_id": format!("task-create-concurrent-{number:02}"),
-                    }))
+                    .bearer_auth(&token)
+                    .json(&request)
                     .send()
                     .await
                     .unwrap();
+                if number == 0 {
+                    assert!(response.status().is_success());
+                    // Lose the created id/tx response body, then retry while
+                    // the other creates are in flight.
+                    drop(response);
+                    response = client
+                        .post(format!("{base}/api/projects/orgasmic/tasks"))
+                        .bearer_auth(&token)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap();
+                }
                 let status = response.status();
                 let body: Value = response.json().await.unwrap();
                 assert!(status.is_success(), "task create: {status} {body}");
@@ -35180,6 +35217,13 @@ pub(crate) mod tests {
         .await
         .expect("concurrent task creates exceeded the client budget");
         assert_eq!(created.len(), N);
+        assert_eq!(
+            std::fs::read_dir(project_root.join(".orgasmic/tasks"))
+                .unwrap()
+                .count(),
+            N + 1,
+            "a lost-response retry must not create an extra node"
+        );
         assert_eq!(
             created
                 .values()
@@ -35240,8 +35284,53 @@ pub(crate) mod tests {
             assert_eq!(&entries[0].entry_id, tx_id);
         }
 
+        let ids = created
+            .values()
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        let durable: Vec<_> = ids
+            .iter()
+            .flat_map(|id| {
+                let node = task_node_file_path(&project_root, id);
+                [node.clone(), node.with_file_name(JOURNAL_FILE)]
+            })
+            .map(|path| {
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
         let _ = running.shutdown.send(());
-        let _ = running.join.await;
+        running.join.await.unwrap();
+        let restarted = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .unwrap();
+        for id in ids {
+            let response = client
+                .get(format!(
+                    "http://{}/api/projects/orgasmic/tasks/{id}",
+                    restarted.addr
+                ))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                response.status().is_success(),
+                "task {id} lost after restart"
+            );
+            let task: Value = response.json().await.unwrap();
+            assert_eq!(task["id"], id);
+        }
+        for (path, bytes) in durable {
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                bytes,
+                "{} changed during restart",
+                path.display()
+            );
+        }
+        let _ = restarted.shutdown.send(());
+        restarted.join.await.unwrap();
     }
 
     #[tokio::test]
@@ -35309,6 +35398,22 @@ pub(crate) mod tests {
             .unwrap();
         let base = format!("http://{}", running.addr);
 
+        let create_client = client.clone();
+        let create_token = token.clone();
+        let create_base = base.clone();
+        let mixed_create = tokio::spawn(async move {
+            let response = create_client
+                .post(format!("{create_base}/api/projects/orgasmic/tasks"))
+                .bearer_auth(create_token)
+                .json(&json!({
+                    "title": "Created while updating", "request_id": "mixed-create-update"
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert!(response.status().is_success());
+            response.json::<Value>().await.unwrap()
+        });
         let mut writes = tokio::task::JoinSet::new();
         for number in 0..N {
             let client = client.clone();
@@ -35317,16 +35422,28 @@ pub(crate) mod tests {
             writes.spawn(async move {
                 let key = format!("CONCURRENT_{number:02}");
                 let value = number.to_string();
-                let response = client
+                let request = json!({
+                    "properties": { key: value },
+                    "request_id": format!("task-property-concurrent-{number:02}"),
+                });
+                let mut response = client
                     .post(format!("{base}/api/projects/orgasmic/tasks/TASK-PRE"))
-                    .bearer_auth(token)
-                    .json(&json!({
-                        "properties": { key: value },
-                        "request_id": format!("task-property-concurrent-{number:02}"),
-                    }))
+                    .bearer_auth(&token)
+                    .json(&request)
                     .send()
                     .await
                     .unwrap();
+                if number == 0 {
+                    assert!(response.status().is_success());
+                    drop(response);
+                    response = client
+                        .post(format!("{base}/api/projects/orgasmic/tasks/TASK-PRE"))
+                        .bearer_auth(&token)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap();
+                }
                 let status = response.status();
                 let body: Value = response.json().await.unwrap();
                 assert!(status.is_success(), "property update: {status} {body}");
@@ -35398,8 +35515,57 @@ pub(crate) mod tests {
             tx_ids.iter().map(String::as_str).collect::<BTreeSet<_>>()
         );
 
+        let created = mixed_create.await.unwrap();
+        let created_id = created["id"].as_str().unwrap().to_string();
+        let created_path = task_node_file_path(&project_root, &created_id);
+        let journal = std::fs::read_to_string(created_path.with_file_name(JOURNAL_FILE)).unwrap();
+        let entries = orgasmic_core::node_kernel::parse_journal(&journal, "mixed create").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry_id, created["tx_id"].as_str().unwrap());
+        let ids = vec!["TASK-PRE".to_string(), created_id];
+        let durable: Vec<_> = ids
+            .iter()
+            .flat_map(|id| {
+                let node = task_node_file_path(&project_root, id);
+                [node.clone(), node.with_file_name(JOURNAL_FILE)]
+            })
+            .map(|path| {
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
         let _ = running.shutdown.send(());
-        let _ = running.join.await;
+        running.join.await.unwrap();
+        let restarted = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .unwrap();
+        for id in ids {
+            let response = client
+                .get(format!(
+                    "http://{}/api/projects/orgasmic/tasks/{id}",
+                    restarted.addr
+                ))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                response.status().is_success(),
+                "task {id} lost after restart"
+            );
+            let task: Value = response.json().await.unwrap();
+            assert_eq!(task["id"], id);
+        }
+        for (path, bytes) in durable {
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                bytes,
+                "{} changed during restart",
+                path.display()
+            );
+        }
+        let _ = restarted.shutdown.send(());
+        restarted.join.await.unwrap();
     }
 
     #[tokio::test]
@@ -35441,6 +35607,159 @@ pub(crate) mod tests {
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
+    }
+
+    async fn queue_task_updates(
+        state: &ApiState,
+        bodies: [Value; 2],
+    ) -> Vec<Result<Value, ApiError>> {
+        let writer = state.writer.clone();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let barrier = tokio::spawn(async move {
+            writer
+                .run_barrier(move || {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                })
+                .await
+                .unwrap();
+        });
+        entered_rx.await.unwrap();
+        let mut writes = Vec::new();
+        for (number, body) in bodies.into_iter().enumerate() {
+            let request_state = state.clone();
+            writes.push(tokio::spawn(async move {
+                post_task_update(
+                    State(request_state),
+                    Path(("orgasmic".into(), "TASK-PRE".into())),
+                    Query(MutationOutputQuery { json: false }),
+                    Json(serde_json::from_value(body).unwrap()),
+                )
+                .await
+                .map(|response| response.0)
+            }));
+            // Queue in a fixed order before either can commit, exposing
+            // transforms prepared from stale caller-side bytes.
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while state.writer.status().queue_depth != number + 1 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        release_tx.send(()).unwrap();
+        barrier.await.unwrap();
+        let mut responses = Vec::new();
+        for write in writes {
+            responses.push(write.await.unwrap());
+        }
+        responses
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_task_property_and_lifecycle_updates_preserve_both_writes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = tmp.path().join("proj");
+        seed_project(&home, &root, "orgasmic");
+        let mut state = direct_stage_test_state(home).await;
+        state.tx_commit_to_project = true;
+        let responses = queue_task_updates(
+            &state,
+            [
+                json!({"priority": "P1", "request_id": "mixed-property"}),
+                json!({"state": "todo", "request_id": "mixed-lifecycle"}),
+            ],
+        )
+        .await;
+        let tx_ids: BTreeSet<_> = responses
+            .into_iter()
+            .map(|response| response.unwrap()["tx_id"].as_str().unwrap().to_string())
+            .collect();
+        let node_path = task_node_file_path(&root, "TASK-PRE");
+        let source = std::fs::read_to_string(&node_path).unwrap();
+        let file = OrgFile::parse(source, "mixed writes").unwrap();
+        let heading = file.find_by_id("TASK-PRE").unwrap();
+        assert_eq!(heading.todo.as_deref(), Some("TODO"));
+        assert_eq!(heading.property("PRIORITY"), Some("P1"));
+        let journal_path = node_path.with_file_name(JOURNAL_FILE);
+        let journal = std::fs::read_to_string(&journal_path).unwrap();
+        let entries = orgasmic_core::node_kernel::parse_journal(&journal, "mixed journal").unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|e| e.entry_id.clone())
+                .collect::<BTreeSet<_>>(),
+            tx_ids
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_task_lifecycle_updates_reject_stale_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = tmp.path().join("proj");
+        seed_project(&home, &root, "orgasmic");
+        let mut state = direct_stage_test_state(home).await;
+        state.tx_commit_to_project = true;
+        let mut responses = queue_task_updates(
+            &state,
+            [
+                json!({"state": "todo", "request_id": "first-lifecycle"}),
+                json!({"state": "cancelled", "request_id": "stale-lifecycle"}),
+            ],
+        )
+        .await
+        .into_iter();
+        let first = responses.next().unwrap().unwrap();
+        let conflict = responses.next().unwrap().unwrap_err();
+        assert_eq!(conflict.status, StatusCode::CONFLICT);
+        assert!(conflict.message.contains("changed before commit"));
+        let path = task_node_file_path(&root, "TASK-PRE");
+        let file = OrgFile::parse(std::fs::read_to_string(&path).unwrap(), "current").unwrap();
+        assert_eq!(
+            file.find_by_id("TASK-PRE").unwrap().todo.as_deref(),
+            Some("TODO")
+        );
+        let journal = std::fs::read_to_string(path.with_file_name(JOURNAL_FILE)).unwrap();
+        let entries = orgasmic_core::node_kernel::parse_journal(&journal, "state journal").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry_id, first["tx_id"].as_str().unwrap());
+    }
+
+    #[tokio::test]
+    async fn task_done_rechecks_evidence_at_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = tmp.path().join("proj");
+        seed_project(&home, &root, "orgasmic");
+        let path = task_node_file_path(&root, "TASK-PRE");
+        let source = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("* BACKLOG", "* IN_REVIEW");
+        std::fs::write(&path, format!("{source}\n** Evidence\nproof\n")).unwrap();
+        let state = direct_stage_test_state(home).await;
+        // The loaded projection still has evidence; the current node does not.
+        std::fs::write(&path, &source).unwrap();
+        let conflict = post_task_update(
+            State(state),
+            Path(("orgasmic".into(), "TASK-PRE".into())),
+            Query(MutationOutputQuery { json: false }),
+            Json(
+                serde_json::from_value(json!({"state": "done", "request_id": "removed-evidence"}))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(conflict.status, StatusCode::CONFLICT);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), source);
     }
 
     #[tokio::test]

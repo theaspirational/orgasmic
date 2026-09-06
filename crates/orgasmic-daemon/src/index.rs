@@ -4155,7 +4155,7 @@ const STRUCTURED_TASK_SECTIONS: &[&str] = &[
     "Reviewer pass",
 ];
 
-fn parse_task_body(file: &OrgFile, heading: &Heading) -> TaskBody {
+pub(crate) fn parse_task_body(file: &OrgFile, heading: &Heading) -> TaskBody {
     // orgasmic:task_ZYWZD
     // `description` is the whole authored body, not just the prose before the
     // first nested heading: the free body, the Description section *including*
