@@ -64,7 +64,9 @@ use serde_json::{json, Value};
 /// project/worktree pair directly, and [`WorktreeAuthority`] carries the
 /// worktree's durable directory identity so a tombstone cannot be revived by
 /// an unrelated directory appearing at the recorded path.
-pub const CATALOG_VERSION: u32 = 2;
+// v3 (TASK-CQM2X.1): external-ledger worktrees are identified by their
+// shared Git repository. Rebuild v2's permanently cached false mismatches.
+pub const CATALOG_VERSION: u32 = 3;
 
 /// Where a project's durable catalog snapshot lives, relative to its root.
 pub const CATALOG_REL_PATH: &str = ".orgasmic/tmp/run-catalog.json";
@@ -1056,6 +1058,7 @@ impl RunCatalog {
                 &ledger,
                 &entry.run_id,
                 project_id,
+                project_root,
             ) {
                 count_ledger_overrule(&overruled, &mut stats);
                 entry.worktree_authority = overruled;
@@ -1091,6 +1094,7 @@ impl RunCatalog {
                 &ledger,
                 &planned.run_id,
                 project_id,
+                project_root,
             ) {
                 Some(overruled) => {
                     count_ledger_overrule(&overruled, &mut stats);
@@ -1756,6 +1760,7 @@ fn reconcile_authority_with_ledger(
     ledger: &TombstoneLedger,
     run_id: &str,
     project_id: Option<&str>,
+    project_root: &Path,
 ) -> Option<WorktreeAuthority> {
     match (verdict, ledger_unusable, ledger.contains(run_id)) {
         (WorktreeAuthority::Verified { worktree, .. }, true, _) => {
@@ -1784,6 +1789,7 @@ fn reconcile_authority_with_ledger(
             // rebuild's inputs.
             Some(verify_worktree_authority(
                 Some(project_id),
+                project_root,
                 Some((Some(project_id.to_string()), Some(recorded.clone()))),
             ))
         }
@@ -1811,6 +1817,7 @@ fn count_ledger_overrule(overruled: &WorktreeAuthority, stats: &mut CatalogRefre
 /// keeps the reasons the same strings the pre-catalog inventory reported.
 pub fn verify_worktree_authority(
     project_id: Option<&str>,
+    project_root: &Path,
     run_meta: Option<(Option<String>, Option<PathBuf>)>,
 ) -> WorktreeAuthority {
     let Some(project_id) = project_id else {
@@ -1837,17 +1844,16 @@ pub fn verify_worktree_authority(
     let Ok(canonical) = recorded.canonicalize() else {
         return WorktreeAuthority::Mismatched { recorded };
     };
-    match crate::api::project_identity_at(&canonical) {
-        Some(identity) if identity == project_id => {
-            // Identity of the canonical path, because that is the path a later
-            // probe stats and the path a tombstone would record.
-            let identity = DirIdentity::at(&canonical);
-            WorktreeAuthority::Verified {
-                worktree: canonical,
-                identity,
-            }
+    if crate::api::worktree_belongs_to_project(&canonical, project_root, project_id) {
+        // Identity of the canonical path, because that is the path a later
+        // probe stats and the path a tombstone would record.
+        let identity = DirIdentity::at(&canonical);
+        WorktreeAuthority::Verified {
+            worktree: canonical,
+            identity,
         }
-        _ => WorktreeAuthority::Mismatched { recorded },
+    } else {
+        WorktreeAuthority::Mismatched { recorded }
     }
 }
 
@@ -2069,7 +2075,7 @@ pub(crate) fn entry_from_scan(
         transport: semantics.transport,
         harness: semantics.harness,
         native: semantics.native,
-        worktree_authority: verify_worktree_authority(project_id, run_meta),
+        worktree_authority: verify_worktree_authority(project_id, project_root, run_meta),
         run_meta_project: semantics.run_meta_project,
         run_meta_worktree: semantics.run_meta_worktree,
         run_meta_recorded: semantics.run_meta_recorded,
@@ -3185,6 +3191,96 @@ mod tests {
             !text.contains("yyyy"),
             "transcript payload reached the durable catalog"
         );
+    }
+
+    // TASK-CQM2X.1: the source checkout intentionally has no .orgasmic
+    // directory after migration; its ledger is another Git worktree.
+    #[test]
+    fn external_ledger_worktree_keeps_recorded_terminal_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let code = dir.path().join("code");
+        let ledger = dir.path().join("ledger");
+        let git = |cwd: &Path, args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        std::fs::create_dir(&code).unwrap();
+        git(&code, &["init", "--quiet"]);
+        git(&code, &["commit", "--allow-empty", "-m", "fixture"]);
+        git(
+            &code,
+            &["worktree", "add", "-b", "ledger", ledger.to_str().unwrap()],
+        );
+        project(&ledger, "proj-1");
+        assert!(!code.join(".orgasmic/project.org").exists());
+        let sessions = project_sessions_dir(&ledger);
+        write_session(
+            &sessions,
+            "run-ledger",
+            1024,
+            Some(ReleaseOutcome::Failed),
+            &code,
+            "proj-1",
+        );
+        let catalog = RunCatalog::new();
+        catalog.refresh_dir(
+            &sessions,
+            Some("proj-1"),
+            &ledger,
+            SessionScanBudget::DEFAULT,
+        );
+        let entry = catalog.entries().remove(0);
+        assert!(
+            entry.worktree_authority.verified_worktree().is_some(),
+            "{:?}",
+            entry.worktree_authority
+        );
+        assert_eq!(entry.final_release_outcome, Some(ReleaseOutcome::Failed));
+
+        let foreign = dir.path().join("foreign");
+        std::fs::create_dir(&foreign).unwrap();
+        git(&foreign, &["init", "--quiet"]);
+        let nested = code.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        for path in [&foreign, &nested] {
+            assert!(!crate::api::worktree_belongs_to_project(
+                path, &ledger, "proj-1"
+            ));
+        }
+        assert!(!crate::api::worktree_belongs_to_project(
+            &code, &ledger, "proj-2"
+        ));
+
+        let marker = code.join(".orgasmic/project.org");
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(&marker, "malformed marker").unwrap();
+        assert!(!crate::api::worktree_belongs_to_project(
+            &code, &ledger, "proj-1"
+        ));
+        project(&code, "proj-2");
+        assert!(!crate::api::worktree_belongs_to_project(
+            &code, &ledger, "proj-1"
+        ));
+        std::fs::remove_file(&marker).unwrap();
+        assert!(crate::api::worktree_belongs_to_project(
+            &code, &ledger, "proj-1"
+        ));
     }
 
     #[tokio::test]
@@ -4672,7 +4768,10 @@ mod tests {
         let mut snapshot: Value = serde_json::from_slice(&bytes).unwrap();
         let path = root.join(CATALOG_REL_PATH);
 
-        for foreign in [0_u64, u64::from(CATALOG_VERSION) + 1] {
+        for foreign in [
+            u64::from(CATALOG_VERSION) - 1,
+            u64::from(CATALOG_VERSION) + 1,
+        ] {
             snapshot["catalog_version"] = json!(foreign);
             std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
             let catalog = RunCatalog::new();

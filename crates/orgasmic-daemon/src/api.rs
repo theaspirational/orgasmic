@@ -2129,6 +2129,60 @@ pub(crate) fn project_identity_at(root: &FsPath) -> Option<String> {
         .map(|project| project.id.to_string())
 }
 
+/// TASK-CQM2X.1: migrated code worktrees carry no ledger marker. Accept them
+/// only through the identified ledger's Git repository; an existing marker
+/// remains authoritative, including a conflicting or unreadable one.
+pub(crate) fn worktree_belongs_to_project(
+    worktree: &FsPath,
+    project_root: &FsPath,
+    project_id: &str,
+) -> bool {
+    match std::fs::symlink_metadata(worktree.join(".orgasmic/project.org")) {
+        Ok(_) => project_identity_at(worktree).as_deref() == Some(project_id),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if project_identity_at(project_root).as_deref() != Some(project_id) {
+                return false;
+            }
+            match (
+                git_checkout_common_dir(worktree),
+                git_checkout_common_dir(project_root),
+            ) {
+                (Some(worktree_git), Some(ledger_git)) => worktree_git == ledger_git,
+                _ => false,
+            }
+        }
+        Err(_) => false,
+    }
+}
+
+/// Resolve an actual checkout root, not an arbitrary subdirectory that Git
+/// happens to discover upwards from. Ambient Git routing must not supply the
+/// repository identity for either of the paths being checked.
+fn git_checkout_common_dir(root: &FsPath) -> Option<PathBuf> {
+    let root = root.canonicalize().ok()?;
+    let output = Command::new("git")
+        .args([
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--git-common-dir",
+        ])
+        .current_dir(&root)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = std::str::from_utf8(&output.stdout).ok()?;
+    let mut lines = text.lines();
+    let top = PathBuf::from(lines.next()?).canonicalize().ok()?;
+    let common = PathBuf::from(lines.next()?).canonicalize().ok()?;
+    (top == root && lines.next().is_none()).then_some(common)
+}
+
 pub(crate) fn read_existing_project_identity(
     project_org: &FsPath,
 ) -> Result<ExistingProjectIdentity, ApiError> {
@@ -11203,11 +11257,7 @@ async fn recovery_origin_authority(
         .ok_or_else(|| ApiError::bad_request("origin RunMeta worktree is required for recovery"))?
         .canonicalize()
         .map_err(|_| ApiError::bad_request("origin RunMeta worktree is unavailable"))?;
-    let worktree_identity = read_existing_project_identity(&worktree.join(".orgasmic/project.org"))
-        .map_err(|_| {
-            ApiError::bad_request("origin RunMeta worktree project identity is invalid")
-        })?;
-    if worktree_identity.project_id != requested_project_id {
+    if !worktree_belongs_to_project(&worktree, &project_root, requested_project_id) {
         return Err(ApiError::bad_request(
             "origin RunMeta worktree belongs to another project",
         ));
@@ -36307,12 +36357,58 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn failed_terminal_release_is_recoverable_via_explicit_post() {
+        assert_failed_terminal_release_is_recoverable(false).await;
+    }
+
+    #[tokio::test]
+    async fn external_ledger_failed_release_is_recoverable_via_explicit_post() {
+        assert_failed_terminal_release_is_recoverable(true).await;
+    }
+
+    async fn assert_failed_terminal_release_is_recoverable(external_ledger: bool) {
         // orgasmic:TASK-R28CP — Failed tombstones stay terminal but expose
         // read-only recovery actions; nothing starts until POST /recover.
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let project_root = tmp.path().join("proj");
+        let worktree = if external_ledger {
+            let code = tmp.path().join("code");
+            std::fs::create_dir(&code).unwrap();
+            for args in [
+                vec!["init", "--quiet"],
+                vec!["commit", "--allow-empty", "-m", "fixture"],
+                vec![
+                    "worktree",
+                    "add",
+                    "-b",
+                    "ledger",
+                    project_root.to_str().unwrap(),
+                ],
+            ] {
+                let output = Command::new("git")
+                    .args([
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.invalid",
+                        "-c",
+                        "commit.gpgsign=false",
+                    ])
+                    .args(args)
+                    .current_dir(&code)
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            code
+        } else {
+            project_root.clone()
+        };
         seed_project(&home, &project_root, "orgasmic");
         let failed_path = write_failed_recoverable_session(
             &project_root,
@@ -36320,6 +36416,23 @@ pub(crate) mod tests {
             "protocol_end_without_finalize",
             false,
         );
+        if external_ledger {
+            let mut envelopes = read_session_file(&failed_path).unwrap();
+            for envelope in &mut envelopes {
+                if envelope.event.get("worktree").is_some() {
+                    envelope.event["worktree"] = json!(worktree);
+                }
+            }
+            let source = envelopes
+                .iter()
+                .map(|e| serde_json::to_string(e).unwrap())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+            std::fs::write(&failed_path, source).unwrap();
+            assert!(!worktree.join(".orgasmic/project.org").exists());
+        }
+        let source_before = std::fs::read(&failed_path).unwrap();
         let sessions_dir = project_sessions_dir(&project_root);
         let session_count_before = std::fs::read_dir(&sessions_dir)
             .map(|entries| entries.count())
@@ -36350,6 +36463,21 @@ pub(crate) mod tests {
         let actions = failed["recovery_actions"].as_array().unwrap();
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0]["kind"], "start_recovery_run");
+
+        let exact: serde_json::Value = client
+            .get(format!(
+                "http://{}/api/runs/run-failed-recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(exact["classification"], "failed_recoverable");
+        assert_eq!(exact["run"]["worktree_authority"], "verified");
 
         let runs: serde_json::Value = client
             .get(format!("http://{}/api/runs", running.addr))
@@ -36396,6 +36524,13 @@ pub(crate) mod tests {
                 }
             })
             .expect("recovery RunMeta");
+        let recovery_worktree = recovery_envelopes
+            .iter()
+            .find_map(|e| e.event.get("worktree"));
+        assert_eq!(
+            recovery_worktree,
+            Some(&json!(worktree.canonicalize().unwrap()))
+        );
         assert_eq!(
             recovery_driver_config["trusted_provider_identity"],
             "claude"
@@ -36409,6 +36544,7 @@ pub(crate) mod tests {
             .is_some_and(|path| FsPath::new(path).is_absolute()));
 
         let failed_raw = std::fs::read_to_string(&failed_path).unwrap();
+        assert_eq!(std::fs::read(&failed_path).unwrap(), source_before);
         assert!(
             failed_raw.contains("\"outcome\":\"failed\"")
                 || failed_raw.contains("\"outcome\": \"failed\""),
