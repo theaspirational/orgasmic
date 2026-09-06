@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-P4XKT
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-P4XKT a test that passes is never repeated, so an intermittent defect merges green and a one-run-per-commit bisect looks conclusive :testing:ci:
+* DONE TASK-P4XKT a test that passes is never repeated, so an intermittent defect merges green and a one-run-per-commit bisect looks conclusive :testing:ci:
 :PROPERTIES:
 :ID: TASK-P4XKT
 :PRIORITY: P1

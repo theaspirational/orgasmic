@@ -78,3 +78,19 @@
 :TO_STATE: in_review
 :EVENT_ID: f1e831ad-de49-41f5-ae68-e53f7de4e103
 :END:
+
+* tx-20260906-orgasmic-42f5795e-d814-47e1-9c58-805dc61caa24 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-42f5795e-d814-47e1-9c58-805dc61caa24
+:TIME:    [2026-09-06 Sun 21:36:29]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-P4XKT
+:TARGET: .orgasmic/tasks/TASK-P4XKT/node.org
+:REASON: All three acceptance criteria verified: real repeated recovery canary scored 3/3, intermittent negative control caught, and added cost measured under host safeguards; local commit d1c67344.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 94429b8d-2e5f-4ad7-b280-87acd978795d
+:END:
