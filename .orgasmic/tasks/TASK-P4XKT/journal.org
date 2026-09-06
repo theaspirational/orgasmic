@@ -15,3 +15,35 @@
 :NODE_ID: TASK-P4XKT
 :EVENT_ID: 4539c284-e7d3-4feb-be0b-9eae3a8776d6
 :END:
+
+* tx-20260906-orgasmic-298d210d-7028-452a-b7b3-6345a6603851 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-298d210d-7028-452a-b7b3-6345a6603851
+:TIME:    [2026-09-06 Sun 21:23:03]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-P4XKT
+:TARGET: .orgasmic/tasks/TASK-P4XKT/node.org
+:REASON: Selected next P1 slice: opt-in exact repeated test with durable pass score and existing whole-run watchdog.
+:FROM_STATE: backlog
+:TO_STATE: todo
+:EVENT_ID: f1100921-9d26-472e-b74b-de428a886d07
+:END:
+
+* tx-20260906-orgasmic-539eac4f-3965-4df0-bf83-3d74aa630566 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260906-orgasmic-539eac4f-3965-4df0-bf83-3d74aa630566
+:TIME:    [2026-09-06 Sun 21:23:03]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-P4XKT
+:TARGET: .orgasmic/tasks/TASK-P4XKT/node.org
+:REASON: Implementing a three-run crash-recovery canary with 100 percent pass requirement; no workspace repeat or operator lifecycle action.
+:FROM_STATE: todo
+:TO_STATE: in_progress
+:EVENT_ID: 293b1d33-bf1c-4379-900d-c23e361bc6c2
+:END:
