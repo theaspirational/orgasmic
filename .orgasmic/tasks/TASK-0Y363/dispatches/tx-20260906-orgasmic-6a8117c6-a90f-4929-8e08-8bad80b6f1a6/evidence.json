@@ -1,0 +1,23 @@
+{
+  "event_count": 773,
+  "tool_call_count": 48,
+  "unparsed_events": 4,
+  "bounded_events": 7,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-0Y363_TASK-48SFW-reviewer-20260906T183338.jsonl",
+    "size_bytes": 1092392
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [
+    {
+      "stream": "assistant",
+      "text": "I'll start by reading the task records and the actual diff.All checks done. Writing the report now."
+    }
+  ],
+  "narrative_truncated": false
+}
