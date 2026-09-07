@@ -368,6 +368,18 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         Ok(params)
     }
 
+    /// Resolve both method and parameters from the live ACP capabilities.
+    fn jsonrpc_post_session_request(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<(String, Value), DriverError> {
+        Ok((
+            method.to_string(),
+            self.jsonrpc_post_session_params(method, params)?,
+        ))
+    }
+
     /// JSON-RPC response hook for non-handshake responses.
     async fn on_ws_response(
         &mut self,

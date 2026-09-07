@@ -791,6 +791,7 @@ async fn run_stdio(runtime: StdioRuntime) {
                     Ok(Some(value)) => {
                         let outgoing = match dispatch_incoming_json(
                             value,
+                            &mut ids,
                             &mut transport,
                             adapter.as_mut(),
                             &events,
@@ -891,6 +892,7 @@ async fn run_stdio(runtime: StdioRuntime) {
                         let Ok(Some(value)) = value else { break };
                         let outgoing = match dispatch_incoming_json(
                             value,
+                            &mut ids,
                             &mut transport,
                             adapter.as_mut(),
                             &events,

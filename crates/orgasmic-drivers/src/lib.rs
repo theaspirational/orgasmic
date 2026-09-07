@@ -23,8 +23,8 @@ pub mod r#trait;
 pub mod transcript_finder;
 
 pub use adapters::{
-    provider_host_invocation, ChatSdkAdapter, ChatSdkProvider, ClaudeAdapter, CodexAdapter,
-    CursorAcpAdapter, CursorAdapter, HermesAdapter, ShellAdapter,
+    provider_host_invocation, AcpAdapter, ChatSdkAdapter, ChatSdkProvider, ClaudeAdapter,
+    CodexAdapter, CursorAcpAdapter, CursorAdapter, HermesAdapter, ShellAdapter,
 };
 pub use catalog::{
     harness_runtime_options, runtime_options_by_harness, transport_profile, transport_profiles,
@@ -236,20 +236,11 @@ pub fn driver_for_mode_harness(mode: &str, harness: &str) -> Option<Box<dyn Work
 
 /// Dedicated RunDock Chat runtime. These pairs are intentionally absent from
 /// `SUPPORTED`: worker dispatch keeps its established transports, while Chat
-/// gets reusable SDK/app-server sessions and canonical provider events.
+/// gets reusable ACP sessions through one shared Rust client.
 pub fn chat_driver(provider: &str) -> Option<Box<dyn WorkerDriver>> {
-    match provider {
-        "codex" => Some(Box::new(StdioDriver::new(Box::new(
-            CodexAdapter::new_chat(),
-        )))),
-        "claude" => Some(Box::new(StdioDriver::new(Box::new(ChatSdkAdapter::new(
-            ChatSdkProvider::Claude,
-        ))))),
-        "opencode" => Some(Box::new(StdioDriver::new(Box::new(ChatSdkAdapter::new(
-            ChatSdkProvider::OpenCode,
-        ))))),
-        _ => None,
-    }
+    Some(Box::new(StdioDriver::new(Box::new(AcpAdapter::new(
+        provider, true,
+    )?))))
 }
 
 pub fn adapter_for(harness: &str) -> Option<Box<dyn HarnessEventAdapter>> {

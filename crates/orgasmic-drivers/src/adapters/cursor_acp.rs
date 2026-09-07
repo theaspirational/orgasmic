@@ -734,7 +734,64 @@ impl CursorAcpAdapter {
             .unwrap_or_default()
     }
 
-    fn permission_allowed(&self, params: &Value, allowlist: &SandboxAllowlist) -> bool {
+    /// Interactive chats follow their selected allowlist; worker workflow restrictions
+    /// below remain specific to dispatched workers.
+    pub(super) fn chat_permission_allowed(
+        &self,
+        params: &Value,
+        allowlist: &SandboxAllowlist,
+    ) -> bool {
+        let tool = &params["toolCall"];
+        let kind = tool["kind"].as_str().unwrap_or("unknown");
+        if !permission_kind_allowed(kind, allowlist) {
+            return false;
+        }
+        if !matches!(kind, "edit" | "delete" | "move") {
+            return true;
+        }
+        if allowlist.allow_writes_outside_cwd {
+            return true;
+        }
+        let keys = [
+            "path",
+            "file",
+            "file_path",
+            "filePath",
+            "uri",
+            "from",
+            "to",
+            "oldPath",
+            "newPath",
+            "old_path",
+            "new_path",
+        ];
+        let paths: Vec<_> = keys
+            .iter()
+            .filter_map(|key| tool["rawInput"][key].as_str())
+            .chain(
+                tool["locations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|location| location["path"].as_str()),
+            )
+            .filter(|path| !path.is_empty())
+            .collect();
+        !paths.is_empty()
+            && paths.iter().all(|path| {
+                let path = Path::new(path);
+                let path = if path.is_absolute() {
+                    path.to_path_buf()
+                } else if let Some(root) = self.worktree() {
+                    root.join(path)
+                } else {
+                    return false;
+                };
+                self.path_under_worktree(&path)
+            })
+    }
+
+    pub(super) fn permission_allowed(&self, params: &Value, allowlist: &SandboxAllowlist) -> bool {
         let kind = params
             .get("kind")
             .or_else(|| params.pointer("/toolCall/kind"))
@@ -1611,6 +1668,33 @@ mod tests {
             verdict.rejects_dispatch().is_some(),
             "an empty configured key cannot start a worker: {verdict:?}"
         );
+    }
+
+    #[test]
+    fn chat_acp_write_permissions_resolve_relative_paths_and_reject_escapes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        let mut context = ctx();
+        context.worktree = Some(root.clone());
+        let mut policy = CursorAcpAdapter::new();
+        policy
+            .stdio_session_init(&context, &DriverConfig::empty())
+            .unwrap();
+        let allowlist = SandboxAllowlist {
+            allow_patch: true,
+            allow_writes_outside_cwd: false,
+            ..Default::default()
+        };
+        let edit = |path: &str| json!({"toolCall":{"kind":"edit","rawInput":{"file_path":path}}});
+        assert!(policy.chat_permission_allowed(&edit("new.txt"), &allowlist));
+        assert!(!policy.chat_permission_allowed(&edit("../outside.txt"), &allowlist));
+        assert!(!policy.chat_permission_allowed(&json!({"toolCall":{"kind":"edit"}}), &allowlist));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(temp.path(), root.join("link")).unwrap();
+            assert!(!policy.chat_permission_allowed(&edit("link/outside.txt"), &allowlist));
+        }
     }
 
     #[test]

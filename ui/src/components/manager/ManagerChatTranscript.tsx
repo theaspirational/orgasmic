@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   Conversation,
@@ -7,7 +7,11 @@ import {
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation';
 import { CodeBlock } from '@/components/ai-elements/code-block';
-import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message';
+import {
+  Message,
+  MessageContent,
+  MessageResponse,
+} from '@/components/ai-elements/message';
 import {
   Reasoning,
   ReasoningContent,
@@ -20,29 +24,14 @@ import {
   ToolInput,
   ToolOutput,
 } from '@/components/ai-elements/tool';
-import { useEventStream } from '@/hooks/useEventStream';
-import { fetchRun } from '@/lib/api';
+import { useTranscriptStream } from '@/hooks/useTranscriptStream';
 import {
-  extractPromptBundle,
-  hasResponseAfterPending,
-  normalizeTranscriptParts,
-  parseSessionSource,
   type TranscriptPart,
   type TranscriptReasoningPart,
   type TranscriptSystemPart,
   type TranscriptTextPart,
   type TranscriptToolPart,
 } from '@/lib/transcriptParts';
-import type { DaemonEvent } from '@/lib/types';
-import { useResource } from '@/lib/useResource';
-
-function shouldRefreshTranscript(event: DaemonEvent, runId: string): boolean {
-  if (event.topic === 'manager') return true;
-  if (event.topic !== 'run') return false;
-  const payloadRunId = event.payload.run_id;
-  return typeof payloadRunId !== 'string' || payloadRunId === runId;
-}
-
 export function ManagerChatTranscript({
   runId,
   initialSource,
@@ -54,35 +43,10 @@ export function ManagerChatTranscript({
   pendingSince?: string | null;
   onPendingResolved?: () => void;
 }) {
-  const detail = useResource(`manager-chat:${runId}`, () => fetchRun(runId));
-
-  useEventStream(
-    useCallback(
-      (event: DaemonEvent) => {
-        if (shouldRefreshTranscript(event, runId)) void detail.refresh();
-      },
-      [detail, runId],
-    ),
-  );
-
-  const source = detail.data?.source ?? initialSource ?? '';
-  // Keep the opening prompt sticky across a refresh whose session snapshot
-  // momentarily lacks the early run_meta lifecycle envelope.
-  const promptRef = useRef<string | null>(null);
-  const stickyPrompt = useMemo(() => {
-    const found =
-      extractPromptBundle(parseSessionSource(source)) ??
-      extractPromptBundle(parseSessionSource(initialSource ?? ''));
-    if (found) promptRef.current = found;
-    return promptRef.current;
-  }, [initialSource, source]);
-  const parts = useMemo(
-    () => normalizeTranscriptParts(source, { promptOverride: stickyPrompt }),
-    [source, stickyPrompt],
-  );
-  const pendingResolved = useMemo(
-    () => hasResponseAfterPending(parts, source, pendingSince),
-    [parts, pendingSince, source],
+  const detail = useTranscriptStream(runId, initialSource);
+  const parts = detail.parts;
+  const pendingResolved = Boolean(
+    pendingSince && detail.responseAt >= Date.parse(pendingSince),
   );
   const showPending = Boolean(pendingSince && !pendingResolved);
 
@@ -98,7 +62,7 @@ export function ManagerChatTranscript({
             className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
             role="alert"
           >
-            {detail.error instanceof Error ? detail.error.message : String(detail.error)}
+            {detail.error}
           </div>
         ) : null}
         {parts.length === 0 && !showPending ? (
@@ -109,10 +73,14 @@ export function ManagerChatTranscript({
                 ? 'Loading the live session and its latest events.'
                 : 'Send a message below to guide the agent. Its work will appear here as it happens.'
             }
-            title={detail.loading ? 'Connecting to transcript…' : 'Ready for direction'}
+            title={
+              detail.loading
+                ? 'Connecting to transcript…'
+                : 'Ready for direction'
+            }
           />
         ) : (
-          parts.map((part) => <TranscriptPartView key={part.id} part={part} />)
+          <TranscriptPartsView parts={parts} />
         )}
         {showPending ? <ThinkingPlaceholder /> : null}
       </ConversationContent>
@@ -121,6 +89,76 @@ export function ManagerChatTranscript({
         title="Scroll to latest transcript event"
       />
     </Conversation>
+  );
+}
+
+/** Activity stays compact between prose messages; expanded order is unchanged. */
+type ActivityPart = TranscriptToolPart | TranscriptReasoningPart;
+export function TranscriptPartsView({ parts }: { parts: TranscriptPart[] }) {
+  const groups: Array<TranscriptPart | ActivityPart[]> = [];
+  for (const part of parts) {
+    const previous = groups.at(-1);
+    if (part.type === 'tool' || part.type === 'reasoning') {
+      if (Array.isArray(previous)) previous.push(part);
+      else groups.push([part]);
+    } else groups.push(part);
+  }
+  return groups.map((group) =>
+    Array.isArray(group) ? (
+      <TranscriptActivity key={group[0].id} activity={group} />
+    ) : (
+      <TranscriptPartView key={group.id} part={group} />
+    ),
+  );
+}
+
+function TranscriptActivity({ activity }: { activity: ActivityPart[] }) {
+  const tools = activity.filter(
+    (part): part is TranscriptToolPart => part.type === 'tool',
+  );
+  const [open, setOpen] = useState(false);
+  const errors = tools.filter((tool) => tool.state === 'error').length;
+  const running = activity.some(
+    (part) => part.state === 'running' || part.state === 'streaming',
+  );
+  if (!tools.length)
+    return activity.map((part) => (
+      <TranscriptPartView key={part.id} part={part} />
+    ));
+  return (
+    <div className="w-full min-w-0 text-sm" data-testid="transcript-activity">
+      <details
+        className="peer"
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+      >
+        <summary className="cursor-pointer rounded-sm text-muted-foreground outline-offset-4 focus-visible:outline-2 focus-visible:outline-ring">
+          {running ? 'Working' : 'Activity'} · {tools.length}{' '}
+          {tools.length === 1 ? 'tool' : 'tools'}
+          {activity.length > tools.length && ' · reasoning'}
+          {errors > 0 && (
+            <span className="ml-2 text-destructive">{errors} failed</span>
+          )}
+        </summary>
+        <div className="mt-3 space-y-2">
+          {open &&
+            activity.map((part) => (
+              <TranscriptPartView key={part.id} part={part} />
+            ))}
+        </div>
+      </details>
+      <div className="mt-2 space-y-2 peer-open:hidden" aria-hidden="true">
+        {tools.slice(-3).map((tool) => (
+          <p
+            key={tool.id}
+            className="truncate text-muted-foreground"
+            title={`${tool.label} ${tool.summary ?? ''}`}
+          >
+            {tool.label} {tool.summary}
+            {tool.state === 'error' ? ' — failed' : ''}
+          </p>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -136,12 +174,16 @@ function TranscriptMessage({ part }: { part: TranscriptTextPart }) {
   const showFullText = Boolean(fullText && fullText !== part.text);
   return (
     <Message className="max-w-[min(720px,95%)]" from={part.role}>
-      <MessageContent className={part.role === 'assistant' ? 'w-full' : undefined}>
+      <MessageContent
+        className={part.role === 'assistant' ? 'w-full' : undefined}
+      >
         <TranscriptMeta label={part.label} time={part.time} />
         {part.role === 'assistant' ? (
           <MessageResponse>{part.text}</MessageResponse>
         ) : (
-          <p className="whitespace-pre-wrap break-words leading-relaxed">{part.text}</p>
+          <p className="whitespace-pre-wrap break-words leading-relaxed">
+            {part.text}
+          </p>
         )}
         {showFullText ? (
           <details className="text-xs">
@@ -163,7 +205,7 @@ function TranscriptReasoning({ part }: { part: TranscriptReasoningPart }) {
   return (
     <div className="w-full max-w-[min(720px,95%)] self-start">
       <TranscriptMeta label={part.label} time={part.time} />
-      <Reasoning defaultOpen={isStreaming} isStreaming={isStreaming}>
+      <Reasoning defaultOpen={false} isStreaming={isStreaming}>
         <ReasoningTrigger />
         <ReasoningContent>{part.text}</ReasoningContent>
       </Reasoning>
@@ -199,7 +241,9 @@ export function TranscriptToolCard({ part }: { part: TranscriptToolPart }) {
         {hasInput ? <ToolInput input={part.input} /> : null}
         {hasOutput || part.state === 'error' ? (
           <ToolOutput
-            errorText={part.state === 'error' ? 'Tool returned an error.' : undefined}
+            errorText={
+              part.state === 'error' ? 'Tool returned an error.' : undefined
+            }
             output={part.output}
           />
         ) : null}
@@ -217,7 +261,10 @@ function ToolMeta({ meta }: { meta: Array<[string, string]> }) {
           className="flex min-w-0 max-w-full items-center gap-1 rounded border bg-background/60 px-1.5 py-0.5"
         >
           <dt className="shrink-0 text-muted-foreground">{key}</dt>
-          <dd className="min-w-0 truncate font-mono text-foreground/80" title={value}>
+          <dd
+            className="min-w-0 truncate font-mono text-foreground/80"
+            title={value}
+          >
             {value}
           </dd>
         </div>
@@ -238,9 +285,15 @@ function TranscriptSystemEvent({ part }: { part: TranscriptSystemPart }) {
     >
       <TranscriptMeta label={part.label} time={part.time} />
       {part.code ? (
-        <CodeBlock className="mt-2 max-h-64 overflow-auto" code={part.text} language="console" />
+        <CodeBlock
+          className="mt-2 max-h-64 overflow-auto"
+          code={part.text}
+          language="console"
+        />
       ) : (
-        <p className="mt-1 whitespace-pre-wrap break-words leading-relaxed">{part.text}</p>
+        <p className="mt-1 whitespace-pre-wrap break-words leading-relaxed">
+          {part.text}
+        </p>
       )}
       {part.fullText && part.fullText !== part.text ? (
         <details className="mt-2 text-xs">
@@ -260,12 +313,20 @@ function TranscriptMeta({ label, time }: { label: string; time?: string }) {
   return (
     <div className="flex items-center gap-2 text-[11px] uppercase text-muted-foreground">
       <span>{label}</span>
-      {time ? <TranscriptTime className="font-mono normal-case" value={time} /> : null}
+      {time ? (
+        <TranscriptTime className="font-mono normal-case" value={time} />
+      ) : null}
     </div>
   );
 }
 
-function TranscriptTime({ value, className }: { value: string; className?: string }) {
+function TranscriptTime({
+  value,
+  className,
+}: {
+  value: string;
+  className?: string;
+}) {
   return (
     <time className={className} dateTime={value} title={value}>
       {formatTranscriptTime(value)}

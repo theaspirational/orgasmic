@@ -416,7 +416,7 @@ export function postManagerLaunch(body: {
 
 export function postManagerChatLaunch(body: {
   project_id: string;
-  provider: 'codex' | 'claude' | 'opencode';
+  provider: 'codex' | 'claude' | 'opencode' | 'cursor-agent' | 'hermes';
   model?: string | null;
   effort?: string | null;
   access?: string | null;

@@ -311,6 +311,7 @@ where
                                 let mut transport = WsJsonRpcTransport { ws: &mut ws };
                                 let outgoing = match dispatch_incoming_json(
                                     value,
+                                    &mut ids,
                                     &mut transport,
                                     adapter.as_mut(),
                                     &events,

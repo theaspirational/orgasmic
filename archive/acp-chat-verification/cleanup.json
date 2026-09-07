@@ -1,0 +1,42 @@
+[
+  {
+    "provider": "claude",
+    "process_group": 6589,
+    "still_exists": false,
+    "run_complete": 1,
+    "errors": [],
+    "release_ack": true
+  },
+  {
+    "provider": "codex",
+    "process_group": 6603,
+    "still_exists": false,
+    "run_complete": 1,
+    "errors": [],
+    "release_ack": true
+  },
+  {
+    "provider": "cursor-agent",
+    "process_group": 6613,
+    "still_exists": false,
+    "run_complete": 1,
+    "errors": [],
+    "release_ack": true
+  },
+  {
+    "provider": "hermes",
+    "process_group": 6623,
+    "still_exists": false,
+    "run_complete": 1,
+    "errors": [],
+    "release_ack": true
+  },
+  {
+    "provider": "opencode",
+    "process_group": 6593,
+    "still_exists": false,
+    "run_complete": 1,
+    "errors": [],
+    "release_ack": true
+  }
+]

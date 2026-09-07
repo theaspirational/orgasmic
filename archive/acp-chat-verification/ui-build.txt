@@ -1,0 +1,15 @@
+dist/assets/cytoscape.esm-DTSO7Bv0.js                        443.72 kB │ gzip: 142.36 kB
+dist/assets/wasm-CG6Dc4jp.js                                 622.34 kB │ gzip: 230.29 kB
+dist/assets/wasm-Ck_ssClF.js                                 622.34 kB │ gzip: 230.29 kB
+dist/assets/cpp-UfJy6YNI.js                                  626.08 kB │ gzip:  44.82 kB
+dist/assets/cpp-CofmeUqb.js                                  626.08 kB │ gzip:  44.82 kB
+dist/assets/cynefin-VYW2F7L2-D9LUc-oy.js                     690.83 kB │ gzip: 155.11 kB
+dist/assets/emacs-lisp-C9XAeP06.js                           779.85 kB │ gzip: 196.03 kB
+dist/assets/emacs-lisp-CXvaQtF9.js                           779.88 kB │ gzip: 196.05 kB
+dist/assets/index-BaS0ScyI.js                              2,343.66 kB │ gzip: 678.48 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 8.81s

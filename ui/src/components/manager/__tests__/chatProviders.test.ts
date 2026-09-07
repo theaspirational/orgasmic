@@ -18,7 +18,7 @@ describe('canonical chat providers', () => {
       'full-access',
     ]);
     expect(availableChatAccess('claude')).toEqual(['auto', 'full-access']);
-    expect(availableChatAccess('opencode')).toEqual(['full-access']);
+    expect(availableChatAccess('opencode')).toEqual(['auto', 'full-access']);
   });
 
   it('advertises only SDK/app-server providers whose live catalog probe succeeded', () => {

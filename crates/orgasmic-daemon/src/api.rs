@@ -768,6 +768,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/org/node/:id/regenerate", post(post_node_regenerate))
         .route("/org/node/:id/submit", post(post_node_submit))
         .route("/ws", get(ws::handler))
+        .route(
+            "/ws/transcript/:run_id",
+            get(crate::transcript_stream::handler),
+        )
         .route("/ws/tmux/:run_id", get(ws::tmux_handler))
         // Stubs — wired so callers can discover them; tracked tasks owned elsewhere.
         // `/runs` is the recovery inventory (whole-board session scan);
@@ -927,6 +931,7 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("POST", "/artifacts/:id/comments/:cid/resolve"),
     ("GET", "/ws"),
     ("GET", "/ws/tmux/:run_id"),
+    ("GET", "/ws/transcript/:run_id"),
 ];
 
 fn member_route_allowed(method: &Method, pattern: &str) -> bool {
@@ -3570,7 +3575,7 @@ fn chat_access_supported(provider: &str, access: &str) -> bool {
     match provider {
         "codex" => matches!(access, "auto-accept-edits" | "auto" | "full-access"),
         "claude" => matches!(access, "auto" | "full-access"),
-        "opencode" => access == "full-access",
+        "opencode" | "cursor-agent" | "hermes" => matches!(access, "auto" | "full-access"),
         _ => false,
     }
 }
@@ -3723,9 +3728,7 @@ async fn post_manager_launch(
 }
 
 /// Launch a reusable RunDock Chat conversation without changing the worker
-/// driver registry. Claude uses the Agent SDK host, OpenCode its HTTP/SSE SDK,
-/// and Codex the existing app-server client wrapped in the same canonical
-/// provider-event vocabulary.
+/// driver registry. All Chat providers use the shared ACP stdio client.
 async fn post_manager_chat_launch(
     State(state): State<ApiState>,
     Json(req): Json<ManagerChatLaunchRequest>,
@@ -3733,7 +3736,7 @@ async fn post_manager_chat_launch(
     let provider = req.provider.trim().to_ascii_lowercase();
     let driver = orgasmic_drivers::chat_driver(&provider).ok_or_else(|| {
         ApiError::bad_request(format!(
-            "unsupported Chat provider '{}'; expected codex, claude, or opencode",
+            "unsupported Chat provider '{}'; expected codex, claude, opencode, cursor-agent, or hermes",
             req.provider
         ))
     })?;
@@ -4915,204 +4918,90 @@ async fn get_manager_chat_catalog(
         .get(&project_id)
         .map(|project| project.root.clone())
         .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
-    let (codex_result, claude, opencode) = tokio::join!(
-        probe_codex_chat_catalog(&state),
-        probe_sdk_chat_catalog("claude", &cwd),
-        probe_sdk_chat_catalog("opencode", &cwd),
-    );
-    let codex = match codex_result {
+    let providers = futures::future::join_all(
+        orgasmic_drivers::adapters::acp::PROVIDERS
+            .iter()
+            .map(|provider| probe_acp_chat_catalog(provider, &cwd, &state.boot.boot_id)),
+    )
+    .await;
+    Ok(Json(ManagerChatCatalogResponse { providers }))
+}
+
+async fn probe_acp_chat_catalog(
+    provider: &str,
+    cwd: &FsPath,
+    boot_id: &str,
+) -> ManagerChatCatalogProvider {
+    let result: Result<RuntimeOptionsCatalog, String> = async {
+        let driver = orgasmic_drivers::chat_driver(provider)
+            .ok_or_else(|| "ACP driver unavailable".to_string())?;
+        let id = format!("chat-catalog-{}", uuid::Uuid::new_v4().simple());
+        let context = DriverContext {
+            identity: RuntimeIdentity::new(id.clone(), boot_id.to_string()),
+            run_kind: RunKind::Worker,
+            task_id: id.clone(),
+            worker_id: id,
+            project_id: None,
+            worktree: Some(cwd.to_path_buf()),
+        };
+        let mut session = driver
+            .acquire(
+                context,
+                DriverConfig::from_value(json!({"auto_start_turn":false,"catalog_probe":true})),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut events = session.events;
+        let drain = tokio::spawn(async move { while events.recv().await.is_some() {} });
+        let catalog = tokio::time::timeout(
+            std::time::Duration::from_secs(40),
+            session.control.runtime_options_catalog(),
+        )
+        .await
+        .map_err(|_| "ACP model catalog timed out".to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()));
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            session.control.release("catalog complete"),
+        )
+        .await;
+        drop(session.control);
+        if let Some(mut producer) = session.producer.take() {
+            if tokio::time::timeout(std::time::Duration::from_secs(10), &mut producer)
+                .await
+                .is_err()
+            {
+                producer.abort();
+                let _ = producer.await;
+            }
+        }
+        drain.abort();
+        catalog
+    }
+    .await;
+    match result {
         Ok(catalog) => ManagerChatCatalogProvider {
-            id: "codex".to_string(),
+            id: provider.into(),
             source: catalog.source,
             models: catalog
                 .models
                 .into_iter()
-                .map(|model| ManagerChatCatalogModel {
-                    id: model.id,
-                    label: model.label,
+                .map(|m| ManagerChatCatalogModel {
+                    id: m.id,
+                    label: m.label,
                     legacy: false,
-                    reasoning_efforts: model.reasoning_efforts,
+                    reasoning_efforts: m.reasoning_efforts,
                 })
                 .collect(),
             message: None,
         },
         Err(message) => ManagerChatCatalogProvider {
-            id: "codex".to_string(),
-            source: "codex-app-server:model/list".to_string(),
-            models: Vec::new(),
+            id: provider.into(),
+            source: format!("{provider}-acp"),
+            models: vec![],
             message: Some(message),
         },
-    };
-    Ok(Json(ManagerChatCatalogResponse {
-        providers: vec![codex, claude, opencode],
-    }))
-}
-
-async fn probe_codex_chat_catalog(state: &ApiState) -> Result<RuntimeOptionsCatalog, String> {
-    let driver = crate::driver_resolution::resolve_driver("stdio", "codex")
-        .ok_or_else(|| "Codex native driver is unavailable".to_string())?;
-    let probe_id = format!("chat-catalog-probe-{}", uuid::Uuid::new_v4().simple());
-    let context = DriverContext {
-        identity: RuntimeIdentity::new(probe_id.clone(), state.boot.boot_id.clone()),
-        run_kind: RunKind::Worker,
-        task_id: probe_id.clone(),
-        worker_id: probe_id,
-        project_id: None,
-        worktree: None,
-    };
-    let config = DriverConfig::from_value(json!({
-        "auto_start_turn": false,
-        "catalog_probe": true,
-    }));
-    let mut session = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        driver.acquire(context, config),
-    )
-    .await
-    .map_err(|_| "Codex model catalog probe timed out".to_string())?
-    .map_err(|error| format!("Codex model catalog probe failed: {error}"))?;
-    let catalog = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        session.control.runtime_options_catalog(),
-    )
-    .await
-    .map_err(|_| "Codex model/list timed out".to_string())?
-    .map_err(|error| format!("Codex model/list failed: {error}"));
-    let _ = session.control.release("catalog probe complete").await;
-    if let Some(mut producer) = session.producer.take() {
-        if tokio::time::timeout(std::time::Duration::from_secs(2), &mut producer)
-            .await
-            .is_err()
-        {
-            producer.abort();
-        }
     }
-    catalog
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SdkChatCatalogModel {
-    id: String,
-    label: String,
-    #[serde(default)]
-    legacy: bool,
-    #[serde(default)]
-    reasoning_efforts: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SdkChatCatalog {
-    id: String,
-    source: String,
-    #[serde(default)]
-    models: Vec<SdkChatCatalogModel>,
-    #[serde(default)]
-    message: Option<String>,
-}
-
-async fn probe_sdk_chat_catalog(provider: &str, cwd: &FsPath) -> ManagerChatCatalogProvider {
-    let unavailable = |message: String| ManagerChatCatalogProvider {
-        id: provider.to_string(),
-        source: format!("{provider}-sdk"),
-        models: Vec::new(),
-        message: Some(message),
-    };
-    let invocation = match orgasmic_drivers::provider_host_invocation() {
-        Ok(invocation) => invocation,
-        Err(error) => return unavailable(error),
-    };
-    let mut command = tokio::process::Command::new(invocation.binary);
-    command.args(invocation.leading_args).args([
-        "catalog",
-        "--provider",
-        provider,
-        "--cwd",
-        &cwd.display().to_string(),
-    ]);
-    let output =
-        match tokio::time::timeout(std::time::Duration::from_secs(35), command.output()).await {
-            Err(_) => return unavailable(format!("{provider} SDK catalog probe timed out")),
-            Ok(Err(error)) => {
-                return unavailable(format!("{provider} SDK catalog probe failed: {error}"));
-            }
-            Ok(Ok(output)) => output,
-        };
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return unavailable(if stderr.is_empty() {
-            format!("{provider} SDK catalog probe exited with {}", output.status)
-        } else {
-            stderr
-        });
-    }
-    let catalog: SdkChatCatalog = match serde_json::from_slice(&output.stdout) {
-        Ok(catalog) => catalog,
-        Err(error) => {
-            return unavailable(format!("invalid {provider} SDK catalog response: {error}"));
-        }
-    };
-    ManagerChatCatalogProvider {
-        id: catalog.id,
-        source: catalog.source,
-        models: catalog
-            .models
-            .into_iter()
-            .map(|model| ManagerChatCatalogModel {
-                id: model.id,
-                label: model.label,
-                legacy: model.legacy,
-                reasoning_efforts: model.reasoning_efforts,
-            })
-            .collect(),
-        message: catalog.message,
-    }
-}
-
-#[cfg(test)]
-fn claude_chat_models(version: &str) -> Vec<ManagerChatCatalogModel> {
-    let common = &["low", "medium", "high", "xhigh", "max"];
-    let standard = &["low", "medium", "high", "max"];
-    let mut models = Vec::new();
-    let mut push = |id: &str, label: &str, legacy: bool, efforts: &[&str]| {
-        models.push(ManagerChatCatalogModel {
-            id: id.to_string(),
-            label: label.to_string(),
-            legacy,
-            reasoning_efforts: efforts.iter().map(|value| (*value).to_string()).collect(),
-        });
-    };
-    if version_at_least(version, (2, 1, 169)) {
-        push("claude-fable-5", "Claude Fable 5", false, common);
-    }
-    if version_at_least(version, (2, 1, 219)) {
-        push("claude-opus-5", "Claude Opus 5", false, common);
-    }
-    push("claude-sonnet-5", "Claude Sonnet 5", false, common);
-    if version_at_least(version, (2, 1, 154)) {
-        push("claude-opus-4-8", "Claude Opus 4.8", true, common);
-    }
-    if version_at_least(version, (2, 1, 111)) {
-        push("claude-opus-4-7", "Claude Opus 4.7", true, common);
-    }
-    push("claude-opus-4-6", "Claude Opus 4.6", true, standard);
-    push("claude-opus-4-5", "Claude Opus 4.5", true, standard);
-    push("claude-sonnet-4-6", "Claude Sonnet 4.6", true, standard);
-    push("claude-haiku-4-5", "Claude Haiku 4.5", true, &[]);
-    models
-}
-
-#[cfg(test)]
-fn version_at_least(version: &str, minimum: (u64, u64, u64)) -> bool {
-    let mut parts = version
-        .split('.')
-        .filter_map(|part| part.parse::<u64>().ok());
-    let parsed = (
-        parts.next().unwrap_or(0),
-        parts.next().unwrap_or(0),
-        parts.next().unwrap_or(0),
-    );
-    parsed >= minimum
 }
 
 async fn post_question(Json(body): Json<Value>) -> Json<Value> {
@@ -5501,6 +5390,8 @@ fn canonical_runtime_provider_address(driver: &str, harness: &str) -> Option<&'s
         ("stdio", "codex-chat") => Some("codex"),
         ("stdio", "claude-sdk") => Some("claude"),
         ("stdio", "opencode") => Some("opencode"),
+        ("stdio", "cursor-acp-chat") => Some("cursor-agent"),
+        ("stdio", "hermes-acp-chat") => Some("hermes"),
         _ => None,
     }
 }
@@ -10252,7 +10143,7 @@ async fn post_run_history_rollback(
     Ok(Json(json!({ "report": report })))
 }
 
-async fn get_run(
+pub(crate) async fn get_run(
     State(state): State<ApiState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
@@ -22347,27 +22238,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn chat_catalog_version_comparison_handles_patch_thresholds() {
-        assert!(version_at_least("2.1.219", (2, 1, 219)));
-        assert!(version_at_least("2.2.0", (2, 1, 219)));
-        assert!(!version_at_least("2.1.218", (2, 1, 219)));
-        assert!(!version_at_least("unknown", (2, 1, 1)));
-    }
-
-    #[test]
-    fn claude_chat_catalog_is_version_gated() {
-        let older = claude_chat_models("2.1.168");
-        assert!(!older.iter().any(|model| model.id == "claude-fable-5"));
-        assert!(!older.iter().any(|model| model.id == "claude-opus-5"));
-        assert!(older.iter().any(|model| model.id == "claude-sonnet-5"));
-
-        let current = claude_chat_models("2.1.233");
-        assert!(current.iter().any(|model| model.id == "claude-fable-5"));
-        assert!(current.iter().any(|model| model.id == "claude-opus-5"));
-        assert!(current.iter().any(|model| model.legacy));
-    }
-
-    #[test]
     fn org_file_rewrite_refuses_ledger_paths() {
         for (path, reason) in [
             (
@@ -28479,7 +28349,7 @@ pub(crate) mod tests {
         assert!(chat_access_supported("claude", "auto"));
         assert!(!chat_access_supported("claude", "auto-accept-edits"));
         assert!(chat_access_supported("opencode", "full-access"));
-        assert!(!chat_access_supported("opencode", "auto"));
+        assert!(chat_access_supported("opencode", "auto"));
     }
 
     // orgasmic:TASK-7QM8M
@@ -42042,6 +41912,75 @@ pub(crate) mod tests {
         );
         assert_eq!(member_first["payload"]["project_id"], "proj-a");
 
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn transcript_ws_replays_then_delivers_only_appends_and_checks_membership() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = tmp.path().join("project");
+        seed_project(&home, &root, "orgasmic");
+        let identity = RuntimeIdentity::new("transcript-test", "old-boot");
+        let path = write_nonterminal_session(&root, identity.clone(), "stub/1", "manager");
+        let member_token = orgasmic_core::add_member(
+            &home,
+            "outsider",
+            &[("other-project".to_string(), "viewer".to_string())],
+        )
+        .unwrap();
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .unwrap();
+        let token = read_token(&home);
+        let url = format!(
+            "ws://{}/api/ws/transcript/transcript-test?token={token}",
+            running.addr
+        );
+        let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        let frame = next_ws_text_containing(&mut ws, "snapshot").await;
+        let snapshot: Value = serde_json::from_str(&frame).unwrap();
+        let initial = snapshot["envelopes"].as_array().unwrap();
+        assert!(!initial.is_empty());
+        let last = initial.last().unwrap()["delivery_seq"].as_u64().unwrap();
+        write_stage_session(
+            &path,
+            identity,
+            DriverEvent::TextChunk {
+                stream: orgasmic_core::TextStream::Assistant,
+                chunk: "incremental proof".into(),
+                seq: 0,
+            },
+        );
+        let frame = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(Ok(Message::Text(text))) = ws.next().await {
+                    if text.contains("incremental proof") {
+                        break text;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let append: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(append["type"], "append");
+        assert_eq!(append["envelopes"].as_array().unwrap().len(), 1);
+        assert!(append["envelopes"][0]["delivery_seq"].as_u64().unwrap() == last + 1);
+        let cookie = member_session_cookie(running.addr, &member_token).await;
+        let mut request = format!("ws://{}/api/ws/transcript/transcript-test", running.addr)
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("cookie", cookie.parse().unwrap());
+        let denied = tokio_tungstenite::connect_async(request).await.unwrap_err();
+        assert!(
+            matches!(denied, tokio_tungstenite::tungstenite::Error::Http(response) if response.status() == StatusCode::FORBIDDEN)
+        );
+        let _ = ws.close(None).await;
         let _ = running.shutdown.send(());
         let _ = running.join.await;
     }

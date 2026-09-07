@@ -943,6 +943,8 @@ pub enum DriverEvent {
     },
     /// T3-style provider-neutral event emitted by dedicated Chat runtimes.
     ProviderRuntime { event: Box<ProviderRuntimeEvent> },
+    /// Original ACP notification/response; extensions survive projection and replay.
+    Acp { provider: String, message: Value },
     /// Free-form text chunk (assistant reply, stdout, stderr).
     TextChunk {
         stream: TextStream,

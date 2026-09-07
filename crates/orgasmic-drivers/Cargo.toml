@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+agent-client-protocol-schema = "=1.7.0"
 orgasmic-core = { path = "../orgasmic-core" }
 anyhow.workspace = true
 thiserror.workspace = true

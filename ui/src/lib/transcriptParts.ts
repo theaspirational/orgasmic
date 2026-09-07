@@ -1,5 +1,8 @@
+import { projectAcpEnvelope } from './acpTranscript';
+
 export type SessionEnvelope = {
   seq?: number;
+  delivery_seq?: number;
   time?: string;
   kind?: string;
   event?: Record<string, unknown>;
@@ -24,7 +27,11 @@ export type TranscriptReasoningPart = {
   time?: string;
 };
 
-export type TranscriptToolState = 'streaming' | 'running' | 'completed' | 'error';
+export type TranscriptToolState =
+  | 'streaming'
+  | 'running'
+  | 'completed'
+  | 'error';
 
 export type TranscriptToolPart = {
   id: string;
@@ -80,7 +87,9 @@ export function parseSessionSource(source: string): SessionEnvelope[] {
     });
 }
 
-export function extractPromptBundle(envelopes: SessionEnvelope[]): string | null {
+export function extractPromptBundle(
+  envelopes: SessionEnvelope[],
+): string | null {
   for (const envelope of envelopes) {
     if (envelope.kind !== 'lifecycle') continue;
     const driverConfig = envelope.event?.driver_config;
@@ -95,15 +104,26 @@ export function normalizeTranscriptParts(
   source: string,
   options: { promptOverride?: string | null } = {},
 ): TranscriptPart[] {
-  const envelopes = parseSessionSource(source);
+  return createTranscriptReducer(parseSessionSource(source), options).parts();
+}
+
+/** The same fold handles historical replay and newly persisted envelopes. */
+export function createTranscriptReducer(
+  initial: SessionEnvelope[] = [],
+  options: { promptOverride?: string | null } = {},
+) {
+  const envelopes = initial;
   const parts: PartDraft[] = [];
   const toolsByCallId = new Map<string, TranscriptToolPart>();
   const pendingResultsByCallId = new Map<string, TranscriptToolPart>();
   const canonicalInputDeltas = new Map<string, string>();
-  let terminalToolState: Extract<TranscriptToolState, 'completed' | 'error'> | null = null;
+  let terminalToolState: Extract<
+    TranscriptToolState,
+    'completed' | 'error'
+  > | null = null;
   const promptBundle = options.promptOverride ?? extractPromptBundle(envelopes);
-  const canonicalChat = envelopes.some(
-    (envelope) => stringValue(envelope.event?.type) === 'provider_runtime',
+  const canonicalChat = envelopes.some((envelope) =>
+    ['provider_runtime', 'acp'].includes(stringValue(envelope.event?.type)),
   );
   const unmatchedComposerSends = canonicalChat
     ? composerSendCounts(envelopes)
@@ -120,451 +140,554 @@ export function normalizeTranscriptParts(
     });
   }
 
-  for (const [index, envelope] of envelopes.entries()) {
-    const event = envelope.event ?? {};
-    const eventType = stringValue(event.type);
-    const id = String(envelope.seq ?? index);
+  let index = 0;
+  const append = (incoming: SessionEnvelope[]) => {
+    for (const sourceEnvelope of incoming) {
+      const envelope = projectAcpEnvelope(sourceEnvelope);
+      index += 1;
+      const event = envelope.event ?? {};
+      const eventType = stringValue(event.type);
+      const id = String(envelope.delivery_seq ?? envelope.seq ?? index - 1);
 
-    if (eventType === 'provider_runtime') {
-      const runtime = isRecord(event.event) ? event.event : null;
-      if (!runtime) continue;
-      const runtimeType = stringValue(runtime.type);
-      const payload = isRecord(runtime.payload) ? runtime.payload : {};
-      const runtimeId = stringValue(runtime.itemId || runtime.requestId) || id;
-      const runtimeTime = stringValue(runtime.createdAt) || envelope.time;
+      if (eventType === 'protocol_notice') {
+        parts.push({
+          id,
+          type: 'system',
+          label: stringValue(event.label),
+          text: stringValue(event.label),
+          fullText: JSON.stringify(event.detail, null, 2),
+          tone: 'info',
+          time: envelope.time,
+        });
+        continue;
+      }
 
-      if (runtimeType === 'content.delta') {
-        const streamKind = stringValue(payload.streamKind);
-        const delta = stringValue(payload.delta);
-        if (!delta) continue;
-        if (streamKind === 'assistant_text') {
+      if (eventType === 'provider_runtime') {
+        const runtime = isRecord(event.event) ? event.event : null;
+        if (!runtime) continue;
+        const runtimeType = stringValue(runtime.type);
+        const payload = isRecord(runtime.payload) ? runtime.payload : {};
+        const runtimeId =
+          stringValue(runtime.itemId || runtime.requestId) || id;
+        const runtimeTime = stringValue(runtime.createdAt) || envelope.time;
+
+        if (runtimeType === 'content.delta') {
+          const streamKind = stringValue(payload.streamKind);
+          const delta = stringValue(payload.delta);
+          if (!delta) continue;
+          if (streamKind === 'assistant_text') {
+            closeStreamingReasoning(parts);
+            const contentId = canonicalContentPartId(
+              runtime,
+              runtimeId,
+              streamKind,
+            );
+            pushPart(
+              parts,
+              {
+                id: contentId,
+                type: 'text',
+                role: 'assistant',
+                label: 'assistant',
+                text: delta,
+                time: runtimeTime,
+              },
+              `provider:assistant:${contentId}`,
+            );
+            continue;
+          }
+          if (streamKind === 'reasoning_text') {
+            const contentId = canonicalContentPartId(
+              runtime,
+              runtimeId,
+              streamKind,
+            );
+            pushPart(
+              parts,
+              {
+                id: contentId,
+                type: 'reasoning',
+                label: 'thinking',
+                text: delta,
+                state: 'streaming',
+                time: runtimeTime,
+              },
+              `provider:reasoning:${contentId}`,
+            );
+            continue;
+          }
+          const tool = toolsByCallId.get(runtimeId);
+          if (tool) {
+            const previous = typeof tool.output === 'string' ? tool.output : '';
+            tool.output = `${previous}${delta}`;
+          }
+          continue;
+        }
+
+        if (
+          runtimeType === 'item.started' ||
+          runtimeType === 'item.updated' ||
+          runtimeType === 'item.completed'
+        ) {
+          const itemType = stringValue(payload.itemType);
+          if (itemType === 'assistant_message') {
+            if (runtimeType === 'item.completed')
+              closeStreamingReasoning(parts);
+            continue;
+          }
           closeStreamingReasoning(parts);
-          const contentId = canonicalContentPartId(runtime, runtimeId, streamKind);
-          pushPart(
-            parts,
-            {
-              id: contentId,
-              type: 'text',
-              role: 'assistant',
-              label: 'assistant',
-              text: delta,
-              time: runtimeTime,
-            },
-            `provider:assistant:${contentId}`,
+          const data = isRecord(payload.data) ? payload.data : {};
+          const providerState = isRecord(data.state) ? data.state : {};
+          const existing = toolsByCallId.get(runtimeId);
+          const name = canonicalProviderToolName(
+            itemType,
+            data,
+            payload,
+            existing?.name,
           );
+          const pairedCommand =
+            !existing && payload.acp !== true && name === 'command_execution'
+              ? immediatelyPrecedingRunningCanonicalExec(parts)
+              : undefined;
+          const target = existing ?? pairedCommand;
+          const status = stringValue(payload.status);
+          const state: TranscriptToolState =
+            status === 'failed'
+              ? 'error'
+              : runtimeType === 'item.completed' || status === 'completed'
+                ? 'completed'
+                : runtimeType === 'item.started'
+                  ? 'running'
+                  : 'streaming';
+          const inputDelta = stringValue(data.inputDelta);
+          if (inputDelta) {
+            canonicalInputDeltas.set(
+              runtimeId,
+              `${canonicalInputDeltas.get(runtimeId) ?? ''}${inputDelta}`,
+            );
+          }
+          const accumulatedInput = parseJsonValue(
+            canonicalInputDeltas.get(runtimeId),
+          );
+          const input =
+            accumulatedInput ?? data.input ?? providerState.input ?? null;
+          const output =
+            data.output ??
+            data.result ??
+            providerState.output ??
+            providerState.error ??
+            (runtimeType === 'item.completed'
+              ? stringValue(payload.detail) || null
+              : null);
+          const summary = summarizeCanonicalProviderTool(
+            name,
+            input,
+            payload,
+            target,
+          );
+          if (target) {
+            if (!existing) toolsByCallId.set(runtimeId, target);
+            target.name = name;
+            target.label = summary.label ?? target.label;
+            target.state = state;
+            if (input !== null) target.input = input;
+            if (output !== null) target.output = output;
+            target.ok =
+              state === 'error' ? false : state === 'completed' ? true : null;
+            target.summary = summary.summary ?? target.summary;
+            target.meta = mergeMeta(target.meta, summary.meta);
+            if (runtimeType === 'item.completed')
+              canonicalInputDeltas.delete(runtimeId);
+            continue;
+          }
+          const part: TranscriptToolPart = {
+            id: runtimeId,
+            type: 'tool',
+            callId: runtimeId,
+            name,
+            label:
+              summary.label ?? (compactLabel(payload.title) || `tool ${name}`),
+            state,
+            input,
+            output,
+            ok: state === 'error' ? false : state === 'completed' ? true : null,
+            summary: summary.summary,
+            meta: summary.meta,
+            time: runtimeTime,
+          };
+          parts.push(part);
+          toolsByCallId.set(runtimeId, part);
+          if (runtimeType === 'item.completed')
+            canonicalInputDeltas.delete(runtimeId);
           continue;
         }
-        if (streamKind === 'reasoning_text') {
-          const contentId = canonicalContentPartId(runtime, runtimeId, streamKind);
-          pushPart(
-            parts,
-            {
-              id: contentId,
-              type: 'reasoning',
-              label: 'thinking',
-              text: delta,
-              state: 'streaming',
-              time: runtimeTime,
-            },
-            `provider:reasoning:${contentId}`,
-          );
-          continue;
-        }
-        const tool = toolsByCallId.get(runtimeId);
-        if (tool) {
-          const previous = typeof tool.output === 'string' ? tool.output : '';
-          tool.output = `${previous}${delta}`;
-        }
-        continue;
-      }
 
-      if (
-        runtimeType === 'item.started' ||
-        runtimeType === 'item.updated' ||
-        runtimeType === 'item.completed'
-      ) {
-        const itemType = stringValue(payload.itemType);
-        if (itemType === 'assistant_message') {
-          if (runtimeType === 'item.completed') closeStreamingReasoning(parts);
+        if (
+          runtimeType === 'turn.completed' ||
+          runtimeType === 'turn.aborted'
+        ) {
+          closeStreamingReasoning(parts);
+          const failed =
+            runtimeType === 'turn.aborted' ||
+            ['failed', 'cancelled', 'interrupted'].includes(
+              stringValue(payload.state),
+            );
+          closeRunningTools(parts, failed ? 'error' : 'completed');
+          const message = stringValue(payload.errorMessage || payload.reason);
+          if (failed && message) {
+            parts.push({
+              id,
+              type: 'system',
+              label:
+                runtimeType === 'turn.aborted'
+                  ? 'turn aborted'
+                  : 'provider error',
+              text: message,
+              tone: 'error',
+              time: runtimeTime,
+            });
+          }
           continue;
         }
-        closeStreamingReasoning(parts);
-        const data = isRecord(payload.data) ? payload.data : {};
-        const providerState = isRecord(data.state) ? data.state : {};
-        const existing = toolsByCallId.get(runtimeId);
-        const name = canonicalProviderToolName(itemType, data, payload, existing?.name);
-        const pairedCommand =
-          !existing && name === 'command_execution'
-            ? immediatelyPrecedingRunningCanonicalExec(parts)
-            : undefined;
-        const target = existing ?? pairedCommand;
-        const status = stringValue(payload.status);
-        const state: TranscriptToolState =
-          status === 'failed'
-            ? 'error'
-            : runtimeType === 'item.completed' || status === 'completed'
-              ? 'completed'
-              : runtimeType === 'item.started'
-                ? 'running'
-                : 'streaming';
-        const inputDelta = stringValue(data.inputDelta);
-        if (inputDelta) {
-          canonicalInputDeltas.set(
-            runtimeId,
-            `${canonicalInputDeltas.get(runtimeId) ?? ''}${inputDelta}`,
-          );
-        }
-        const accumulatedInput = parseJsonValue(canonicalInputDeltas.get(runtimeId));
-        const input = accumulatedInput ?? data.input ?? providerState.input ?? null;
-        const output =
-          data.output ??
-          data.result ??
-          providerState.output ??
-          providerState.error ??
-          (runtimeType === 'item.completed' ? stringValue(payload.detail) || null : null);
-        const summary = summarizeCanonicalProviderTool(name, input, payload, target);
-        if (target) {
-          if (!existing) toolsByCallId.set(runtimeId, target);
-          target.name = name;
-          target.label = summary.label ?? target.label;
-          target.state = state;
-          if (input !== null) target.input = input;
-          if (output !== null) target.output = output;
-          target.ok = state === 'error' ? false : state === 'completed' ? true : null;
-          target.summary = summary.summary ?? target.summary;
-          target.meta = mergeMeta(target.meta, summary.meta);
-          if (runtimeType === 'item.completed') canonicalInputDeltas.delete(runtimeId);
-          continue;
-        }
-        const part: TranscriptToolPart = {
-          id: runtimeId,
-          type: 'tool',
-          callId: runtimeId,
-          name,
-          label: summary.label ?? (compactLabel(payload.title) || `tool ${name}`),
-          state,
-          input,
-          output,
-          ok: state === 'error' ? false : state === 'completed' ? true : null,
-          summary: summary.summary,
-          meta: summary.meta,
-          time: runtimeTime,
-        };
-        parts.push(part);
-        toolsByCallId.set(runtimeId, part);
-        if (runtimeType === 'item.completed') canonicalInputDeltas.delete(runtimeId);
-        continue;
-      }
 
-      if (runtimeType === 'turn.completed' || runtimeType === 'turn.aborted') {
-        closeStreamingReasoning(parts);
-        const failed =
-          runtimeType === 'turn.aborted' ||
-          ['failed', 'cancelled', 'interrupted'].includes(stringValue(payload.state));
-        closeRunningTools(parts, failed ? 'error' : 'completed');
-        const message = stringValue(payload.errorMessage || payload.reason);
-        if (failed && message) {
+        if (
+          runtimeType === 'runtime.error' ||
+          runtimeType === 'runtime.warning'
+        ) {
+          const message = stringValue(payload.message);
+          if (!message) continue;
           parts.push({
             id,
             type: 'system',
-            label: runtimeType === 'turn.aborted' ? 'turn aborted' : 'provider error',
+            label:
+              runtimeType === 'runtime.error'
+                ? 'provider error'
+                : 'provider warning',
             text: message,
-            tone: 'error',
+            tone: runtimeType === 'runtime.error' ? 'error' : 'diagnostic',
             time: runtimeTime,
+          });
+          continue;
+        }
+
+        if (
+          runtimeType === 'request.opened' ||
+          runtimeType === 'user-input.requested'
+        ) {
+          parts.push({
+            id,
+            type: 'system',
+            label:
+              runtimeType === 'request.opened'
+                ? 'approval required'
+                : 'input required',
+            text:
+              stringValue(payload.detail) ||
+              (runtimeType === 'request.opened'
+                ? 'The provider is waiting for approval.'
+                : 'The provider is waiting for an answer.'),
+            tone: 'info',
+            time: runtimeTime,
+          });
+        }
+        // Session metadata, token usage, rate limits, and resolved requests are
+        // canonical state updates, not transcript prose.
+        continue;
+      }
+
+      if (eventType === 'text_chunk') {
+        const stream = stringValue(event.stream);
+        const chunk = stringValue(event.chunk);
+        if (stream === 'user') terminalToolState = null;
+        if (!chunk) continue;
+        if (
+          canonicalChat &&
+          stream === 'user' &&
+          promptBundle &&
+          chunk === promptBundle
+        )
+          continue;
+        if (
+          canonicalChat &&
+          stream === 'user' &&
+          consumeComposerSend(unmatchedComposerSends, chunk)
+        ) {
+          continue;
+        }
+
+        if (
+          stream === 'system' &&
+          (event.acpReasoning === true || !isProviderWarning(chunk))
+        ) {
+          pushPart(
+            parts,
+            {
+              id,
+              type: 'reasoning',
+              label: 'thinking',
+              text: chunk,
+              state: 'streaming',
+              time: envelope.time,
+            },
+            'text:system:reasoning',
+          );
+          continue;
+        }
+
+        if (stream === 'stderr') {
+          if (canonicalChat || isIgnoredStderr(chunk)) continue;
+          closeStreamingReasoning(parts);
+          const clean = stripAnsi(chunk);
+          pushPart(
+            parts,
+            {
+              id,
+              type: 'system',
+              label: 'diagnostics',
+              text: clean,
+              fullText: chunk,
+              tone: 'diagnostic',
+              code: true,
+              time: envelope.time,
+            },
+            'text:stderr:diagnostics',
+          );
+          continue;
+        }
+
+        closeStreamingReasoning(parts);
+        if (stream === 'assistant' || stream === 'user') {
+          pushPart(
+            parts,
+            {
+              id,
+              type: 'text',
+              role: stream,
+              label: stream,
+              text: chunk,
+              time: envelope.time,
+            },
+            `text:${stream}`,
+          );
+          continue;
+        }
+
+        if (stream === 'stdout') {
+          pushPart(
+            parts,
+            {
+              id,
+              type: 'system',
+              label: 'stdout',
+              text: chunk,
+              tone: 'diagnostic',
+              code: true,
+              time: envelope.time,
+            },
+            'text:stdout',
+          );
+          continue;
+        }
+
+        pushPart(
+          parts,
+          {
+            id,
+            type: 'system',
+            label: isProviderWarning(chunk)
+              ? 'provider warning'
+              : stream || 'system',
+            text: chunk,
+            tone: isProviderWarning(chunk) ? 'error' : 'info',
+            time: envelope.time,
+          },
+          `text:${stream || 'system'}`,
+        );
+        continue;
+      }
+
+      // 'pane_activity' is a content-free pane liveness signal,
+      // rendered nowhere for the same reason heartbeats are not.
+      if (
+        eventType === 'ready' ||
+        eventType === 'heartbeat' ||
+        eventType === 'pane_activity'
+      )
+        continue;
+
+      closeStreamingReasoning(parts);
+
+      if (eventType === 'tool_call') {
+        const callId = stringValue(event.call_id) || undefined;
+        const name = compactLabel(event.name);
+        const existing = callId ? toolsByCallId.get(callId) : undefined;
+        const pendingResult = callId
+          ? pendingResultsByCallId.get(callId)
+          : undefined;
+        const summary = summarizeToolCall(name, event.args);
+        if (existing) {
+          existing.state = toolCallState(event.args);
+          existing.summary ??= summary.summary;
+          if (existing.meta.length === 0) existing.meta = summary.meta;
+          continue;
+        }
+
+        if (pendingResult) {
+          pendingResult.name = name;
+          pendingResult.label = summary.label ?? `tool ${name}`;
+          pendingResult.input = event.args ?? null;
+          pendingResult.state =
+            pendingResult.ok === false ? 'error' : 'completed';
+          pendingResult.summary = summary.summary ?? pendingResult.summary;
+          pendingResult.meta = mergeMeta(summary.meta, pendingResult.meta);
+          pendingResult.time = envelope.time ?? pendingResult.time;
+          toolsByCallId.set(callId!, pendingResult);
+          pendingResultsByCallId.delete(callId!);
+          continue;
+        }
+
+        const part: TranscriptToolPart = {
+          id,
+          type: 'tool',
+          callId,
+          name,
+          label: summary.label ?? `tool ${name}`,
+          state: toolCallState(event.args),
+          input: event.args ?? null,
+          output: null,
+          ok: null,
+          summary: summary.summary,
+          meta: summary.meta,
+          time: envelope.time,
+        };
+        parts.push(part);
+        if (callId) toolsByCallId.set(callId, part);
+        continue;
+      }
+
+      if (eventType === 'tool_result') {
+        const callId = stringValue(event.call_id) || undefined;
+        const ok = booleanValue(event.ok);
+        const paired = callId ? toolsByCallId.get(callId) : undefined;
+        const resultSummary = summarizeToolResult(ok, event.output);
+        if (paired) {
+          paired.output = event.output ?? null;
+          paired.ok = ok;
+          paired.state = ok === false ? 'error' : 'completed';
+          paired.summary ??= resultSummary.summary;
+          paired.meta = mergeMeta(paired.meta, resultSummary.meta);
+          continue;
+        }
+
+        const part: TranscriptToolPart = {
+          id,
+          type: 'tool',
+          callId,
+          name: 'tool result',
+          label: resultSummary.label ?? 'tool result',
+          state: ok === false ? 'error' : 'running',
+          input: null,
+          output: event.output ?? null,
+          ok,
+          summary: resultSummary.summary,
+          meta: resultSummary.meta,
+          time: envelope.time,
+        };
+        parts.push(part);
+        if (callId) pendingResultsByCallId.set(callId, part);
+        continue;
+      }
+
+      if (eventType === 'transition_state') {
+        const from = compactLabel(event.from);
+        const to = compactLabel(event.to);
+        const reason = stringValue(event.reason).trim();
+        parts.push({
+          id,
+          type: 'system',
+          label: 'state transition',
+          text: reason ? `${from} -> ${to}\n${reason}` : `${from} -> ${to}`,
+          tone: 'info',
+          time: envelope.time,
+        });
+        continue;
+      }
+
+      if (eventType === 'run_complete') {
+        terminalToolState ??= 'completed';
+        const summary = stringValue(event.summary).trim();
+        if (summary) {
+          parts.push({
+            id,
+            type: 'system',
+            label: 'run complete',
+            text: summary,
+            tone: 'info',
+            time: envelope.time,
           });
         }
         continue;
       }
 
-      if (runtimeType === 'runtime.error' || runtimeType === 'runtime.warning') {
-        const message = stringValue(payload.message);
-        if (!message) continue;
+      if (eventType === 'run_fail' || eventType === 'driver_error') {
+        terminalToolState = 'error';
         parts.push({
           id,
           type: 'system',
-          label: runtimeType === 'runtime.error' ? 'provider error' : 'provider warning',
-          text: message,
-          tone: runtimeType === 'runtime.error' ? 'error' : 'diagnostic',
-          time: runtimeTime,
-        });
-        continue;
-      }
-
-      if (runtimeType === 'request.opened' || runtimeType === 'user-input.requested') {
-        parts.push({
-          id,
-          type: 'system',
-          label: runtimeType === 'request.opened' ? 'approval required' : 'input required',
-          text:
-            stringValue(payload.detail) ||
-            (runtimeType === 'request.opened'
-              ? 'The provider is waiting for approval.'
-              : 'The provider is waiting for an answer.'),
-          tone: 'info',
-          time: runtimeTime,
-        });
-      }
-      // Session metadata, token usage, rate limits, and resolved requests are
-      // canonical state updates, not transcript prose.
-      continue;
-    }
-
-    if (eventType === 'text_chunk') {
-      const stream = stringValue(event.stream);
-      const chunk = stringValue(event.chunk);
-      if (!chunk.trim()) continue;
-      if (canonicalChat && stream === 'user' && promptBundle && chunk === promptBundle) continue;
-      if (canonicalChat && stream === 'user' && consumeComposerSend(unmatchedComposerSends, chunk)) {
-        continue;
-      }
-
-      if (stream === 'system' && !isProviderWarning(chunk)) {
-        pushPart(
-          parts,
-          {
-            id,
-            type: 'reasoning',
-            label: 'thinking',
-            text: chunk,
-            state: 'streaming',
-            time: envelope.time,
-          },
-          'text:system:reasoning',
-        );
-        continue;
-      }
-
-      if (stream === 'stderr') {
-        if (canonicalChat || isIgnoredStderr(chunk)) continue;
-        closeStreamingReasoning(parts);
-        const clean = stripAnsi(chunk);
-        pushPart(
-          parts,
-          {
-            id,
-            type: 'system',
-            label: 'diagnostics',
-            text: clean,
-            fullText: chunk,
-            tone: 'diagnostic',
-            code: true,
-            time: envelope.time,
-          },
-          'text:stderr:diagnostics',
-        );
-        continue;
-      }
-
-      closeStreamingReasoning(parts);
-      if (stream === 'assistant' || stream === 'user') {
-        pushPart(
-          parts,
-          {
-            id,
-            type: 'text',
-            role: stream,
-            label: stream,
-            text: chunk,
-            time: envelope.time,
-          },
-          `text:${stream}`,
-        );
-        continue;
-      }
-
-      if (stream === 'stdout') {
-        pushPart(
-          parts,
-          {
-            id,
-            type: 'system',
-            label: 'stdout',
-            text: chunk,
-            tone: 'diagnostic',
-            code: true,
-            time: envelope.time,
-          },
-          'text:stdout',
-        );
-        continue;
-      }
-
-      pushPart(
-        parts,
-        {
-          id,
-          type: 'system',
-          label: isProviderWarning(chunk) ? 'provider warning' : stream || 'system',
-          text: chunk,
-          tone: isProviderWarning(chunk) ? 'error' : 'info',
+          label: eventType.replace('_', ' '),
+          text: stringValue(event.error_markdown || event.message),
+          tone: 'error',
           time: envelope.time,
-        },
-        `text:${stream || 'system'}`,
-      );
-      continue;
-    }
-
-    // 'pane_activity' is a content-free pane liveness signal,
-    // rendered nowhere for the same reason heartbeats are not.
-    if (eventType === 'ready' || eventType === 'heartbeat' || eventType === 'pane_activity')
-      continue;
-
-    closeStreamingReasoning(parts);
-
-    if (eventType === 'tool_call') {
-      const callId = stringValue(event.call_id) || undefined;
-      const name = compactLabel(event.name);
-      const existing = callId ? toolsByCallId.get(callId) : undefined;
-      const pendingResult = callId ? pendingResultsByCallId.get(callId) : undefined;
-      const summary = summarizeToolCall(name, event.args);
-      if (existing) {
-        existing.state = toolCallState(event.args);
-        existing.summary ??= summary.summary;
-        if (existing.meta.length === 0) existing.meta = summary.meta;
+        });
         continue;
       }
 
-      if (pendingResult) {
-        pendingResult.name = name;
-        pendingResult.label = summary.label ?? `tool ${name}`;
-        pendingResult.input = event.args ?? null;
-        pendingResult.state = pendingResult.ok === false ? 'error' : 'completed';
-        pendingResult.summary = summary.summary ?? pendingResult.summary;
-        pendingResult.meta = mergeMeta(summary.meta, pendingResult.meta);
-        pendingResult.time = envelope.time ?? pendingResult.time;
-        toolsByCallId.set(callId!, pendingResult);
-        pendingResultsByCallId.delete(callId!);
+      if (envelope.kind === 'lifecycle') {
+        if (event.phase === 'composer_send') terminalToolState = null;
+        if (
+          canonicalChat &&
+          stringValue(event.phase) === 'composer_send' &&
+          promptBundle &&
+          stringValue(event.text) === promptBundle
+        ) {
+          continue;
+        }
+        if (stringValue(event.phase) === 'release') {
+          terminalToolState =
+            stringValue(event.outcome) === 'failed'
+              ? 'error'
+              : (terminalToolState ?? 'completed');
+        }
+        const lifecyclePart = normalizeLifecyclePart(
+          id,
+          envelope.time,
+          event,
+          canonicalChat,
+        );
+        if (lifecyclePart) parts.push(lifecyclePart);
         continue;
       }
 
-      const part: TranscriptToolPart = {
-        id,
-        type: 'tool',
-        callId,
-        name,
-        label: summary.label ?? `tool ${name}`,
-        state: toolCallState(event.args),
-        input: event.args ?? null,
-        output: null,
-        ok: null,
-        summary: summary.summary,
-        meta: summary.meta,
-        time: envelope.time,
-      };
-      parts.push(part);
-      if (callId) toolsByCallId.set(callId, part);
-      continue;
-    }
-
-    if (eventType === 'tool_result') {
-      const callId = stringValue(event.call_id) || undefined;
-      const ok = booleanValue(event.ok);
-      const paired = callId ? toolsByCallId.get(callId) : undefined;
-      const resultSummary = summarizeToolResult(ok, event.output);
-      if (paired) {
-        paired.output = event.output ?? null;
-        paired.ok = ok;
-        paired.state = ok === false ? 'error' : 'completed';
-        paired.summary ??= resultSummary.summary;
-        paired.meta = mergeMeta(paired.meta, resultSummary.meta);
-        continue;
-      }
-
-      const part: TranscriptToolPart = {
-        id,
-        type: 'tool',
-        callId,
-        name: 'tool result',
-        label: resultSummary.label ?? 'tool result',
-        state: ok === false ? 'error' : 'running',
-        input: null,
-        output: event.output ?? null,
-        ok,
-        summary: resultSummary.summary,
-        meta: resultSummary.meta,
-        time: envelope.time,
-      };
-      parts.push(part);
-      if (callId) pendingResultsByCallId.set(callId, part);
-      continue;
-    }
-
-    if (eventType === 'transition_state') {
-      const from = compactLabel(event.from);
-      const to = compactLabel(event.to);
-      const reason = stringValue(event.reason).trim();
-      parts.push({
-        id,
-        type: 'system',
-        label: 'state transition',
-        text: reason ? `${from} -> ${to}\n${reason}` : `${from} -> ${to}`,
-        tone: 'info',
-        time: envelope.time,
-      });
-      continue;
-    }
-
-    if (eventType === 'run_complete') {
-      terminalToolState ??= 'completed';
-      const summary = stringValue(event.summary).trim();
-      if (summary) {
+      if (envelope.kind === 'note') {
         parts.push({
           id,
           type: 'system',
-          label: 'run complete',
-          text: summary,
+          label: 'note',
+          text: stringValue(event),
           tone: 'info',
           time: envelope.time,
         });
       }
-      continue;
     }
 
-    if (eventType === 'run_fail' || eventType === 'driver_error') {
-      terminalToolState = 'error';
-      parts.push({
-        id,
-        type: 'system',
-        label: eventType.replace('_', ' '),
-        text: stringValue(event.error_markdown || event.message),
-        tone: 'error',
-        time: envelope.time,
-      });
-      continue;
-    }
-
-    if (envelope.kind === 'lifecycle') {
-      if (
-        canonicalChat &&
-        stringValue(event.phase) === 'composer_send' &&
-        promptBundle &&
-        stringValue(event.text) === promptBundle
-      ) {
-        continue;
-      }
-      if (stringValue(event.phase) === 'release') {
-        terminalToolState =
-          stringValue(event.outcome) === 'failed' ? 'error' : (terminalToolState ?? 'completed');
-      }
-      const lifecyclePart = normalizeLifecyclePart(id, envelope.time, event, canonicalChat);
-      if (lifecyclePart) parts.push(lifecyclePart);
-      continue;
-    }
-
-    if (envelope.kind === 'note') {
-      parts.push({
-        id,
-        type: 'system',
-        label: 'note',
-        text: stringValue(event),
-        tone: 'info',
-        time: envelope.time,
-      });
-    }
-  }
-
-  if (terminalToolState) closeRunningTools(parts, terminalToolState);
-  return parts.map(({ mergeKey: _mergeKey, ...part }) => part);
+    if (terminalToolState) closeRunningTools(parts, terminalToolState);
+  };
+  append(initial);
+  return {
+    append,
+    parts: (): TranscriptPart[] =>
+      parts.map(({ mergeKey: _mergeKey, ...part }) => part),
+  };
 }
 
 export function hasResponseAfterPending(
@@ -588,9 +711,10 @@ export function hasResponseAfterPending(
 
   return parseSessionSource(source).some((envelope) => {
     const type = stringValue(envelope.event?.type);
-    const runtime = type === 'provider_runtime' && isRecord(envelope.event?.event)
-      ? envelope.event.event
-      : null;
+    const runtime =
+      type === 'provider_runtime' && isRecord(envelope.event?.event)
+        ? envelope.event.event
+        : null;
     const runtimeType = runtime ? stringValue(runtime.type) : '';
     const isTerminal =
       type === 'run_complete' ||
@@ -599,7 +723,9 @@ export function hasResponseAfterPending(
       runtimeType === 'turn.completed' ||
       runtimeType === 'turn.aborted';
     if (!isTerminal) return false;
-    const eventTime = Date.parse(stringValue(runtime?.createdAt) || envelope.time || '');
+    const eventTime = Date.parse(
+      stringValue(runtime?.createdAt) || envelope.time || '',
+    );
     return Number.isFinite(eventTime) && eventTime >= pendingTime;
   });
 }
@@ -630,7 +756,14 @@ function normalizeLifecyclePart(
     };
   }
   if (phase === 'attach') {
-    return { id, type: 'system', label: 'attached', text: 'session attached', tone: 'info', time };
+    return {
+      id,
+      type: 'system',
+      label: 'attached',
+      text: 'session attached',
+      tone: 'info',
+      time,
+    };
   }
   if (phase === 'reattach') {
     const transport = stringValue(event.transport);
@@ -638,7 +771,9 @@ function normalizeLifecyclePart(
       id,
       type: 'system',
       label: 'reattached',
-      text: transport ? `session reattached via ${transport}` : 'session reattached',
+      text: transport
+        ? `session reattached via ${transport}`
+        : 'session reattached',
       tone: 'info',
       time,
     };
@@ -649,7 +784,9 @@ function normalizeLifecyclePart(
       id,
       type: 'system',
       label: 'continuation',
-      text: previousRun ? `continued from ${previousRun}` : 'continued previous run',
+      text: previousRun
+        ? `continued from ${previousRun}`
+        : 'continued previous run',
       tone: 'info',
       time,
     };
@@ -670,7 +807,11 @@ function normalizeLifecyclePart(
   return null;
 }
 
-function pushPart(parts: PartDraft[], part: TranscriptPart, mergeKey: string): void {
+function pushPart(
+  parts: PartDraft[],
+  part: TranscriptPart,
+  mergeKey: string,
+): void {
   const previous = parts[parts.length - 1];
   if (previous?.mergeKey === mergeKey && mergePart(previous, part)) {
     previous.time = part.time ?? previous.time;
@@ -696,7 +837,10 @@ function composerSendCounts(envelopes: SessionEnvelope[]): Map<string, number> {
   return counts;
 }
 
-function consumeComposerSend(counts: Map<string, number>, text: string): boolean {
+function consumeComposerSend(
+  counts: Map<string, number>,
+  text: string,
+): boolean {
   const key = composerSendKey(text);
   const count = counts.get(key) ?? 0;
   if (!key || count === 0) return false;
@@ -737,7 +881,9 @@ function immediatelyPrecedingRunningCanonicalExec(
   parts: PartDraft[],
 ): TranscriptToolPart | undefined {
   const previous = parts.at(-1);
-  return previous?.type === 'tool' && previous.name === 'exec' && previous.state === 'running'
+  return previous?.type === 'tool' &&
+    previous.name === 'exec' &&
+    previous.state === 'running'
     ? previous
     : undefined;
 }
@@ -776,7 +922,9 @@ function summarizeCanonicalProviderTool(
   const inputRecord = isRecord(input) ? input : {};
   if (name === 'web_search') {
     const url = stringValue(inputRecord.url).trim();
-    const query = stringValue(inputRecord.query || inputRecord.searchTerm).trim();
+    const query = stringValue(
+      inputRecord.query || inputRecord.searchTerm,
+    ).trim();
     return {
       label: url ? 'Fetched page' : 'Searched web',
       summary: trimMiddle(url || query, 180) || existing?.summary,
@@ -801,7 +949,10 @@ function summarizeCanonicalProviderTool(
   }
   if (name === 'agent_task') {
     const task = stringValue(
-      inputRecord.description || inputRecord.prompt || inputRecord.task || inputRecord.message,
+      inputRecord.description ||
+        inputRecord.prompt ||
+        inputRecord.task ||
+        inputRecord.message,
     ).trim();
     return {
       label: 'Delegated task',
@@ -813,7 +964,9 @@ function summarizeCanonicalProviderTool(
   const title = stringValue(payload.title).trim();
   const semanticTitle = title.toLowerCase() === 'tool' ? '' : title;
   return {
-    label: semanticTitle ? trimMiddle(semanticTitle, 96) : existing?.label ?? base.label,
+    label: semanticTitle
+      ? trimMiddle(semanticTitle, 96)
+      : (existing?.label ?? base.label),
     summary: existing?.summary,
     meta: base.meta,
   };
@@ -821,13 +974,19 @@ function summarizeCanonicalProviderTool(
 
 function providerPath(input: Record<string, unknown>): string {
   return stringValue(
-    input.path || input.filePath || input.filename || input.newPath || input.oldPath,
+    input.path ||
+      input.filePath ||
+      input.filename ||
+      input.newPath ||
+      input.oldPath,
   ).trim();
 }
 
 function providerCommand(input: unknown): string | undefined {
   if (!isRecord(input)) return undefined;
-  const actions = Array.isArray(input.commandActions) ? input.commandActions : [];
+  const actions = Array.isArray(input.commandActions)
+    ? input.commandActions
+    : [];
   for (const action of actions) {
     if (!isRecord(action)) continue;
     const command = stringValue(action.command).trim();
@@ -838,7 +997,11 @@ function providerCommand(input: unknown): string | undefined {
 }
 
 function mergePart(previous: PartDraft, next: TranscriptPart): boolean {
-  if (previous.type === 'text' && next.type === 'text' && previous.role === next.role) {
+  if (
+    previous.type === 'text' &&
+    next.type === 'text' &&
+    previous.role === next.role
+  ) {
     previous.text += next.text;
     return true;
   }
@@ -854,7 +1017,8 @@ function mergePart(previous: PartDraft, next: TranscriptPart): boolean {
     previous.tone === next.tone
   ) {
     previous.text += next.text;
-    previous.fullText = `${previous.fullText ?? ''}${next.fullText ?? ''}` || undefined;
+    previous.fullText =
+      `${previous.fullText ?? ''}${next.fullText ?? ''}` || undefined;
     return true;
   }
   return false;
@@ -870,7 +1034,10 @@ function closeRunningTools(
   state: Extract<TranscriptToolState, 'completed' | 'error'>,
 ): void {
   for (const part of parts) {
-    if (part.type === 'tool' && (part.state === 'running' || part.state === 'streaming')) {
+    if (
+      part.type === 'tool' &&
+      (part.state === 'running' || part.state === 'streaming')
+    ) {
       part.state = state;
     }
   }
@@ -879,20 +1046,24 @@ function closeRunningTools(
 function toolCallState(args: unknown): TranscriptToolState {
   if (!isRecord(args)) return 'running';
   const status = stringValue(args.status).toLowerCase().replaceAll('_', '-');
-  return status === 'streaming' || status === 'input-streaming' || status === 'pending'
+  return status === 'streaming' ||
+    status === 'input-streaming' ||
+    status === 'pending'
     ? 'streaming'
     : 'running';
 }
 
 function summarizeToolCall(name: string, args: unknown): ToolSummary {
-  if (!isRecord(args)) return { summary: name ? `use ${name}` : 'tool call', meta: [] };
+  if (!isRecord(args))
+    return { summary: name ? `use ${name}` : 'tool call', meta: [] };
   const meta: Array<[string, string]> = [];
   const cwd = args.workdir ?? args.cwd;
   if (cwd) meta.push(['cwd', trimMiddle(stringValue(cwd), 96)]);
 
   if (name === 'exec_command') {
     const command = stringValue(args.cmd);
-    if (args.yield_time_ms !== undefined) meta.push(['wait', `${stringValue(args.yield_time_ms)}ms`]);
+    if (args.yield_time_ms !== undefined)
+      meta.push(['wait', `${stringValue(args.yield_time_ms)}ms`]);
     if (args.max_output_tokens !== undefined) {
       meta.push(['limit', `${stringValue(args.max_output_tokens)} tokens`]);
     }
@@ -904,8 +1075,12 @@ function summarizeToolCall(name: string, args: unknown): ToolSummary {
   }
 
   if (name === 'command_execution') {
-    const actions = Array.isArray(args.commandActions) ? args.commandActions : [];
-    const actionSummary = actions.map((action) => commandActionSummary(action, args.cwd)).find(Boolean);
+    const actions = Array.isArray(args.commandActions)
+      ? args.commandActions
+      : [];
+    const actionSummary = actions
+      .map((action) => commandActionSummary(action, args.cwd))
+      .find(Boolean);
     const command = stringValue(args.command);
     const status = stringValue(args.status);
     const processId = stringValue(args.processId);
@@ -913,7 +1088,9 @@ function summarizeToolCall(name: string, args: unknown): ToolSummary {
     if (processId) meta.push(['pid', processId]);
     return {
       label: 'command started',
-      summary: actionSummary ?? (command ? `started ${trimMiddle(command, 140)}` : 'started command'),
+      summary:
+        actionSummary ??
+        (command ? `started ${trimMiddle(command, 140)}` : 'started command'),
       meta,
     };
   }
@@ -924,12 +1101,15 @@ function summarizeToolCall(name: string, args: unknown): ToolSummary {
     if (sessionId) meta.push(['session', sessionId]);
     return {
       label: 'terminal input',
-      summary: chars ? `send ${chars.length} chars to terminal` : 'poll terminal',
+      summary: chars
+        ? `send ${chars.length} chars to terminal`
+        : 'poll terminal',
       meta,
     };
   }
 
-  if (name === 'apply_patch') return { label: 'patch', summary: 'apply patch', meta };
+  if (name === 'apply_patch')
+    return { label: 'patch', summary: 'apply patch', meta };
   return { summary: name ? `use ${name}` : 'tool call', meta };
 }
 
@@ -958,7 +1138,9 @@ function summarizeToolResult(ok: boolean | null, output: unknown): ToolSummary {
   ].filter(Boolean);
   return {
     label: ok === false ? 'command error' : 'command result',
-    summary: summaryParts.length ? summaryParts.join(' · ') : firstLine(output) || 'tool finished',
+    summary: summaryParts.length
+      ? summaryParts.join(' · ')
+      : firstLine(output) || 'tool finished',
     meta: chunkId ? [['chunk', chunkId]] : [],
   };
 }
@@ -995,13 +1177,18 @@ function mergeMeta(
 }
 
 function isIgnoredStderr(text: string): boolean {
-  if (text.includes('codex_core_skills::loader') && text.includes("icon path must not contain '..'")) {
+  if (
+    text.includes('codex_core_skills::loader') &&
+    text.includes("icon path must not contain '..'")
+  ) {
     return true;
   }
   const isInfoOrDebug = text.includes(' [INFO] ') || text.includes(' [DEBUG] ');
   return (
     isInfoOrDebug &&
-    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[(INFO|DEBUG)\]\s+[\w.:_-]+:/.test(text)
+    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[(INFO|DEBUG)\]\s+[\w.:_-]+:/.test(
+      text,
+    )
   );
 }
 
@@ -1025,7 +1212,12 @@ function compactLabel(value: unknown): string {
 }
 
 function firstLine(text: string): string {
-  return text.split('\n').find((line) => line.trim())?.trim() ?? '';
+  return (
+    text
+      .split('\n')
+      .find((line) => line.trim())
+      ?.trim() ?? ''
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1035,7 +1227,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function relativePath(path: unknown, cwd: unknown): string {
   const text = stringValue(path);
   const base = stringValue(cwd);
-  return base && text.startsWith(`${base}/`) ? text.slice(base.length + 1) : text;
+  return base && text.startsWith(`${base}/`)
+    ? text.slice(base.length + 1)
+    : text;
 }
 
 function stringValue(value: unknown): string {

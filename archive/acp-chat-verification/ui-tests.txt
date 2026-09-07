@@ -1,0 +1,14 @@
+ ✓ src/lib/__tests__/orgInlineText.test.tsx (2 tests) 40ms
+ ✓ src/lib/__tests__/useResourceResync.test.tsx (1 test) 10ms
+ ✓ src/components/ai-elements/__tests__/streamdown-config.test.tsx (2 tests) 148ms
+ ✓ src/components/manager/__tests__/ManagerComposer.test.tsx (1 test) 120ms
+ ✓ src/components/__tests__/CopyIdBadge.test.tsx (1 test) 137ms
+ ✓ src/components/ui/__tests__/dialog.test.tsx (1 test) 121ms
+ ✓ src/components/ui/__tests__/button.test.tsx (1 test) 80ms
+ ✓ src/lib/__tests__/streamdownStyles.test.ts (1 test) 13112ms
+   ✓ Streamdown production CSS > includes dependency-only wrapping utilities and KaTeX rules 13111ms
+
+ Test Files  61 passed (61)
+      Tests  371 passed (371)
+   Start at  14:27:20
+   Duration  14.09s (transform 2.92s, setup 0ms, collect 23.27s, tests 23.04s, environment 30.00s, prepare 3.39s)

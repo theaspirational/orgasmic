@@ -1,3 +1,5 @@
+pub mod acp;
+pub use acp::AcpAdapter;
 pub mod chat_sdk;
 pub mod claude;
 pub mod codex;

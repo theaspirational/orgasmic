@@ -1,0 +1,27 @@
+[
+  {
+    "file": "ui/src/lib/__tests__/fixtures/acp/claude.jsonl",
+    "sha256": "d3e828f667f8e18bef42ba48afb7f2f7dc0bfdb49d07e58b362c4cd64564d846",
+    "events": 117
+  },
+  {
+    "file": "ui/src/lib/__tests__/fixtures/acp/codex.jsonl",
+    "sha256": "e82c9c1eb258a4870f13f49b6d55e240e574e2613218a7db4f0927b23645b2ef",
+    "events": 197
+  },
+  {
+    "file": "ui/src/lib/__tests__/fixtures/acp/cursor-agent.jsonl",
+    "sha256": "e71dfddbf86a4804db1309b5811a934ade4cbc0c760b27b178088b95b1e34df9",
+    "events": 610
+  },
+  {
+    "file": "ui/src/lib/__tests__/fixtures/acp/hermes.jsonl",
+    "sha256": "d3fad5bfdf4c290dffc605c525fdd4245d59b780d1d490c31b640e651232ec8f",
+    "events": 51
+  },
+  {
+    "file": "ui/src/lib/__tests__/fixtures/acp/opencode.jsonl",
+    "sha256": "ac774a3b5de3fec5e359198363c7b92a356009ad276dcc54db2657c8c76eeafd",
+    "events": 248
+  }
+]

@@ -19,11 +19,15 @@ pub trait JsonRpcTransport: Send {
 #[derive(Debug, Clone, Default)]
 pub struct RpcIds {
     next: u64,
+    pending: std::collections::HashMap<u64, String>,
 }
 
 impl RpcIds {
     pub fn new() -> Self {
-        Self { next: 1 }
+        Self {
+            next: 1,
+            pending: Default::default(),
+        }
     }
 
     pub fn next_id(&mut self) -> u64 {
@@ -34,7 +38,9 @@ impl RpcIds {
 }
 
 pub fn response_matches(value: &Value, id: u64) -> bool {
-    value.get("id") == Some(&json!(id))
+    value.get("method").is_none()
+        && (value.get("result").is_some() || value.get("error").is_some())
+        && value.get("id") == Some(&json!(id))
 }
 
 const RPC_ERROR_DATA_MAX_BYTES: usize = 3 * 1024;
@@ -136,13 +142,30 @@ pub async fn try_dispatch_approval(
 
 pub async fn dispatch_incoming_json(
     value: Value,
+    ids: &mut RpcIds,
     transport: &mut dyn JsonRpcTransport,
     adapter: &mut dyn HarnessEventAdapter,
     events: &mpsc::Sender<DriverEvent>,
     allowlist: &SandboxAllowlist,
 ) -> Result<Vec<DriverEvent>, DriverError> {
+    if value.get("method").is_none() {
+        if let Some(method) = value["id"].as_u64().and_then(|id| ids.pending.remove(&id)) {
+            return match rpc_result(&method, value) {
+                Ok(response) => adapter.on_ws_response(&method, response).await,
+                Err(error) => Ok(vec![DriverEvent::DriverError {
+                    fatal: false,
+                    message: error.to_string(),
+                }]),
+            };
+        }
+    }
     if try_dispatch_approval(&value, transport, adapter, events, allowlist).await? {
         return Ok(Vec::new());
+    }
+    if is_server_request(&value) {
+        // No other client methods are implemented. Reply instead of leaving
+        // an unfamiliar vendor request waiting forever.
+        transport.send_json(json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32601,"message":"Client method not supported"}})).await?;
     }
     Ok(adapter.parse_event(value).await)
 }
@@ -180,7 +203,8 @@ pub async fn request_response(
         if response_matches(&value, id) {
             return rpc_result(method, value);
         }
-        let outgoing = dispatch_incoming_json(value, transport, adapter, events, allowlist).await?;
+        let outgoing =
+            dispatch_incoming_json(value, ids, transport, adapter, events, allowlist).await?;
         emit_events(events, outgoing).await;
         if method == adapter.jsonrpc_turn_start_method() && adapter.terminal_emitted() {
             return Ok(Value::Null);
@@ -209,12 +233,16 @@ pub async fn send_wire_message(
 ) -> Result<(), DriverError> {
     let value = match message {
         WireMessage::Json(value) => value,
-        WireMessage::JsonRpc { method, params } => json!({
-            "jsonrpc": "2.0",
-            "id": ids.next_id(),
-            "method": method,
-            "params": params,
-        }),
+        WireMessage::JsonRpc { method, params } => {
+            let id = ids.next_id();
+            ids.pending.insert(id, method.clone());
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": params,
+            })
+        }
     };
     transport
         .send_json(value)
@@ -294,11 +322,11 @@ pub async fn run_jsonrpc_handshake(
                 map.entry("sessionId".to_string())
                     .or_insert_with(|| json!(session_id));
             }
-            let params = adapter.jsonrpc_post_session_params(method, params)?;
+            let (method, params) = adapter.jsonrpc_post_session_request(method, params)?;
             let response =
-                request_response(transport, ids, method, params, events, adapter, allowlist)
+                request_response(transport, ids, &method, params, events, adapter, allowlist)
                     .await?;
-            if let Ok(events_to_emit) = adapter.on_ws_response(method, response).await {
+            if let Ok(events_to_emit) = adapter.on_ws_response(&method, response).await {
                 emit_events(events, events_to_emit).await;
             }
         }
@@ -391,6 +419,90 @@ mod tests {
         async fn recv_json(&mut self) -> Result<Option<Value>, DriverError> {
             Ok(self.incoming.pop_front())
         }
+    }
+
+    #[tokio::test]
+    async fn acp_followup_responses_are_correlated_and_permissions_use_protocol_shape() {
+        let (tx, _rx) = mpsc::channel(16);
+        let mut transport = ChannelTransport {
+            incoming: Default::default(),
+            outgoing: Vec::new(),
+        };
+        let mut adapter = crate::adapters::acp::AcpAdapter::new("codex", true).unwrap();
+        adapter
+            .on_ws_thread_started("", &json!({"sessionId":"test"}))
+            .await
+            .unwrap();
+        let mut ids = RpcIds::new();
+        for turn in 0..2 {
+            send_wire_message(
+                &mut transport,
+                &mut ids,
+                WireMessage::JsonRpc {
+                    method: "session/prompt".into(),
+                    params: json!({"sessionId":"test"}),
+                },
+            )
+            .await
+            .unwrap();
+            let id = transport.outgoing.last().unwrap()["id"].clone();
+            let reply = if turn == 0 {
+                json!({"id":id,"result":{"stopReason":"end_turn"}})
+            } else {
+                json!({"id":id,"error":{"code":-1,"message":"test failure"}})
+            };
+            let events = dispatch_incoming_json(
+                reply,
+                &mut ids,
+                &mut transport,
+                &mut adapter,
+                &tx,
+                &SandboxAllowlist::default(),
+            )
+            .await
+            .unwrap();
+            if turn == 0 {
+                assert!(events.iter().any(|e| matches!(e, DriverEvent::Acp { message,.. } if message["method"] == "session/prompt")));
+            } else {
+                assert!(events.iter().any(|e| matches!(e, DriverEvent::DriverError { message,.. } if message.contains("test failure"))));
+            }
+            assert!(ids.pending.is_empty());
+        }
+        let request = json!({"id":"permission-1","method":"session/request_permission","params":{"toolCall":{"kind":"execute"},"options":[{"kind":"reject_once","optionId":"deny-42"}]}});
+        dispatch_incoming_json(
+            request,
+            &mut ids,
+            &mut transport,
+            &mut adapter,
+            &tx,
+            &SandboxAllowlist {
+                allow_exec: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            transport.outgoing.last().unwrap(),
+            &json!({"jsonrpc":"2.0","id":"permission-1","result":{"outcome":{"outcome":"selected","optionId":"deny-42"}}})
+        );
+        let unknown =
+            json!({"id":99,"method":"vendor/new_client_method","params":{"extra":"retained"}});
+        assert!(!response_matches(&unknown, 99));
+        let events = dispatch_incoming_json(
+            unknown,
+            &mut ids,
+            &mut transport,
+            &mut adapter,
+            &tx,
+            &SandboxAllowlist::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(transport.outgoing.last().unwrap()["error"]["code"], -32601);
+        assert!(
+            matches!(&events[0], DriverEvent::Acp { message,.. } if message["params"]["extra"] == "retained")
+        );
     }
 
     #[tokio::test]

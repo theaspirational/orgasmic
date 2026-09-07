@@ -1,0 +1,15 @@
+   Compiling orgasmic-daemon v0.0.24 (/Users/aspirational/Documents/code/tools/orgasmic-acp-chat/crates/orgasmic-daemon)
+   Compiling orgasmic-drivers v0.0.24 (/Users/aspirational/Documents/code/tools/orgasmic-acp-chat/crates/orgasmic-drivers)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.28s
+     Running unittests src/lib.rs (target/debug/deps/orgasmic_daemon-5e7d56dd15dd5dce)
+
+running 5 tests
+test transcript_stream::tests::transcript_tail_reads_new_complete_lines_and_resets_on_replacement ... ok
+test api::tests::get_run_native_transcript_custom_is_unsupported ... ok
+test api::tests::get_run_native_transcript_uses_recorded_session_path ... ok
+test api::tests::transcript_ws_replays_then_delivers_only_appends_and_checks_membership ... ok
+test api::tests::inventory_cost_does_not_follow_transcript_bytes ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 898 filtered out; finished in 1.41s
+
+orgasmic-fixture-exec-stats: fresh_first_execs=0 shared_link_reuses=3

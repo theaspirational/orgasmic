@@ -491,7 +491,7 @@ export type ManagerChatCatalogModel = {
 };
 
 export type ManagerChatCatalogProvider = {
-  id: 'codex' | 'claude' | 'opencode';
+  id: 'codex' | 'claude' | 'opencode' | 'cursor-agent' | 'hermes';
   source: string;
   models: ManagerChatCatalogModel[];
   message?: string | null;

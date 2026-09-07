@@ -34,6 +34,7 @@ pub mod run_catalog;
 pub mod run_history;
 pub mod runtime;
 pub mod supervisor;
+mod transcript_stream;
 pub mod watcher;
 pub mod writer;
 pub mod ws;

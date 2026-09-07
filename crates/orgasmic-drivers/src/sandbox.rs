@@ -20,7 +20,13 @@ use crate::r#trait::DriverConfig;
 pub enum ApprovalResponse {
     Approved,
     Denied,
-    Selected { option_id: String },
+    Selected {
+        option_id: String,
+    },
+    Acp {
+        option_id: Option<String>,
+        allowed: bool,
+    },
 }
 
 pub fn allowlist_from_driver_config(
@@ -44,6 +50,13 @@ pub fn approval_document_events(
         ApprovalResponse::Approved => "Approved",
         ApprovalResponse::Denied => "Denied",
         ApprovalResponse::Selected { option_id } => option_id.as_str(),
+        ApprovalResponse::Acp { allowed, .. } => {
+            if *allowed {
+                "Approved"
+            } else {
+                "Denied"
+            }
+        }
     };
     vec![
         DriverEvent::ToolCall {
@@ -62,11 +75,18 @@ pub fn approval_document_events(
 }
 
 pub fn approval_result(decision: ApprovalResponse) -> Value {
+    if let ApprovalResponse::Acp { option_id, .. } = decision {
+        return match option_id {
+            Some(id) => json!({"outcome":{"outcome":"selected","optionId":id}}),
+            None => json!({"outcome":{"outcome":"cancelled"}}),
+        };
+    }
     let mut value = json!({
         "decision": match &decision {
             ApprovalResponse::Approved => "accept",
             ApprovalResponse::Denied => "decline",
             ApprovalResponse::Selected { .. } => "selected",
+            ApprovalResponse::Acp { .. } => unreachable!(),
         }
     });
     if let ApprovalResponse::Selected { option_id } = decision {
@@ -81,6 +101,7 @@ fn approval_ok(decision: &ApprovalResponse) -> bool {
         ApprovalResponse::Approved => true,
         ApprovalResponse::Denied => false,
         ApprovalResponse::Selected { option_id } => option_id.starts_with("allow"),
+        ApprovalResponse::Acp { allowed, option_id } => *allowed && option_id.is_some(),
     }
 }
 

@@ -1,0 +1,15 @@
+    Checking colorchoice v1.0.5
+    Checking is_terminal_polyfill v1.70.2
+    Checking anstyle v1.0.14
+    Checking clap_lex v1.1.0
+    Checking strsim v0.11.1
+    Checking orgasmic-drivers v0.0.24 (/Users/aspirational/Documents/code/tools/orgasmic-acp-chat/crates/orgasmic-drivers)
+   Compiling clap_derive v4.6.1
+    Checking semver v1.0.28
+    Checking anstyle-parse v1.0.0
+    Checking anstream v1.0.0
+    Checking clap_builder v4.6.0
+    Checking clap v4.6.1
+    Checking orgasmic-daemon v0.0.24 (/Users/aspirational/Documents/code/tools/orgasmic-acp-chat/crates/orgasmic-daemon)
+    Checking orgasmic-cli v0.0.24 (/Users/aspirational/Documents/code/tools/orgasmic-acp-chat/crates/orgasmic-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.42s

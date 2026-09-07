@@ -1,0 +1,14 @@
+test transcript_finder::tests::production_path_probe_when_local_homes_present ... ok
+test transcript_finder::tests::recorded_path_symlink_escape_is_rejected ... ok
+test transcript_finder::tests::session_id_path_traversal_is_rejected ... ok
+test modes::tmux::tests::real_tmux_control_drop_without_release_kills_session ... ok
+test modes::tmux::tests::real_tmux_prompt_bundle_is_consumed ... ok
+test modes::tmux::tests::real_tmux_session_exports_orgasmic_run_id ... ok
+test modes::tmux::tests::real_tmux_session_lifecycle ... ok
+test modes::tmux::tests::required_test_tooling_is_present ... ok
+test modes::tmux::tests::tmux_pane_activity_publishes_raw_byte_counts_from_a_real_pane ... ok
+test modes::tmux::tests::tmux_sessions_land_on_a_server_the_test_run_owns ... ok
+test adapters::claude::tests::the_launch_uses_the_credential_the_preflight_admitted ... ok
+test preflight::tests::a_status_command_that_starts_late_is_asked_again_rather_than_given_up_on ... ok
+
+test result: ok. 250 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 7.95s
