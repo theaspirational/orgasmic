@@ -2,7 +2,7 @@
 type: Operation
 title: Run and utility commands
 description: Inspect worker histories, recover runs, manage auth, answer questions,
-  and mint ids.
+  materialize explicit native evidence, and mint ids.
 aliases:
 - orgasmic run
 - orgasmic recovery
@@ -12,6 +12,8 @@ aliases:
 - orgasmic run list
 - orgasmic run show
 - orgasmic run history
+- orgasmic run evidence
+- orgasmic run evidence materialize
 - orgasmic run native-transcript
 - orgasmic run recover
 - orgasmic recovery status
@@ -31,6 +33,9 @@ sources:
 - cli-help/run/list.txt
 - cli-help/run/show.txt
 - cli-help/run/history.txt
+- cli-help/run/evidence.txt
+- cli-help/run/evidence/materialize.txt
+- crates/orgasmic-daemon/src/native_evidence.rs
 - cli-help/run/native-transcript.txt
 - cli-help/run/recover.txt
 - cli-help/recovery/status.txt
@@ -61,6 +66,8 @@ Canonical commands in this family:
 - `orgasmic run list`
 - `orgasmic run show`
 - `orgasmic run history`
+- `orgasmic run evidence`
+- `orgasmic run evidence materialize`
 - `orgasmic run native-transcript`
 - `orgasmic run recover`
 - `orgasmic recovery status`
@@ -93,25 +100,18 @@ or a reported worker result as evidence to inspect, not as lifecycle closure.
 orgasmic run history rollback --help
 ```
 
-## Explicit native evidence and manual retrospectives
+## Explicit native evidence
 
-`orgasmic run evidence materialize --run <run-id>` converts verified Claude
-native JSONL into a bounded, versioned diagnostic cache. It returns a summary
-and file reference. Repeating it with unchanged source is a cache hit.
+`orgasmic run evidence materialize --run RUN_ID` converts verified Claude native
+JSONL into a versioned `derived_native` cache. It returns the run id, source digest,
+converter version, cache-hit flag, summary, and file reference; never a full
+transcript in the response. Unchanged source reuses the cache; changed source gets
+a new digest entry. Missing/ambiguous correlation, malformed or incomplete input,
+unsafe cache paths, and corrupt caches are refused.
 
-`orgasmic manager retro --project <project> --run <id> --run <id> --model <model-id>`
-starts a foreground read-only Claude SDK retrospector. Repeat `--task <id>` to
-include task-linked implementer, reviewer, and recovery runs, or use
-`--task-sequence TASK-A,TASK-B` to preserve task order. Add `--question <text>`
-for specific questions. `--prepare-only` pins the scope without a provider turn.
-The SDK requires `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`; it isolates its
-configuration and loads no ambient user/project tools, hooks, or plugins.
+Limits are 64 MiB source, 2 MiB source line, 16 KiB converted event, 10,000 retained
+events, and 8 MiB cache per run. Truncation and omissions are reported. Native files
+stay vendor-owned; converted terminal signals never establish run completion,
+liveness, task state, or recovery authority.
 
-The immutable scope, SDK scratch files, and report stay under
-`.orgasmic/tmp/retro/evidence`. The worker receives only catalog, materialize,
-bounded read, and submit tools; it receives no daemon bearer token. Submission
-is the retrospective's explicit terminal declaration. Provider exit without
-submission is failure, with the scope retained for inspection. Changed sources
-require a new manual scope. Evidence never authorizes source-run completion,
-recovery, task transitions, or cleanup. Neither command restarts the daemon;
-retrospectives have no automatic trigger.
+For analysis across runs, follow the [manual retrospective recipe](/recipes/manual-retrospective.md).

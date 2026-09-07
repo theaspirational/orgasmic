@@ -1,8 +1,8 @@
 ---
 type: PurposeFitness
 title: Purpose fitness sample
-date: '2026-08-30'
-prompt_version: manual-bootstrap@1
+date: '2026-09-07'
+prompt_version: manual-feature-refresh@1
 selector_version: 2
 seed: 2114cdf7a9549850
 sampled:
@@ -26,6 +26,10 @@ sampled:
 - references/recall-resume
 - references/tiers
 - references/update
+- recipes/manual-retrospective
+- recipes/recover-unresponsive-daemon
+- recipes/retry-interrupted-write
+- operations/daemon
 rows:
 - concept_id: SKILL
   check_id: callable-from-concept-alone
@@ -413,8 +417,85 @@ rows:
   verdict: n/a
   evidence: Topic concept retaining policy depth; contract-scoped applies to another
     archetype type.
+- concept_id: recipes/manual-retrospective
+  check_id: callable-from-concept-alone
+  verdict: n/a
+  evidence: Recipe concept; callable-from-concept-alone applies to another archetype
+    type.
+- concept_id: recipes/manual-retrospective
+  check_id: recipe-grounded
+  verdict: pass
+  evidence: Verified current CLI selectors, preview versus execution, auth, source
+    pinning, lazy evidence, report submission and diagnostic-only boundaries against
+    cited help and implementation.
+- concept_id: recipes/manual-retrospective
+  check_id: family-findable
+  verdict: n/a
+  evidence: Recipe concept; family-findable applies to another archetype type.
+- concept_id: recipes/manual-retrospective
+  check_id: contract-scoped
+  verdict: n/a
+  evidence: Recipe concept; contract-scoped applies to another archetype type.
+- concept_id: recipes/recover-unresponsive-daemon
+  check_id: callable-from-concept-alone
+  verdict: n/a
+  evidence: Recipe concept; callable-from-concept-alone applies to another archetype
+    type.
+- concept_id: recipes/recover-unresponsive-daemon
+  check_id: recipe-grounded
+  verdict: pass
+  evidence: Verified status/start preserve a live unresponsive owner, restart requires
+    explicit operator intent, and ownership refusals are retained.
+- concept_id: recipes/recover-unresponsive-daemon
+  check_id: family-findable
+  verdict: n/a
+  evidence: Recipe concept; family-findable applies to another archetype type.
+- concept_id: recipes/recover-unresponsive-daemon
+  check_id: contract-scoped
+  verdict: n/a
+  evidence: Recipe concept; contract-scoped applies to another archetype type.
+- concept_id: recipes/retry-interrupted-write
+  check_id: callable-from-concept-alone
+  verdict: n/a
+  evidence: Recipe concept; callable-from-concept-alone applies to another archetype
+    type.
+- concept_id: recipes/retry-interrupted-write
+  check_id: recipe-grounded
+  verdict: pass
+  evidence: Verified same request id plus identical payload replay and conflicting
+    reuse behavior; example names the stable identity before the initial create.
+- concept_id: recipes/retry-interrupted-write
+  check_id: family-findable
+  verdict: n/a
+  evidence: Recipe concept; family-findable applies to another archetype type.
+- concept_id: recipes/retry-interrupted-write
+  check_id: contract-scoped
+  verdict: n/a
+  evidence: Recipe concept; contract-scoped applies to another archetype type.
+- concept_id: operations/daemon
+  check_id: callable-from-concept-alone
+  verdict: pass
+  evidence: Names the daemon command family and links explicit recovery with local-owner
+    and service-ownership failure behavior.
+- concept_id: operations/daemon
+  check_id: recipe-grounded
+  verdict: n/a
+  evidence: Operation concept; recipe-grounded applies to another archetype type.
+- concept_id: operations/daemon
+  check_id: family-findable
+  verdict: pass
+  evidence: Names the daemon command family and links explicit recovery with local-owner
+    and service-ownership failure behavior.
+- concept_id: operations/daemon
+  check_id: contract-scoped
+  verdict: n/a
+  evidence: Operation concept; contract-scoped applies to another archetype type.
 ---
 
 # Purpose fitness
 
 Model-authored review of the deterministic risk-oriented sample. This is not an owner eval verdict.
+
+2026-09-07: retained the original selector sample and added four targeted checks
+for the new recipes and daemon operation. This is a source/structure review,
+not an owner acceptance verdict or a live provider execution claim.

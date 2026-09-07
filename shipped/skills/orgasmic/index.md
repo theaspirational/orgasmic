@@ -5,10 +5,10 @@
 - [Artifact, verification, and member commands](operations/artifacts.md) — Replay verification proofs, submit or inspect artifacts, and manage local members.
 - [Prompt and shipped-content commands](operations/content.md) — Inspect prompts and skills and manage optional or hub content.
 - [Core and project commands](operations/core-project.md) — Install, enter, diagnose, update, and inspect projects and the UI.
-- [Daemon commands](operations/daemon.md) — Run and manage the local daemon lifecycle.
-- [Manager and dispatch commands](operations/dispatch.md) — Select drivers, dispatch workers, wait, close, finalize, record tx entries, and run manager stages.
+- [Daemon commands](operations/daemon.md) — Inspect daemon responsiveness, preserve live owners, and restart explicitly.
+- [Manager and dispatch commands](operations/dispatch.md) — Select drivers, dispatch workers, wait, close, finalize, record tx entries, run manual retrospectives, and run manager stages.
 - [Forum commands](operations/forum.md) — Ask, critique, review, and curate multi-model forums.
-- [Run and utility commands](operations/runs.md) — Inspect worker histories, explicitly materialize native evidence or run a manual retrospective, recover runs, manage auth, answer questions, and mint ids.
+- [Run and utility commands](operations/runs.md) — Inspect worker histories, recover runs, manage auth, answer questions, materialize explicit native evidence, and mint ids.
 - [Task and graph commands](operations/task-graph.md) — List and mutate tasks, goals, glossary, decisions, edges, and node bodies/properties.
 
 ## Recipe
@@ -20,11 +20,14 @@
 - [Inspect tasks, runs, and artifacts](recipes/inspect-work.md) — Use read surfaces to locate task state, run history, artifact content, and feedback before mutating anything.
 - [Install or update the runtime](recipes/install-update-runtime.md) — Install a prebuilt runtime by default, or update according to install.json without touching project state.
 - [Judge a document with a forum](recipes/judge-document.md) — Critique a UTF-8 document with an optional focus and either self or dispatched curation.
+- [Investigate repeated work with a manual retrospective](recipes/manual-retrospective.md) — Select task or run history, prepare an immutable scope, and request an evidence-linked read-only retrospective.
+- [Diagnose an unresponsive daemon and restart explicitly](recipes/recover-unresponsive-daemon.md) — Distinguish a slow boot from an unresponsive local owner, preserve active runs, and use an operator-requested restart.
+- [Retry an interrupted task write without duplicates](recipes/retry-interrupted-write.md) — Reuse the original request id and payload after an uncertain response, then verify the recorded task state.
 - [Run a self-curated forum](recipes/self-curated-forum.md) — Run one or more ask/critique/review rounds, curate in the current chat, then submit once.
 
 ## Topic
 
-- [Orgasmic skill door](SKILL.md) — Orgasmic project management: forum ask/critique/review, self- or dispatched curation, task dispatch lifecycle, and runtime install/update.
+- [Orgasmic skill door](SKILL.md) — Orgasmic project management: forum ask/critique/review, self- or dispatched curation, task dispatch lifecycle, manual run retrospectives, and runtime install/update.
 - [Agent selection](references/agent-selection.md) — Choose dispatch harness, model, and effort while preserving reviewer independence.
 - [When to ask](references/asking.md) — Confirm only actions that are hard to reverse, external, or spend another party's resources.
 - [Dispatch mechanics and lifecycle](references/dispatch.md) — Worker visibility, retained worktrees, dispatch lifecycle, and finalization ownership.

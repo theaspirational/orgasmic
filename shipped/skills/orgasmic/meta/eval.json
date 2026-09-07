@@ -1307,6 +1307,1893 @@
           "owner_note": null
         }
       ]
+    },
+    {
+      "run_id": "2026-09-07T07:54:09.272007+00:00",
+      "tool_version": "0.19.0",
+      "created": "2026-09-07T07:54:09.272007+00:00",
+      "retrieval_schema": "okfy-retrieval@3",
+      "retrieval_fingerprint": "01034b79407da41c011b828e9f73bff757e3141476d68e989de5340bb08add5b",
+      "suite": "acceptance",
+      "query_options": {
+        "n": 10,
+        "expand": true,
+        "include_meta": false,
+        "include_stale": true
+      },
+      "results": [
+        {
+          "query": "How do I run a cheap 10-model forum round?",
+          "expanded_query": "How do I run a cheap 10-model forum round?",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 17.166
+            },
+            {
+              "id": "references/forum",
+              "score": 9.708
+            },
+            {
+              "id": "SKILL",
+              "score": 8.724
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.961
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 7.596
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 7.586
+            },
+            {
+              "id": "references/tiers",
+              "score": 6.333
+            },
+            {
+              "id": "operations/forum",
+              "score": 5.264
+            },
+            {
+              "id": "references/dispatch",
+              "score": 4.116
+            },
+            {
+              "id": "references/asking",
+              "score": 3.709
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run a forum without cross-review?",
+          "expanded_query": "How do I run a forum without cross-review? fast skip cross-review",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/forum",
+              "score": 13.1
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.509
+            },
+            {
+              "id": "references/tiers",
+              "score": 8.777
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 8.655
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 8.628
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 7.968
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.94
+            },
+            {
+              "id": "operations/forum",
+              "score": 7.662
+            },
+            {
+              "id": "SKILL",
+              "score": 7.438
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How can one strong model challenge the existing forum answers?",
+          "expanded_query": "How can one strong model challenge the existing forum answers?",
+          "top_hits": [
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 20.89
+            },
+            {
+              "id": "references/forum",
+              "score": 11.653
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 8.336
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 8.238
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 5.577
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 5.504
+            },
+            {
+              "id": "references/agent-selection",
+              "score": 4.921
+            },
+            {
+              "id": "operations/forum",
+              "score": 4.774
+            },
+            {
+              "id": "SKILL",
+              "score": 4.426
+            },
+            {
+              "id": "references/asking",
+              "score": 4.111
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I judge a supplied document with several models?",
+          "expanded_query": "How do I judge a supplied document with several models?",
+          "top_hits": [
+            {
+              "id": "recipes/judge-document",
+              "score": 14.167
+            },
+            {
+              "id": "SKILL",
+              "score": 7.529
+            },
+            {
+              "id": "references/forum",
+              "score": 6.335
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.679
+            },
+            {
+              "id": "references/asking",
+              "score": 3.653
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 3.545
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 2.788
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 1.117
+            },
+            {
+              "id": "references/init",
+              "score": 1.046
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 1.039
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run and finish a self-curated multi-round forum?",
+          "expanded_query": "How do I run and finish a self-curated multi-round forum?",
+          "top_hits": [
+            {
+              "id": "references/forum",
+              "score": 16.354
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 15.963
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 15.185
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 13.452
+            },
+            {
+              "id": "SKILL",
+              "score": 12.019
+            },
+            {
+              "id": "operations/forum",
+              "score": 7.908
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 6.517
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 6.218
+            },
+            {
+              "id": "references/asking",
+              "score": 3.74
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.28
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "expanded_query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 22.73
+            },
+            {
+              "id": "references/forum",
+              "score": 10.382
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.354
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.352
+            },
+            {
+              "id": "references/dispatch",
+              "score": 5.853
+            },
+            {
+              "id": "SKILL",
+              "score": 5.612
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 3.749
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.74
+            },
+            {
+              "id": "operations/forum",
+              "score": 3.72
+            },
+            {
+              "id": "references/asking",
+              "score": 3.718
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "expanded_query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "top_hits": [
+            {
+              "id": "references/dispatch",
+              "score": 8.99
+            },
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 8.825
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 7.286
+            },
+            {
+              "id": "references/tiers",
+              "score": 6.549
+            },
+            {
+              "id": "references/asking",
+              "score": 5.833
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 5.535
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 5.442
+            },
+            {
+              "id": "SKILL",
+              "score": 5.006
+            },
+            {
+              "id": "references/agent-selection",
+              "score": 4.797
+            },
+            {
+              "id": "references/forum",
+              "score": 3.741
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I close a reviewed task with evidence?",
+          "expanded_query": "How do I close a reviewed task with evidence?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 10.629
+            },
+            {
+              "id": "references/dispatch",
+              "score": 7.359
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 5.633
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 5.245
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 4.873
+            },
+            {
+              "id": "references/tiers",
+              "score": 4.824
+            },
+            {
+              "id": "references/asking",
+              "score": 3.653
+            },
+            {
+              "id": "references/forum",
+              "score": 3.591
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 3.526
+            },
+            {
+              "id": "references/init",
+              "score": 2.669
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I inspect tasks, runs, and artifacts?",
+          "expanded_query": "How do I inspect tasks, runs, and artifacts?",
+          "top_hits": [
+            {
+              "id": "recipes/inspect-work",
+              "score": 9.655
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 5.061
+            },
+            {
+              "id": "operations/artifacts",
+              "score": 4.85
+            },
+            {
+              "id": "references/tiers",
+              "score": 4.261
+            },
+            {
+              "id": "SKILL",
+              "score": 4.072
+            },
+            {
+              "id": "references/init",
+              "score": 3.761
+            },
+            {
+              "id": "references/asking",
+              "score": 3.291
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 3.234
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 3.051
+            },
+            {
+              "id": "references/ledger",
+              "score": 3.032
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I install or update the orgasmic runtime?",
+          "expanded_query": "How do I install or update the orgasmic runtime?",
+          "top_hits": [
+            {
+              "id": "recipes/install-update-runtime",
+              "score": 9.673
+            },
+            {
+              "id": "references/install",
+              "score": 9.172
+            },
+            {
+              "id": "references/update",
+              "score": 8.481
+            },
+            {
+              "id": "SKILL",
+              "score": 6.974
+            },
+            {
+              "id": "operations/core-project",
+              "score": 5.499
+            },
+            {
+              "id": "references/init",
+              "score": 5.436
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 4.029
+            },
+            {
+              "id": "references/asking",
+              "score": 3.423
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.366
+            },
+            {
+              "id": "operations/content",
+              "score": 3.04
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run a manual retrospective across an ordered task sequence?",
+          "expanded_query": "How do I run a manual retrospective across an ordered task sequence? retro task sequence run evidence token use",
+          "top_hits": [
+            {
+              "id": "recipes/manual-retrospective",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 22.546
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 14.96
+            },
+            {
+              "id": "SKILL",
+              "score": 11.461
+            },
+            {
+              "id": "references/dispatch",
+              "score": 10.886
+            },
+            {
+              "id": "operations/runs",
+              "score": 10.7
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 9.489
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 7.408
+            },
+            {
+              "id": "references/ledger",
+              "score": 6.873
+            },
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 6.241
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "Why did this task take so long and repeat the same reads?",
+          "expanded_query": "Why did this task take so long and repeat the same reads? retro repeated work retries latency waits",
+          "top_hits": [
+            {
+              "id": "recipes/manual-retrospective",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 9.272
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 8.781
+            },
+            {
+              "id": "references/forum",
+              "score": 7.872
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 7.81
+            },
+            {
+              "id": "SKILL",
+              "score": 5.917
+            },
+            {
+              "id": "references/dispatch",
+              "score": 5.867
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 5.369
+            },
+            {
+              "id": "references/tiers",
+              "score": 5.318
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 4.449
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I materialize native evidence without a retrospective worker?",
+          "expanded_query": "How do I materialize native evidence without a retrospective worker? run evidence materialize derived_native cache",
+          "top_hits": [
+            {
+              "id": "operations/runs",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 25.189
+            },
+            {
+              "id": "references/dispatch",
+              "score": 8.101
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 6.407
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 6.086
+            },
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 4.714
+            },
+            {
+              "id": "SKILL",
+              "score": 4.618
+            },
+            {
+              "id": "references/asking",
+              "score": 4.529
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 4.395
+            },
+            {
+              "id": "operations/daemon",
+              "score": 4.214
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "What does a Hermes partial report mean after a worker exits?",
+          "expanded_query": "What does a Hermes partial report mean after a worker exits? Hermes partial report orphan explicit completion",
+          "top_hits": [
+            {
+              "id": "references/dispatch",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 17.437
+            },
+            {
+              "id": "references/forum",
+              "score": 9.933
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 8.95
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 8.818
+            },
+            {
+              "id": "references/tiers",
+              "score": 8.136
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 6.263
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 6.001
+            },
+            {
+              "id": "references/install",
+              "score": 5.428
+            },
+            {
+              "id": "recipes/recover-unresponsive-daemon",
+              "score": 5.291
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "What should I do when the daemon is not responding while runs may still be active?",
+          "expanded_query": "What should I do when the daemon is not responding while runs may still be active?",
+          "top_hits": [
+            {
+              "id": "references/recall-resume",
+              "score": 16.693
+            },
+            {
+              "id": "recipes/recover-unresponsive-daemon",
+              "score": 12.984
+            },
+            {
+              "id": "references/install",
+              "score": 11.559
+            },
+            {
+              "id": "references/agent-selection",
+              "score": 9.203
+            },
+            {
+              "id": "references/dispatch",
+              "score": 8.609
+            },
+            {
+              "id": "references/update",
+              "score": 8.01
+            },
+            {
+              "id": "references/forum",
+              "score": 7.67
+            },
+            {
+              "id": "operations/daemon",
+              "score": 6.84
+            },
+            {
+              "id": "references/ledger",
+              "score": 6.748
+            },
+            {
+              "id": "references/init",
+              "score": 6.549
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I retry after timeout without creating a duplicate task?",
+          "expanded_query": "How do I retry after timeout without creating a duplicate task? request-id durable replay interrupted write duplicate task",
+          "top_hits": [
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/ledger",
+              "score": 23.625
+            },
+            {
+              "id": "operations/task-graph",
+              "score": 14.75
+            },
+            {
+              "id": "references/init",
+              "score": 9.823
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 9.151
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 8.421
+            },
+            {
+              "id": "references/asking",
+              "score": 8.087
+            },
+            {
+              "id": "references/dispatch",
+              "score": 7.552
+            },
+            {
+              "id": "references/tiers",
+              "score": 6.451
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 6.441
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "Why is an external ledger worktree still eligible for recovery?",
+          "expanded_query": "Why is an external ledger worktree still eligible for recovery? Git repository identity worktree recovery",
+          "top_hits": [
+            {
+              "id": "references/dispatch",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 12.807
+            },
+            {
+              "id": "references/init",
+              "score": 10.976
+            },
+            {
+              "id": "references/ledger",
+              "score": 8.735
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 8.422
+            },
+            {
+              "id": "recipes/recover-unresponsive-daemon",
+              "score": 7.558
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 7.194
+            },
+            {
+              "id": "references/asking",
+              "score": 7.187
+            },
+            {
+              "id": "references/forum",
+              "score": 6.966
+            },
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 6.936
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "Why is a foreign home service change refused?",
+          "expanded_query": "Why is a foreign home service change refused? daemon service ownership refusal",
+          "top_hits": [
+            {
+              "id": "operations/daemon",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "recipes/recover-unresponsive-daemon",
+              "score": 25.789
+            },
+            {
+              "id": "references/install",
+              "score": 11.804
+            },
+            {
+              "id": "references/dispatch",
+              "score": 10.015
+            },
+            {
+              "id": "references/update",
+              "score": 7.917
+            },
+            {
+              "id": "references/asking",
+              "score": 7.228
+            },
+            {
+              "id": "recipes/install-update-runtime",
+              "score": 4.368
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 3.533
+            },
+            {
+              "id": "references/ledger",
+              "score": 3.175
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 3.144
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        }
+      ]
+    },
+    {
+      "run_id": "2026-09-07T07:56:36.001153+00:00",
+      "tool_version": "0.19.0",
+      "created": "2026-09-07T07:56:36.001153+00:00",
+      "retrieval_schema": "okfy-retrieval@3",
+      "retrieval_fingerprint": "bee5239a95cbc6d57dda3a222a28054a5381a5c76e5e0f11276a358b323cb009",
+      "suite": "acceptance",
+      "query_options": {
+        "n": 10,
+        "expand": true,
+        "include_meta": false,
+        "include_stale": true
+      },
+      "results": [
+        {
+          "query": "How do I run a cheap 10-model forum round?",
+          "expanded_query": "How do I run a cheap 10-model forum round?",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 17.166
+            },
+            {
+              "id": "references/forum",
+              "score": 9.708
+            },
+            {
+              "id": "SKILL",
+              "score": 8.724
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.961
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 7.596
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 7.586
+            },
+            {
+              "id": "references/tiers",
+              "score": 6.333
+            },
+            {
+              "id": "operations/forum",
+              "score": 5.264
+            },
+            {
+              "id": "references/dispatch",
+              "score": 4.116
+            },
+            {
+              "id": "references/asking",
+              "score": 3.709
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run a forum without cross-review?",
+          "expanded_query": "How do I run a forum without cross-review? fast skip cross-review",
+          "top_hits": [
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/forum",
+              "score": 13.1
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.509
+            },
+            {
+              "id": "references/tiers",
+              "score": 8.777
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 8.655
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 8.628
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 7.968
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.94
+            },
+            {
+              "id": "operations/forum",
+              "score": 7.662
+            },
+            {
+              "id": "SKILL",
+              "score": 7.438
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How can one strong model challenge the existing forum answers?",
+          "expanded_query": "How can one strong model challenge the existing forum answers?",
+          "top_hits": [
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 20.89
+            },
+            {
+              "id": "references/forum",
+              "score": 11.653
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 8.336
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 8.238
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 5.577
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 5.504
+            },
+            {
+              "id": "references/agent-selection",
+              "score": 4.921
+            },
+            {
+              "id": "operations/forum",
+              "score": 4.774
+            },
+            {
+              "id": "SKILL",
+              "score": 4.426
+            },
+            {
+              "id": "references/asking",
+              "score": 4.111
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I judge a supplied document with several models?",
+          "expanded_query": "How do I judge a supplied document with several models?",
+          "top_hits": [
+            {
+              "id": "recipes/judge-document",
+              "score": 14.167
+            },
+            {
+              "id": "SKILL",
+              "score": 7.529
+            },
+            {
+              "id": "references/forum",
+              "score": 6.335
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.679
+            },
+            {
+              "id": "references/asking",
+              "score": 3.653
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 3.545
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 2.788
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 1.117
+            },
+            {
+              "id": "references/init",
+              "score": 1.046
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 1.039
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run and finish a self-curated multi-round forum?",
+          "expanded_query": "How do I run and finish a self-curated multi-round forum? self curated forum rounds submit",
+          "top_hits": [
+            {
+              "id": "recipes/self-curated-forum",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/forum",
+              "score": 33.19
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 31.691
+            },
+            {
+              "id": "recipes/cheap-wide-forum",
+              "score": 25.185
+            },
+            {
+              "id": "SKILL",
+              "score": 21.214
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 12.869
+            },
+            {
+              "id": "operations/forum",
+              "score": 11.459
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 10.247
+            },
+            {
+              "id": "references/dispatch",
+              "score": 6.273
+            },
+            {
+              "id": "operations/artifacts",
+              "score": 4.164
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "expanded_query": "How do I launch a fire-and-forget forum with a dispatched curator?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 22.73
+            },
+            {
+              "id": "references/forum",
+              "score": 10.382
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 9.354
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 7.352
+            },
+            {
+              "id": "references/dispatch",
+              "score": 5.853
+            },
+            {
+              "id": "SKILL",
+              "score": 5.612
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 3.749
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.74
+            },
+            {
+              "id": "operations/forum",
+              "score": 3.72
+            },
+            {
+              "id": "references/asking",
+              "score": 3.718
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I dispatch an implementer or reviewer and complete its lifecycle?",
+          "expanded_query": "How do I dispatch an implementer or reviewer and complete its lifecycle? dispatch worker implementer reviewer lifecycle",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/dispatch",
+              "score": 18.112
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 13.698
+            },
+            {
+              "id": "references/tiers",
+              "score": 9.686
+            },
+            {
+              "id": "references/agent-selection",
+              "score": 9.355
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 8.56
+            },
+            {
+              "id": "SKILL",
+              "score": 8.09
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 7.148
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 6.918
+            },
+            {
+              "id": "references/asking",
+              "score": 6.423
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I close a reviewed task with evidence?",
+          "expanded_query": "How do I close a reviewed task with evidence?",
+          "top_hits": [
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 10.629
+            },
+            {
+              "id": "references/dispatch",
+              "score": 7.359
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 5.633
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 5.245
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 4.873
+            },
+            {
+              "id": "references/tiers",
+              "score": 4.824
+            },
+            {
+              "id": "references/asking",
+              "score": 3.653
+            },
+            {
+              "id": "references/forum",
+              "score": 3.591
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 3.526
+            },
+            {
+              "id": "references/init",
+              "score": 2.669
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I inspect tasks, runs, and artifacts?",
+          "expanded_query": "How do I inspect tasks, runs, and artifacts?",
+          "top_hits": [
+            {
+              "id": "recipes/inspect-work",
+              "score": 9.655
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 5.061
+            },
+            {
+              "id": "operations/artifacts",
+              "score": 4.85
+            },
+            {
+              "id": "references/tiers",
+              "score": 4.261
+            },
+            {
+              "id": "SKILL",
+              "score": 4.072
+            },
+            {
+              "id": "references/init",
+              "score": 3.761
+            },
+            {
+              "id": "references/asking",
+              "score": 3.291
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 3.234
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 3.051
+            },
+            {
+              "id": "references/ledger",
+              "score": 3.032
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I install or update the orgasmic runtime?",
+          "expanded_query": "How do I install or update the orgasmic runtime?",
+          "top_hits": [
+            {
+              "id": "recipes/install-update-runtime",
+              "score": 9.673
+            },
+            {
+              "id": "references/install",
+              "score": 9.172
+            },
+            {
+              "id": "references/update",
+              "score": 8.481
+            },
+            {
+              "id": "SKILL",
+              "score": 6.974
+            },
+            {
+              "id": "operations/core-project",
+              "score": 5.499
+            },
+            {
+              "id": "references/init",
+              "score": 5.436
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 4.029
+            },
+            {
+              "id": "references/asking",
+              "score": 3.423
+            },
+            {
+              "id": "references/tiers",
+              "score": 3.366
+            },
+            {
+              "id": "operations/content",
+              "score": 3.04
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I run a manual retrospective across an ordered task sequence?",
+          "expanded_query": "How do I run a manual retrospective across an ordered task sequence? retro task sequence run evidence token use",
+          "top_hits": [
+            {
+              "id": "recipes/manual-retrospective",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 22.546
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 14.96
+            },
+            {
+              "id": "SKILL",
+              "score": 11.461
+            },
+            {
+              "id": "references/dispatch",
+              "score": 10.886
+            },
+            {
+              "id": "operations/runs",
+              "score": 10.7
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 9.489
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 7.408
+            },
+            {
+              "id": "references/ledger",
+              "score": 6.873
+            },
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 6.241
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "Why did this task take so long and repeat the same reads?",
+          "expanded_query": "Why did this task take so long and repeat the same reads? retro repeated work retries latency waits",
+          "top_hits": [
+            {
+              "id": "recipes/manual-retrospective",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 9.272
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 8.781
+            },
+            {
+              "id": "references/forum",
+              "score": 7.872
+            },
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": 7.81
+            },
+            {
+              "id": "SKILL",
+              "score": 5.917
+            },
+            {
+              "id": "references/dispatch",
+              "score": 5.867
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 5.369
+            },
+            {
+              "id": "references/tiers",
+              "score": 5.318
+            },
+            {
+              "id": "recipes/adversarial-forum-review",
+              "score": 4.449
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I materialize native evidence without a retrospective worker?",
+          "expanded_query": "How do I materialize native evidence without a retrospective worker? run evidence materialize derived_native cache",
+          "top_hits": [
+            {
+              "id": "operations/runs",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 25.189
+            },
+            {
+              "id": "references/dispatch",
+              "score": 8.101
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 6.407
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 6.086
+            },
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 4.714
+            },
+            {
+              "id": "SKILL",
+              "score": 4.618
+            },
+            {
+              "id": "references/asking",
+              "score": 4.529
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 4.395
+            },
+            {
+              "id": "operations/daemon",
+              "score": 4.214
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "What does a Hermes partial report mean after a worker exits?",
+          "expanded_query": "What does a Hermes partial report mean after a worker exits? Hermes partial report orphan explicit completion",
+          "top_hits": [
+            {
+              "id": "references/dispatch",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 17.437
+            },
+            {
+              "id": "references/forum",
+              "score": 9.933
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 8.95
+            },
+            {
+              "id": "recipes/dispatched-curator",
+              "score": 8.818
+            },
+            {
+              "id": "references/tiers",
+              "score": 8.136
+            },
+            {
+              "id": "recipes/self-curated-forum",
+              "score": 6.263
+            },
+            {
+              "id": "recipes/judge-document",
+              "score": 6.001
+            },
+            {
+              "id": "references/install",
+              "score": 5.428
+            },
+            {
+              "id": "recipes/recover-unresponsive-daemon",
+              "score": 5.291
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "What should I do when the daemon is not responding while runs may still be active?",
+          "expanded_query": "What should I do when the daemon is not responding while runs may still be active? unresponsive daemon explicit restart preserve runs",
+          "top_hits": [
+            {
+              "id": "recipes/recover-unresponsive-daemon",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "operations/daemon",
+              "score": 22.665
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 18.21
+            },
+            {
+              "id": "references/install",
+              "score": 16.983
+            },
+            {
+              "id": "references/update",
+              "score": 13.353
+            },
+            {
+              "id": "references/ledger",
+              "score": 13.047
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 12.53
+            },
+            {
+              "id": "references/agent-selection",
+              "score": 12.137
+            },
+            {
+              "id": "references/dispatch",
+              "score": 11.579
+            },
+            {
+              "id": "references/forum",
+              "score": 9.229
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "How do I retry after timeout without creating a duplicate task?",
+          "expanded_query": "How do I retry after timeout without creating a duplicate task? request-id durable replay interrupted write duplicate task",
+          "top_hits": [
+            {
+              "id": "recipes/retry-interrupted-write",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/ledger",
+              "score": 23.625
+            },
+            {
+              "id": "operations/task-graph",
+              "score": 14.75
+            },
+            {
+              "id": "references/init",
+              "score": 9.823
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 9.151
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 8.421
+            },
+            {
+              "id": "references/asking",
+              "score": 8.087
+            },
+            {
+              "id": "references/dispatch",
+              "score": 7.552
+            },
+            {
+              "id": "references/tiers",
+              "score": 6.451
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 6.441
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "Why is an external ledger worktree still eligible for recovery?",
+          "expanded_query": "Why is an external ledger worktree still eligible for recovery? Git repository identity worktree recovery",
+          "top_hits": [
+            {
+              "id": "references/dispatch",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 12.807
+            },
+            {
+              "id": "references/init",
+              "score": 10.976
+            },
+            {
+              "id": "references/ledger",
+              "score": 8.735
+            },
+            {
+              "id": "operations/dispatch",
+              "score": 8.422
+            },
+            {
+              "id": "recipes/recover-unresponsive-daemon",
+              "score": 7.558
+            },
+            {
+              "id": "recipes/inspect-work",
+              "score": 7.194
+            },
+            {
+              "id": "references/asking",
+              "score": 7.187
+            },
+            {
+              "id": "references/forum",
+              "score": 6.966
+            },
+            {
+              "id": "recipes/dispatch-task-lifecycle",
+              "score": 6.936
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        },
+        {
+          "query": "Why is a foreign home service change refused?",
+          "expanded_query": "Why is a foreign home service change refused? daemon service ownership refusal",
+          "top_hits": [
+            {
+              "id": "operations/daemon",
+              "score": null,
+              "via": "lexicon"
+            },
+            {
+              "id": "recipes/recover-unresponsive-daemon",
+              "score": 25.789
+            },
+            {
+              "id": "references/install",
+              "score": 11.804
+            },
+            {
+              "id": "references/dispatch",
+              "score": 10.015
+            },
+            {
+              "id": "references/update",
+              "score": 7.917
+            },
+            {
+              "id": "references/asking",
+              "score": 7.228
+            },
+            {
+              "id": "recipes/install-update-runtime",
+              "score": 4.368
+            },
+            {
+              "id": "recipes/manual-retrospective",
+              "score": 3.533
+            },
+            {
+              "id": "references/ledger",
+              "score": 3.175
+            },
+            {
+              "id": "references/recall-resume",
+              "score": 3.144
+            }
+          ],
+          "notes": [],
+          "llm_verdict": null,
+          "llm_reason": null,
+          "owner_verdict": null,
+          "owner_note": null
+        }
+      ]
     }
   ]
 }

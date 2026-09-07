@@ -2,7 +2,7 @@
 type: Operation
 title: Manager and dispatch commands
 description: Select drivers, dispatch workers, wait, close, finalize, record tx entries,
-  and run manager stages.
+  run manual retrospectives, and run manager stages.
 aliases:
 - orgasmic manager
 - orgasmic dispatch
@@ -11,6 +11,7 @@ aliases:
 - orgasmic plan
 - orgasmic manager state
 - orgasmic manager drivers
+- orgasmic manager retro
 - orgasmic manager dispatch
 - orgasmic manager dispatch-close
 - orgasmic manager dispatch-status
@@ -32,6 +33,7 @@ sources:
 - cli-help/plan.txt
 - cli-help/manager/state.txt
 - cli-help/manager/drivers.txt
+- cli-help/manager/retro.txt
 - cli-help/manager/dispatch.txt
 - cli-help/manager/dispatch-close.txt
 - cli-help/manager/dispatch-status.txt
@@ -64,6 +66,7 @@ Canonical commands in this family:
 - `orgasmic plan`
 - `orgasmic manager state`
 - `orgasmic manager drivers`
+- `orgasmic manager retro`
 - `orgasmic manager dispatch`
 - `orgasmic manager dispatch-close`
 - `orgasmic manager dispatch-status`
@@ -100,3 +103,15 @@ orgasmic tx list --help
 ```
 
 For lifecycle and visibility rules, see [Dispatch mechanics](../references/dispatch.md).
+
+## Manual retrospective
+
+`orgasmic manager retro --project PROJECT (--run RUN_ID | --task TASK_ID | --task-sequence TASK-A,TASK-B) [--question TEXT] [--model MODEL_ID | --prepare-only]`
+
+Repeat `--run`, `--task`, or `--question`; run/task selectors may be combined.
+`--task-sequence` preserves task order and is exclusive of those selectors.
+`--model` is required unless `--prepare-only` is used. This is a foreground,
+read-only diagnostic worker, with its own report submission contract; it does
+not use task-dispatch leases or `dispatch finalize`. See the
+[manual retrospective recipe](/recipes/manual-retrospective.md) for authentication,
+source pinning, write boundaries, and failure handling.

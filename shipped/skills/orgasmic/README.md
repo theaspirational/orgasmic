@@ -4,14 +4,14 @@ An [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog) knowledge bun
 built with OKFy. Archetype: api-reference v1.
 
 **Purpose:** Orgasmic workflow discovery — see [meta/purpose.md](meta/purpose.md).
-**Corpus:** `/private/tmp/TASK-DN1WK-corpus.kHb6rP`
-(snapshot 2026-08-30).
+**Corpus:** `/Users/aspirational/.codex/artifacts/orgasmic-okf-refresh-20260907/corpus`
+(snapshot 2026-09-07).
 **Language:** en.
 
 | Type | Concepts |
 |---|---|
 | Operation | 8 |
-| Recipe | 8 |
+| Recipe | 11 |
 | Topic | 11 |
 
 Humans: start at [index.md](index.md). Agents: read [AGENTS.md](AGENTS.md).

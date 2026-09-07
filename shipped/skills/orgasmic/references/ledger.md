@@ -4,6 +4,8 @@ title: Ledger map and write rules
 description: Map project state and enforce daemon-owned writes.
 sources:
 - shipped/skills/orgasmic/references/ledger.md
+- crates/orgasmic-daemon/src/writer.rs
+- crates/orgasmic-daemon/src/api.rs
 ---
 
 # Ledger — file map, write rules, content rules
@@ -30,8 +32,9 @@ Paths relative to the project root printed by `orgasmic entry` (usually
 ## Write rules
 
 - Precheck: `command -v orgasmic >/dev/null && orgasmic status >/dev/null`.
-- Success → write through `orgasmic ...` verbs only. Failure → stop; install
-  or start the runtime. Never hand-edit.
+- Success → write through `orgasmic ...` verbs only. Failure → inspect daemon
+  status. An unresponsive live owner requires explicit recovery, not an automatic
+  restart. Never hand-edit.
 - Tasks/decisions/glossary: create via their verbs; revise via
   `orgasmic node body set|append` / `orgasmic node prop set`; retitle via
   `orgasmic node title set` (goal titles excepted: TASK-V460X).
@@ -50,3 +53,14 @@ Paths relative to the project root printed by `orgasmic entry` (usually
 Something under `~/.orgasmic/` looks configured but stale? Run
 `orgasmic doctor` — it names every retired path and its deciding decision.
 Do not conclude a capability is lost before reading that decision.
+
+## Concurrent edits and uncertain responses
+
+Lifecycle transitions transform fresh task bytes inside the serialized writer, so
+a concurrent successful property edit is preserved. Stale starting state or missing
+required evidence is a conflict, not permission to force completion.
+
+For commands supporting `--request-id`, keep the original id and exact payload on
+retry. Durable ledger replay recovers acknowledged operation identities across
+restarts; a reused id with different content is refused. A timeout or sync error
+is not proof of rollback. Follow [interrupted-write retry](/recipes/retry-interrupted-write.md).

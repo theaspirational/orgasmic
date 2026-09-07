@@ -2,7 +2,7 @@
 name: orgasmic
 type: Topic
 title: Orgasmic skill door
-description: 'Orgasmic project management: forum ask/critique/review, self- or dispatched curation, task dispatch lifecycle, and runtime install/update.'
+description: 'Orgasmic project management: forum ask/critique/review, self- or dispatched curation, task dispatch lifecycle, manual run retrospectives, and runtime install/update.'
 triggers:
 - /orgasmic
 - /orgasmic install
@@ -45,6 +45,8 @@ offer the fitting subset of:
   (`in_review` beats `in_progress` beats `todo` beats `backlog`):
   [dispatch-task-lifecycle](recipes/dispatch-task-lifecycle.md) to move it,
   [inspect-work](recipes/inspect-work.md) to look first.
+- **Investigate repeated work** — select runs or tasks for a
+  [manual retrospective](recipes/manual-retrospective.md).
 - **Shape something new** — pressure-test the idea in chat or via a
   [forum critique](recipes/judge-document.md), then record tasks and
   decisions ([task and graph verbs](operations/task-graph.md)).

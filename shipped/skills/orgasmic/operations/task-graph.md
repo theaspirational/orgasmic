@@ -159,3 +159,10 @@ orgasmic node prop unset --help
 ```
 
 For storage and write authority, see [Ledger map](../references/ledger.md).
+
+## Retrying task writes
+
+`task create` and `task update` accept `--request-id`. Retain the same request id
+and payload after an uncertain response, including across daemon restarts. Reusing
+an id for different content is refused. Follow the
+[interrupted-write recipe](/recipes/retry-interrupted-write.md) before retrying.

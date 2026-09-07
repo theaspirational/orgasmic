@@ -1,7 +1,7 @@
 ---
 type: Operation
 title: Daemon commands
-description: Run and manage the local daemon lifecycle.
+description: Inspect daemon responsiveness, preserve live owners, and restart explicitly.
 aliases:
 - orgasmic serve
 - orgasmic daemon
@@ -16,6 +16,8 @@ sources:
 - cli-help/daemon/start.txt
 - cli-help/daemon/stop.txt
 - cli-help/daemon/restart.txt
+- crates/orgasmic-cli/src/daemon_lifecycle.rs
+- crates/orgasmic-cli/src/daemon_service.rs
 tags:
 - cli-reference
 ---
@@ -55,3 +57,13 @@ or a reported worker result as evidence to inspect, not as lifecycle closure.
 ```bash
 orgasmic daemon restart --help
 ```
+
+## Responsiveness and service ownership
+
+A present local owner without usable boot progress is reported as **not responding**.
+Status/start checks leave it intact and point to logs plus an explicit restart.
+A health timeout does not authorize replacing a live process. Service mutations
+refuse foreign or unknown Orgasmic-home ownership.
+
+Follow [unresponsive-daemon recovery](/recipes/recover-unresponsive-daemon.md) to
+diagnose first and restart only when the operator requests it.
