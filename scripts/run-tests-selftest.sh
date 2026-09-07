@@ -230,6 +230,22 @@ check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "isolation: passed" \
     "verdict: GREEN modulo 1 registered flake"
 
+start "setup incomplete stays non-green even when its signature is registered"
+registry '[[flake]]' \
+    'test = "tests::process_observation_integration"' \
+    "owner = \"$FIXTURE_OWNER\"" \
+    'signature = "test setup incomplete: fixture did not become ready"' \
+    'evidence = "a registry entry must not excuse incomplete setup"' \
+    'filed = "2026-09-07"'
+write_log "$TMP/green" "tests::process_observation_integration" \
+    "test setup incomplete: fixture did not become ready"
+run --classify "$TMP/suite.log"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "INCOMPLETE (1)" \
+    "behavior was not exercised" \
+    "isolation: passed" \
+    "verdict: INCOMPLETE — 1 test setup failure(s); behavior was not verified"
+
 start "registered name, WRONG signature -> REAL, exit 1 (the mislabel detector)"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
 write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$OTHER_PANIC"

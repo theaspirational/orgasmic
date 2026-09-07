@@ -30,7 +30,7 @@
 #   scripts/run-tests.sh --help
 #
 # Exit codes: 0 clean or all-flake · 1 REAL failure present · 2 registry or
-# verify artifacts rejected · 3 wrapper misuse · 4 INCONCLUSIVE (host degraded — re-run when calm).
+# verify artifacts rejected · 3 wrapper misuse · 4 INCOMPLETE (setup or host state prevented a verdict).
 #
 # Host state (TASK-STWVB / TASK-STWVB.1 / TASK-STWVB.1.1):
 #   On a live suite run: load is sampled BEFORE the suite, and syspolicyd
@@ -102,6 +102,7 @@ EXIT_REAL=1
 EXIT_REGISTRY=2
 EXIT_MISUSE=3
 EXIT_INCONCLUSIVE=4
+SETUP_INCOMPLETE_MARKER="test setup incomplete:"
 
 # orgasmic:TASK-STWVB.1.1
 # Load is printed on the host stamp for operators but is NOT an independent
@@ -1291,12 +1292,15 @@ rerun_isolated() {
 REAL_REPORT="$WORK/real.txt"
 FLAKE_REPORT="$WORK/flake.txt"
 LOAD_REPORT="$WORK/load.txt"
+INCOMPLETE_REPORT="$WORK/incomplete.txt"
 : > "$REAL_REPORT"
 : > "$FLAKE_REPORT"
 : > "$LOAD_REPORT"
+: > "$INCOMPLETE_REPORT"
 REAL_COUNT=0
 FLAKE_COUNT=0
 LOAD_COUNT=0
+INCOMPLETE_COUNT=0
 
 # The registry is keyed by the name cargo prints. A bare function name is
 # accepted too, so an entry does not go stale when a test moves module.
@@ -1338,6 +1342,26 @@ classify_one() {
     local iso_log="$WORK/isolation-$(printf '%s' "$name" | tr -c 'A-Za-z0-9_.' '_').log"
     local entries matched_owner="" matched_sig="" matched_ev="" iso
     entries=$(matching_entries "$name")
+
+    # A setup failure never exercised the behavior under test. Keep it
+    # non-green, but do not call it a product failure or let a registry entry
+    # excuse it. The isolation result stays beside the original failure rather
+    # than replacing its verdict.
+    if [ -n "$detail" ] && [ -f "$detail" ] \
+        && grep -qF -- "$SETUP_INCOMPLETE_MARKER" "$detail"; then
+        rerun_isolated "$bin" "$name" "$iso_log"
+        iso=$?
+        INCOMPLETE_COUNT=$((INCOMPLETE_COUNT + 1))
+        {
+            printf '  %s\n' "$name"
+            printf '      binary   : %s\n' "$bin"
+            printf '      why      : TEST SETUP INCOMPLETE — behavior was not exercised\n'
+            printf '      isolation: %s\n' "$(iso_word "$iso")"
+            printf '      panic    : %s\n' "$(first_panic "$detail")"
+            printf '      next     : fix or rerun the setup; do not register this as a flake\n'
+        } >> "$INCOMPLETE_REPORT"
+        return
+    fi
 
     if [ -z "$entries" ]; then
         rerun_isolated "$bin" "$name" "$iso_log"
@@ -1730,6 +1754,11 @@ if [ "$LOAD_COUNT" -gt 0 ]; then
         "$LOAD_COUNT"
     cat "$LOAD_REPORT"
 fi
+if [ "$INCOMPLETE_COUNT" -gt 0 ]; then
+    printf '\nINCOMPLETE (%s) — test setup did not reach the behavior under test:\n' \
+        "$INCOMPLETE_COUNT"
+    cat "$INCOMPLETE_REPORT"
+fi
 if [ "$FLAKE_COUNT" -gt 0 ]; then
     printf '\nFLAKE (%s) — green in isolation, registered signature matched:\n' "$FLAKE_COUNT"
     cat "$FLAKE_REPORT"
@@ -1787,6 +1816,10 @@ elif [ "$REAL_COUNT" -gt 0 ]; then
     # The host stamp above is reported alongside this verdict, not instead of it.
     printf '\nverdict: RED — %s real failure(s). This red means something.\n' "$REAL_COUNT"
     STATUS=$EXIT_REAL
+elif [ "$INCOMPLETE_COUNT" -gt 0 ]; then
+    printf '\nverdict: INCOMPLETE — %s test setup failure(s); behavior was not verified.\n' \
+        "$INCOMPLETE_COUNT"
+    STATUS=$EXIT_INCONCLUSIVE
 elif [ "$REPEAT_FAILED" -eq 1 ] && [ "$HOST_DEGRADED" -eq 0 ]; then
     # A degraded host retains the existing INCONCLUSIVE verdict below;
     # neither a repeat score nor a registry entry can make that run green.

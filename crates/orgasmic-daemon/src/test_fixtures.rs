@@ -606,10 +606,8 @@ mod tests {
     /// `cursor-worker-sibling` is the arm TASK-BCYMM measured: it backgrounds
     /// two `sleep 300`s and then sleeps an hour in the foreground, so nothing
     /// in the tree exits on its own and killing only the foreground pid orphans
-    /// the rest to init. The panic here stands in for the real one — the
-    /// `fake cursor-agent did not start children` deadline in
-    /// `supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling`,
-    /// which fires under load and used to skip that test's trailing kill.
+    /// the rest to init. The panic here preserves the former readiness-failure
+    /// cleanup case, which used to skip that test's trailing kill.
     #[test]
     fn panicking_body_still_reaps_the_whole_fixture_process_group() {
         let tmp = tempfile::tempdir().expect("fixture tempdir");
@@ -630,7 +628,7 @@ mod tests {
             while !ready.exists() {
                 assert!(
                     std::time::Instant::now() < deadline,
-                    "fixture did not start its children"
+                    "test setup incomplete: fixture did not start its children"
                 );
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }

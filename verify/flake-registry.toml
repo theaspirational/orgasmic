@@ -31,83 +31,10 @@
 # every one of them exists as a literal assertion message in the current source
 # — grep it before you trust it.
 
-# --------------------------------------------------------------------------
-# TASK-STWVB — daemon tests that fail under full-suite parallelism, pass alone
-# (owned by TASK-STWVB until 2026-08-07, then by TASK-X0PV1 while that round
-# closed with these modes unfixed, rather than deleting live entries to green
-# --check; returned to TASK-STWVB on 2026-09-03, see the transfer note below)
-#
-# Re-evaluated 2026-09-02 at 7c85f177 (worktree FLAKES), each of the three
-# tests run 20 times as two concurrent copies of one daemon --lib binary under
-# 8 cpu hogs (load average 30-56): 60/60 green. Three of the four entries that
-# stood here are gone on that measurement plus a named mechanism:
-#
-#   recovery_reattaches_tmux_session_when_handle_exists /
-#   "tmux test session should start" — the measured daemon error was `tmux
-#   new-session failed (exit 1): server exited unexpectedly`, the shared-server
-#   drain race. TASK-0RCRY (2026-07-29, the day AFTER the 2026-07-28
-#   measurement) put every tmux-gated test on a per-process `-L` server held
-#   open by a keepalive session, whose doc comment names this exact error as
-#   the window it closes. The entry outlived its defect by a month.
-#
-#   recovery_reattaches_tmux_session_when_handle_exists / left: "interrupted"
-#   — the inventory resolves attach probes against RECOVERY_ATTACH_PROBE_BUDGET
-#   (1s); a `tmux has-session` that misses it classifies `interrupted` with
-#   "attach proof exceeded inventory deadline" and bumps
-#   attach_probes_timed_out. Same mechanism as TASK-QCG6J. The test now treats
-#   exactly that shape as "liveness not decided" and returns without a verdict
-#   instead of asserting a probe that never ran; a probe that ran and answered
-#   "not live" still fails.
-#
-#   production_resume_native_fork_uses_pinned_claude_not_path_shim /
-#   "resume_native_fork recover: 500" — the 500 is `supervisor_recover_error`'s
-#   catch-all ("failed to recover run"), so the panic never carried the cause;
-#   it is in the daemon's tracing log only. It was measured once, pre-0RCRY,
-#   on a tmux-spawning path, and did not recur in 20 loaded runs here. Deleted
-#   on that evidence: the next 500 must be read as REAL and its daemon log
-#   read, not excused against a mechanism nobody recorded.
-#
-# The one below stays, re-evidenced, because its mechanism is the host and not
-# the test: in the same 2026-09-02 measurement both concurrent copies of it
-# stalled from 12:48:46 to 12:49:28 (41.5s and 43.4s wall for a test that
-# otherwise takes 0.3s) and were released in the same second, while staying
-# inside the 30s `ready` deadline — a machine-wide process-spawn stall of the
-# kind the run-tests.sh host-state stamp exists to label. The registered mode
-# is that stall landing on the first phase. Raising the deadline moves the
-# threshold and proves nothing; the interlock is the answer.
-#
-# TRANSFER 2026-09-03, TASK-X0PV1 -> TASK-STWVB. X0PV1 was filed to be the
-# accountable owner of four entries; three are retired on measurement and this
-# one is not X0PV1's to fix. Its mechanism is the host, and the answer named
-# above — the run-tests.sh host-state stamp and the C interlock that reads it —
-# is TASK-STWVB's deliverable, which is open. So the entry follows the fix, and
-# X0PV1 closes. This is NOT the 2026-08-07 mistake in reverse: that one closed
-# an owner and left its entries behind, whereas this one moves the entry to an
-# open task first and closes second, which is exactly what the owner-lifecycle
-# guard asks for.
-#
-# It is deliberately NOT deleted. The 2026-09-02 stall was real and measured
-# (41.5s and 43.4s wall against a 0.3s norm), so deletion would report the next
-# occurrence REAL. The interlock only labels it LOAD-SENSITIVE when this run's
-# own host stamp reads degraded; a stall on a host that measures calm — and the
-# syspolicyd half of that stamp is known dead, see TASK-STWVB — would still be
-# called REAL. Delete this entry when the interlock can be shown to catch the
-# mode without it, not before.
-# --------------------------------------------------------------------------
-
-[[flake]]
-test = "supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling"
-owner = "TASK-STWVB"
-signature = "fake cursor-agent did not start children"
-evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, full daemon --lib: 528 passed / 5 failed, this among them. Assertion is crates/orgasmic-daemon/src/supervisor.rs (the 30s `ready` deadline). Green alone 2026-07-28; NOT reproduced in 6 runs then. Re-measured 2026-09-02 at 7c85f177: 20/20 green as two concurrent copies under 8 cpu hogs, but two concurrent runs each took ~42s wall (12:48:46-12:49:28, same release second) against a 0.3s norm — a host-wide spawn stall, the same class as the registered mode."
-filed = "2026-07-28"
-
-# --------------------------------------------------------------------------
-# Retired 2026-09-02 at 512fcb08: 20 concurrent rounds of the two exact
-# orgasmic-cli dispatch tests under 20 CPU hogs passed 20/20 each while load
-# average rose from 10.45 to 78.17. The entries were deleted on that current-HEAD
-# evidence; either mode recurring is now a REAL failure.
-# --------------------------------------------------------------------------
+# TASK-STWVB retired its final entry on 2026-09-07. PID-selection behavior now
+# uses deterministic process snapshots. Its one real-process adapter check
+# reports `test setup incomplete:` when fixture readiness fails, which the
+# runner preserves as non-green INCOMPLETE instead of excusing through here.
 
 # --------------------------------------------------------------------------
 # Deliberately NOT registered. Each of these is a failure somebody could excuse

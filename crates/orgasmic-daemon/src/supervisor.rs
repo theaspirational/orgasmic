@@ -4287,122 +4287,159 @@ pub enum OrphanedLeaseOutcome {
 /// blocked and leave the lease stuck. TASK-072 closed the no-terminal hung
 /// watcher for longer runs; this closes the early-exit case.
 /// Subprocess drivers such as cursor-agent fork a long-lived worker child and
-/// may exit their CLI wrapper quickly. Poll briefly for a direct child so
-/// the dispatch watch hint (DispatchResponse.pid) tracks the real worker PID.
+/// may exit their CLI wrapper quickly. Poll briefly for a direct child so the
+/// daemon can record the real worker PID after dispatch returns the wrapper.
 /// The early-exit watcher (spawn_early_exit_watcher, TASK-074) remains on the
 /// wrapper PID by design — it must track the original spawn target to detect
 /// genuine early-exit failures rather than intermediate-child shenanigans.
-pub(crate) async fn resolve_dispatch_watch_pid(wrapper_pid: Option<u32>) -> Option<u32> {
-    let wrapper_pid = wrapper_pid?;
+pub(crate) async fn resolve_dispatch_watch_pid(
+    wrapper_pid: Option<u32>,
+) -> Result<Option<u32>, String> {
+    let Some(wrapper_pid) = wrapper_pid else {
+        return Ok(None);
+    };
     if wrapper_pid == 0 {
-        return Some(0);
+        return Ok(Some(0));
     }
-    Some(
+    Ok(Some(
         poll_direct_child_pid(wrapper_pid)
-            .await
+            .await?
             .unwrap_or(wrapper_pid),
-    )
+    ))
 }
 
-async fn poll_direct_child_pid(parent_pid: u32) -> Option<u32> {
-    let wait_for_worker_server = wrapper_looks_like_cursor_agent(parent_pid);
+async fn poll_direct_child_pid(parent_pid: u32) -> Result<Option<u32>, String> {
+    let mut wait_for_worker_server = None;
+    let mut last_observation_error = None;
     let accept_any_child_after = Instant::now() + Duration::from_millis(500);
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if let Some(child) = prefer_worker_server_child(parent_pid) {
-            return Some(child);
-        }
-        if !wait_for_worker_server && Instant::now() >= accept_any_child_after {
-            if let Some(child) = live_direct_child_pid(parent_pid) {
-                return Some(child);
+        match observe_processes().await {
+            Ok(snapshot) => {
+                let prefer_worker = *wait_for_worker_server
+                    .get_or_insert_with(|| should_wait_for_worker_server(&snapshot, parent_pid));
+                if let Some(child) = select_dispatch_watch_pid(
+                    &snapshot,
+                    parent_pid,
+                    !prefer_worker && Instant::now() >= accept_any_child_after,
+                ) {
+                    return Ok(Some(child));
+                }
+                if !snapshot.contains_live(parent_pid) {
+                    return Ok(None);
+                }
+                last_observation_error = None;
             }
-        }
-        if subprocess_exited(parent_pid) {
-            return None;
+            Err(error) => last_observation_error = Some(error),
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    prefer_worker_server_child(parent_pid).or_else(|| live_direct_child_pid(parent_pid))
+    if let Some(error) = last_observation_error {
+        return Err(format!(
+            "process observation remained unavailable while resolving wrapper pid {parent_pid}: {error}"
+        ));
+    }
+    let snapshot = observe_processes().await?;
+    Ok(select_dispatch_watch_pid(&snapshot, parent_pid, true))
 }
 
-fn prefer_worker_server_child(parent_pid: u32) -> Option<u32> {
-    live_direct_child_pids(parent_pid).into_iter().find(|pid| {
-        process_command(*pid)
-            .map(|command| command.contains("worker-server"))
-            .unwrap_or(false)
-    })
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessInfo {
+    pid: u32,
+    parent_pid: u32,
+    state: String,
+    command: String,
 }
 
-fn live_direct_child_pids(parent_pid: u32) -> Vec<u32> {
-    let output = match Command::new("pgrep")
-        .args(["-P", &parent_pid.to_string()])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-    {
-        Ok(output) if output.status.success() => output,
-        _ => return ps_direct_child_pids(parent_pid),
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse::<u32>().ok())
-        .filter(|pid| !process_is_zombie(*pid))
-        .collect::<Vec<_>>()
-        .into_iter()
-        .chain(ps_direct_child_pids(parent_pid))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessSnapshot(Vec<ProcessInfo>);
 
-fn ps_direct_child_pids(parent_pid: u32) -> Vec<u32> {
-    let output = match Command::new("ps")
-        .args(["ax", "-o", "pid=,ppid="])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-    {
-        Ok(output) if output.status.success() => output,
-        _ => return Vec::new(),
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            let pid = parts.next()?.parse::<u32>().ok()?;
-            let ppid = parts.next()?.parse::<u32>().ok()?;
-            (ppid == parent_pid).then_some(pid)
+impl ProcessSnapshot {
+    fn parse(output: &[u8]) -> Result<Self, String> {
+        let mut processes = Vec::new();
+        for line in String::from_utf8_lossy(output).lines() {
+            let mut fields = line.split_whitespace();
+            let pid = fields
+                .next()
+                .and_then(|value| value.parse().ok())
+                .ok_or_else(|| format!("malformed ps pid in {line:?}"))?;
+            let parent_pid = fields
+                .next()
+                .and_then(|value| value.parse().ok())
+                .ok_or_else(|| format!("malformed ps parent pid in {line:?}"))?;
+            let state = fields
+                .next()
+                .ok_or_else(|| format!("missing ps state in {line:?}"))?
+                .to_string();
+            processes.push(ProcessInfo {
+                pid,
+                parent_pid,
+                state,
+                command: fields.collect::<Vec<_>>().join(" "),
+            });
+        }
+        if processes.is_empty() {
+            return Err("ps returned no process rows".into());
+        }
+        Ok(Self(processes))
+    }
+
+    fn contains_live(&self, pid: u32) -> bool {
+        self.0
+            .iter()
+            .any(|process| process.pid == pid && !process.state.starts_with('Z'))
+    }
+
+    fn command(&self, pid: u32) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|process| process.pid == pid && !process.state.starts_with('Z'))
+            .map(|process| process.command.as_str())
+    }
+
+    fn live_children(&self, parent_pid: u32) -> impl Iterator<Item = &ProcessInfo> {
+        self.0.iter().filter(move |process| {
+            process.parent_pid == parent_pid && !process.state.starts_with('Z')
         })
-        .filter(|pid| !process_is_zombie(*pid))
-        .collect()
+    }
 }
 
-fn live_direct_child_pid(parent_pid: u32) -> Option<u32> {
-    live_direct_child_pids(parent_pid).into_iter().next()
-}
-
-fn wrapper_looks_like_cursor_agent(parent_pid: u32) -> bool {
-    process_command(parent_pid)
-        .map(|command| command.contains("cursor-agent"))
-        .unwrap_or(false)
-}
-
-fn process_command(pid: u32) -> Option<String> {
-    let output = Command::new("ps")
-        .args(["-p", pid.to_string().as_str(), "-o", "command="])
+async fn observe_processes() -> Result<ProcessSnapshot, String> {
+    let mut command = tokio::process::Command::new("ps");
+    command
+        .args(["ax", "-o", "pid=,ppid=,stat=,command="])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
-        .ok()?;
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(1), command.output())
+        .await
+        .map_err(|_| "ps exceeded 1s".to_string())?
+        .map_err(|error| format!("failed to start ps: {error}"))?;
     if !output.status.success() {
-        return None;
+        return Err(format!("ps exited {}", output.status));
     }
-    let command = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if command.is_empty() {
-        None
-    } else {
-        Some(command)
-    }
+    ProcessSnapshot::parse(&output.stdout)
+}
+
+fn select_dispatch_watch_pid(
+    snapshot: &ProcessSnapshot,
+    parent_pid: u32,
+    allow_generic: bool,
+) -> Option<u32> {
+    let mut children = snapshot.live_children(parent_pid);
+    let first = children.next();
+    first
+        .into_iter()
+        .chain(children)
+        .find(|process| process.command.contains("worker-server"))
+        .or_else(|| allow_generic.then_some(first).flatten())
+        .map(|process| process.pid)
+}
+
+fn should_wait_for_worker_server(snapshot: &ProcessSnapshot, wrapper_pid: u32) -> bool {
+    snapshot
+        .command(wrapper_pid)
+        .is_some_and(|command| command.contains("cursor-agent"))
 }
 
 fn process_is_zombie(pid: u32) -> bool {
@@ -12626,106 +12663,90 @@ printf '%s\n' '{"type":"text_chunk","stream":"assistant","chunk":"transport text
             "snapshot driver should come from WorkerDriver::transport at acquire time"
         );
     }
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn poll_direct_child_pid_prefers_worker_server_over_generic_sibling() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ready = tmp.path().join("children-ready");
-        // Put the wrapper in its own process group and null its stdio so the
-        // backgrounded `sleep` children it spawns neither inherit the test
-        // runner's stdout/stderr (which would hold a piped `cargo test | tail`
-        // open past test completion) nor survive cleanup as orphans reparented
-        // to init. The handle owns the whole group and reaps it on `Drop`
-        // (orgasmic:task_BCYMM), so the `ready` deadline assertion below —
-        // which is the one that fails under load (TASK-STWVB) — no longer
-        // skips cleanup on its way out.
-        let wrapper = crate::test_fixtures::spawn_in_own_process_group(
-            Command::new(crate::test_fixtures::shared_test_executable())
-                .args(["cursor-worker-sibling", ready.to_str().unwrap()])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null()),
-            "fake cursor-agent",
+    #[test]
+    fn dispatch_watch_pid_selection_uses_one_process_snapshot() {
+        let snapshot = ProcessSnapshot(vec![
+            ProcessInfo {
+                pid: 10,
+                parent_pid: 1,
+                state: "S".into(),
+                command: "/usr/bin/cursor-agent".into(),
+            },
+            ProcessInfo {
+                pid: 11,
+                parent_pid: 10,
+                state: "S".into(),
+                command: "/bin/sleep 300".into(),
+            },
+            ProcessInfo {
+                pid: 12,
+                parent_pid: 10,
+                state: "S".into(),
+                command: "worker-server".into(),
+            },
+            ProcessInfo {
+                pid: 13,
+                parent_pid: 10,
+                state: "Z".into(),
+                command: "worker-server zombie".into(),
+            },
+        ]);
+
+        assert!(should_wait_for_worker_server(&snapshot, 10));
+        assert_eq!(select_dispatch_watch_pid(&snapshot, 10, false), Some(12));
+
+        let without_worker = ProcessSnapshot(snapshot.0[..2].to_vec());
+        assert_eq!(select_dispatch_watch_pid(&without_worker, 10, false), None);
+        assert_eq!(
+            select_dispatch_watch_pid(&without_worker, 10, true),
+            Some(11)
         );
-        let wrapper_pid = wrapper.id();
-        let ready_deadline = Instant::now() + Duration::from_secs(30);
-        while !ready.exists() {
-            if Instant::now() >= ready_deadline {
-                panic!(
-                    "fake cursor-agent did not start children; {}",
-                    wrapper.diagnostic().await
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-
-        let resolved = resolve_dispatch_watch_pid(Some(wrapper_pid))
-            .await
-            .expect("resolved watch pid");
-        assert_ne!(resolved, wrapper_pid, "should not return wrapper pid");
-
-        let output = Command::new("ps")
-            .args(["-p", resolved.to_string().as_str(), "-o", "command="])
-            .output()
-            .expect("ps resolved pid");
-        let command = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            command.contains("worker-server"),
-            "expected worker-server child, got {command:?}"
-        );
-
-        // The wrapper and its backgrounded sleeps are reaped as a group when
-        // `wrapper` drops, on this path and on every panic path above it.
-        drop(wrapper);
+        assert_eq!(select_dispatch_watch_pid(&snapshot, 999, true), None);
+        assert!(ProcessSnapshot::parse(b"not a process row").is_err());
     }
 
     #[cfg(unix)]
-    #[test]
-    fn direct_child_pid_finds_wrapper_child_process() {
-        // Null stdio + own process group so the backgrounded `sleep 300` cannot
-        // inherit a piped `cargo test | tail` stdout (which would block on EOF)
-        // and is reaped with the group rather than orphaned to init. The handle
-        // reaps that group on `Drop` (orgasmic:task_BCYMM), including on the
-        // `wrapper never forked a direct child` deadline panic below.
+    #[tokio::test]
+    async fn process_snapshot_integration_observes_spawned_child() {
+        // One separately labelled real-process check for the `ps` adapter.
+        // The shared tooling lock keeps it out of other process-environment
+        // integration setup; selection behavior is tested in memory above.
+        let _environment = test_environment_lock().lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let ready = tmp.path().join("child-ready");
         let wrapper = crate::test_fixtures::spawn_in_own_process_group(
-            Command::new("sh")
-                .args(["-c", "sleep 300 & cat"])
-                .stdin(Stdio::piped())
+            Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "/bin/sleep 300 & /usr/bin/touch \"$1\"; wait",
+                    "process-snapshot-fixture",
+                    ready.to_str().unwrap(),
+                ])
+                .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null()),
-            "wrapper",
+            "process snapshot fixture",
         );
-        let wrapper_pid = wrapper.id();
-        // Wait for `sh` to actually fork `sleep 300` instead of assuming it has.
-        // The shared state here is host scheduling: a fixed sleep asserts that
-        // 500 concurrent tests plus whatever else the machine is running leave
-        // `sh` enough CPU to fork within one fixed window, and on a loaded host
-        // it does not (observed twice under a background `mediaanalysisd` spike).
-        // Poll to a deadline, the same shape the wrapper-child sibling test
-        // above already uses for its `ready` marker.
         let deadline = Instant::now() + Duration::from_secs(10);
-        let child_pid = loop {
-            if let Some(pid) = live_direct_child_pid(wrapper_pid) {
-                break pid;
+        while !ready.exists() {
+            if Instant::now() >= deadline {
+                panic!(
+                    "test setup incomplete: process snapshot fixture did not become ready; {}",
+                    wrapper.diagnostic().await
+                );
             }
-            assert!(
-                Instant::now() < deadline,
-                "wrapper never forked a direct child"
-            );
-            std::thread::sleep(Duration::from_millis(25));
-        };
-        let output = Command::new("ps")
-            .args(["-p", child_pid.to_string().as_str(), "-o", "command="])
-            .output()
-            .expect("ps child");
-        let command = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            command.contains("sleep 300"),
-            "expected inner worker command, got {command:?}"
-        );
-        // The `cat` wrapper and its backgrounded `sleep 300` are reaped as a
-        // group when `wrapper` drops, here and on every panic path above.
-        drop(wrapper);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        let snapshot = observe_processes()
+            .await
+            .expect("process observation must be available");
+        assert!(snapshot.contains_live(wrapper.id()));
+        let child = select_dispatch_watch_pid(&snapshot, wrapper.id(), true)
+            .expect("snapshot should contain the spawned child");
+        assert!(snapshot
+            .command(child)
+            .is_some_and(|command| command.contains("sleep 300")));
     }
 
     #[tokio::test]

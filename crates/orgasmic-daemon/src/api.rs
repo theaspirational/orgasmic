@@ -6548,13 +6548,20 @@ async fn spawn_worker_run(
         if let Some(wrapper_pid) = acquire.pid.filter(|p| *p != 0) {
             let run_id = acquire.run_id.clone();
             tokio::spawn(async move {
-                if let Some(watch_pid) = resolve_dispatch_watch_pid(Some(wrapper_pid)).await {
-                    tracing::info!(
+                match resolve_dispatch_watch_pid(Some(wrapper_pid)).await {
+                    Ok(Some(watch_pid)) => tracing::info!(
                         %run_id,
                         wrapper_pid,
                         watch_pid,
                         "resolved dispatch worker watch pid"
-                    );
+                    ),
+                    Ok(None) => {}
+                    Err(error) => tracing::warn!(
+                        %run_id,
+                        wrapper_pid,
+                        %error,
+                        "dispatch worker watch pid observation unavailable"
+                    ),
                 }
             });
         }

@@ -2620,8 +2620,8 @@ async fn dispatch_response_pid_is_inner_subprocess_child() {
         .expect("ps watch pid");
     let command = String::from_utf8_lossy(&ps.stdout);
     // Loose on purpose: macOS ps may report the wrapper path for script-backed
-    // execs. The strict wrapper-vs-child guarantee is owned by the supervisor
-    // unit test poll_direct_child_pid_prefers_worker_server_over_generic_sibling.
+    // execs. The strict wrapper-vs-child guarantee is owned by the supervisor's
+    // deterministic process-snapshot test.
     assert!(
         command.contains(&agent.display().to_string()) || command.contains("worker-server"),
         "dispatch pid should resolve to the hermetic fake harness, got command={command:?}"
@@ -2697,8 +2697,8 @@ async fn dispatch_response_pid_prefers_worker_server_child() {
     let command = String::from_utf8_lossy(&ps.stdout);
     // Loose on purpose: the generic sibling renames itself to "generic-sleep"
     // so it can never satisfy either accepted substring. The strict
-    // wrapper-vs-child preference is owned by the supervisor unit test
-    // poll_direct_child_pid_prefers_worker_server_over_generic_sibling.
+    // wrapper-vs-child preference is owned by the supervisor's deterministic
+    // process-snapshot test.
     assert!(
         command.contains("worker-server") || command.contains("cursor-agent"),
         "dispatch pid should be the hermetic fake harness, not generic sibling: {command:?}"
