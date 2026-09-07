@@ -1,0 +1,47 @@
+#+title: orgasmic task TASK-F98BV
+#+orgasmic_version: 2
+
+* BACKLOG TASK-F98BV Meetings spec: resume deferred grilling (open design branches)    :meetings:spec:
+:PROPERTIES:
+:ID: TASK-F98BV
+:PRIORITY: P3
+:END:
+
+** Description
+Deferred grilling session (2026-09-07) on MEETINGS-IMPLEMENTATION-SPEC.md (repo root, untracked, baseline d12baf6d). The user paused it to explore making Orgasmic plugin-based first (meeting node + UI as a plugin; tasks/decisions/glossary/artifacts as plugins). Resume the grilling after the plugin direction is decided, since several answers change under a plugin architecture.
+
+** Facts established (verified 2026-09-07)
+- No open git feature branches; only main and the orgasmic ledger branch.
+- Graph vocabulary already has RELATES_TO and PRODUCES (conventions/decision-graph.org).
+- Local transcription available: whisper-cli (brew whisper-cpp) + model ~/.hermes/models/ggml-large-v3-turbo.bin; ffmpeg/ffprobe installed.
+- Three ledgers: orgasmic, vscode-orsl, orsl-language-server.
+- Spec §12 errors: Interactive/data/attachments/ and Interactive/data/history/ are empty or missing. Images live in tasks/<slug>/frame_*.jpg (41 jpg, 40 referenced). No task has annotations; no edit history; all 21 tasks revision 0, status "Не переглянуто". Clips carry both plaud and video times already.
+- Media: browser.mp4 2.16 GB (5791.40 s), synced.mkv 2.35 GB, original CleanShot 2.31 GB, work/ 345 MB. Plaud transcript: 547 segments, ms clocks, speakers.
+- Daemon: no custom node-type registry (descriptors load only from shipped runtime). NodeLayer::for_id falls through to Glossary for unknown ids (api.rs ~15838). reserved_files parsed but never read. No expected-revision CAS at writer boundary (only comment body CAS + verify_before_commit closure); transaction_multi and request-id idempotency exist. No attachment/upload/asset/multipart/Content-Range code at all; axum lacks multipart feature.
+- Auth: roles viewer/editor/artifacts; admin bypasses. sessions.interact is in no built-in role (admin-only chat). Sandbox allowlist = 4 coarse bools; chat default = all on. Desktop native app = bearer; web = cookie; remote profile trades token for ticket and becomes same-origin cookie.
+- UI: no <video>/<audio>, no upload, no drawing lib (roughjs present but unused), events over one WebSocket with no replay, chat = one run per project on the manager lease.
+
+** Round 1 questions (unanswered) with recommendations
+- Q1 First slice: full M0–M7 vs thin cut (M1 meeting node+links, M2 attachments+seekable playback, M3 workspace manual create/link, M7 import Max). Rec: thin cut.
+- Q2 Execution: (a) ledger decision + task per milestone, dispatched/reviewed; (b) sprint mode. Rec: (a); M1 touches node kernel.
+- Q3 Target ledger for Max import: vscode-orsl vs orsl-language-server. Rec: vscode-orsl.
+- Q4 Teammates in V1: real second member or just user on desktop+tablet. Rec: just user; one new meeting capability through existing authz; role matrix later.
+- Q5 Transcription engine: local whisper.cpp vs paid API vs none. Rec: local whisper.cpp in the chat-tools milestone.
+- Q6 Media ops shape: (a) daemon-owned operation records; (b) agent runs ffmpeg/whisper in its run, commits via CLI attach with --derived-from/--tool. Rec: (b).
+- Q7 Annotations: import 40 frames as plain images with captions; drawing editor later. Rec: yes.
+- Q8 Transcript editing V1: import Plaud original + video-timed VTT as attachments; read-only pane with click-to-seek; edits in M4. Rec: yes.
+- Q9 Hard delete: archive only. Rec: archive only.
+- Q10 Asset copy set: everything (~7 GB) vs browser.mp4 + plaud audio + sidecars/JSON + frames. Rec: smaller set; mkv and CleanShot original later via same attach path.
+- Q11 Drop "registered custom node type" from M1 acceptance (mechanism does not exist). Rec: drop.
+- Q12 Agent execution grant: explicit per-member sessions.interact grant vs build restricted tool mode. Rec: explicit grant.
+- Q13 Playback auth V1: cookie paths only (browser + remote profile), desktop-native bearer gets a short-lived media ticket later. Rec: cookie only; verify tablet flow lands on cookie before M2.
+
+** Round 2 (blocked on Q1/Q4)
+- Meeting chat vs the single project manager lease (separate run kind per meeting, or project chat + context chips).
+- How much revision-conflict plumbing to build (none exists at writer boundary).
+- Browser upload needed in V1, or CLI attach from local path only (Max import is local).
+- Annotation editor: native canvas vs new dependency (no drawing lib installed).
+- New event topic for meetings (derivable, no decision).
+
+** Done when
+The grilling resumes with the plugin decision known, every question above gets an answer recorded on this task or on the meetings decision, and the spec is amended accordingly.
