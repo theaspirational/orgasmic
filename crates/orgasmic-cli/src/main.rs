@@ -29,6 +29,7 @@ mod node;
 mod path_env;
 mod project_migrate;
 mod project_repair_ids;
+mod retro;
 mod sequencer_markers;
 #[cfg(test)]
 mod test_support;
@@ -1067,6 +1068,8 @@ enum ManagerCmd {
     /// List the supported `(mode, harness)` transport pairs, which of them run
     /// unattended, and where each harness's model/effort values come from.
     Drivers(drivers::DriversArgs),
+    /// Dispatch a read-only, explicitly scoped Claude retrospective; waits for its report.
+    Retro(retro::RetroArgs),
     /// Dispatch a worker for one or more tasks (worktree + tx + driver).
     Dispatch(DispatchArgs),
     /// Close an open dispatch (done or aborted).
@@ -1140,6 +1143,9 @@ enum RunCmd {
     /// Inspect or maintain durable run history storage (TASK-FZB6T).
     #[command(subcommand)]
     History(RunHistoryCmd),
+    /// Explicit diagnostic conversion; never changes run or task lifecycle.
+    #[command(subcommand)]
+    Evidence(RunEvidenceCmd),
     /// Locate the harness-native session transcript for a run (TASK-0SADP).
     ///
     /// Resolves claude/codex/cursor-agent/hermes on-disk JSONL via per-harness
@@ -1178,6 +1184,16 @@ enum RunCmd {
         /// use only after confirming the process is gone.
         #[arg(long)]
         force_inert: bool,
+    },
+}
+
+// orgasmic:TASK-VBSG2
+#[derive(Subcommand, Debug)]
+enum RunEvidenceCmd {
+    /// Convert verified Claude native history into a bounded derived cache.
+    Materialize {
+        #[arg(long)]
+        run: String,
     },
 }
 
@@ -3836,6 +3852,17 @@ fn cmd_run(home: &Home, cmd: RunCmd) -> Result<()> {
         let client = DaemonClient::from_home_autostart_async(home).await?;
         let value: serde_json::Value = match cmd {
             RunCmd::List => client.get("/runs").await?,
+            RunCmd::Evidence(RunEvidenceCmd::Materialize { run }) => {
+                client
+                    .post_json(
+                        &format!(
+                            "/runs/{}/evidence/materialize",
+                            daemon_client::path_segment(&run)
+                        ),
+                        &serde_json::json!({}),
+                    )
+                    .await?
+            }
             RunCmd::Show { id } => client.get(&format!("/runs/{id}")).await?,
             RunCmd::History(RunHistoryCmd::Inspect { project }) => {
                 client.get(&run_history_path(project.as_deref())).await?
@@ -4070,6 +4097,7 @@ fn print_lifecycle_entry(action: &str, entry: &LifecycleEntry) {
 
 fn cmd_manager(home: &Home, cmd: ManagerCmd) -> Result<()> {
     match cmd {
+        ManagerCmd::Retro(args) => retro::cmd_retro(home, args),
         ManagerCmd::Drivers(args) => drivers::cmd_drivers(home, args),
         ManagerCmd::Dispatch(args) => manager::cmd_dispatch(home, args),
         ManagerCmd::DispatchClose(args) => manager::cmd_dispatch_close(home, args),
@@ -4318,9 +4346,79 @@ mod okf_bundle_tests {
 #[cfg(test)]
 mod task_inventory_tests {
     use super::{
-        filter_tasks_by_stage, parse_task_stage, task_count_summary, Cli, Cmd, ManagerCmd,
+        filter_tasks_by_stage, parse_task_stage, task_count_summary, Cli, Cmd, ManagerCmd, RunCmd,
+        RunEvidenceCmd,
     };
     use clap::Parser;
+
+    #[test]
+    fn manager_retro_requires_explicit_scope_and_preserves_sequence() {
+        let cli = Cli::try_parse_from([
+            "orgasmic",
+            "manager",
+            "retro",
+            "--project",
+            "proj",
+            "--task-sequence",
+            "TASK-B,TASK-A",
+            "--prepare-only",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.cmd,
+            Cmd::Manager {
+                cmd: ManagerCmd::Retro(_)
+            }
+        ));
+        assert!(Cli::try_parse_from([
+            "orgasmic",
+            "manager",
+            "retro",
+            "--project",
+            "proj",
+            "--prepare-only"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "orgasmic",
+            "manager",
+            "retro",
+            "--project",
+            "proj",
+            "--run",
+            "run-a",
+            "--task-sequence",
+            "TASK-B",
+            "--prepare-only"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "orgasmic",
+            "manager",
+            "retro",
+            "--project",
+            "proj",
+            "--run",
+            "run-a"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "orgasmic",
+            "manager",
+            "retro",
+            "--project",
+            "proj",
+            "--run",
+            "run-a",
+            "--run",
+            "run-b",
+            "--task",
+            "TASK-A",
+            "--model",
+            "fixture-model"
+        ])
+        .is_ok());
+    }
 
     fn tasks() -> serde_json::Value {
         serde_json::json!([
@@ -4346,6 +4444,23 @@ mod task_inventory_tests {
         assert_eq!(summary["selected_total"], 2);
         assert_eq!(summary["by_stage"]["backlog"], 2);
         assert_eq!(summary["by_stage"]["done"], 1);
+    }
+
+    #[test]
+    fn run_evidence_materialize_requires_an_explicit_run() {
+        let cli = Cli::try_parse_from([
+            "orgasmic",
+            "run",
+            "evidence",
+            "materialize",
+            "--run",
+            "run-test",
+        ])
+        .unwrap();
+        assert!(
+            matches!(cli.cmd, Cmd::Run { cmd: RunCmd::Evidence(RunEvidenceCmd::Materialize { run }) } if run == "run-test")
+        );
+        assert!(Cli::try_parse_from(["orgasmic", "run", "evidence", "materialize"]).is_err());
     }
 
     #[test]

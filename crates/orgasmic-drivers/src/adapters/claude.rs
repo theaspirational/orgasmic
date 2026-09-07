@@ -139,6 +139,69 @@ pub struct ClaudeAdapter {
 }
 
 impl ClaudeAdapter {
+    /// Explicit offline conversion of one native JSONL record. These events
+    /// are diagnostics; callers must never feed them to a live driver session.
+    pub async fn native_evidence_events(
+        &mut self,
+        raw: &Value,
+    ) -> Result<Vec<DriverEvent>, DriverError> {
+        self.translator
+            .get_or_insert_with(|| StreamJsonTranslator::new(None, RunKind::Worker, None));
+        let ty = raw.get("type").and_then(Value::as_str).unwrap_or_default();
+        if !matches!(ty, "assistant" | "user" | "result" | "system") {
+            return Ok(Vec::new());
+        }
+        // The live adapter tolerates missing IDs by minting UUIDs. Evidence
+        // must be reproducible and must not invent tool/result correlation.
+        let blocks = raw.pointer("/message/content").and_then(Value::as_array);
+        for block in blocks.into_iter().flatten() {
+            let key = match block["type"].as_str() {
+                Some("tool_use") => "id",
+                Some("tool_result") => "tool_use_id",
+                _ => continue,
+            };
+            if block[key].as_str().is_none_or(str::is_empty) {
+                return Err(DriverError::Other(format!(
+                    "native tool record is missing {key}"
+                )));
+            }
+        }
+        let mut events = self.parse_event(raw.clone()).await;
+        for block in blocks.into_iter().flatten() {
+            let (stream, text) = match block["type"].as_str() {
+                Some("thinking") => (TextStream::System, block["thinking"].as_str()),
+                Some("text") if ty == "user" => (TextStream::User, block["text"].as_str()),
+                _ => continue,
+            };
+            if let Some(chunk) = text {
+                events.push(DriverEvent::TextChunk {
+                    stream,
+                    chunk: chunk.into(),
+                    seq: self.next_seq(),
+                });
+            }
+        }
+        if ty == "user" {
+            if let Some(chunk) = raw.pointer("/message/content").and_then(Value::as_str) {
+                events.push(DriverEvent::TextChunk {
+                    stream: TextStream::User,
+                    chunk: chunk.into(),
+                    seq: self.next_seq(),
+                });
+            }
+        }
+        if ty == "assistant"
+            && matches!(
+                raw.pointer("/message/stop_reason").and_then(Value::as_str),
+                Some("end_turn" | "stop_sequence" | "max_tokens")
+            )
+        {
+            events.push(DriverEvent::AgentTurnComplete {
+                seq: self.next_seq(),
+            });
+        }
+        Ok(events)
+    }
     pub fn new() -> Self {
         Self {
             translator: None,
@@ -158,12 +221,17 @@ impl ClaudeAdapter {
             return Vec::new();
         };
         let (tx, mut rx) = mpsc::channel(32);
-        f(translator, tx.clone()).await;
-        drop(tx);
-        let mut events = Vec::new();
-        while let Ok(event) = rx.try_recv() {
-            events.push(event);
-        }
+        // A native message can contain more blocks than the channel capacity.
+        // Drain concurrently, including on the live translation path.
+        let translate = f(translator, tx);
+        let drain = async move {
+            let mut events = Vec::new();
+            while let Some(event) = rx.recv().await {
+                events.push(event);
+            }
+            events
+        };
+        let (_, events) = tokio::join!(translate, drain);
         events
     }
 }
@@ -1574,6 +1642,48 @@ mod tests {
     use crate::{AttachOutcome, ClaudeStreamJsonDriver, StdioDriver, WorkerDriver, WsDriver};
     use orgasmic_core::RuntimeIdentity;
     use tokio::time::{timeout, Duration};
+
+    #[tokio::test]
+    async fn native_evidence_conversion_preserves_tools_and_drains_large_messages() {
+        let mut adapter = ClaudeAdapter::new();
+        let content: Vec<Value> = (0..64).map(|i| json!({"type":"tool_use", "id":format!("call-{i}"), "name":"Read", "input":{"file_path":"src/lib.rs"}})).collect();
+        let record =
+            json!({"type":"assistant", "message":{"content":content,"stop_reason":"tool_use"}});
+        let events = timeout(
+            Duration::from_secs(2),
+            adapter.native_evidence_events(&record),
+        )
+        .await
+        .expect("conversion cannot block on its own event channel")
+        .unwrap();
+        assert_eq!(events.len(), 64);
+        assert!(
+            matches!(&events[63], DriverEvent::ToolCall { call_id, name, .. } if call_id == "call-63" && name == "Read")
+        );
+        assert_eq!(
+            events,
+            ClaudeAdapter::new()
+                .native_evidence_events(&record)
+                .await
+                .unwrap()
+        );
+        let result = adapter.native_evidence_events(&json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"call-0","is_error":true,"content":"missing"}]}})).await.unwrap();
+        assert!(
+            matches!(&result[0], DriverEvent::ToolResult { call_id, ok:false, .. } if call_id == "call-0")
+        );
+        let text = adapter.native_evidence_events(&json!({"type":"assistant","message":{"content":[{"type":"thinking","thinking":"reasoning"},{"type":"text","text":"report"}],"stop_reason":"end_turn"}})).await.unwrap();
+        assert!(text.iter().any(|e| matches!(e, DriverEvent::TextChunk { stream:TextStream::System, chunk, .. } if chunk == "reasoning")));
+        assert!(matches!(
+            text.last(),
+            Some(DriverEvent::AgentTurnComplete { .. })
+        ));
+        assert!(adapter.native_evidence_events(&json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}})).await.is_err());
+        assert!(adapter
+            .native_evidence_events(&json!({"type":"custom-title","customTitle":"not an event"}))
+            .await
+            .unwrap()
+            .is_empty());
+    }
 
     fn ctx(id: &str, kind: RunKind) -> DriverContext {
         DriverContext {

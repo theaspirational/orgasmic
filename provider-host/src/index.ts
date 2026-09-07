@@ -132,6 +132,7 @@ async function runSession(): Promise<void> {
 const command = process.argv[2];
 try {
   if (command === "catalog") await runCatalog();
+  else if (command === "retro") await (await import("./retro.ts")).runRetro();
   else if (command === "session") await runSession();
   else throw new Error("usage: index.ts <catalog|session> --provider <claude|opencode>");
 } catch (cause) {

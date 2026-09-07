@@ -8,7 +8,7 @@
 - [Daemon commands](operations/daemon.md) — Run and manage the local daemon lifecycle.
 - [Manager and dispatch commands](operations/dispatch.md) — Select drivers, dispatch workers, wait, close, finalize, record tx entries, and run manager stages.
 - [Forum commands](operations/forum.md) — Ask, critique, review, and curate multi-model forums.
-- [Run and utility commands](operations/runs.md) — Inspect worker histories, recover runs, manage auth, answer questions, and mint ids.
+- [Run and utility commands](operations/runs.md) — Inspect worker histories, explicitly materialize native evidence or run a manual retrospective, recover runs, manage auth, answer questions, and mint ids.
 - [Task and graph commands](operations/task-graph.md) — List and mutate tasks, goals, glossary, decisions, edges, and node bodies/properties.
 
 ## Recipe

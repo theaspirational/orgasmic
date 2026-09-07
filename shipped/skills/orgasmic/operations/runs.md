@@ -92,3 +92,26 @@ or a reported worker result as evidence to inspect, not as lifecycle closure.
 ```bash
 orgasmic run history rollback --help
 ```
+
+## Explicit native evidence and manual retrospectives
+
+`orgasmic run evidence materialize --run <run-id>` converts verified Claude
+native JSONL into a bounded, versioned diagnostic cache. It returns a summary
+and file reference. Repeating it with unchanged source is a cache hit.
+
+`orgasmic manager retro --project <project> --run <id> --run <id> --model <model-id>`
+starts a foreground read-only Claude SDK retrospector. Repeat `--task <id>` to
+include task-linked implementer, reviewer, and recovery runs, or use
+`--task-sequence TASK-A,TASK-B` to preserve task order. Add `--question <text>`
+for specific questions. `--prepare-only` pins the scope without a provider turn.
+The SDK requires `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`; it isolates its
+configuration and loads no ambient user/project tools, hooks, or plugins.
+
+The immutable scope, SDK scratch files, and report stay under
+`.orgasmic/tmp/retro/evidence`. The worker receives only catalog, materialize,
+bounded read, and submit tools; it receives no daemon bearer token. Submission
+is the retrospective's explicit terminal declaration. Provider exit without
+submission is failure, with the scope retained for inspection. Changed sources
+require a new manual scope. Evidence never authorizes source-run completion,
+recovery, task transitions, or cleanup. Neither command restarts the daemon;
+retrospectives have no automatic trigger.

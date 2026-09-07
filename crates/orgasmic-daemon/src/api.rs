@@ -787,6 +787,10 @@ pub fn router(state: ApiState) -> Router {
             get(get_run_native_transcript),
         )
         .route("/runs/:id/recover", post(post_run_recover))
+        .route(
+            "/runs/:id/evidence/materialize",
+            post(post_run_evidence_materialize),
+        )
         .route("/runs/:id/input", post(post_run_input))
         .route(
             "/runs/:id/runtime-options",
@@ -805,6 +809,8 @@ pub fn router(state: ApiState) -> Router {
             get(get_prompt_spec).post(post_prompt_spec_save),
         )
         .route("/prompt-specs/:id/compile", post(post_prompt_spec_compile))
+        .route("/projects/:project/retro", post(post_retro_prepare))
+        .route("/projects/:project/retro/:id/tool", post(post_retro_tool))
         .route("/prompt-specs/:id/lint", post(post_prompt_spec_lint))
         .route("/prompt-specs/:id/fork", post(post_prompt_spec_fork))
         .route("/skills", get(get_skills))
@@ -10375,7 +10381,132 @@ fn refresh_project_catalog(catalog: &crate::run_catalog::RunCatalog, canonical_r
     );
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetroToolRequest {
+    scope_sha256: String,
+    request: crate::retro::Request,
+}
+
+async fn post_retro_prepare(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Path(project_id): Path<String>,
+    Json(selectors): Json<crate::retro::Selectors>,
+) -> Result<Json<Value>, ApiError> {
+    let (_, snapshot) =
+        resolve_authorized_project(&state, &identity, Some(&project_id), Action::TasksRead).await?;
+    let project = snapshot
+        .project(&project_id)
+        .ok_or_else(|| ApiError::not_found("project"))?;
+    let root = project.root.clone();
+    let tasks = project
+        .tasks
+        .iter()
+        .map(|t| json!({"id":t.id,"title":t.title,"lifecycle_stage":t.lifecycle_stage}))
+        .collect();
+    let roots =
+        TranscriptRoots::from_env_home().ok_or_else(|| ApiError::internal("HOME is unset"))?;
+    let home = state.home.clone();
+    // Private catalog: an explicit diagnostic must not publish tombstones or catalog changes.
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Value> {
+        let entries = crate::retro::catalog_entries(&root, &project_id)?;
+        let tx = project_tx_entries(&root).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let prompt =
+            crate::prompt_compiler::compile_prompt_spec(&home, "retro", Default::default())?;
+        anyhow::ensure!(
+            !prompt.diagnostics.iter().any(|d| d.level == "error"),
+            "retro prompt has compile errors"
+        );
+        crate::retro::prepare(
+            &root,
+            &project_id,
+            selectors,
+            entries,
+            tasks,
+            &tx,
+            prompt.text,
+            &roots,
+        )
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(result))
+}
+
+async fn post_retro_tool(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Path((project_id, id)): Path<(String, String)>,
+    Json(req): Json<RetroToolRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let (_, snapshot) =
+        resolve_authorized_project(&state, &identity, Some(&project_id), Action::TasksRead).await?;
+    let root = snapshot
+        .project(&project_id)
+        .ok_or_else(|| ApiError::not_found("project"))?
+        .root
+        .clone();
+    let roots =
+        TranscriptRoots::from_env_home().ok_or_else(|| ApiError::internal("HOME is unset"))?;
+    let runtime = tokio::runtime::Handle::current();
+    let result = tokio::task::spawn_blocking(move || {
+        runtime.block_on(crate::retro::request(
+            &root,
+            &id,
+            &req.scope_sha256,
+            req.request,
+            &roots,
+        ))
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(result))
+}
+
 /// Resolve harness-native session transcript for a run (TASK-0SADP / dec_WDR5K item 7).
+async fn post_run_evidence_materialize(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::native_evidence::MaterializedEvidence>, ApiError> {
+    let projects = state.index.snapshot().await.board;
+    let lookup_id = id.clone();
+    let (project_root, canonical_session) =
+        tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let mut matches = Vec::new();
+            for project in projects {
+                for entry in crate::retro::catalog_entries(&project.path, &project.id)? {
+                    if entry.run_id == lookup_id {
+                        matches.push((project.path.clone(), entry.session_path));
+                    }
+                }
+            }
+            anyhow::ensure!(matches.len() == 1, "registered run is missing or ambiguous");
+            Ok(matches.pop().unwrap())
+        })
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let roots =
+        TranscriptRoots::from_env_home().ok_or_else(|| ApiError::internal("HOME is unset"))?;
+    let runtime = tokio::runtime::Handle::current();
+    let result = tokio::task::spawn_blocking(move || {
+        runtime.block_on(crate::native_evidence::materialize(
+            &project_root,
+            &id,
+            &canonical_session,
+            &roots,
+        ))
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(result))
+}
+
+/// Read-only lookup; conversion is a separate explicit POST.
 async fn get_run_native_transcript(
     State(state): State<ApiState>,
     Path(id): Path<String>,
@@ -26373,6 +26504,84 @@ pub(crate) mod tests {
             body["result"]["correlation"],
             "recorded_native_runtime_session_path"
         );
+    }
+
+    #[tokio::test]
+    async fn explicit_materialization_http_keeps_operational_history_unchanged() {
+        let _live_guard = live_session_guard();
+        let mut env = TestEnvGuard::acquire().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let user_home = tmp.path().join("vendor-home");
+        env.set("HOME", &user_home);
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("project");
+        seed_project(&home, &project_root, "proj");
+        let native = user_home.join(".claude/projects/project/native.jsonl");
+        std::fs::create_dir_all(native.parent().unwrap()).unwrap();
+        std::fs::write(&native, "{\"type\":\"result\",\"sessionId\":\"native-id\",\"is_error\":false,\"result\":\"diagnostic success only\"}\n").unwrap();
+        let session_path = project_sessions_dir(&project_root).join("run-materialize.jsonl");
+        let mut writer = orgasmic_core::SessionWriter::open(
+            &session_path,
+            RuntimeIdentity::new("run-materialize", "old-boot"),
+        )
+        .unwrap();
+        writer.append(SessionEventKind::Lifecycle, json!({"phase":"acquire","task_id":"TASK-RETRO","kind":"worker","worker_id":"fixture"})).unwrap();
+        writer.append(SessionEventKind::Lifecycle, json!({"phase":"run_meta","transport":"stdio","harness":"claude","project_id":"proj","worktree":project_root,"driver_config":{}})).unwrap();
+        writer.append(SessionEventKind::Lifecycle, json!({"phase":"native_runtime","provider":"claude","session_id":"native-id","session_path":native,"launch_argv":[],"resume_argv":[]})).unwrap();
+        writer.append(SessionEventKind::Lifecycle, json!({"phase":"release","reason":"protocol_end_without_finalize","outcome":"failed","finalized_by_worker":false})).unwrap();
+        drop(writer);
+        let before = std::fs::read(&session_path).unwrap();
+        let native_before = std::fs::read(&native).unwrap();
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .unwrap();
+        let client = reqwest::Client::new();
+        let token = read_token(&home);
+        let url = format!(
+            "http://{}/api/runs/run-materialize/evidence/materialize",
+            running.addr
+        );
+        let denied = client.post(&url).json(&json!({})).send().await.unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        let read = client
+            .get(format!(
+                "http://{}/api/runs/run-materialize/native-transcript",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert!(read.status().is_success());
+        assert!(!project_root.join(".orgasmic/tmp/retro/evidence").exists());
+        for cache_hit in [false, true] {
+            let response = client
+                .post(&url)
+                .bearer_auth(&token)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let body: Value = response.json().await.unwrap();
+            assert!(status.is_success(), "{status}: {body}");
+            assert_eq!(body["cache_hit"], cache_hit);
+            assert_eq!(body["provenance"], "derived_native");
+            assert_eq!(body["summary"]["events"]["run_complete"], 1);
+            assert!(body.get("records").is_none());
+        }
+        assert_eq!(std::fs::read(&session_path).unwrap(), before);
+        assert_eq!(std::fs::read(native).unwrap(), native_before);
+        assert!(running.boot_id != "old-boot");
+        let envelopes = read_session_file(&session_path).unwrap();
+        assert_eq!(
+            dispatch_release_outcome(&envelopes),
+            Some(ReleaseOutcome::Failed)
+        );
+        assert!(!dispatch_release_finalized_by_worker(&envelopes));
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 
     #[tokio::test]
