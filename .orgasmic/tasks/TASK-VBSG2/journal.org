@@ -31,3 +31,34 @@
 :TO_STATE: in_progress
 :EVENT_ID: 4879a580-7b1a-42a5-970e-8c4c7776bf01
 :END:
+
+* tx-20260907-orgasmic-6db39c6a-e7cf-4e4d-aa4a-96836cecd9f1 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260907-orgasmic-6db39c6a-e7cf-4e4d-aa4a-96836cecd9f1
+:TIME:    [2026-09-07 Mon 07:28:52]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-VBSG2
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-VBSG2/node.org
+:REASON: edited task node TASK-VBSG2
+:NODE_ID: TASK-VBSG2
+:EVENT_ID: c48dcb47-a55d-427e-9ab6-bc073806943d
+:END:
+
+* tx-20260907-orgasmic-df03ae69-da20-4ce2-9390-5d82660cde49 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260907-orgasmic-df03ae69-da20-4ce2-9390-5d82660cde49
+:TIME:    [2026-09-07 Mon 07:28:52]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-VBSG2
+:TARGET: .orgasmic/tasks/TASK-VBSG2/node.org
+:REASON: Both slices implemented, final diff inspected, 26 offline tests and strict static checks passed; source-only review evidence attached.
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 7a555649-66d2-4d38-a14b-d4879246d816
+:END:

@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-VBSG2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-VBSG2 Add explicit Claude evidence materialization and manual multi-run retro dispatch :retro:claude:evidence:
+* IN_REVIEW TASK-VBSG2 Add explicit Claude evidence materialization and manual multi-run retro dispatch :retro:claude:evidence:
 :PROPERTIES:
 :DEPENDS_ON: TASK-FZB6T
 :ID: TASK-VBSG2
@@ -29,4 +29,6 @@ Use a backlog-to-done task with multiple implementer/reviewer/recovery runs as t
 Blocked in practice for the acp-stdio transport by TASK-VB9DQ. Measured 2026-07-25: the acp-stdio claude adapter passes `--no-session-persistence` and writes zero native transcripts (0 new files under `~/.claude/projects` versus 1 for an otherwise identical run), never passes `--session-id`, and never emits a `NativeRuntime` lifecycle event. Slice A's materializer resolves verified NativeRuntime metadata and parses Claude native JSONL, so for acp-stdio runs there is nothing to resolve and nothing to parse. The rmux/tmux transport is unaffected — it mints an explicit session id and records launch/resume argv. Land TASK-VB9DQ first, or scope this task to TUI-transport runs and say so explicitly.
 ** Status 2026-09-06
 Source/ledger triage at main 0bf80eb0. P1 retained as unimplemented feature scope. Installed run CLI exposes history/native-transcript/recover, but no evidence materialize verb; materialization and multi-run retro acceptance remain. The old transport blocker note names retired paths and must be revalidated before design; NativeRuntime availability is per adapter/run. No provider calls or retrospective worker launched.
+** Evidence
+Both slices implemented in local commit 66e7f6e1a6c45a1a7e871222a20d135848ad846f. Explicit Claude NativeRuntime-correlated, bounded, versioned derived evidence cache plus manager retro selectors, immutable scope, read-only SDK tool broker, lazy materialization, evidence-linked report and explicit submission terminal declaration. 26 distinct offline tests pass, plus TypeScript typecheck, cargo fmt, and Clippy with warnings denied. RED/GREEN collector regression: old behavior times out on 64 tool blocks; fix passes. Real CLI/daemon/offline-worker integration verifies submission and refusal on exit without report. Backlog-to-done multi-role/recovery fixture verifies cache hits, new source digest, ambiguity refusal, ordering, scope/citation guards, bounded cross-run findings, and unchanged source history. Evidence: /Users/aspirational/.codex/artifacts/orgasmic-vbsg2-20260907/acceptance.md. No billed provider calls or live Claude output-quality/authentication verification. Claude SDK retrospective requires explicit API/OAuth environment credentials. Local source only; not pushed, installed, or released. Operator PID 39114 and boot 019f72b5-9e79-4536-905c-a95dff391ac7 preserved; P0 restart stays explicit.
 
