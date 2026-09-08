@@ -1681,24 +1681,8 @@ impl Supervisor {
         // The capability is injected only into a bare app terminal's launch
         // environment. It is deliberately stripped before RunMeta is written:
         // session JSONL is durable evidence, not secret storage.
-        let mut persisted_driver_config = req.driver_config.clone();
-        if let Some(object) = persisted_driver_config.0.as_object_mut() {
-            object.remove("manager_terminal_capability");
-            object.remove("report_path");
-        }
-        if let Some(path) = req.last_path.as_ref() {
-            let path = path.to_str().ok_or_else(|| {
-                SupervisorError::Driver(DriverError::InvalidConfig(
-                    "report path must be UTF-8".into(),
-                ))
-            })?;
-            let object = persisted_driver_config.0.as_object_mut().ok_or_else(|| {
-                SupervisorError::Driver(DriverError::InvalidConfig(
-                    "a run with a report path requires an object driver config".into(),
-                ))
-            })?;
-            object.insert("report_path".into(), serde_json::Value::String(path.into()));
-        }
+        let persisted_driver_config =
+            persisted_driver_config(&req.driver_config, req.last_path.as_deref())?;
         // The dispatch path writes its preflight verdict onto the config it
         // hands over (`api::spawn_worker_run`); lift it into the run's own
         // record so RunMeta and `/api/runs` say it without parsing the config.
@@ -6340,6 +6324,32 @@ pub(crate) fn dispatch_worktree_checked_out_branch(worktree: &Path) -> Option<St
     }
 }
 
+/// Canonical non-secret config used by both immutable recovery plans and RunMeta.
+pub(crate) fn persisted_driver_config(
+    config: &DriverConfig,
+    last_path: Option<&Path>,
+) -> Result<DriverConfig, SupervisorError> {
+    let mut config = config.clone();
+    if let Some(object) = config.0.as_object_mut() {
+        object.remove("manager_terminal_capability");
+        object.remove("report_path");
+    }
+    if let Some(path) = last_path {
+        let path = path.to_str().ok_or_else(|| {
+            SupervisorError::Driver(DriverError::InvalidConfig(
+                "report path must be UTF-8".into(),
+            ))
+        })?;
+        let object = config.0.as_object_mut().ok_or_else(|| {
+            SupervisorError::Driver(DriverError::InvalidConfig(
+                "a run with a report path requires an object driver config".into(),
+            ))
+        })?;
+        object.insert("report_path".into(), serde_json::Value::String(path.into()));
+    }
+    Ok(config)
+}
+
 /// Whether this run requires an explicit worker-declared terminal call
 /// (dec_WDR5K item 6 / TASK-S52X9). Dispatch and stage grill/plan advertise the
 /// contract when they carry a `last_path`; artifactor and manager always do
@@ -9363,56 +9373,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatched_subprocess_exports_its_authoritative_report_path() {
-        use orgasmic_drivers::{
-            HarnessEventAdapter, HarnessRequest, StdioDriver, SubprocessStreamJsonDriver,
-        };
-        struct ReportAdapter;
-        #[async_trait::async_trait]
-        impl HarnessEventAdapter for ReportAdapter {
-            fn harness(&self) -> &'static str {
-                "report-fixture"
-            }
-            fn clone_box(&self) -> Box<dyn HarnessEventAdapter> {
-                Box::new(Self)
-            }
-            async fn parse_event(&mut self, raw: serde_json::Value) -> Vec<DriverEvent> {
-                vec![serde_json::from_value(raw).unwrap()]
-            }
-            fn compose_request(
-                &mut self,
-                _ctx: &DriverContext,
-                config: &DriverConfig,
-            ) -> Result<HarnessRequest, DriverError> {
-                Ok(HarnessRequest::Subprocess {
-                    binary: "/bin/sh".into(),
-                    args: vec![
-                        "-c".into(),
-                        r#"printf '%s' "$ORGASMIC_REPORT_PATH" > "$REPORT_FIXTURE_OBSERVATION"
-if [ -n "$ORGASMIC_REPORT_PATH" ]; then
-    printf 'worker report: %s' "$ORGASMIC_REPORT_PATH" > "$ORGASMIC_REPORT_PATH"
-fi
-printf '%s\n' '{"type":"text_chunk","stream":"assistant","chunk":"transport text","seq":0}'
-"#
-                        .into(),
-                    ],
-                    env: [
-                        ("ORGASMIC_REPORT_PATH".into(), "wrong inherited path".into()),
-                        (
-                            "REPORT_FIXTURE_OBSERVATION".into(),
-                            config.0["observation_path"].as_str().unwrap().into(),
-                        ),
-                    ]
-                    .into(),
-                    cwd: None,
-                    stdin_payload: None,
-                    close_stdin: true,
-                })
-            }
-        }
-        for driver in [
-            Box::new(StdioDriver::new(Box::new(ReportAdapter))) as Box<dyn WorkerDriver>,
-            Box::new(SubprocessStreamJsonDriver::new(Box::new(ReportAdapter))),
-        ] {
+        for driver in crate::driver_resolution::report_fixture_drivers() {
             for assigned in [true, false] {
                 let (sup, dir, _writer) = make_supervisor();
                 let mut req = dispatch_impl_req("TASK-REPORT-ENV", dir.path());

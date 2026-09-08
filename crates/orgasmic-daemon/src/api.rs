@@ -9569,7 +9569,7 @@ struct TxDestination {
 }
 
 fn event_routes_to_journal(ty: &str) -> bool {
-    if ty.ends_with(".deleted") {
+    if ty.ends_with(".deleted") || matches!(ty, "graph.handoff.edited" | "graph.project.edited") {
         return false;
     }
     matches!(
@@ -12060,6 +12060,12 @@ async fn post_run_recover(
         } else {
             None
         };
+        // Freeze the same non-secret config that acquire writes to RunMeta.
+        // Report-path injection after signing the plan makes recovery reject
+        // its own session as a conflicting immutable prefix.
+        let driver_config =
+            crate::supervisor::persisted_driver_config(&driver_config, last_path.as_deref())
+                .map_err(supervisor_recover_error)?;
         let kind = "worker".to_string();
         let spec = PendingRecoveryClaimSpec {
             project_id: project_id.clone(),
@@ -26333,6 +26339,10 @@ pub(crate) mod tests {
         ("graph.gotcha.edited", true),
         ("graph.convention.created", true),
         ("graph.convention.edited", true),
+        ("graph.meetings.created", true),
+        ("graph.meetings.edited", true),
+        ("link.updated", true),
+        ("attachment.created", true),
         ("reviewer.finding", true),
         ("review.verdict", true),
         ("artifact.created", true),
@@ -38326,8 +38336,10 @@ pub(crate) mod tests {
             .send()
             .await
             .unwrap();
-        assert!(resp.status().is_success(), "recover: {}", resp.status());
-        let continued: serde_json::Value = resp.json().await.unwrap();
+        let status = resp.status();
+        let body = resp.text().await.unwrap();
+        assert!(status.is_success(), "recover: {status}: {body}");
+        let continued: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_ne!(continued["run_id"], "run-failed-recover");
         assert_eq!(continued["action"], "start_recovery_run");
         assert!(continued["draft_prompt"].as_str().is_some());
