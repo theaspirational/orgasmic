@@ -1015,6 +1015,9 @@ impl Index {
             return Ok(true);
         }
         if let (Some(collection), Some(node_id)) = (parts.get(1), parts.get(2)) {
+            if !orgasmic_core::paths::is_node_collection(collection) {
+                return Ok(false);
+            }
             if !node_id.ends_with(".org") {
                 return self.reload_node_dir(&entry, collection, node_id).await;
             }
@@ -1188,6 +1191,16 @@ impl Index {
                 }
             } else {
                 remove_graph_node_source(&mut project.graph, &node_dir);
+            }
+        } else if orgasmic_core::paths::is_node_collection(collection) {
+            remove_graph_node_source(&mut project.graph, &node_dir);
+            if let Some(contents) = node_contents.as_ref() {
+                match OrgFile::parse(contents, node_path.to_string_lossy()) {
+                    Ok(file) => {
+                        load_generic_nodes(&file, &node_path, collection, &mut project.graph)
+                    }
+                    Err(error) => push_parse_error(&mut snap, node_path.clone(), error.to_string()),
+                }
             }
         }
 
@@ -3130,6 +3143,41 @@ impl Index {
                 Err(err) => push_parse_error(snap, glossary, err),
             }
         }
+        match orgasmic_core::paths::node_collections(&board_entry.path) {
+            Ok(collections) => {
+                for collection in collections {
+                    if matches!(
+                        collection.as_str(),
+                        "tasks" | "decisions" | "glossary" | "artifacts"
+                    ) {
+                        continue;
+                    }
+                    match collection_node_file_paths(&board_entry.path, &collection) {
+                        Ok(paths) => {
+                            for path in paths {
+                                match read_org_tracked(&path, snap) {
+                                    Ok(file) => load_generic_nodes(
+                                        &file,
+                                        &path,
+                                        &collection,
+                                        &mut project.graph,
+                                    ),
+                                    Err(error) => push_parse_error(snap, path, error),
+                                }
+                            }
+                        }
+                        Err(error) => push_parse_error(
+                            snap,
+                            board_entry.path.join(".orgasmic").join(collection),
+                            error.to_string(),
+                        ),
+                    }
+                }
+            }
+            Err(error) => {
+                push_parse_error(snap, board_entry.path.join(".orgasmic"), error.to_string())
+            }
+        }
     }
 
     fn load_home_tx(&self, snap: &mut IndexSnapshot) {
@@ -3375,6 +3423,28 @@ fn load_glossary(file: &OrgFile, source: &Path, graph: &mut GraphIndex) {
             relates_to: own_vec(&term.relates_to),
             definition: term.definition.map(str::to_string),
             source_file: source.to_path_buf(),
+        });
+    }
+}
+
+fn load_generic_nodes(file: &OrgFile, source: &Path, collection: &str, graph: &mut GraphIndex) {
+    for heading in &file.headings {
+        let Some(id) = heading.property("ID") else {
+            continue;
+        };
+        let outgoing = heading
+            .property_entries()
+            .filter(|property| {
+                orgasmic_core::REFERENCE_PROPERTY_KEYS.contains(&property.key.as_str())
+            })
+            .flat_map(|property| property.value.split_whitespace().map(str::to_string))
+            .collect();
+        graph.nodes.push(GraphNodeSummary {
+            id: id.to_string(),
+            layer: collection.to_string(),
+            outgoing,
+            source_file: source.to_path_buf(),
+            superseded: false,
         });
     }
 }

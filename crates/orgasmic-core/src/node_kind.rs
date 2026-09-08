@@ -1,72 +1,59 @@
-//! Canonical `--kind` vocabulary for `org node` reads/writes (TASK-JJ9RD).
-//!
-//! The daemon's node-layer resolver and the CLI's `--kind` argument must
-//! accept exactly the same set of strings, or a request can silently resolve
-//! against the wrong `.org` file. Both derive from [`NodeKind`] instead of
-//! keeping independent lists, and a parity test in `orgasmic-cli` asserts the
-//! CLI's advertised kinds match this list.
-
-/// One selectable org-node layer. Node ids that lack a distinctive prefix
-/// (`project`) can only be resolved through an explicit `--kind`.
+//! Registry-resolved node kind. Collection names are open; these constants
+//! select existing compiled behavior and core singleton storage only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeKind {
-    Decision,
-    Glossary,
-    Project,
-    Task,
-    Goal,
-    Handoff,
-}
+pub struct NodeKind<'a>(&'a str);
 
-impl NodeKind {
-    /// Every accepted kind, in the order shown in `--help`.
-    pub const ALL: [NodeKind; 6] = [
-        NodeKind::Decision,
-        NodeKind::Glossary,
-        NodeKind::Project,
-        NodeKind::Task,
-        NodeKind::Goal,
-        NodeKind::Handoff,
-    ];
+#[allow(non_upper_case_globals)]
+impl<'a> NodeKind<'a> {
+    pub const Task: Self = Self("task");
+    pub const Decision: Self = Self("decision");
+    pub const Glossary: Self = Self("glossary");
+    pub const Artifact: Self = Self("artifact");
+    pub const Project: Self = Self("project");
+    pub const Goal: Self = Self("goal");
+    pub const Handoff: Self = Self("handoff");
 
-    pub fn as_str(self) -> &'static str {
+    pub fn collection(collection: &'a str) -> Self {
+        match collection {
+            "tasks" => Self::Task,
+            "decisions" => Self::Decision,
+            "glossary" => Self::Glossary,
+            "artifacts" => Self::Artifact,
+            name => Self(name),
+        }
+    }
+    pub fn singleton(kind: &str) -> Option<Self> {
+        match kind {
+            "project" => Some(Self::Project),
+            "goal" => Some(Self::Goal),
+            "handoff" => Some(Self::Handoff),
+            _ => None,
+        }
+    }
+    pub fn as_str(self) -> &'a str {
+        self.0
+    }
+    pub fn layer_name(self) -> &'a str {
+        self.0
+    }
+    pub fn collection_name(self) -> Option<&'a str> {
         match self {
-            NodeKind::Decision => "decision",
-            NodeKind::Glossary => "glossary",
-            NodeKind::Project => "project",
-            NodeKind::Task => "task",
-            NodeKind::Goal => "goal",
-            NodeKind::Handoff => "handoff",
+            Self::Project | Self::Goal | Self::Handoff => None,
+            Self::Task => Some("tasks"),
+            Self::Decision => Some("decisions"),
+            Self::Artifact => Some("artifacts"),
+            _ => Some(self.0),
         }
     }
-
-    pub fn parse(s: &str) -> Option<NodeKind> {
-        NodeKind::ALL.into_iter().find(|kind| kind.as_str() == s)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn as_str_and_parse_round_trip_for_every_kind() {
-        for kind in NodeKind::ALL {
-            assert_eq!(NodeKind::parse(kind.as_str()), Some(kind));
-        }
-    }
-
-    #[test]
-    fn parse_rejects_unknown_kind() {
-        assert_eq!(NodeKind::parse("bogus"), None);
-        assert_eq!(NodeKind::parse(""), None);
-    }
-
-    #[test]
-    fn all_kinds_have_distinct_strings() {
-        let mut seen = std::collections::BTreeSet::new();
-        for kind in NodeKind::ALL {
-            assert!(seen.insert(kind.as_str()), "duplicate kind string {kind:?}");
+    pub fn artifact_name(self) -> &'static str {
+        match self {
+            Self::Project => "project file",
+            Self::Goal => "goal file",
+            Self::Handoff => "handoff file",
+            Self::Task => "task file",
+            Self::Decision => "decisions file",
+            Self::Glossary => "glossary file",
+            _ => "node file",
         }
     }
 }

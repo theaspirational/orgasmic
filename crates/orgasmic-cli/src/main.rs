@@ -706,28 +706,9 @@ enum IdCmd {
     Mint {
         /// Node class the id is minted for; fixes the id prefix
         /// (`task` → `TASK-…`, `decision` → `dec_…`, `term` → `term_…`).
-        #[arg(long, value_enum)]
-        class: MintClassArg,
+        #[arg(long)]
+        class: String,
     },
-}
-
-#[derive(clap::ValueEnum, Clone, Debug)]
-enum MintClassArg {
-    Task,
-    Decision,
-    Term,
-    Artifact,
-}
-
-impl MintClassArg {
-    fn collection(&self) -> &'static str {
-        match self {
-            Self::Task => "tasks",
-            Self::Decision => "decisions",
-            Self::Term => "glossary",
-            Self::Artifact => "artifacts",
-        }
-    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -1192,6 +1173,7 @@ enum RunCmd {
 enum RunEvidenceCmd {
     /// Convert verified Claude native history into a bounded derived cache.
     Materialize {
+        /// Run id whose native evidence should be materialized.
         #[arg(long)]
         run: String,
     },
@@ -3383,15 +3365,10 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
 fn cmd_id(home: &Home, cmd: IdCmd) -> Result<()> {
     match cmd {
         IdCmd::Mint { class } => {
-            let descriptor_dir = home.source().join("shipped/schema/node-types");
-            let registry = if descriptor_dir.is_dir() {
-                orgasmic_daemon::node_types::NodeTypeRegistry::load(&descriptor_dir)?
-            } else {
-                orgasmic_daemon::node_types::NodeTypeRegistry::embedded()?
-            };
-            let descriptor = registry.descriptor(class.collection()).with_context(|| {
-                format!("missing shipped descriptor for {}", class.collection())
-            })?;
+            let registry = orgasmic_core::NodeTypeRegistry::for_home(home)?;
+            let descriptor = registry
+                .collection_for_kind(&class)
+                .with_context(|| format!("unknown node class {class}"))?;
             println!("{}", orgasmic_core::mint_node_id(descriptor));
             Ok(())
         }

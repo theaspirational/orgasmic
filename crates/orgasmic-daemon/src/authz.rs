@@ -25,12 +25,13 @@ pub enum Action {
     ArtifactsComment,
     ArtifactsGenerate,
     OrgWrite,
+    NodesWrite,
     #[allow(dead_code)]
     MembersManage,
 }
 
 impl Action {
-    pub const ALL: [Action; 11] = [
+    pub const ALL: [Action; 12] = [
         Action::ProjectRead,
         Action::GraphRead,
         Action::TasksRead,
@@ -41,6 +42,7 @@ impl Action {
         Action::ArtifactsComment,
         Action::ArtifactsGenerate,
         Action::OrgWrite,
+        Action::NodesWrite,
         Action::MembersManage,
     ];
 }
@@ -60,6 +62,7 @@ pub fn action_name(action: Action) -> &'static str {
         Action::ArtifactsComment => "artifacts.comment",
         Action::ArtifactsGenerate => "artifacts.generate",
         Action::OrgWrite => "org.write",
+        Action::NodesWrite => "nodes.write",
         Action::MembersManage => "members.manage",
     }
 }
@@ -86,6 +89,7 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             ArtifactsComment,
         ],
         "editor" => &[
+            NodesWrite,
             ProjectRead,
             GraphRead,
             TasksRead,

@@ -9,6 +9,18 @@ use anyhow::{bail, Context, Result};
 use crate::id::random_stem;
 use crate::OrgFile;
 
+pub fn validate_component(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.contains(['/', '\\'])
+        || value.chars().any(char::is_control)
+    {
+        bail!("invalid node path component");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeTypeDescriptor {
     pub collection: String,
@@ -19,7 +31,6 @@ pub struct NodeTypeDescriptor {
     pub states: Vec<String>,
     pub transitions: BTreeMap<String, Vec<String>>,
     pub regenerate_prompt: Option<String>,
-    pub reserved_files: Vec<String>,
 }
 
 impl NodeTypeDescriptor {
@@ -28,7 +39,22 @@ impl NodeTypeDescriptor {
         if file.headings.len() != 1 {
             bail!("{display}: node-type descriptor must contain exactly one top-level heading");
         }
-        let heading = &file.headings[0];
+        let root = &file.headings[0];
+        let heading = if root.property("COLLECTION").is_some() {
+            root
+        } else {
+            let mut candidates = root
+                .sections
+                .iter()
+                .filter(|heading| heading.property("COLLECTION").is_some());
+            let heading = candidates
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("{display}: missing node type"))?;
+            if candidates.next().is_some() {
+                bail!("{display}: multiple node types are not supported");
+            }
+            heading
+        };
         let required = |key: &str| -> Result<String> {
             heading
                 .property(key)
@@ -38,6 +64,9 @@ impl NodeTypeDescriptor {
                 .ok_or_else(|| anyhow::anyhow!("{display}: missing required :{key}:"))
         };
         let collection = required("COLLECTION")?;
+        if !crate::paths::is_node_collection(&collection) {
+            bail!("{display}: reserved or invalid collection {collection:?}");
+        }
         if collection == "."
             || collection == ".."
             || collection.contains(['/', '\\'])
@@ -46,10 +75,20 @@ impl NodeTypeDescriptor {
             bail!("{display}: invalid :COLLECTION: {collection:?}");
         }
         let id_prefix = required("ID_PREFIX")?;
-        if id_prefix.contains(['/', '\\']) {
-            bail!("{display}: :ID_PREFIX: must not contain a path separator");
+        if !id_prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            bail!("{display}: :ID_PREFIX: requires letters, digits, hyphens or underscores");
         }
         let states = words(heading.property("STATES"));
+        if states.iter().any(|state| {
+            !state
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        }) {
+            bail!("{display}: states require lowercase letters, digits or underscores");
+        }
         let state_set: BTreeSet<_> = states.iter().map(String::as_str).collect();
         let mut transitions = BTreeMap::new();
         for rule in words(heading.property("TRANSITIONS")) {
@@ -93,7 +132,6 @@ impl NodeTypeDescriptor {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
-            reserved_files: words(heading.property("RESERVED_FILES")),
         })
     }
 

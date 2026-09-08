@@ -9598,7 +9598,7 @@ async fn legacy_torn_dispatch_close_is_still_repaired_by_next_manager_command() 
     assert!(
         !live.status.success()
             && String::from_utf8_lossy(&live.stderr)
-                .contains("not allowed by the shipped task descriptor"),
+                .contains("transition backlog -> in_review is not allowed"),
         "a live backlog -> in_review transition must remain guarded: stdout={}\nstderr={}",
         String::from_utf8_lossy(&live.stdout),
         String::from_utf8_lossy(&live.stderr)

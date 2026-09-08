@@ -762,7 +762,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/reindex/:project", post(post_reindex_project))
         .route("/graph/edges", get(get_graph_edges))
         .route("/org/file", get(get_org_file).post(post_org_file))
-        .route("/org/node", get(get_org_node))
+        .route("/org/node", get(get_org_node).post(post_org_node_create))
         .route("/org/node/:id/edit", post(post_org_node_edit))
         .route("/org/node/:id/delete", post(post_org_node_delete))
         .route("/org/node/:id/regenerate", post(post_node_regenerate))
@@ -849,7 +849,10 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/grill", post(post_grill))
         .route("/plan", post(post_plan))
-        .route("/graph/nodes", get(get_graph_nodes).post(stub("TASK-008")))
+        .route(
+            "/graph/nodes",
+            get(get_graph_nodes).post(post_org_node_create),
+        )
         // Artifact store (arch_ARSPJ / TASK-ZEFEY)
         .route("/artifacts", get(get_artifacts))
         .route("/artifacts/generate", post(post_artifact_generate))
@@ -907,6 +910,10 @@ pub fn router(state: ApiState) -> Router {
 /// `/me` are listed but gate nothing here — their handlers filter results per
 /// identity rather than rejecting the whole request.
 const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/org/node"),
+    ("POST", "/org/node"),
+    ("POST", "/org/node/:id/edit"),
+    ("POST", "/org/node/:id/delete"),
     ("GET", "/board"),
     ("GET", "/me"),
     ("GET", "/projects/:id"),
@@ -918,6 +925,7 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("POST", "/tasks/:id/comments/:entry_id/edit"),
     ("POST", "/tasks/:id/comments/:entry_id/delete"),
     ("GET", "/graph/nodes"),
+    ("POST", "/graph/nodes"),
     ("GET", "/graph/edges"),
     ("GET", "/decisions"),
     ("GET", "/decisions/:id"),
@@ -9159,7 +9167,10 @@ async fn prepare_api_tx_as(
         TxIdPolicy::ProjectSequence { .. } => "pending-project-sequence".to_string(),
     };
     let time_str = tx_time_string_utc(&now);
-    let actor = choose_actor(&pseudo_req, project_entry.as_ref(), state);
+    let actor = identity
+        .member_name()
+        .map(str::to_string)
+        .unwrap_or_else(|| choose_actor(&pseudo_req, project_entry.as_ref(), state));
     // dec_Q78QN — same journal `:ACTOR:` namespace guard as
     // `prepare_tx_append_request`, on the same `choose_actor` chain. A member
     // session is exempt: its handler forces the session name as the actor,
@@ -9399,6 +9410,7 @@ fn event_routes_to_journal(ty: &str) -> bool {
             | "reviewer.finding"
             | "review.verdict"
     ) || ty.starts_with("artifact.")
+        || ty.starts_with("graph.")
 }
 
 fn node_journal_path(project_root: &FsPath, req: &TxAppendRequest) -> Option<PathBuf> {
@@ -9418,6 +9430,7 @@ fn node_journal_path(project_root: &FsPath, req: &TxAppendRequest) -> Option<Pat
         );
     }
     let id = (ids.len() == 1).then(|| ids.into_iter().next()).flatten()?;
+    orgasmic_core::node_type::validate_component(&id).ok()?;
     let dotorg = project_root.join(".orgasmic");
     if let Some(target) = req.target.as_deref().map(PathBuf::from) {
         let target = if target.is_absolute() {
@@ -9436,10 +9449,10 @@ fn node_journal_path(project_root: &FsPath, req: &TxAppendRequest) -> Option<Pat
             return Some(target.with_file_name("journal.org"));
         }
     }
-    std::fs::read_dir(dotorg)
+    orgasmic_core::paths::node_collections(project_root)
         .ok()?
-        .filter_map(Result::ok)
-        .map(|collection| collection.path().join(&id))
+        .into_iter()
+        .map(|collection| dotorg.join(collection).join(&id))
         .find(|node| node.join("node.org").is_file() || node.join("artifact.org").is_file())
         .map(|node| node.join("journal.org"))
 }
@@ -15800,98 +15813,7 @@ impl GraphLayer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NodeLayer {
-    Decision,
-    Glossary,
-    Project,
-    Task,
-    Goal,
-    Handoff,
-}
-
-impl NodeLayer {
-    fn layer_name(self) -> &'static str {
-        match self {
-            Self::Decision => "decision",
-            Self::Glossary => "glossary",
-            Self::Project => "project",
-            Self::Task => "task",
-            Self::Goal => "goal",
-            Self::Handoff => "handoff",
-        }
-    }
-
-    fn artifact_name(self) -> &'static str {
-        match self {
-            Self::Decision => "decisions file",
-            Self::Glossary => "glossary file",
-            Self::Project => "project file",
-            Self::Task => "task file",
-            Self::Goal => "goal file",
-            Self::Handoff => "handoff file",
-        }
-    }
-
-    /// Infer the org-node layer that owns a node id. Retired `arch_` ids are
-    /// rejected rather than falling through to the glossary file.
-    fn for_id(id: &str) -> Option<Self> {
-        if id.starts_with("arch_") {
-            None
-        } else if id.starts_with("TASK-") {
-            Some(Self::Task)
-        } else if id.starts_with("dec_") {
-            Some(Self::Decision)
-        } else if id == "handoff-current" {
-            Some(Self::Handoff)
-        } else if id.starts_with("goal-") {
-            Some(Self::Goal)
-        } else {
-            Some(Self::Glossary)
-        }
-    }
-
-    /// Resolve an explicit `kind` selector back to a live read-model layer.
-    /// Used when the node id alone cannot identify the owning file. The core
-    /// registry still carries retired kinds until their owning excision stage.
-    fn from_kind(kind: &str) -> Option<Self> {
-        match orgasmic_core::NodeKind::parse(kind)? {
-            orgasmic_core::NodeKind::Decision => Some(Self::Decision),
-            orgasmic_core::NodeKind::Glossary => Some(Self::Glossary),
-            orgasmic_core::NodeKind::Project => Some(Self::Project),
-            orgasmic_core::NodeKind::Task => Some(Self::Task),
-            orgasmic_core::NodeKind::Goal => Some(Self::Goal),
-            orgasmic_core::NodeKind::Handoff => Some(Self::Handoff),
-        }
-    }
-}
-
-impl From<NodeLayer> for orgasmic_core::NodeKind {
-    fn from(layer: NodeLayer) -> Self {
-        match layer {
-            NodeLayer::Decision => Self::Decision,
-            NodeLayer::Glossary => Self::Glossary,
-            NodeLayer::Project => Self::Project,
-            NodeLayer::Task => Self::Task,
-            NodeLayer::Goal => Self::Goal,
-            NodeLayer::Handoff => Self::Handoff,
-        }
-    }
-}
-
-const ACCEPTED_NODE_KINDS: [orgasmic_core::NodeKind; 6] = [
-    orgasmic_core::NodeKind::Decision,
-    orgasmic_core::NodeKind::Glossary,
-    orgasmic_core::NodeKind::Project,
-    orgasmic_core::NodeKind::Task,
-    orgasmic_core::NodeKind::Goal,
-    orgasmic_core::NodeKind::Handoff,
-];
-
-/// Kinds this daemon accepts for `--kind` on `node prop/body get/set`.
-pub fn accepted_node_kinds() -> &'static [orgasmic_core::NodeKind] {
-    &ACCEPTED_NODE_KINDS
-}
+use orgasmic_core::NodeKind;
 
 /// Write-time reference-property guard (dec_HJENQ vocabulary), front-running
 /// the index-time dangling-reference lint that previously only surfaced this
@@ -15959,6 +15881,15 @@ impl ReferenceGuard {
 
 async fn create_graph_heading(
     state: &ApiState,
+    layer: GraphLayer,
+    req: GraphCreateRequest,
+) -> Result<Json<GraphMutationResponse>, ApiError> {
+    create_graph_heading_as(state, &Identity::Admin, layer, req).await
+}
+
+async fn create_graph_heading_as(
+    state: &ApiState,
+    identity: &Identity,
     layer: GraphLayer,
     req: GraphCreateRequest,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
@@ -16033,18 +15964,21 @@ async fn create_graph_heading(
     let source = orgasmic_core::node_kernel::node_org_header(layer.label(), &node_id) + &heading;
     OrgFile::parse(source.clone(), path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
-    write_graph_and_record(GraphWriteRequest {
-        state,
-        layer,
-        project_id,
-        path,
-        source,
-        request_id: req.request_id,
-        mutation: Some(mutation),
-        tx_type: format!("graph.{}.created", layer.layer_name()),
-        node_id,
-        action: "created",
-    })
+    write_graph_and_record_as(
+        GraphWriteRequest {
+            state,
+            layer,
+            project_id,
+            path,
+            source,
+            request_id: req.request_id,
+            mutation: Some(mutation),
+            tx_type: format!("graph.{}.created", layer.layer_name()),
+            node_id,
+            action: "created",
+        },
+        identity,
+    )
     .await
 }
 
@@ -16091,7 +16025,7 @@ pub fn normalize_glossary_identity(value: &str) -> String {
 }
 
 fn glossary_heading_human_title(heading: &Heading) -> String {
-    node_display_title(heading, NodeLayer::Glossary)
+    node_display_title(heading, NodeKind::Glossary)
 }
 
 fn reject_glossary_duplicate_identity(
@@ -16429,6 +16363,268 @@ async fn delete_decision_heading(
 
 // --- generic org-node read/edit (editor surface) ------------------------
 
+#[derive(Debug, Deserialize, Serialize)]
+struct NodeCreateRequest {
+    project: Option<String>,
+    kind: String,
+    title: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    properties: BTreeMap<String, String>,
+    #[serde(default)]
+    request_id: Option<String>,
+}
+
+async fn post_org_node_create(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Json(req): Json<NodeCreateRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let (project_id, snapshot) = resolve_authorized_project(
+        &state,
+        &identity,
+        req.project.as_deref(),
+        Action::NodesWrite,
+    )
+    .await?;
+    let project = select_loaded_project(&snapshot, &project_id)?;
+    let descriptor = state
+        .node_types
+        .collection_for_kind(&req.kind)
+        .ok_or_else(|| ApiError::bad_request("unknown node collection"))?;
+    let kind = NodeKind::collection(&descriptor.collection);
+    validate_node_title(&req.title)?;
+    if kind == NodeKind::Task {
+        let response = post_task_create_as(
+            State(state.clone()),
+            Path(project_id),
+            Json(TaskCreateRequest {
+                id: None,
+                title: req.title,
+                tags: Vec::new(),
+                properties: req.properties,
+                body: Some(req.body),
+                reason: None,
+                request_id: req.request_id,
+                force: false,
+            }),
+            &identity,
+        )
+        .await?;
+        return Ok(Json(json!(response.0)));
+    }
+    if kind == NodeKind::Decision || kind == NodeKind::Glossary {
+        let response = create_graph_heading_as(
+            &state,
+            &identity,
+            if kind == NodeKind::Decision {
+                GraphLayer::Decision
+            } else {
+                GraphLayer::Glossary
+            },
+            GraphCreateRequest {
+                project: Some(project_id),
+                request_id: req.request_id,
+                id: None,
+                title: Some(req.title),
+                properties: req.properties,
+                body: Some(req.body),
+                force: false,
+                allow_marker: false,
+            },
+        )
+        .await?;
+        return Ok(Json(json!(response.0)));
+    }
+    if kind == NodeKind::Artifact {
+        let errors = validate_mdx(&req.body);
+        if !errors.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "MDX validation failed: {}",
+                errors.join("; ")
+            )));
+        }
+        if req
+            .properties
+            .keys()
+            .any(|key| !matches!(key.as_str(), "SUBJECT_NODES" | "PROMPT"))
+        {
+            return Err(ApiError::bad_request("artifact create accepts SUBJECT_NODES and PROMPT; title, VERSION and STATE are assigned by the compiled artifact initializer"));
+        }
+    } else {
+        reject_body_with_nested_headings("node create", &req.body)?;
+    }
+    for (key, value) in &req.properties {
+        if key == "ID"
+            || key.is_empty()
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+            || value.chars().any(char::is_control)
+        {
+            return Err(ApiError::bad_request("properties require uppercase keys and single-line values; ID is assigned by the registry"));
+        }
+    }
+    let mutation = mutation_identity("node.created", &project_id, json!(req))?;
+    if let Some(request_id) = req.request_id.as_deref() {
+        if let Some(cached) = state
+            .writer
+            .cached_mutation(request_id, &mutation)
+            .await
+            .map_err(writer_transaction_error)?
+        {
+            return Ok(Json(
+                json!({"id": cached.mutation_id, "tx_id": cached.tx_id}),
+            ));
+        }
+    }
+    let (id, dir) = orgasmic_core::create_node_dir(&project.root, descriptor)
+        .map_err(|error| ApiError::internal(format!("reserve node: {error}")))?;
+    let path = dir.join(NODE_FILE);
+    let mut source = orgasmic_core::node_kernel::node_org_header(&descriptor.label, &id);
+    if !descriptor.states.is_empty() {
+        source.push_str(&format!(
+            "#+todo: {}\n",
+            descriptor.states.join(" ").to_ascii_uppercase()
+        ));
+    }
+    let todo = descriptor
+        .states
+        .first()
+        .map(|state| format!("{} ", state.to_ascii_uppercase()))
+        .unwrap_or_default();
+    source.push_str(&format!(
+        "\n* {todo}{id} {}\n:PROPERTIES:\n:ID: {id}\n",
+        req.title.trim()
+    ));
+    for (key, value) in &req.properties {
+        source.push_str(&format!(":{key}: {}\n", value.trim()));
+    }
+    source.push_str(":END:\n");
+    source.push_str(&req.body);
+    source.push('\n');
+    if kind == NodeKind::Artifact {
+        let subjects = req
+            .properties
+            .get("SUBJECT_NODES")
+            .map(|value| {
+                value
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        source = artifact_node_content(
+            &id,
+            &req.title,
+            &subjects,
+            req.properties
+                .get("PROMPT")
+                .map(String::as_str)
+                .unwrap_or_default(),
+            1,
+            "submitted",
+        );
+    }
+    let file = OrgFile::parse(&source, "node.org")
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    let validation = state
+        .node_types
+        .validate_write(&descriptor.collection, &file, &file.headings[0])
+        .and_then(|_| {
+            state.node_types.validate_transition(
+                &descriptor.collection,
+                None,
+                &file,
+                &file.headings[0],
+            )
+        })
+        .map_err(|error| ApiError::bad_request(error.to_string()));
+    if let Err(error) = validation {
+        let _ = std::fs::remove_dir(&dir);
+        return Err(error);
+    }
+    let prepared = prepare_api_tx_as(
+        &state,
+        &identity,
+        ApiTxRequest {
+            ty: format!("graph.{}.created", descriptor.collection),
+            actor: None,
+            project: Some(project_id.clone()),
+            task: None,
+            target: Some(path.display().to_string()),
+            reason: format!("created {} {id}", descriptor.label),
+            request_id: req.request_id,
+            extra: vec![("NODE_ID".to_string(), id.clone())],
+        },
+    )
+    .await;
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let _ = std::fs::remove_dir(&dir);
+            return Err(error);
+        }
+    };
+    let result = if kind == NodeKind::Artifact {
+        state
+            .writer
+            .transaction_mutation(
+                vec![
+                    FileRewrite {
+                        path,
+                        new_contents: source.into_bytes(),
+                    },
+                    FileRewrite {
+                        path: dir.join("artifact.mdx"),
+                        new_contents: req.body.into_bytes(),
+                    },
+                ],
+                prepared.tx,
+                mutation,
+                id.clone(),
+            )
+            .await
+    } else {
+        state
+            .writer
+            .transaction_mutate_file_mutation(
+                FileMutate {
+                    path,
+                    transform: Box::new(move |current| {
+                        if !current.is_empty() {
+                            anyhow::bail!("node already exists");
+                        }
+                        Ok(source.into_bytes())
+                    }),
+                },
+                prepared.tx,
+                mutation,
+                id.clone(),
+            )
+            .await
+    }
+    .map_err(writer_transaction_error)?;
+    if result.mutation_id != id {
+        std::fs::remove_dir(&dir).map_err(|error| {
+            ApiError::internal(format!("release unused node reservation: {error}"))
+        })?;
+    }
+    let id = result.mutation_id;
+    refresh_after_project_mutation(&state, &project_id, prepared.project_tx, &result.tx_id).await?;
+    state.events.publish(
+        Topic::Graph,
+        EventPayload::GraphNodeCreated {
+            project_id,
+            layer: descriptor.collection.clone(),
+            node_id: id.clone(),
+            tx_id: result.tx_id.clone(),
+        },
+    );
+    Ok(Json(json!({"id": id, "tx_id": result.tx_id})))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct NodeQuery {
     #[serde(default)]
@@ -16621,11 +16817,15 @@ pub const NODE_EDIT_OPS: &[&str] = &[
     "remove_property",
     "set_title",
     "set_tags",
+    "set_state",
 ];
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum NodeEditOp {
+    SetState {
+        state: String,
+    },
     /// Replace the heading's own free prose (leaf-node descriptions).
     SetBody {
         #[serde(default)]
@@ -16701,9 +16901,9 @@ fn content_hash(bytes: &[u8]) -> String {
 /// `ProjectFile::from_org` locates project.org by that `PROJECT ` prefix — so
 /// for the Project layer the word is the token, and composing `<id> <prose>`
 /// there would drop it and break every cwd-resolved CLI command.
-fn node_title_token(heading: &Heading, layer: NodeLayer) -> Option<&str> {
+fn node_title_token<'a>(heading: &'a Heading, layer: NodeKind<'_>) -> Option<&'a str> {
     match layer {
-        NodeLayer::Project => Some("PROJECT"),
+        NodeKind::Project => Some("PROJECT"),
         _ => heading.property("ID"),
     }
 }
@@ -16712,7 +16912,7 @@ fn node_title_token(heading: &Heading, layer: NodeLayer) -> Option<&str> {
 /// `PROJECT Foo` → `Foo`) when the heading actually has that token. Tokenless
 /// drifted headings still display their full title so a repair edit does not
 /// hide the bad state.
-fn node_display_title(heading: &Heading, layer: NodeLayer) -> String {
+fn node_display_title(heading: &Heading, layer: NodeKind) -> String {
     let title = heading.title.trim();
     node_title_token(heading, layer)
         .and_then(|token| title.strip_prefix(token))
@@ -16750,7 +16950,7 @@ fn validate_node_title(title: &str) -> Result<(), ApiError> {
 /// title write has no way to touch them.
 fn node_heading_line_edit(
     heading: &Heading,
-    layer: NodeLayer,
+    layer: NodeKind<'_>,
     new_title: Option<&str>,
     new_tags: Option<&[String]>,
 ) -> HeadingLineEdit {
@@ -16791,17 +16991,16 @@ mod node_heading_line_edit_tests {
         let heading =
             parse_heading("* PROJECT node-title-set\n:PROPERTIES:\n:ID: node-title-set\n:END:\n");
         assert_eq!(
-            node_display_title(&heading, NodeLayer::Project),
+            node_display_title(&heading, NodeKind::Project),
             "node-title-set"
         );
-        let edit =
-            node_heading_line_edit(&heading, NodeLayer::Project, Some("Project after"), None);
+        let edit = node_heading_line_edit(&heading, NodeKind::Project, Some("Project after"), None);
         assert_eq!(edit.title.as_deref(), Some("PROJECT Project after"));
         assert!(edit.tags.is_none(), "a title write never restates tags");
         let rewritten =
             parse_heading("* PROJECT Project after\n:PROPERTIES:\n:ID: node-title-set\n:END:\n");
         assert_eq!(
-            node_display_title(&rewritten, NodeLayer::Project),
+            node_display_title(&rewritten, NodeKind::Project),
             "Project after"
         );
         assert!(
@@ -16817,8 +17016,8 @@ mod node_heading_line_edit_tests {
         let heading = parse_heading(
             "* BACKLOG TASK-AAAAA Task before\n:PROPERTIES:\n:ID: TASK-AAAAA\n:END:\n",
         );
-        assert_eq!(node_display_title(&heading, NodeLayer::Task), "Task before");
-        let edit = node_heading_line_edit(&heading, NodeLayer::Task, Some("Task after"), None);
+        assert_eq!(node_display_title(&heading, NodeKind::Task), "Task before");
+        let edit = node_heading_line_edit(&heading, NodeKind::Task, Some("Task after"), None);
         assert_eq!(edit.title.as_deref(), Some("TASK-AAAAA Task after"));
     }
 }
@@ -16840,7 +17039,7 @@ fn node_sections(file: &OrgFile, sections: &[Heading]) -> Vec<NodeSection> {
 fn org_node_doc(
     file: &OrgFile,
     heading: &Heading,
-    layer: NodeLayer,
+    layer: NodeKind<'_>,
     source_file: String,
     descriptor: Option<&orgasmic_core::NodeTypeDescriptor>,
 ) -> NodeDoc {
@@ -16873,46 +17072,22 @@ fn org_node_doc(
     }
 }
 
-fn descriptor_for_layer(
-    state: &ApiState,
-    layer: NodeLayer,
-) -> Option<&orgasmic_core::NodeTypeDescriptor> {
-    let collection = match layer {
-        NodeLayer::Task => "tasks",
-        NodeLayer::Decision => "decisions",
-        NodeLayer::Glossary => "glossary",
-        _ => return None,
-    };
-    state.node_types.descriptor(collection)
+fn descriptor_for_layer<'a>(
+    state: &'a ApiState,
+    layer: NodeKind<'_>,
+) -> Option<&'a orgasmic_core::NodeTypeDescriptor> {
+    state.node_types.descriptor(layer.collection_name()?)
 }
 
-/// Pick the layer that owns a node: an explicit `kind` selector when present,
-/// otherwise inferred from the id prefix.
-///
-/// orgasmic:TASK-CS2TM — an explicit kind that contradicts a distinctive id
-/// prefix (`TASK-`, `dec_`, `goal-`, `handoff-current`) is refused rather than
-/// aimed at the wrong file: `--kind project` on a task id used to be resolved
-/// against project.org. Glossary is the prefix-less fallback, so an id that
-/// infers glossary accepts any explicit kind (that is how `project` is named).
-fn resolve_node_layer(kind: Option<&str>, id: &str) -> Result<NodeLayer, ApiError> {
-    match kind {
-        Some(kind) => {
-            let layer = NodeLayer::from_kind(kind)
-                .ok_or_else(|| ApiError::bad_request(format!("unknown node kind {kind}")))?;
-            match NodeLayer::for_id(id) {
-                Some(inferred) if inferred != layer && inferred != NodeLayer::Glossary => {
-                    Err(ApiError::bad_request(format!(
-                        "node {id} is a {} node by its id, not {kind}; drop --kind or pass --kind {}",
-                        inferred.layer_name(),
-                        inferred.layer_name()
-                    )))
-                }
-                _ => Ok(layer),
-            }
-        }
-        None => NodeLayer::for_id(id)
-            .ok_or_else(|| ApiError::bad_request("architecture node layer is retired")),
-    }
+/// Resolve ownership once through the shared registry. Unknown prefixes fail.
+fn resolve_node_layer<'a>(
+    registry: &'a orgasmic_core::NodeTypeRegistry,
+    kind: Option<&str>,
+    id: &str,
+) -> Result<NodeKind<'a>, ApiError> {
+    registry
+        .resolve_node(kind, id)
+        .map_err(|error| ApiError::bad_request(error.to_string()))
 }
 
 fn display_node_source_path(project_root: &FsPath, path: &FsPath) -> String {
@@ -16926,12 +17101,12 @@ async fn org_node_path(
     state: &ApiState,
     project: Option<&str>,
     id: &str,
-    layer: NodeLayer,
+    layer: NodeKind<'_>,
 ) -> Result<(String, PathBuf, String), ApiError> {
     let (project_id, snap) = ensure_loaded_snapshot(state, project).await?;
     let project = select_loaded_project(&snap, &project_id)?;
     match layer {
-        NodeLayer::Task => {
+        NodeKind::Task => {
             let task = project
                 .tasks
                 .iter()
@@ -16941,40 +17116,50 @@ async fn org_node_path(
             let source_file = display_node_source_path(&project.root, &path);
             Ok((project.project_id.clone(), path, source_file))
         }
-        NodeLayer::Goal => {
+        NodeKind::Goal => {
             let path = goal_file_path(&project.root);
             let source_file = display_node_source_path(&project.root, &path);
             Ok((project.project_id.clone(), path, source_file))
         }
-        NodeLayer::Handoff => {
+        NodeKind::Handoff => {
             let path = handoff_file_path(&project.root);
             let source_file = display_node_source_path(&project.root, &path);
             Ok((project.project_id.clone(), path, source_file))
         }
-        NodeLayer::Decision | NodeLayer::Glossary => {
-            let collection = if layer == NodeLayer::Decision {
-                "decisions"
-            } else {
-                "glossary"
-            };
+        other if other.collection_name().is_some() => {
+            let collection = other.collection_name().unwrap();
             let path = orgasmic_core::node_kernel::node_dir(&project.root, collection, id)
                 .join(orgasmic_core::node_kernel::NODE_FILE);
             let source_file = display_node_source_path(&project.root, &path);
             Ok((project.project_id.clone(), path, source_file))
         }
-        NodeLayer::Project => {
+        NodeKind::Project => {
             let path = project.root.join(".orgasmic/project.org");
             let source_file = display_node_source_path(&project.root, &path);
             Ok((project.project_id.clone(), path, source_file))
         }
+        _ => Err(ApiError::bad_request("unknown node storage")),
     }
 }
 
 async fn get_org_node(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<NodeQuery>,
 ) -> Result<Json<NodeDoc>, ApiError> {
-    let layer = resolve_node_layer(q.kind.as_deref(), &q.id)?;
+    let layer = resolve_node_layer(&state.node_types, q.kind.as_deref(), &q.id)?;
+    resolve_authorized_project(
+        &state,
+        &identity,
+        q.project.as_deref(),
+        match layer {
+            NodeKind::Task => Action::TasksRead,
+            NodeKind::Artifact => Action::ArtifactsRead,
+            NodeKind::Project | NodeKind::Goal | NodeKind::Handoff => Action::ProjectRead,
+            _ => Action::GraphRead,
+        },
+    )
+    .await?;
     let (_project_id, path, source_file) =
         org_node_path(&state, q.project.as_deref(), &q.id, layer).await?;
     let source = read_artifact(&path, layer.artifact_name())?;
@@ -16994,15 +17179,71 @@ async fn get_org_node(
 
 async fn post_org_node_edit(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<MutationOutputQuery>,
     Json(req): Json<NodeEditRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let layer = resolve_node_layer(req.kind.as_deref(), &id)?;
-    if layer == NodeLayer::Goal {
+    let layer = resolve_node_layer(&state.node_types, req.kind.as_deref(), &id)?;
+    resolve_authorized_project(
+        &state,
+        &identity,
+        req.project.as_deref(),
+        if layer.collection_name().is_some() {
+            Action::NodesWrite
+        } else {
+            Action::OrgWrite
+        },
+    )
+    .await?;
+    if layer == NodeKind::Goal {
         return Err(ApiError::bad_request(
             "goal nodes are read-only through /org/node; use goal set/clear/supersede",
         ));
+    }
+    if layer == NodeKind::Task {
+        if let Some(next) = req.ops.iter().find_map(|op| match op {
+            NodeEditOp::SetState { state } => Some(state.clone()),
+            _ => None,
+        }) {
+            if req.ops.len() != 1 {
+                return Err(ApiError::bad_request(
+                    "task set_state must be sent on its own; edit fields in a separate request",
+                ));
+            }
+            let (project_id, _) = ensure_loaded_snapshot(&state, req.project.as_deref()).await?;
+            let response = post_task_update_as(
+                State(state.clone()),
+                Path((project_id.clone(), id.clone())),
+                Query(MutationOutputQuery { json: false }),
+                Json(TaskUpdateRequest {
+                    state: Some(next),
+                    priority: None,
+                    reason: None,
+                    request_id: req.request_id,
+                    repair_closed_tx: None,
+                    properties: BTreeMap::new(),
+                }),
+                &identity,
+                Some(req.base_version),
+            )
+            .await?;
+            return if q.json {
+                let doc = get_org_node(
+                    State(state),
+                    Extension(identity),
+                    Query(NodeQuery {
+                        project: Some(project_id),
+                        id,
+                        kind: Some("task".into()),
+                    }),
+                )
+                .await?;
+                Ok(Json(json!(doc.0)))
+            } else {
+                Ok(response)
+            };
+        }
     }
     // orgasmic:task_ZKZBF
     // The same drawer every task write validates (TASK-HXSW0): a key that is
@@ -17018,7 +17259,7 @@ async fn post_org_node_edit(
             _ => continue,
         };
         match layer {
-            NodeLayer::Task => {
+            NodeKind::Task => {
                 if let Some(value) = value {
                     // Update-shaped verb: keys that only `task update` writes
                     // (BLOCKED_BY, FIX_SUBTASK, KIND) are legal here, same as
@@ -17063,6 +17304,11 @@ async fn post_org_node_edit(
     }
     let (project_id, path, source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
+    let write_lock = state.node_write_lock(
+        path.parent()
+            .ok_or_else(|| ApiError::internal("node path has no parent"))?,
+    );
+    let _write_guard = write_lock.lock().await;
     if !req.force {
         let mut guard = reference_guard(&state, &project_id).await?;
         for op in &req.ops {
@@ -17070,7 +17316,7 @@ async fn post_org_node_edit(
                 // Decision PARENT already has dedicated existence/class/cycle
                 // validation below (validate_decision_parent_ops); don't
                 // double-reject it here with a weaker generic check.
-                if layer == NodeLayer::Decision && key == "PARENT" {
+                if layer == NodeKind::Decision && key == "PARENT" {
                     continue;
                 }
                 guard.check(key, value)?;
@@ -17092,7 +17338,7 @@ async fn post_org_node_edit(
         )));
     }
 
-    let parent_changed = if layer == NodeLayer::Decision {
+    let parent_changed = if layer == NodeKind::Decision {
         validate_decision_parent_ops(&file, &id, &req.ops)?
     } else {
         false
@@ -17102,8 +17348,21 @@ async fn post_org_node_edit(
     let mut title_override: Option<String> = None;
     let mut tags_override: Option<Vec<String>> = None;
     let mut changed: BTreeMap<String, String> = BTreeMap::new();
+    let mut state_override = None;
     for op in req.ops {
         match op {
+            NodeEditOp::SetState { state } => {
+                let next = state.trim().to_ascii_uppercase();
+                if next.is_empty()
+                    || !next.bytes().all(|byte| {
+                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+                {
+                    return Err(ApiError::bad_request("invalid lifecycle state"));
+                }
+                changed.insert("STATE".to_string(), next.to_ascii_lowercase());
+                state_override = Some(next);
+            }
             NodeEditOp::SetBody { body, body_format } => {
                 let body = prepare_body_edit(&body, body_format);
                 reject_body_with_nested_headings("node body set", &body)?;
@@ -17193,6 +17452,10 @@ async fn post_org_node_edit(
             }
             NodeEditOp::SetTitle { title } => {
                 validate_node_title(&title)?;
+                if layer == NodeKind::Artifact {
+                    rw.upsert_property(&id, "TITLE", &title)
+                        .map_err(|error| org_rewriter_error("set artifact title", &id, error))?;
+                }
                 changed.insert("title".to_string(), title.clone());
                 title_override = Some(title);
             }
@@ -17223,15 +17486,34 @@ async fn post_org_node_edit(
         })?;
     }
 
-    let updated = rw.finish();
-    OrgFile::parse(updated.clone(), path.to_string_lossy())
+    let mut updated = rw.finish();
+    if let Some(next) = state_override {
+        let draft = OrgFile::parse(&updated, "node.org")
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        let current = draft
+            .find_by_id(&id)
+            .ok_or_else(|| ApiError::bad_request("ID is immutable"))?;
+        let mut line = orgasmic_core::HeadingLine::of(current);
+        line.todo = Some(next);
+        let mut writer = OrgRewriter::new(&draft, "node.org");
+        writer
+            .set_title_line(&id, &line.render())
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        updated = writer.finish();
+    }
+    let proposed = OrgFile::parse(updated.clone(), path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
+    proposed
+        .find_by_id(&id)
+        .ok_or_else(|| ApiError::bad_request("ID is immutable"))?;
     let tx_id = write_org_node_edit_and_record(NodeEditWriteRequest {
         state: &state,
+        identity: &identity,
         layer,
         project_id: project_id.clone(),
         path: path.clone(),
         source: updated,
+        base_version: Some(current_version),
         request_id: req.request_id,
         node_id: id.clone(),
         action: if parent_changed { "reparent" } else { "edited" },
@@ -17277,29 +17559,37 @@ pub struct NodeDeleteRequest {
 /// Decision deletes reuse the existing child-guard semantics.
 async fn post_org_node_delete(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<MutationOutputQuery>,
     Json(req): Json<NodeDeleteRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // orgasmic:TASK-N4TGD
-    let layer = resolve_node_layer(req.kind.as_deref(), &id)?;
+    let layer = resolve_node_layer(&state.node_types, req.kind.as_deref(), &id)?;
+    resolve_authorized_project(
+        &state,
+        &identity,
+        req.project.as_deref(),
+        Action::NodesWrite,
+    )
+    .await?;
     match layer {
-        NodeLayer::Task => {
+        NodeKind::Task => {
             return Err(ApiError::bad_request(
                 "task deletion is not implemented through /org/node; task-specific delete semantics are required",
             ));
         }
-        NodeLayer::Goal => {
+        NodeKind::Goal => {
             return Err(ApiError::bad_request(
                 "goal nodes cannot be deleted through /org/node; use goal clear/supersede",
             ));
         }
-        NodeLayer::Project => {
+        NodeKind::Project => {
             return Err(ApiError::bad_request(
                 "project nodes cannot be deleted through /org/node",
             ));
         }
-        NodeLayer::Handoff => {
+        NodeKind::Handoff => {
             return Err(ApiError::bad_request(
                 "handoff nodes cannot be deleted through /org/node",
             ));
@@ -17308,6 +17598,11 @@ async fn post_org_node_delete(
     }
     let (project_id, path, _source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
+    let write_lock = state.node_write_lock(
+        path.parent()
+            .ok_or_else(|| ApiError::internal("node path has no parent"))?,
+    );
+    let _write_guard = write_lock.lock().await;
     let source = read_artifact(&path, layer.artifact_name())?;
     let file = OrgFile::parse(source, path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
@@ -17327,7 +17622,7 @@ async fn post_org_node_delete(
             inbound.join(", ")
         )));
     }
-    if layer == NodeLayer::Decision && decision_has_children(&file, &id)? {
+    if layer == NodeKind::Decision && decision_has_children(&file, &id)? {
         return Err(ApiError::bad_request(format!(
             "decision {id} still has child decisions; re-parent or delete children first"
         )));
@@ -17340,20 +17635,20 @@ async fn post_org_node_delete(
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
     let tx_id = write_org_node_edit_and_record(NodeEditWriteRequest {
         state: &state,
+        identity: &identity,
         layer,
         project_id: project_id.clone(),
         path: path.clone(),
         source: updated,
+        base_version: Some(current_version),
         request_id: req.request_id,
         node_id: id.clone(),
         action: "deleted",
     })
     .await?;
-    let node_dir = path
-        .parent()
-        .ok_or_else(|| ApiError::internal("node path has no parent directory"))?;
-    std::fs::remove_dir_all(node_dir)
-        .map_err(|error| ApiError::internal(format!("remove node directory: {error}")))?;
+    // The committed heading removal is the deletion. Keep the journal and
+    // type-owned files; a second, non-transactional directory removal loses
+    // history and can race another writer after the commit.
     let mut changed = BTreeMap::new();
     changed.insert("deleted".to_string(), "true".to_string());
     let compact = CompactMutationResponse {
@@ -17379,9 +17674,11 @@ async fn inbound_reference_owners(
         goal_file_path(&project.root),
         handoff_file_path(&project.root),
     ];
-    for collection in ["tasks", "decisions", "glossary"] {
+    for collection in orgasmic_core::paths::node_collections(&project.root)
+        .map_err(|error| ApiError::internal(format!("read node collections: {error}")))?
+    {
         paths.extend(
-            collection_node_file_paths(&project.root, collection).map_err(|error| {
+            collection_node_file_paths(&project.root, &collection).map_err(|error| {
                 ApiError::internal(format!("read {collection} collection: {error}"))
             })?,
         );
@@ -17468,34 +17765,71 @@ fn validate_decision_parent_ops(
     Ok(true)
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("node changed on disk; reload before editing")]
+struct NodeVersionConflict;
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct NodeWriteInvalid(String);
+
 struct NodeEditWriteRequest<'a> {
     state: &'a ApiState,
-    layer: NodeLayer,
+    identity: &'a Identity,
+    layer: NodeKind<'a>,
     project_id: String,
     path: PathBuf,
     source: String,
+    base_version: Option<String>,
     request_id: Option<String>,
     node_id: String,
     action: &'a str,
 }
 
 async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result<String, ApiError> {
-    let primary_rewrite = FileRewrite {
+    let registry = req.state.node_types.clone();
+    let collection = req.layer.collection_name().map(str::to_string);
+    let node_id = req.node_id.clone();
+    let proposed = req.source.clone();
+    let base_version = req.base_version;
+    let mutation = MutationIdentity::new("node.edited", &req.project_id, proposed.clone());
+    let primary_mutation = FileMutate {
         path: req.path.clone(),
-        new_contents: req.source.into_bytes(),
+        transform: Box::new(move |current| {
+            let before = OrgFile::parse(current, "node.org")?;
+            let old = before
+                .find_by_id(&node_id)
+                .ok_or_else(|| anyhow::anyhow!("node not found"))?;
+            if base_version.as_ref().is_some_and(|expected| {
+                content_hash(before.slice(old.span.clone()).as_bytes()) != *expected
+            }) {
+                return Err(NodeVersionConflict.into());
+            }
+            let after = OrgFile::parse(&proposed, "node.org")?;
+            if let (Some(collection), Some(new)) =
+                (collection.as_deref(), after.find_by_id(&node_id))
+            {
+                registry
+                    .validate_write(collection, &after, new)
+                    .and_then(|_| registry.validate_transition(collection, Some(old), &after, new))
+                    .map_err(|error| NodeWriteInvalid(error.to_string()))?;
+            }
+            Ok(proposed.into_bytes())
+        }),
     };
-    let project_tx_type = if req.layer == NodeLayer::Task {
+    let project_tx_type = if req.layer == NodeKind::Task {
         "task.edited".to_string()
     } else {
         format!("graph.{}.{}", req.layer.layer_name(), req.action)
     };
-    let prepared_tx = prepare_api_tx(
+    let prepared_tx = prepare_api_tx_as(
         req.state,
+        req.identity,
         ApiTxRequest {
             ty: project_tx_type,
             actor: None,
             project: Some(req.project_id.clone()),
-            task: if req.layer == NodeLayer::Task {
+            task: if req.layer == NodeKind::Task {
                 Some(req.node_id.clone())
             } else {
                 None
@@ -17515,12 +17849,20 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
     let tx_id = req
         .state
         .writer
-        .transaction(vec![primary_rewrite], prepared_tx.tx)
+        .transaction_mutate_file(primary_mutation, prepared_tx.tx, mutation)
         .await
-        .map_err(writer_transaction_error)?;
+        .map_err(|error| {
+            if error.downcast_ref::<NodeVersionConflict>().is_some() {
+                ApiError::conflict("node changed on disk; reload before editing")
+            } else if let Some(invalid) = error.downcast_ref::<NodeWriteInvalid>() {
+                ApiError::bad_request(invalid.to_string())
+            } else {
+                writer_transaction_error(error)
+            }
+        })?;
     refresh_after_project_mutation(req.state, &req.project_id, prepared_tx.project_tx, &tx_id)
         .await?;
-    if req.layer == NodeLayer::Task {
+    if req.layer == NodeKind::Task {
         req.state.events.publish(
             Topic::Task,
             EventPayload::TaskUpdated {
@@ -17587,13 +17929,29 @@ struct GraphWriteRequest<'a> {
 async fn write_graph_and_record(
     req: GraphWriteRequest<'_>,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
+    write_graph_and_record_as(req, &Identity::Admin).await
+}
+
+async fn write_graph_and_record_as(
+    req: GraphWriteRequest<'_>,
+    identity: &Identity,
+) -> Result<Json<GraphMutationResponse>, ApiError> {
+    let after = OrgFile::parse(&req.source, NODE_FILE)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    if let Some(heading) = after.find_by_id(&req.node_id) {
+        req.state
+            .node_types
+            .validate_write(req.layer.collection(), &after, heading)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
     let primary_rewrite = FileRewrite {
         path: req.path.clone(),
         new_contents: req.source.into_bytes(),
     };
     let rewrites = vec![primary_rewrite];
-    let prepared_tx = prepare_api_tx(
+    let prepared_tx = prepare_api_tx_as(
         req.state,
+        identity,
         ApiTxRequest {
             ty: req.tx_type,
             actor: None,
@@ -18003,27 +18361,29 @@ const GLOSSARY_SCHEMA_PROPERTY_KEYS: &[&str] = &[
 /// `ID` is deliberately absent from every list: it is derived from the node
 /// identity and refused by the shared guard, not a key to advertise
 /// (orgasmic:task_ZKZBF.1).
-fn node_layer_schema_property_keys(layer: NodeLayer) -> &'static [&'static str] {
+fn node_layer_schema_property_keys(layer: NodeKind) -> &'static [&'static str] {
     match layer {
-        NodeLayer::Task => TASK_SCHEMA_PROPERTY_KEYS,
-        NodeLayer::Decision => DECISION_SCHEMA_PROPERTY_KEYS,
-        NodeLayer::Glossary => GLOSSARY_SCHEMA_PROPERTY_KEYS,
-        NodeLayer::Project => &["BRANCH", "DEFAULT_BRANCH", "LOCAL_PATH", "PATH", "STATUS"],
-        NodeLayer::Goal | NodeLayer::Handoff => &["GOAL_ID", "LIVENESS"],
+        NodeKind::Task => TASK_SCHEMA_PROPERTY_KEYS,
+        NodeKind::Decision => DECISION_SCHEMA_PROPERTY_KEYS,
+        NodeKind::Glossary => GLOSSARY_SCHEMA_PROPERTY_KEYS,
+        NodeKind::Project => &["BRANCH", "DEFAULT_BRANCH", "LOCAL_PATH", "PATH", "STATUS"],
+        NodeKind::Goal | NodeKind::Handoff => &["GOAL_ID", "LIVENESS"],
+        _ => &[],
     }
 }
 
 // orgasmic:task_ZKZBF.1
 /// Refusal label for a node layer, so every drawer-key refusal names the
 /// vocabulary it is about. Total on purpose: no dead arms to drift.
-fn node_layer_label(layer: NodeLayer) -> &'static str {
+fn node_layer_label(layer: NodeKind) -> &'static str {
     match layer {
-        NodeLayer::Task => "Task",
-        NodeLayer::Decision => "Decision",
-        NodeLayer::Glossary => "Glossary",
-        NodeLayer::Project => "Project",
-        NodeLayer::Goal => "Goal",
-        NodeLayer::Handoff => "Handoff",
+        NodeKind::Task => "Task",
+        NodeKind::Decision => "Decision",
+        NodeKind::Glossary => "Glossary",
+        NodeKind::Project => "Project",
+        NodeKind::Goal => "Goal",
+        NodeKind::Handoff => "Handoff",
+        _ => "Node",
     }
 }
 
@@ -18369,6 +18729,15 @@ async fn post_task_create(
     Path(project_id): Path<String>,
     Json(req): Json<TaskCreateRequest>,
 ) -> Result<Json<TaskCreateResponse>, ApiError> {
+    post_task_create_as(State(state), Path(project_id), Json(req), &Identity::Admin).await
+}
+
+async fn post_task_create_as(
+    State(state): State<ApiState>,
+    Path(project_id): Path<String>,
+    Json(req): Json<TaskCreateRequest>,
+    identity: &Identity,
+) -> Result<Json<TaskCreateResponse>, ApiError> {
     if req.title.trim().is_empty() {
         return Err(ApiError::bad_request("task title is required"));
     }
@@ -18430,13 +18799,25 @@ async fn post_task_create(
     let transform_path = path.to_string_lossy().to_string();
     let source =
         orgasmic_core::node_kernel::node_org_header("task", &task_id) + heading.trim_start();
+    let parsed = OrgFile::parse(&source, "node.org")
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    state
+        .node_types
+        .validate_write("tasks", &parsed, &parsed.headings[0])
+        .and_then(|_| {
+            state
+                .node_types
+                .validate_transition("tasks", None, &parsed, &parsed.headings[0])
+        })
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let target = task_node_rel(&task_id);
     let reason = req
         .reason
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("created task {task_id}"));
-    let prepared = prepare_api_tx(
+    let prepared = prepare_api_tx_as(
         &state,
+        identity,
         ApiTxRequest {
             ty: "task.created".to_string(),
             actor: None,
@@ -18886,10 +19267,12 @@ async fn sync_handoff_goal_id(
     let updated = rw.finish();
     write_org_node_edit_and_record(NodeEditWriteRequest {
         state,
-        layer: NodeLayer::Handoff,
+        identity: &Identity::Admin,
+        layer: NodeKind::Handoff,
         project_id: project_id.to_string(),
         path,
         source: updated,
+        base_version: None,
         request_id,
         node_id: "handoff-current".to_string(),
         action: "edited",
@@ -19007,6 +19390,10 @@ struct TaskLifecycleConflict(String);
 
 struct TaskLifecycleWriteRequest<'a> {
     state: &'a ApiState,
+    identity: &'a Identity,
+    base_version: Option<String>,
+    repair_allowed: bool,
+    observed_body: Option<crate::index::TaskBody>,
     project_id: &'a str,
     task_id: &'a str,
     path: PathBuf,
@@ -19032,8 +19419,13 @@ async fn write_task_lifecycle_and_record(
     // change cannot replace an earlier property or body edit with stale bytes.
     let from_state = req.from_state;
     let to_state = req.to_state;
-    let prepared_tx = prepare_api_tx(
+    let registry = req.state.node_types.clone();
+    let base_version = req.base_version;
+    let repair_allowed = req.repair_allowed;
+    let observed_body = req.observed_body;
+    let prepared_tx = prepare_api_tx_as(
         req.state,
+        req.identity,
         ApiTxRequest {
             ty: "task.state_transitioned".to_string(),
             actor: None,
@@ -19066,16 +19458,40 @@ async fn write_task_lifecycle_and_record(
                     let task =
                         orgasmic_core::TaskHeading::from_heading(&file, heading, &path_display)?;
                     if task.lifecycle_stage != from_state
-                        || (to_state == LifecycleStage::Done
-                            && crate::index::parse_task_body(&file, heading)
-                                .evidence
-                                .is_empty())
+                        || base_version.as_ref().is_some_and(|expected| {
+                            content_hash(file.slice(heading.span.clone()).as_bytes()) != *expected
+                        })
                     {
                         return Err(TaskLifecycleConflict(task_id).into());
                     }
                     let mut rw = OrgRewriter::new(&file, path_display);
                     rw.set_title_line(&task_id, &task_lifecycle_title_line(heading, to_state))?;
-                    Ok(rw.finish().into_bytes())
+                    let updated = rw.finish();
+                    let after = OrgFile::parse(&updated, NODE_FILE)?;
+                    let next = after
+                        .find_by_id(&task_id)
+                        .ok_or_else(|| TaskLifecycleConflict(task_id.clone()))?;
+                    // A verified terminal record already authorizes the repaired
+                    // edge. Treat it as replay for the edge check only; target
+                    // schema and compiled evidence hooks still run unchanged.
+                    let before = if repair_allowed { next } else { heading };
+                    let validation =
+                        registry
+                            .validate_write("tasks", &after, next)
+                            .and_then(|_| {
+                                registry.validate_transition("tasks", Some(before), &after, next)
+                            });
+                    if let Err(error) = validation {
+                        // Distinguish an invalid request from a previously valid
+                        // projection whose body changed while the write queued.
+                        if observed_body.as_ref().is_some_and(|observed| {
+                            *observed != crate::index::parse_task_body(&file, heading)
+                        }) {
+                            return Err(TaskLifecycleConflict(task_id).into());
+                        }
+                        return Err(NodeWriteInvalid(error.to_string()).into());
+                    }
+                    Ok(updated.into_bytes())
                 }),
             },
             prepared_tx.tx,
@@ -19085,6 +19501,8 @@ async fn write_task_lifecycle_and_record(
         .map_err(|error| {
             if let Some(conflict) = error.downcast_ref::<TaskLifecycleConflict>() {
                 ApiError::conflict(conflict.to_string())
+            } else if let Some(invalid) = error.downcast_ref::<NodeWriteInvalid>() {
+                ApiError::bad_request(invalid.to_string())
             } else {
                 writer_transaction_error(error)
             }
@@ -19255,6 +19673,25 @@ async fn post_task_update(
     Query(q): Query<MutationOutputQuery>,
     Json(req): Json<TaskUpdateRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    post_task_update_as(
+        State(state),
+        Path((project_id, task_id)),
+        Query(q),
+        Json(req),
+        &Identity::Admin,
+        None,
+    )
+    .await
+}
+
+async fn post_task_update_as(
+    State(state): State<ApiState>,
+    Path((project_id, task_id)): Path<(String, String)>,
+    Query(q): Query<MutationOutputQuery>,
+    Json(req): Json<TaskUpdateRequest>,
+    identity: &Identity,
+    base_version: Option<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     if req.state.is_some() {
         // orgasmic:task_HXSW0
         // This arm used to return here with `{"changed":{"STATE":…}}` and drop
@@ -19280,7 +19717,16 @@ async fn post_task_update(
                 also.join(" ")
             )));
         }
-        return update_task_state(&state, &project_id, &task_id, q.json, req).await;
+        return update_task_state(
+            &state,
+            &project_id,
+            &task_id,
+            q.json,
+            req,
+            identity,
+            base_version,
+        )
+        .await;
     }
     if req.priority.is_some() || !req.properties.is_empty() {
         return update_task_properties(&state, &project_id, &task_id, q.json, req).await;
@@ -19296,6 +19742,8 @@ async fn update_task_state(
     task_id: &str,
     want_full: bool,
     req: TaskUpdateRequest,
+    identity: &Identity,
+    base_version: Option<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let to_state = LifecycleStage::from_str(req.state.as_deref().unwrap_or(""))
         .map_err(|_| ApiError::bad_request("unknown task state"))?;
@@ -19309,6 +19757,18 @@ async fn update_task_state(
             tracing::warn!(project_id = %project_id, task_id = %task_id, "task not found");
             ApiError::not_found("task not found")
         })?;
+    if let Some(expected) = base_version.as_ref() {
+        let current = OrgFile::parse(read_artifact(&task.source_file, "task file")?, NODE_FILE)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        let heading = current
+            .find_by_id(task_id)
+            .ok_or_else(|| ApiError::not_found("task not found"))?;
+        if content_hash(current.slice(heading.span.clone()).as_bytes()) != *expected {
+            return Err(ApiError::conflict(
+                "node changed on disk; reload before editing",
+            ));
+        }
+    }
     let from_state = task.lifecycle_stage;
     if from_state == to_state {
         let supervisor = state.supervisor.snapshot().await;
@@ -19341,10 +19801,6 @@ async fn update_task_state(
         };
         return compact_or_full_response(want_full, compact, detail);
     }
-    let descriptor = state
-        .node_types
-        .descriptor("tasks")
-        .ok_or_else(|| ApiError::internal("missing shipped descriptor for tasks"))?;
     let repair_allowed = match req.repair_closed_tx.as_deref() {
         Some(closed_tx) => recorded_close_allows_repair(
             &project.root,
@@ -19356,40 +19812,16 @@ async fn update_task_state(
         )?,
         None => false,
     };
-    if !descriptor.allows_transition(from_state.as_str(), to_state.as_str()) && !repair_allowed {
-        return Err(ApiError::bad_request(format!(
-            "task transition {} -> {} is not allowed by the shipped task descriptor",
-            from_state.as_str(),
-            to_state.as_str()
-        )));
-    }
-    // ART-04FYD: a task does not close on a bare claim. `done` requires the
-    // task's own Evidence section to carry at least one proof line (a run id,
-    // review verdict, test output, commit), including a legacy close repair.
-    // A torn close to `done` is unrepairable until an operator records that
-    // evidence with the command named by this endpoint's 400 response.
-    // Atomic dispatch-close uses a separate endpoint and carries its dispatch
-    // record as evidence.
-    if to_state == LifecycleStage::Done {
-        let has_evidence = project
-            .task_bodies
-            .get(task_id)
-            .is_some_and(|body| !body.evidence.is_empty());
-        if !has_evidence {
-            return Err(ApiError::bad_request(format!(
-                "closing {task_id} requires recorded evidence and its Evidence section is \
-                 empty. Record proof (a run id, review verdict, test output, commit) with \
-                 `orgasmic node body set {task_id} --section Evidence --create --body \"…\"`, \
-                 then close again."
-            )));
-        }
-    }
     let reason = req
         .reason
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("transition {task_id} to {}", to_state.as_str()));
     let tx_id = write_task_lifecycle_and_record(TaskLifecycleWriteRequest {
         state,
+        identity,
+        base_version,
+        repair_allowed,
+        observed_body: project.task_bodies.get(task_id).cloned(),
         project_id,
         task_id,
         path: task.source_file.clone(),
@@ -20544,8 +20976,8 @@ async fn assemble_artifact_context(
     let mut out = String::new();
     for id in node_ids {
         out.push_str(&format!("### {id}\n"));
-        let Some(layer) = NodeLayer::for_id(id) else {
-            out.push_str("(retired node layer)\n");
+        let Ok(layer) = state.node_types.resolve_node(None, id) else {
+            out.push_str("(unknown node type)\n");
             continue;
         };
         match org_node_path(state, Some(project_id), id, layer).await {
@@ -21534,6 +21966,8 @@ async fn post_node_submit(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<NodeSubmitRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    orgasmic_core::node_type::validate_component(&node_id)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let entry = resolve_artifact_project(&state, q.project.as_deref()).await?;
     let descriptor = state
         .node_types
@@ -21555,6 +21989,25 @@ async fn post_node_submit(
         .map_err(|error| ApiError::not_found(format!("node {node_id} not found: {error}")))?;
     let (replacement, version) =
         prepare_regenerated_node(&current, &body.content, &node_id, descriptor)?;
+    let before = OrgFile::parse(&current, NODE_FILE)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    let after = OrgFile::parse(String::from_utf8_lossy(&replacement), NODE_FILE)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    let heading = after
+        .find_by_id(&node_id)
+        .ok_or_else(|| ApiError::bad_request("replacement must preserve ID"))?;
+    state
+        .node_types
+        .validate_write(&descriptor.collection, &after, heading)
+        .and_then(|_| {
+            state.node_types.validate_transition(
+                &descriptor.collection,
+                before.find_by_id(&node_id),
+                &after,
+                heading,
+            )
+        })
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
 
     let now = Utc::now();
     let mut submitted = orgasmic_core::tx::TxEntry::new(
@@ -21611,17 +22064,18 @@ async fn post_node_submit(
                 task_id: node_id.clone(),
             },
         ),
-        "decisions" | "glossary" => state.events.publish(
+        _ => state.events.publish(
             Topic::Graph,
             EventPayload::GraphNodeRevised {
                 project_id: entry.id.clone(),
-                layer: descriptor.collection.trim_end_matches('s').to_string(),
+                layer: NodeKind::collection(&descriptor.collection)
+                    .layer_name()
+                    .to_string(),
                 node_id: node_id.clone(),
                 action: "regenerated".into(),
                 tx_id: tx_id.clone(),
             },
         ),
-        _ => {}
     }
     Ok(Json(
         json!({ "node_id": node_id, "version": version, "tx_id": tx_id }),
@@ -21634,6 +22088,8 @@ async fn post_node_regenerate(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactRegenerateRequest>,
 ) -> Result<Json<NodeRegenerateResponse>, ApiError> {
+    orgasmic_core::node_type::validate_component(&node_id)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let entry = resolve_artifact_project(&state, q.project.as_deref()).await?;
     let descriptor = state
         .node_types
@@ -23475,7 +23931,7 @@ pub(crate) mod tests {
         );
         ApiState {
             home: home.clone(),
-            node_types: Arc::new(crate::node_types::NodeTypeRegistry::embedded().unwrap()),
+            node_types: Arc::new(crate::node_types::load(&home).unwrap()),
             index,
             writer,
             supervisor,
@@ -32219,26 +32675,28 @@ pub(crate) mod tests {
     // orgasmic:TASK-CS2TM
     #[test]
     fn resolve_node_layer_infers_from_id_and_refuses_contradicting_kind() {
-        assert_eq!(resolve_node_layer(None, "TASK-1").unwrap(), NodeLayer::Task);
+        let registry = orgasmic_core::NodeTypeRegistry::embedded().unwrap();
+        let resolve_node_layer = |kind, id| super::resolve_node_layer(&registry, kind, id);
+        assert_eq!(resolve_node_layer(None, "TASK-1").unwrap(), NodeKind::Task);
         assert_eq!(
             resolve_node_layer(None, "dec_1").unwrap(),
-            NodeLayer::Decision
+            NodeKind::Decision
         );
         // Matching explicit kind is fine.
         assert_eq!(
             resolve_node_layer(Some("task"), "TASK-1").unwrap(),
-            NodeLayer::Task
+            NodeKind::Task
         );
         // Prefix-less ids accept any explicit kind (project lives here).
         assert_eq!(
             resolve_node_layer(Some("project"), "orgasmic").unwrap(),
-            NodeLayer::Project
+            NodeKind::Project
         );
         // Contradicting kind is refused, naming the inferred kind.
         let err = resolve_node_layer(Some("project"), "TASK-1").unwrap_err();
         let message = format!("{err:?}");
-        assert!(message.contains("task node"), "{message}");
-        assert!(message.contains("--kind task"), "{message}");
+        assert!(message.contains("does not belong"), "{message}");
+        assert!(resolve_node_layer(None, "MEET-1").is_err());
         assert!(
             resolve_node_layer(Some("glossary"), "dec_1").is_err(),
             "decision id with glossary kind"
@@ -33450,7 +33908,7 @@ pub(crate) mod tests {
         let rejected = client
             .post(format!("{base}/api/projects/orgasmic/tasks/TASK-PRE"))
             .bearer_auth(&token)
-            .json(&serde_json::json!({ "state": "done" }))
+            .json(&serde_json::json!({ "state": "in_review" }))
             .send()
             .await
             .unwrap();
@@ -33459,7 +33917,7 @@ pub(crate) mod tests {
             .text()
             .await
             .unwrap()
-            .contains("not allowed by the shipped task descriptor"));
+            .contains("transition backlog -> in_review is not allowed"));
 
         let resp = client
             .post(format!("{base}/api/reindex/does-not-exist"))
@@ -34415,7 +34873,8 @@ pub(crate) mod tests {
         let client = reqwest::Client::new();
         let base = format!("http://{}", running.addr);
 
-        // Without `kind`, the id falls back to the glossary layer and misses.
+        // Without `kind`, an unowned prefix is refused before choosing any
+        // file. It must no longer fall through to the glossary writer.
         let missed = client
             .get(format!("{base}/api/org/node"))
             .bearer_auth(&token)
@@ -34423,7 +34882,12 @@ pub(crate) mod tests {
             .send()
             .await
             .unwrap();
-        assert_eq!(missed.status(), reqwest::StatusCode::NOT_FOUND);
+        assert_eq!(missed.status(), reqwest::StatusCode::BAD_REQUEST);
+        assert!(missed
+            .text()
+            .await
+            .unwrap()
+            .contains("no descriptor owns its prefix"));
 
         // With `kind=project`, the PROJECT heading's sections come back.
         let doc: Value = client

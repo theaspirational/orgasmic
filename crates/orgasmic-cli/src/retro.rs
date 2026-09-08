@@ -10,15 +10,19 @@ use crate::{daemon_client::DaemonClient, home::Home};
 #[derive(Debug, Args)]
 #[command(group(clap::ArgGroup::new("scope").required(true).multiple(true).args(["run", "task", "task_sequence"])))]
 pub struct RetroArgs {
+    /// Registered project whose history is being reviewed.
     #[arg(long)]
     project: String,
+    /// Run id to include; repeatable.
     #[arg(long, action = clap::ArgAction::Append)]
     run: Vec<String>,
+    /// Task id whose runs to include; repeatable.
     #[arg(long, action = clap::ArgAction::Append)]
     task: Vec<String>,
     /// Comma-separated tasks, preserving this order then run chronology within each task.
     #[arg(long, value_delimiter = ',', conflicts_with_all = ["run", "task"])]
     task_sequence: Vec<String>,
+    /// Question for the retrospective; repeatable.
     #[arg(long, action = clap::ArgAction::Append)]
     question: Vec<String>,
     /// Claude model id passed unchanged to the SDK. Authentication requires

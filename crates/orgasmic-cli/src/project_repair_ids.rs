@@ -258,19 +258,19 @@ fn hash(bytes: &[u8]) -> String {
 }
 
 fn current_file(path: &str) -> bool {
-    let p = Path::new(path);
-    [
-        ".orgasmic/tasks",
-        ".orgasmic/decisions",
-        ".orgasmic/glossary",
-    ]
-    .iter()
-    .any(|collection| {
-        p.starts_with(collection)
-            && (p.file_name().is_some_and(|n| n == "node.org")
-                || (p.parent() == Some(Path::new(collection))
-                    && p.extension().is_some_and(|x| x == "org")))
-    })
+    let parts: Vec<_> = Path::new(path)
+        .components()
+        .filter_map(|part| part.as_os_str().to_str())
+        .collect();
+    match parts.as_slice() {
+        [".orgasmic", collection, _, "node.org"] => {
+            orgasmic_core::paths::is_node_collection(collection)
+        }
+        [".orgasmic", collection, file] => {
+            matches!(*collection, "tasks" | "decisions" | "glossary") && file.ends_with(".org")
+        }
+        _ => false,
+    }
 }
 
 // Exact local IDs only: no descendant/prefix matches and no foreign-project refs.
@@ -920,6 +920,21 @@ fn apply_plan(plan: &Plan, interrupt_after: Option<usize>) -> Result<()> {
 mod tests {
     use super::*;
     use orgasmic_core::{claims::CLAIMED, TxEntry, TxWriter};
+
+    #[test]
+    fn repair_only_visits_node_collections_not_conventions_or_history() {
+        assert!(current_file(".orgasmic/meetings/MEET-ABCDE/node.org"));
+        assert!(!current_file(".orgasmic/conventions/example/node.org"));
+        for reserved in ["dispatch-records", "repairs", "claims"] {
+            assert!(!current_file(&format!(
+                ".orgasmic/{reserved}/example/node.org"
+            )));
+        }
+        assert!(!current_file(".orgasmic/meetings/MEET-ABCDE/journal.org"));
+        assert!(!current_file(
+            ".orgasmic/meetings/MEET-ABCDE/versions/node.org"
+        ));
+    }
 
     fn fixture() -> (tempfile::TempDir, Home, PathBuf) {
         let temp = tempfile::tempdir().unwrap();

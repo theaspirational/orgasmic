@@ -28,6 +28,8 @@ aliases:
 - orgasmic decision create
 - orgasmic decision schema
 - orgasmic graph edges
+- orgasmic node create
+- orgasmic node state
 - orgasmic node body
 - orgasmic node prop
 - orgasmic node title
@@ -119,6 +121,8 @@ Canonical commands in this family:
 - `orgasmic decision create`
 - `orgasmic decision schema`
 - `orgasmic graph edges`
+- `orgasmic node create`
+- `orgasmic node state`
 - `orgasmic node body`
 - `orgasmic node prop`
 - `orgasmic node title`
@@ -141,6 +145,11 @@ Canonical commands in this family:
 
 Read `orgasmic <command-path> --help` immediately before use. Flags are scoped to
 the leaf verb; do not infer a flag from a sibling command.
+
+`orgasmic node create` selects a registered collection with `--kind` and starts
+in its descriptor's initial state. `orgasmic node state` resolves the collection
+from the id; compiled task transitions retain their evidence and lifecycle guards.
+An unknown prefix is refused rather than treated as a glossary term.
 
 ## Returns
 

@@ -24,10 +24,6 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "runtime-manifest.json",
     "docs/README.md",
     "shipped/schema/tx.org",
-    "shipped/schema/node-types/task.org",
-    "shipped/schema/node-types/decision.org",
-    "shipped/schema/node-types/glossary.org",
-    "shipped/schema/node-types/artifact.org",
     "shipped/prompt-studio/slots.org",
     "shipped/prompt-studio/references/wireframe.md",
     "shipped/entry/router.org",
@@ -567,6 +563,16 @@ fn validate_runtime_dir(dir: &Path) -> Result<()> {
         }
     }
     validate_executable(&dir.join("bin/orgasmic"))?;
+    let descriptors =
+        orgasmic_core::NodeTypeRegistry::load(&dir.join("shipped/schema/node-types"))?;
+    for required in orgasmic_core::NodeTypeRegistry::embedded()?.descriptors() {
+        if descriptors.descriptor(&required.collection).is_none() {
+            bail!(
+                "runtime bundle missing descriptor for {}",
+                required.collection
+            );
+        }
+    }
     Ok(())
 }
 

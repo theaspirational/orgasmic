@@ -1,153 +1,69 @@
-use std::collections::BTreeMap;
-use std::path::Path;
+pub use orgasmic_core::node_registry::*;
 
-use anyhow::{bail, Context, Result};
-use orgasmic_core::NodeTypeDescriptor;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeTypeLintSeverity {
-    Low,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NodeTypeLint {
-    pub severity: NodeTypeLintSeverity,
-    pub message: String,
-}
-
-pub struct ResolvedCollection<'a> {
-    pub descriptor: Option<&'a NodeTypeDescriptor>,
-    pub label: &'a str,
-    pub lint: Option<NodeTypeLint>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct NodeTypeRegistry {
-    descriptors: BTreeMap<String, NodeTypeDescriptor>,
-}
-
-impl NodeTypeRegistry {
-    pub fn load(dir: &Path) -> Result<Self> {
-        let mut descriptors = BTreeMap::new();
-        let entries = std::fs::read_dir(dir)
-            .with_context(|| format!("read node-type descriptors from {}", dir.display()))?;
-        for entry in entries {
-            let entry = entry.with_context(|| format!("read entry in {}", dir.display()))?;
-            let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("org") {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path)
-                .with_context(|| format!("read {}", path.display()))?;
-            let descriptor = NodeTypeDescriptor::parse(&source, &path.display().to_string())?;
-            let collection = descriptor.collection.clone();
-            if descriptors.insert(collection.clone(), descriptor).is_some() {
-                bail!("duplicate node-type descriptor for collection {collection:?}");
-            }
-        }
-        Ok(Self { descriptors })
-    }
-
-    pub fn embedded() -> Result<Self> {
-        let mut descriptors = BTreeMap::new();
-        for (name, source) in [
-            (
-                "task.org",
-                include_str!("../../../shipped/schema/node-types/task.org"),
-            ),
-            (
-                "decision.org",
-                include_str!("../../../shipped/schema/node-types/decision.org"),
-            ),
-            (
-                "glossary.org",
-                include_str!("../../../shipped/schema/node-types/glossary.org"),
-            ),
-            (
-                "artifact.org",
-                include_str!("../../../shipped/schema/node-types/artifact.org"),
-            ),
-        ] {
-            let descriptor = NodeTypeDescriptor::parse(source, name)?;
-            descriptors.insert(descriptor.collection.clone(), descriptor);
-        }
-        Ok(Self { descriptors })
-    }
-
-    pub fn descriptor(&self, collection: &str) -> Option<&NodeTypeDescriptor> {
-        self.descriptors.get(collection)
-    }
-
-    pub fn descriptor_for_id(&self, id: &str) -> Option<&NodeTypeDescriptor> {
-        self.descriptors
-            .values()
-            .filter(|descriptor| id.starts_with(&descriptor.id_prefix))
-            .max_by_key(|descriptor| descriptor.id_prefix.len())
-    }
-
-    pub fn len(&self) -> usize {
-        self.descriptors.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.descriptors.is_empty()
-    }
-
-    /// Unknown collections keep the type-agnostic node kernel. The lint is
-    /// advisory because indexing, journals, and comments need no descriptor.
-    pub fn resolve<'a>(&'a self, collection: &'a str) -> ResolvedCollection<'a> {
-        match self.descriptor(collection) {
-            Some(descriptor) => ResolvedCollection {
-                descriptor: Some(descriptor),
-                label: &descriptor.label,
-                lint: None,
-            },
-            None => ResolvedCollection {
-                descriptor: None,
-                label: collection,
-                lint: Some(NodeTypeLint {
-                    severity: NodeTypeLintSeverity::Low,
-                    message: format!(
-                        "collection {collection:?} has no shipped node-type descriptor; using generic indexing, comments, and journals"
-                    ),
-                }),
-            },
-        }
-    }
+pub fn load(home: &orgasmic_core::Home) -> anyhow::Result<NodeTypeRegistry> {
+    let mut registry = NodeTypeRegistry::for_home(home)?;
+    registry.register_hooks(
+        "tasks",
+        WriteHooks {
+            validate_write: Some(|file, heading| {
+                orgasmic_core::TaskHeading::from_heading(file, heading, "node.org")?;
+                Ok(())
+            }),
+            validate_transition: Some(|file, heading, _| {
+                if heading.todo.as_deref() == Some("DONE")
+                    && crate::index::parse_task_body(file, heading)
+                        .evidence
+                        .is_empty()
+                {
+                    let id = heading.property("ID").unwrap_or("task");
+                    anyhow::bail!("closing {id} requires recorded evidence and its Evidence section is empty. Record proof (a run id, review verdict, test output, commit) with `orgasmic node body set {id} --section Evidence --create --body \"…\"`, then close again.");
+                }
+                Ok(())
+            }),
+        },
+    )?;
+    registry.register_hooks(
+        "artifacts",
+        WriteHooks {
+            validate_write: Some(|_, heading| {
+                crate::artifacts::validate_art_id_readable(heading.property("ID").unwrap_or_default())
+                    .map_err(anyhow::Error::msg)?;
+                anyhow::ensure!(heading.property("VERSION").and_then(|value| value.parse::<u32>().ok()).is_some_and(|version| version > 0), "artifact VERSION must be a positive integer");
+                anyhow::ensure!(heading.todo.is_none(), "artifacts use their compiled STATE lifecycle, not heading states");
+                Ok(())
+            }),
+            validate_transition: Some(|_, heading, before| {
+                if let Some(before) = before {
+                    for key in ["VERSION", "STATE"] {
+                        anyhow::ensure!(heading.property(key) == before.property(key), "artifact {key} is owned by submit/regenerate; use the artifact command");
+                    }
+                } else {
+                    anyhow::ensure!(heading.property("VERSION") == Some("1") && heading.property("STATE") == Some("submitted"), "new artifacts start at VERSION 1, STATE submitted");
+                }
+                Ok(())
+            }),
+        },
+    )?;
+    Ok(registry)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    fn repo_root() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-    }
-
     #[test]
-    fn shipped_descriptors_load_and_unknown_collection_is_generic() {
-        let registry = NodeTypeRegistry::load(&repo_root().join("shipped/schema/node-types"))
-            .expect("load shipped node types");
-        assert_eq!(registry.len(), 4);
-        for (collection, prefix) in [
-            ("tasks", "TASK-"),
-            ("decisions", "dec_"),
-            ("glossary", "term_"),
-            ("artifacts", "ART-"),
-        ] {
-            assert_eq!(registry.descriptor(collection).unwrap().id_prefix, prefix);
-        }
-        let tasks = registry.descriptor("tasks").unwrap();
-        assert!(tasks.states.contains(&"in_review".to_string()));
-        assert!(tasks.allows_transition("in_review", "done"));
-        assert!(!tasks.allows_transition("done", "in_progress"));
-        for id in ["TASK-ABCDE", "dec_ABCDE", "term_ABCDE", "ART-ABCDE"] {
-            assert!(registry.descriptor_for_id(id).is_some(), "{id}");
-        }
-
-        let generic = registry.resolve("problems");
-        assert!(generic.descriptor.is_none());
-        assert_eq!(generic.label, "problems");
-        assert_eq!(generic.lint.unwrap().severity, NodeTypeLintSeverity::Low);
+    fn descriptor_states_match_compiled_task_behavior() {
+        use orgasmic_core::LifecycleStage::*;
+        let registry = orgasmic_core::NodeTypeRegistry::embedded().unwrap();
+        let actual: std::collections::BTreeSet<_> = registry
+            .descriptor("tasks")
+            .unwrap()
+            .states
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let expected = [Backlog, Todo, InProgress, InReview, Done, Cancelled]
+            .map(|stage| stage.as_str())
+            .into_iter()
+            .collect();
+        assert_eq!(actual, expected);
     }
 }

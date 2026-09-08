@@ -1040,12 +1040,7 @@ impl Daemon {
 
         boot_progress.set_phase("loading project catalog")?;
         boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
-        let descriptor_dir = home.source().join("shipped/schema/node-types");
-        let node_types = if descriptor_dir.is_dir() {
-            node_types::NodeTypeRegistry::load(&descriptor_dir)?
-        } else {
-            node_types::NodeTypeRegistry::embedded()?
-        };
+        let node_types = node_types::load(&home)?;
         let index = Index::new(home.clone());
         // TASK-AJP4A: boot publishes registration plus home-owned safety state.
         // No ProjectIndex is built before the listener binds.
