@@ -14,4 +14,6 @@ A GitHub workflow runs the same suite on macOS runners and posts the =local/rele
 ** Acceptance
 - integrate-main lands a PR with certification produced by CI; laptop runs zero test binaries.
 - The no-bypass property holds: status only from the workflow, on the exact head sha.
+** Notes
+2026-09-08 stable release preparation: immutable app candidate promotion is implemented and reviewed (fd19af52), forcing full certification. scripts/certify-release.sh invokes scripts/run-tests.sh without package selectors, which defaults to cargo test --workspace. This conflicts with the explicit dev-laptop prohibition in gotchas.org; no full workspace run was started and no certification receipt or publication was claimed. Safe bounded checks passed: 14 hermetic app publisher tests, member-policy HTTP route, pinned strict workspace Clippy, UI typecheck/full UI tests, and transcript tail regression. The release needs a safe certification execution path preserving complete coverage and exact-commit authority; the existing CI proposal still requires its documented decision. Local host load reached 24.22 during bounded UI/build checks, so no further heavy test run is being started. Runtime/app candidates, installed-build media/Android smoke, publication and installation remain pending.
 
