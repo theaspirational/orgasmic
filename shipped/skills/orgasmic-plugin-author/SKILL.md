@@ -13,8 +13,7 @@ and `orgasmic plugin run`.
 Use the existing node API and CLI; do not write ledger files directly. Check
 `orgasmic plugin --help` and the relevant leaf command's `--help` against the
 installed runtime before executing. The foundation supports declarative
-collections and commands. UI asset serving is available; automatic view
-activation and hot reload are not yet wired. Sidecars, attachments, and chat
+collections, commands, and same-origin UI views with hot reload. Sidecars, attachments, and chat
 remain unavailable.
 
 ## Build and verify
@@ -47,7 +46,7 @@ remain unavailable.
 One top-level `Plugin`, at most one nested node type. The folder name must match
 `ID`. Version is numeric major.minor.patch; schema numbers are positive.
 `COMMANDS`, `SCHEMA_ACCEPTS`, states, and transitions are optional. Currently
-only `core.nodes@1`, `nodes.read`, and `nodes.write` are supported.
+only `core.nodes@1`, `nodes.read`, `nodes.write`, and implicit `ui.execute` are supported.
 
 ```org
 * Plugin
@@ -100,7 +99,7 @@ Do not log tokens. Disable, member revocation, or manifest changes revoke them;
 normal command exit revokes its lease too. Commands still run as the OS user
 with full host filesystem access: this is daemon authorization, not a sandbox.
 
-## UI serving foundation
+## UI views and hot reload
 
 Add `:UI: ui/index.js` and `:SDK: ^1.0` to the root drawer. Check requires that
 entry file inside the plugin folder. UI automatically adds `ui.execute` to the
@@ -114,7 +113,35 @@ Import React from
 `react` (or `react/jsx-runtime`) and host APIs from `@orgasmic/plugin-sdk`.
 Do not bundle React. The SDK is built with the host and exposes the node
 client, transport, hooks, and existing Button/Card/Input/Textarea primitives.
-It does not export future P5 services. Scope styles under `[data-plugin=<id>]`.
-Keep module import free of side effects and return cleanup from `register(ctx)`;
-the automatic activation/runtime contract is the next slice, not implemented
-by this serving foundation.
+It does not export future P5 services. Open the app from the selected backend's
+origin; a remote-backend profile cannot load another origin's plugin UI.
+
+Export `register(ctx)`, optionally returning a disposer. Register a component
+with `ctx.registerNodeView('meetings', View)`. It receives `projectId`,
+`collection`, optional `nodeId` (detail, otherwise list), and `onOpenNode(id)`.
+Only the plugin's owned collection may be registered. Without a custom view,
+the host uses the generic collection/list editor.
+
+Use `ctx.registerStyles(css)` for host-scoped CSS, `ctx.get(path)` and
+`ctx.post(path, body)` for project-scoped API requests. `ctx.signal` aborts on
+reload, disable, or leaving the project. UI API calls use the signed-in user's
+authority, not the plugin's capabilities (`ui.execute` is the trust approval).
+Other fetches and module side effects are not managed. Use `ctx.getDraft(nodeId)`, `setDraft(nodeId, value)`, and
+`clearDraft(nodeId)` for unsaved edits that must survive view replacement.
+Keep the original `base_version` in the draft; never silently retry conflicts
+against a fresh version.
+
+Register views and styles only inside `register(ctx)` (until its promise settles
+if async); late registrations throw. The daemon stats the installed UI tree
+every second. Clients refresh statuses on board events and WebSocket reconnect,
+not on a timer. The host imports each new
+revision under `/plugins/<id>/ui/<project>/@<revision>/index.js`, so relative
+imports reload too. Keep module import free of side effects. Registration is
+staged: a failed revision leaves the previous view/styles alive, and one
+plugin's failure or throwing disposer cannot block another. This rollback
+covers SDK registrations, not arbitrary JavaScript side effects. The host
+does not reattempt a failed revision until files change again.
+
+See `examples/plugins/meetings` for a plain-ESM list/detail view and a scoped
+notes importer. Test register, edit/reload with an unsaved draft, save, disable
+to the read-only generic fallback, and re-enable before handing a plugin over.

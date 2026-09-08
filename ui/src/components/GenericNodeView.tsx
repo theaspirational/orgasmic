@@ -16,10 +16,24 @@ import { useNodeTypes } from '@/lib/nodeTypes';
 import type { OrgNodeDoc } from '@/lib/orgdoc/types';
 import { routeSearch } from '@/lib/searchState';
 import { useResource } from '@/lib/useResource';
+import { PluginViewBoundary, usePluginView } from '@/lib/pluginRuntime';
 
 const directory: NodeDirectory = { labelFor: (id) => id, suggestionsFor: () => [] };
 
 export function GenericNodeView({ projectId, collection }: { projectId: string; collection: string }) {
+  const plugin = usePluginView(collection);
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const { can } = useMe();
+  const fallback = <GenericCollectionView projectId={projectId} collection={collection} />;
+  if (!plugin || !can(projectId, 'graph.read')) return fallback;
+  return <PluginViewBoundary key={plugin.revision} fallback={fallback}>
+    <div data-plugin={plugin.pluginId}><plugin.View projectId={projectId} collection={collection}
+      onOpenNode={(id) => void navigate({ search: routeSearch((previous) => pushEntityPeek(pathname, previous, id)) })} /></div>
+  </PluginViewBoundary>;
+}
+
+function GenericCollectionView({ projectId, collection }: { projectId: string; collection: string }) {
   const registry = useNodeTypes();
   const { can } = useMe();
   const refresh = useRefreshToken();
@@ -36,13 +50,14 @@ export function GenericNodeView({ projectId, collection }: { projectId: string; 
   if (!canRead) return <ErrorPanel error="You do not have permission to read this collection." />;
   if (registry.error) return <ErrorPanel error={registry.error} />;
   if (!registry.data) return <Loading label="Loading node types…" />;
-  if (!type) return <ErrorPanel error={`The ${collection} descriptor is unavailable. No data has been changed.`} />;
+  const label = type?.label_plural ?? collection;
   return <div className="flex flex-col gap-4">
-    <PageHeader title={type.label_plural} count={nodes.length} />
+    <PageHeader title={label} count={nodes.length} />
+    {!type ? <p className="text-sm text-muted-foreground">Plugin unavailable. Retained nodes are read only.</p> : null}
     {resource.error ? <ErrorPanel error={resource.error} /> : null}
-    <NodeListView ariaLabel={type.label_plural} items={filtered} getId={(node) => node.id}
+    <NodeListView ariaLabel={label} items={filtered} getId={(node) => node.id}
       loading={resource.loading && !resource.data} search={search} onSearchChange={setSearch}
-      emptyLabel={search ? 'No matching nodes.' : `No ${type.label_plural.toLowerCase()} yet.`}
+      emptyLabel={search ? 'No matching nodes.' : `No ${label.toLowerCase()} yet.`}
       onSelect={(id) => void navigate({ search: routeSearch((previous) => pushEntityPeek(pathname, previous, id)) })}
       renderRow={(node) => <div className="flex min-w-0 flex-1 items-center gap-3">
         <span className="shrink-0 font-mono text-xs text-muted-foreground">{node.id}</span>

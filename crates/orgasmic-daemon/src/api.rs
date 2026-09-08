@@ -1194,7 +1194,22 @@ async fn get_plugin_ui_asset(
         .get(&id)
         .ok_or_else(|| ApiError::not_found("plugin UI unavailable"))?;
     let path = manifest
-        .ui_asset_path(&state.home.user().join("plugins").join(id), &asset)
+        .ui_asset_path(
+            &state.home.user().join("plugins").join(id),
+            // The revision directory also busts the browser's ESM cache for
+            // relative imports, which do not inherit an entry's ?v= query.
+            if asset.starts_with('@') {
+                let (revision, path) = asset
+                    .split_once('/')
+                    .ok_or_else(|| ApiError::not_found("invalid UI revision path"))?;
+                if revision.len() != 65 || !revision[1..].bytes().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(ApiError::not_found("invalid UI revision"));
+                }
+                path
+            } else {
+                &asset
+            },
+        )
         .map_err(|_| ApiError::not_found("plugin UI asset unavailable"))?;
     let mime = match path.extension().and_then(|e| e.to_str()) {
         Some("js" | "mjs") => "text/javascript; charset=utf-8",

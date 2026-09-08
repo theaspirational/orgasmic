@@ -147,6 +147,40 @@ async fn ui_assets_require_approval_project_access_and_safe_paths() {
     assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     assert_eq!(response.headers()["cache-control"], "no-store");
     assert!(response.text().await.unwrap().contains("plugin asset"));
+    let statuses = get(&client, &api, token, "/plugins?project=demo").await;
+    let revision = statuses[0]["revision"].as_str().unwrap().to_owned();
+    assert_eq!(revision.len(), 64);
+    write(
+        dir.join("ui/index.js"),
+        "import './label.js'; export const marker = 'reloaded asset';",
+    );
+    write(
+        dir.join("ui/label.js"),
+        "export const label = 'reloaded relative import';",
+    );
+    // Observe the real one-second reconcile loop, not the force-reconcile API.
+    let next = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let statuses = get(&client, &api, token, "/plugins?project=demo").await;
+            let next = statuses[0]["revision"].as_str().unwrap().to_owned();
+            if next != revision {
+                break next;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("UI changes must bump the revision without a restart");
+    for file in ["index.js", "label.js"] {
+        let response = client
+            .get(format!("{base}/plugins/meetings/ui/demo/@{next}/{file}"))
+            .bearer_auth(&viewer)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert!(response.text().await.unwrap().contains("reloaded"));
+    }
     assert_eq!(
         client
             .get(&asset)
@@ -157,7 +191,7 @@ async fn ui_assets_require_approval_project_access_and_safe_paths() {
             .status(),
         403
     );
-    for path in ["%2e%2e%2fplugin.org", "missing.js"] {
+    for path in ["%2e%2e%2fplugin.org", "missing.js", "@bad/index.js"] {
         assert_eq!(
             client
                 .get(format!("{base}/plugins/meetings/ui/demo/{path}"))
@@ -224,6 +258,16 @@ async fn ui_assets_require_approval_project_access_and_safe_paths() {
     assert_eq!(
         client
             .get(&asset)
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}/plugins/meetings/ui/demo/@{next}/index.js"))
             .bearer_auth(token)
             .send()
             .await

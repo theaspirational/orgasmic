@@ -76,12 +76,14 @@ pub struct PluginStatus {
     pub manifest: Option<PluginManifest>,
     pub enabled: bool,
     pub error: Option<String>,
+    pub revision: String,
 }
 
 type FileSignature = Vec<(PathBuf, Option<(std::time::SystemTime, u64)>)>;
 
 struct Cached {
     signature: FileSignature,
+    revisions: BTreeMap<String, String>,
     base: NodeTypeRegistry,
     installed: BTreeMap<String, PluginManifest>,
     errors: BTreeMap<String, String>,
@@ -112,6 +114,7 @@ impl PluginRegistry {
             home: home.clone(),
             data: Mutex::new(Cached {
                 signature: Vec::new(),
+                revisions: BTreeMap::new(),
                 base: crate::node_types::load(home)?,
                 installed: BTreeMap::new(),
                 errors: BTreeMap::new(),
@@ -168,6 +171,9 @@ impl PluginRegistry {
             if let Ok(entries) = std::fs::read_dir(&root) {
                 for entry in entries {
                     let entry = entry?;
+                    if root.ends_with("plugins") {
+                        collect_ui_paths(&entry.path().join("ui"), &mut paths);
+                    }
                     let path = if root.ends_with("plugins") {
                         entry.path().join("plugin.org")
                     } else {
@@ -262,6 +268,22 @@ impl PluginRegistry {
                     .and_then(|p| p.active.get(&lease.manifest.id))
                     == Some(&lease.manifest)
         });
+        use sha2::{Digest, Sha256};
+        data.revisions = data
+            .installed
+            .keys()
+            .map(|id| {
+                let root = self.home.user().join("plugins").join(id);
+                let stamps: Vec<_> = signature
+                    .iter()
+                    .filter(|(path, _)| path.starts_with(&root))
+                    .collect();
+                (
+                    id.clone(),
+                    format!("{:x}", Sha256::digest(format!("{stamps:?}").as_bytes())),
+                )
+            })
+            .collect();
         data.signature = signature;
         Ok(true)
     }
@@ -351,6 +373,7 @@ impl PluginRegistry {
                 manifest: data.installed.get(&id).cloned(),
                 enabled: snapshot.active.contains_key(&id),
                 error: snapshot.errors.get(&id).cloned(),
+                revision: data.revisions.get(&id).cloned().unwrap_or_default(),
                 id,
             })
             .collect())
@@ -552,6 +575,33 @@ impl PluginRegistry {
 fn token_hash(token: &str) -> Vec<u8> {
     use sha2::{Digest, Sha256};
     Sha256::digest(token.as_bytes()).to_vec()
+}
+
+fn collect_ui_paths(root: &Path, paths: &mut Vec<PathBuf>) {
+    // ponytail: stat the UI tree once per tick, never .git or file contents;
+    // use filesystem notifications if large plugin bundles make this expensive.
+    paths.push(root.into());
+    if root
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                collect_ui_paths(&entry.path(), paths);
+            } else if kind.is_file() {
+                paths.push(entry.path());
+            }
+        }
+    }
 }
 
 #[cfg(test)]

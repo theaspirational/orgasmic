@@ -69,6 +69,7 @@ import { setUnauthorizedHandler } from '@/lib/transport';
 import type { DaemonEvent, ViewName, WsConnectionState } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { NodeTypesContext, useNodeTypesResource } from '@/lib/nodeTypes';
+import { PluginRuntimeContext, usePluginRuntime } from '@/lib/pluginRuntime';
 
 import { ConnectGate } from './ConnectGate';
 import { ConnectionBanner } from './ConnectionBanner';
@@ -166,6 +167,7 @@ export function AppShell() {
     !checkingSession && !isMember && !hasAdminSession && (!activeProfile.token || Boolean(authError));
   const blockProtectedRoutes = checkingSession || needsToken;
   const registry = useNodeTypesResource(projectId, !blockProtectedRoutes);
+  const pluginRuntime = usePluginRuntime(projectId, activeProfile, !blockProtectedRoutes && can(projectId, 'graph.read'), `${me?.identity}:${me?.name}`);
   const collectionNav: NavItem[] = registry.data
     ? registry.data.map((type): NavItem => {
         const builtin = PRIMARY.find((item) => item.page === type.collection);
@@ -319,6 +321,7 @@ export function AppShell() {
 
   return (
     <NodeTypesContext.Provider value={registry}>
+    <PluginRuntimeContext.Provider value={pluginRuntime}>
     <TooltipProvider>
       <RichTextProvider projectId={projectId} canReadGraph={can(projectId, 'graph.read')}>
       <RunDockProvider>
@@ -452,6 +455,7 @@ export function AppShell() {
       </RunDockProvider>
       </RichTextProvider>
     </TooltipProvider>
+    </PluginRuntimeContext.Provider>
     </NodeTypesContext.Provider>
   );
 }

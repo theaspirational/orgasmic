@@ -1,0 +1,22 @@
+* Plugin
+:PROPERTIES:
+:ID: meetings
+:VERSION: 0.1.0
+:PLUGIN_API: 1
+:SCHEMA: 1
+:REQUIRES: core.nodes@1
+:CAPABILITIES: nodes.read nodes.write
+:UI: ui/index.js
+:SDK: ^1.0
+:COMMANDS: import
+:END:
+** Node type meetings
+:PROPERTIES:
+:COLLECTION: meetings
+:ID_PREFIX: MEET-
+:LABEL: Meeting
+:LABEL_PLURAL: Meetings
+:REQUIRED_PROPERTIES: ID
+:STATES: active archived
+:TRANSITIONS: active>archived archived>active
+:END:

@@ -26,6 +26,7 @@ export class HttpError extends Error {
 }
 
 type RequestInit = {
+  signal?: AbortSignal;
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   body?: unknown;
   contentType?: string;
@@ -112,6 +113,7 @@ type BuiltRequest = {
     headers: Record<string, string>;
     body?: string;
     credentials?: RequestCredentials;
+    signal?: AbortSignal;
   };
 };
 
@@ -135,7 +137,7 @@ function buildRequest(path: string, init: RequestInit, profile: TransportProfile
   if (authMode === 'bearer' && profile.token) headers.authorization = `Bearer ${profile.token}`;
   return {
     url: resolveHttpUrl(path, profile),
-    init: { method, headers, body, credentials: authMode === 'member' ? 'include' : 'same-origin' },
+    init: { method, headers, body, credentials: authMode === 'member' ? 'include' : 'same-origin', signal: init.signal },
   };
 }
 
@@ -153,6 +155,18 @@ export async function requestWithProfile<T>(
   }
   if (res.status === 204) return undefined as unknown as T;
   return (await res.json()) as T;
+}
+
+// Native module imports cannot attach a bearer header. Reuse the existing
+// one-use ticket exchange; never put a daemon bearer in an asset URL.
+export async function ensurePluginUiSession(profile: TransportProfile, signal: AbortSignal) {
+  if (new URL(profile.baseUrl).origin !== window.location.origin) {
+    throw new Error('Open the app from the selected backend to load its same-origin plugin UI.');
+  }
+  if (authMode === 'member' || !profile.token) return;
+  const session = await requestWithProfile<{ path: string }>(profile, '/auth/ui-session', { method: 'POST', signal });
+  const response = await fetch(new URL(session.path, profile.baseUrl), { credentials: 'same-origin', signal });
+  if (!response.ok) throw new HttpError(response.status, 'Plugin UI session failed');
 }
 
 async function requestWithHeader<T>(path: string, headerName: string): Promise<{ data: T; header: string | null }> {
