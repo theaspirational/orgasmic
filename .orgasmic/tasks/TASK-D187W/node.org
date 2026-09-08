@@ -11,10 +11,10 @@
 ** Description
 Follow up on the P0 registry review after the UI registry slice. P0 commit: 453b8d9ba4f6689bef0ab4ef9c9bb72342a470b7 on plugins/p0-registry. These items are deliberately not fixed in P0.
 ** Acceptance Criteria
-- Make the registry reloadable through P2 reconciliation. Today the daemon loads once at boot while CLI id mint loads fresh, so the CLI can mint an id the daemon rejects. Both must agree on the active descriptor snapshot.
-- Resolve compiled descriptor override authority. User files under user/schema/node-types currently replace shipped descriptors by name; prefixes and task states are pinned, but transitions and required properties are not. Pin the whole compiled descriptor or allow only new files, with regression coverage.
-- Audit every node_id_class_by_prefix caller that treats None as not a node. Plugin ids currently return None and must not be silently excluded from generic node behavior.
-- Emit an Org TODO declaration with a | separator for done states, without changing application lifecycle semantics.
-- Review and explicitly retain or narrow the P0 member policy: authorized members can read every node kind, including project and handoff files, and editors can delete decisions and glossary terms. Keep policy and HTTP tests aligned.
+- [ ] Make the registry reloadable through P2 reconciliation. Today the daemon loads once at boot while CLI id mint loads fresh, so the CLI can mint an id the daemon rejects. Both must agree on the active descriptor snapshot.
+- [ ] Resolve compiled descriptor override authority. User files under user/schema/node-types currently replace shipped descriptors by name; prefixes and task states are pinned, but transitions and required properties are not. Pin the whole compiled descriptor or allow only new files, with regression coverage.
+- [ ] Audit every node_id_class_by_prefix caller that treats None as not a node. Plugin ids currently return None and must not be silently excluded from generic node behavior.
+- [ ] Emit an Org TODO declaration with a | separator for done states, without changing application lifecycle semantics.
+- [ ] Review and explicitly retain or narrow the P0 member policy: authorized members can read every node kind, including project and handoff files, and editors can delete decisions and glossary terms. Keep policy and HTTP tests aligned.
 ** Notes
 P0 remains branch-only and is not deployed. This is one consolidated P2 task, not authorization to pull loader, sidecar, attachment, or chat work into P0/P1.
