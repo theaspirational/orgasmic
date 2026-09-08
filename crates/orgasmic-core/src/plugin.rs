@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub const PLUGIN_API: u32 = 1;
+pub const PLUGIN_SDK_VERSION: &str = "1.0.0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -15,6 +16,10 @@ pub struct PluginManifest {
     pub schema_accepts: BTreeSet<u32>,
     pub capabilities: BTreeSet<String>,
     pub commands: Vec<String>,
+    #[serde(default)]
+    pub ui: Option<String>,
+    #[serde(default)]
+    pub sdk: Option<String>,
     pub node_type: Option<NodeTypeDescriptor>,
 }
 
@@ -89,22 +94,44 @@ impl PluginManifest {
             "SCHEMA_ACCEPTS must be positive"
         );
         schema_accepts.insert(schema);
-        for key in ["UI", "SDK", "SIDECAR"] {
-            anyhow::ensure!(
-                root.property(key).is_none_or(|v| v.trim().is_empty()),
-                "{key} is not supported in P2"
-            );
-        }
+        anyhow::ensure!(
+            root.property("SIDECAR").is_none_or(|v| v.trim().is_empty()),
+            "SIDECAR is not supported"
+        );
         for service in words("REQUIRES") {
             anyhow::ensure!(
                 service == "core.nodes@1",
                 "required service {service} is unavailable"
             );
         }
-        let capabilities: BTreeSet<_> = words("CAPABILITIES").into_iter().collect();
+        let ui = root
+            .property("UI")
+            .filter(|v| !v.trim().is_empty())
+            .map(|v| v.trim().to_string());
+        let sdk = root
+            .property("SDK")
+            .filter(|v| !v.trim().is_empty())
+            .map(|v| v.trim().to_string());
+        if let Some(ui) = &ui {
+            anyhow::ensure!(ui == "ui/index.js", "UI must be ui/index.js");
+            let requirement =
+                semver::VersionReq::parse(sdk.as_deref().context("UI requires SDK")?)?;
+            anyhow::ensure!(
+                requirement.matches(&semver::Version::parse(PLUGIN_SDK_VERSION)?),
+                "unsupported SDK version"
+            );
+        } else {
+            anyhow::ensure!(sdk.is_none(), "SDK requires UI");
+        }
+        let mut capabilities: BTreeSet<_> = words("CAPABILITIES").into_iter().collect();
+        // A declarative install becoming executable UI must require re-approval.
+        // This is a trust acknowledgement, not a same-origin authority boundary.
+        if ui.is_some() {
+            capabilities.insert("ui.execute".into());
+        }
         for capability in &capabilities {
             anyhow::ensure!(
-                ["nodes.read", "nodes.write"].contains(&capability.as_str()),
+                ["nodes.read", "nodes.write", "ui.execute"].contains(&capability.as_str()),
                 "unknown or unavailable capability {capability}"
             );
         }
@@ -136,6 +163,8 @@ impl PluginManifest {
             schema_accepts,
             capabilities,
             commands,
+            ui,
+            sdk,
             node_type,
         })
     }
@@ -161,7 +190,33 @@ impl PluginManifest {
         for command in &manifest.commands {
             manifest.command_path(dir, command)?;
         }
+        if manifest.ui.is_some() {
+            manifest.ui_asset_path(dir, "index.js")?;
+        }
         Ok(manifest)
+    }
+
+    pub fn ui_asset_path(&self, dir: &Path, asset: &str) -> Result<std::path::PathBuf> {
+        anyhow::ensure!(self.ui.is_some(), "plugin has no UI");
+        anyhow::ensure!(
+            !asset.is_empty()
+                && asset.split('/').all(|part| {
+                    !part.is_empty() && part != "." && part != ".." && !part.contains('\\')
+                }),
+            "invalid UI asset path"
+        );
+        anyhow::ensure!(
+            !dir.symlink_metadata()?.file_type().is_symlink(),
+            "plugin root must not be a symlink"
+        );
+        let root = dir.canonicalize()?;
+        let ui = root.join("ui").canonicalize()?;
+        let path = ui.join(asset).canonicalize()?;
+        anyhow::ensure!(
+            ui.starts_with(&root) && path.starts_with(&ui) && path.is_file(),
+            "UI asset escapes plugin folder"
+        );
+        Ok(path)
     }
 
     pub fn command_path(&self, dir: &Path, command: &str) -> Result<std::path::PathBuf> {
@@ -230,6 +285,20 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
 mod tests {
     use super::*;
     const SOURCE: &str = "* Plugin\n:PROPERTIES:\n:ID: meetings\n:VERSION: 0.1.0\n:PLUGIN_API: 1\n:SCHEMA: 2\n:SCHEMA_ACCEPTS: 1\n:REQUIRES: core.nodes@1\n:CAPABILITIES: nodes.read nodes.write\n:END:\n** Node type meetings\n:PROPERTIES:\n:COLLECTION: meetings\n:ID_PREFIX: MEET-\n:LABEL: Meeting\n:LABEL_PLURAL: Meetings\n:END:\n";
+    #[test]
+    fn ui_requires_supported_sdk_and_executable_trust_approval() {
+        let source = SOURCE.replace(":SCHEMA: 2", ":UI: ui/index.js\n:SDK: ^1.0\n:SCHEMA: 2");
+        let manifest = PluginManifest::parse(&source, "UI").unwrap();
+        assert!(manifest.capabilities.contains("ui.execute"));
+        for invalid in [
+            source.replace("^1.0", "^2.0"),
+            source.replace("ui/index.js", "../index.js"),
+            source.replace(":SDK: ^1.0\n", ""),
+        ] {
+            assert!(PluginManifest::parse(&invalid, "UI").is_err());
+        }
+    }
+
     #[test]
     fn author_skill_manifest_is_valid() {
         let skill = include_str!("../../../shipped/skills/orgasmic-plugin-author/SKILL.md");

@@ -12,8 +12,10 @@ and `orgasmic plugin run`.
 
 Use the existing node API and CLI; do not write ledger files directly. Check
 `orgasmic plugin --help` and the relevant leaf command's `--help` against the
-installed runtime before executing. The supported foundation is declarative
-collections plus commands, not sidecars, UI bundles, attachments, or chat.
+installed runtime before executing. The foundation supports declarative
+collections and commands. UI asset serving is available; automatic view
+activation and hot reload are not yet wired. Sidecars, attachments, and chat
+remain unavailable.
 
 ## Build and verify
 
@@ -97,3 +99,22 @@ role, writes stay within owned collections, and calls stay in one project.
 Do not log tokens. Disable, member revocation, or manifest changes revoke them;
 normal command exit revokes its lease too. Commands still run as the OS user
 with full host filesystem access: this is daemon authorization, not a sandbox.
+
+## UI serving foundation
+
+Add `:UI: ui/index.js` and `:SDK: ^1.0` to the root drawer. Check requires that
+entry file inside the plugin folder. UI automatically adds `ui.execute` to the
+approval set: existing declarative approvals cannot silently enable executable
+code. It acknowledges full application-session authority, not a sandbox.
+
+The authenticated route is `/plugins/<id>/ui/<project>/index.js`; keeping the
+project in the path also scopes relative chunk imports. Only JavaScript and CSS
+assets are served today; fonts, images, JSON, and wasm are not supported.
+Import React from
+`react` (or `react/jsx-runtime`) and host APIs from `@orgasmic/plugin-sdk`.
+Do not bundle React. The SDK is built with the host and exposes the node
+client, transport, hooks, and existing Button/Card/Input/Textarea primitives.
+It does not export future P5 services. Scope styles under `[data-plugin=<id>]`.
+Keep module import free of side effects and return cleanup from `register(ctx)`;
+the automatic activation/runtime contract is the next slice, not implemented
+by this serving foundation.

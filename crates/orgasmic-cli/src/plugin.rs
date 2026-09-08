@@ -107,6 +107,9 @@ pub fn cmd_plugin(home: &Home, cmd: PluginCmd) -> Result<()> {
                 anyhow::ensure!(manifest.id == id, "directory name must match plugin id");
                 eprintln!("{id} requests: {}", manifest.capabilities.iter().cloned().collect::<Vec<_>>().join(", "));
                 eprintln!("Plugin commands run as your OS user with full host filesystem access; daemon calls are capability-scoped.");
+                if manifest.ui.is_some() {
+                    eprintln!("Plugin UI runs in the app origin with your full application session authority, not just its declared capabilities. Enable only code you trust.");
+                }
                 if !yes {
                     anyhow::ensure!(io::stdin().is_terminal(), "approval requires a terminal or --yes");
                     eprint!("Enable for {project}? [y/N] "); io::stderr().flush()?;

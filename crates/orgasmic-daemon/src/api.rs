@@ -878,6 +878,13 @@ pub fn router(state: ApiState) -> Router {
             identity_middleware,
         ));
 
+    let plugin_assets = Router::new()
+        .route("/plugins/:id/ui/:project/*asset", get(get_plugin_ui_asset))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            identity_middleware,
+        ))
+        .with_state(state.clone());
     let api = Router::new()
         .route("/healthz", get(healthz))
         .route(
@@ -891,6 +898,8 @@ pub fn router(state: ApiState) -> Router {
 
     Router::new()
         .route("/", get(get_app_index))
+        .route("/prototype-frame.html", get(get_prototype_frame))
+        .merge(plugin_assets)
         .nest("/api", api)
         .fallback(get(get_spa_asset))
         .layer(
@@ -919,6 +928,7 @@ pub fn router(state: ApiState) -> Router {
 /// `/me` are listed but gate nothing here — their handlers filter results per
 /// identity rather than rejecting the whole request.
 const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/plugins/:id/ui/:project/*asset"),
     ("GET", "/org/node"),
     ("POST", "/org/node"),
     ("POST", "/org/node/:id/edit"),
@@ -1165,6 +1175,75 @@ async fn get_app_index() -> Response {
     app_asset_response("index.html", false)
 }
 
+async fn get_plugin_ui_asset(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Path((id, project, asset)): Path<(String, String, String)>,
+) -> Result<Response, ApiError> {
+    orgasmic_core::plugin::validate_id(&id).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let _guard = state.plugins.operations.read().await;
+    let (_, plugins) = node_scope(
+        state.clone(),
+        &identity,
+        Some(&project),
+        Action::ProjectRead,
+    )
+    .await?;
+    let manifest = plugins
+        .active
+        .get(&id)
+        .ok_or_else(|| ApiError::not_found("plugin UI unavailable"))?;
+    let path = manifest
+        .ui_asset_path(&state.home.user().join("plugins").join(id), &asset)
+        .map_err(|_| ApiError::not_found("plugin UI asset unavailable"))?;
+    let mime = match path.extension().and_then(|e| e.to_str()) {
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        _ => return Err(ApiError::not_found("unsupported plugin UI asset type")),
+    };
+    use tokio::io::AsyncReadExt;
+    // ponytail: bounded in-memory assets (8 MiB); stream if bundles exceed this ceiling.
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|_| ApiError::not_found("plugin UI asset unavailable"))?;
+    let mut bytes = Vec::new();
+    file.take(8 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err(ApiError::bad_request("plugin UI asset exceeds 8 MiB"));
+    }
+    Ok((
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CACHE_CONTROL, "no-store"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; sandbox",
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+async fn get_prototype_frame() -> Response {
+    prototype_frame_response()
+}
+
+fn prototype_frame_response() -> Response {
+    // Unlike srcdoc, this response gets its own policy. Always opaque-origin,
+    // even when opened directly; artifact scripts never gain the app session.
+    ([
+        (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+        (header::CONTENT_SECURITY_POLICY, "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' http: https:; style-src 'unsafe-inline' http: https:; img-src http: https: data: blob:; font-src http: https: data:; connect-src http: https:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::CACHE_CONTROL, "no-store"),
+    ], include_str!("../../../ui/public/prototype-frame.html")).into_response()
+}
+
 async fn get_spa_asset(uri: Uri, headers: HeaderMap) -> Response {
     let path = uri.path();
     if path == "/api" || path.starts_with("/api/") || path == "/app" || path.starts_with("/app/") {
@@ -1245,6 +1324,10 @@ fn app_asset_response(path: &str, allow_spa_fallback: bool) -> Response {
     let Some(safe_path) = safe_app_asset_path(path) else {
         return (StatusCode::BAD_REQUEST, "invalid app asset path").into_response();
     };
+    // Keep the sandbox on fallback aliases too (e.g. a double-leading slash).
+    if safe_path == "prototype-frame.html" {
+        return prototype_frame_response();
+    }
     let file = UI_DIST.get_file(&safe_path).or_else(|| {
         if allow_spa_fallback {
             UI_DIST.get_file("index.html")
@@ -1260,7 +1343,27 @@ fn app_asset_response(path: &str, allow_spa_fallback: bool) -> Response {
     } else {
         "index.html"
     };
-    let mut response = Response::new(Body::from(file.contents().to_vec()));
+    let mut response = if response_path == "index.html" {
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let html = String::from_utf8_lossy(file.contents()).replace(
+            "<script type=\"importmap\">",
+            &format!("<script type=\"importmap\" nonce=\"{nonce}\">"),
+        );
+        let mut response = Response::new(Body::from(html));
+        response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_str(&format!(
+            "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' http: https: data: blob:; font-src 'self' data:; media-src 'self' http: https: blob:; connect-src 'self' http: https: ws: wss:; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+        )).unwrap());
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response
+    } else {
+        Response::new(Body::from(file.contents().to_vec()))
+    };
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(content_type_for_path(response_path)),

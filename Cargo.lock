@@ -1399,6 +1399,7 @@ dependencies = [
  "fs2",
  "libc",
  "rand 0.8.6",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

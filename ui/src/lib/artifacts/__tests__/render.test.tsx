@@ -79,6 +79,9 @@ describe('ArtifactRenderer (fixture render smoke test)', () => {
     for (const iframe of sandboxed) {
       expect(iframe.getAttribute('sandbox')).not.toContain('allow-same-origin');
     }
+    const prototype = sandboxed.find((iframe) => iframe.getAttribute('sandbox') === 'allow-scripts');
+    expect(prototype?.getAttribute('src')).toBe('/prototype-frame.html');
+    expect(prototype?.hasAttribute('srcdoc')).toBe(false);
   });
 
   it('renders a Canvas with multiple labeled artboards', () => {

@@ -56,6 +56,186 @@ async fn get(client: &reqwest::Client, base: &str, token: &str, path: &str) -> V
 }
 
 #[tokio::test]
+async fn ui_assets_require_approval_project_access_and_safe_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = Home::at(temp.path().join("home"));
+    home.ensure().unwrap();
+    let root = temp.path().join("demo");
+    write(
+        root.join(".orgasmic/project.org"),
+        "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:END:\n",
+    );
+    write(
+        home.board(),
+        &format!(
+            "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:PATH: {}\n:BRANCH: main\n:END:\n",
+            root.display()
+        ),
+    );
+    let dir = home.user().join("plugins/meetings");
+    let source = manifest("meetings", "MEET-").replace(":COMMANDS: probe\n", "");
+    write(dir.join("plugin.org"), &source);
+    let running = Daemon::run(
+        home.clone(),
+        DaemonOptions {
+            bind_override: Some("127.0.0.1".parse().unwrap()),
+            port_override: Some(0),
+            fs_watcher_enabled: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let base = format!("http://{}", running.addr);
+    let api = format!("{base}/api");
+    let token = std::fs::read_to_string(home.auth_token()).unwrap();
+    let token = token.trim();
+    let viewer =
+        orgasmic_core::add_member(&home, "viewer", &[("demo".into(), "viewer".into())]).unwrap();
+    let foreign =
+        orgasmic_core::add_member(&home, "foreign", &[("elsewhere".into(), "viewer".into())])
+            .unwrap();
+    let client = reqwest::Client::new();
+    let approval = json!({"project":"demo", "enabled":true, "approved_capabilities":["nodes.read", "nodes.write"]});
+    send(
+        &client,
+        &api,
+        token,
+        "/plugins/meetings/activation",
+        approval.clone(),
+        200,
+    )
+    .await;
+    write(
+        dir.join("ui/index.js"),
+        "export const marker = 'plugin asset';",
+    );
+    write(
+        dir.join("plugin.org"),
+        &source.replace(":SCHEMA: 1", ":UI: ui/index.js\n:SDK: ^1.0\n:SCHEMA: 1"),
+    );
+    send(&client, &api, token, "/plugins/reconcile", json!({}), 200).await;
+    let asset = format!("{base}/plugins/meetings/ui/demo/index.js");
+    assert_eq!(client.get(&asset).send().await.unwrap().status(), 401);
+    assert_eq!(
+        client
+            .get(&asset)
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    send(
+        &client,
+        &api,
+        token,
+        "/plugins/meetings/activation",
+        approval,
+        400,
+    )
+    .await;
+    send(&client, &api, token, "/plugins/meetings/activation", json!({"project":"demo", "enabled":true, "approved_capabilities":["nodes.read", "nodes.write", "ui.execute"]}), 200).await;
+    let response = client
+        .get(&asset)
+        .bearer_auth(&viewer)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert!(response.text().await.unwrap().contains("plugin asset"));
+    assert_eq!(
+        client
+            .get(&asset)
+            .bearer_auth(&foreign)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    for path in ["%2e%2e%2fplugin.org", "missing.js"] {
+        assert_eq!(
+            client
+                .get(format!("{base}/plugins/meetings/ui/demo/{path}"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    #[cfg(unix)]
+    {
+        write(temp.path().join("secret.js"), "secret");
+        std::os::unix::fs::symlink(temp.path().join("secret.js"), dir.join("ui/escape.js"))
+            .unwrap();
+        assert_eq!(
+            client
+                .get(format!("{base}/plugins/meetings/ui/demo/escape.js"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    let response = client.get(format!("{base}/")).send().await.unwrap();
+    let csp = response.headers()["content-security-policy"]
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("script-src 'self' 'nonce-"));
+    assert!(csp.contains("connect-src 'self' http: https: ws: wss:"));
+    assert!(!csp.contains("unsafe-eval"));
+    assert!(response
+        .text()
+        .await
+        .unwrap()
+        .contains("<script type=\"importmap\" nonce=\""));
+    let preview = client
+        .get(format!("{base}/prototype-frame.html"))
+        .send()
+        .await
+        .unwrap();
+    let csp = preview.headers()["content-security-policy"]
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("sandbox allow-scripts;") && !csp.contains("allow-same-origin"));
+    let alias = client
+        .get(format!("{base}//prototype-frame.html"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(alias.headers()["content-security-policy"], csp);
+    send(
+        &client,
+        &api,
+        token,
+        "/plugins/meetings/activation",
+        json!({"project":"demo", "enabled":false}),
+        200,
+    )
+    .await;
+    assert_eq!(
+        client
+            .get(&asset)
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let _ = running.shutdown.send(());
+    running.join.await.unwrap();
+}
+
+#[tokio::test]
 async fn plugins_reload_scope_and_revoke_through_existing_routes() {
     let temp = tempfile::tempdir().unwrap();
     let home = Home::at(temp.path().join("home"));
