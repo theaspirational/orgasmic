@@ -65,6 +65,9 @@ bash scripts/assert-ci-certified-selftest.sh
 step "Runtime candidate/publisher self-test"
 bash scripts/publish-runtime-selftest.sh
 
+step "App candidate/publisher self-test"
+node --test scripts/app-candidate.test.mjs
+
 step "Test classifier self-test"
 bash scripts/run-tests-selftest.sh
 
