@@ -11,7 +11,7 @@ REPO=$(git rev-parse --show-toplevel 2>/dev/null) || {
 cd "$REPO"
 
 CERTIFICATION_RUST="1.97.1"
-MSRV_RUST="1.87.0"
+MSRV_RUST="1.88.0"
 # `rustup run cargo` selects the requested Cargo binary, but Cargo resolves its
 # child `rustc` through PATH. On this maintainer Mac Homebrew precedes the rustup
 # proxies, so without this prefix Cargo can silently compile with a different

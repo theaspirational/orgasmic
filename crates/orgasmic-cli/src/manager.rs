@@ -8429,7 +8429,7 @@ fn acquire_dispatch_cleanup_lock(project_root: &Path) -> Result<DispatchCleanupL
         .write(true)
         .open(&path)
         .with_context(|| format!("open cleanup lock {}", path.display()))?;
-    // MSRV 1.87: call fs2 explicitly; the std methods stabilized in 1.89.
+    // MSRV 1.88: call fs2 explicitly; the std methods stabilized in 1.89.
     fs2::FileExt::lock_exclusive(&file)
         .with_context(|| format!("lock dispatch cleanup {}", path.display()))?;
     Ok(DispatchCleanupLock(file))

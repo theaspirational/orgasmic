@@ -63,7 +63,7 @@ if (args.includes(process.env.FAIL_TARGET)) process.exit(Number(process.env.FAIL
   fs.writeFileSync(path.join(repo, 'scripts/run-tests.sh'), 'exec cargo test "$@"\n');
   fs.writeFileSync(path.join(repo, 'scripts/certify-release.sh'), `set -e
 CERTIFICATION_RUST="1.97.1"
-MSRV_RUST="1.87.0"
+MSRV_RUST="1.88.0"
 node scripts/certify-rust-batches.mjs
 case "$SOURCE_MUTATION" in
   dirty) printf changed >> scripts/certify-rust-batches.mjs ;;
