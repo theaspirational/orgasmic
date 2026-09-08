@@ -36,6 +36,10 @@ async fn user_descriptor_uses_existing_node_routes_and_preserves_state() {
         "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:END:\n",
     );
     write(
+        orgasmic_core::handoff_file_path(&project),
+        "* HANDOFF Current handoff\n:PROPERTIES:\n:ID: handoff\n:END:\nShared project context.\n",
+    );
+    write(
         tmp.path().join("elsewhere/.orgasmic/project.org"),
         "* PROJECT elsewhere\n:PROPERTIES:\n:ID: elsewhere\n:END:\n",
     );
@@ -69,6 +73,55 @@ async fn user_descriptor_uses_existing_node_routes_and_preserves_state() {
             .unwrap();
     let editor = cookie(&client, &base, &editor_token).await;
     let viewer = cookie(&client, &base, &viewer_token).await;
+    // P0 policy retained: project/handoff context is visible to project members,
+    // but never across projects. Editors may delete decisions and glossary nodes.
+    for (kind, id) in [("project", "demo"), ("handoff", "handoff")] {
+        for (scope, expected) in [("demo", 200), ("elsewhere", 403)] {
+            let response = client
+                .get(format!("{base}/org/node"))
+                .header("cookie", &viewer)
+                .query(&[("project", scope), ("kind", kind), ("id", id)])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), expected, "{kind}: {scope}");
+        }
+    }
+    for kind in ["decision", "glossary"] {
+        let created = client
+            .post(format!("{base}/org/node"))
+            .bearer_auth(token.trim())
+            .json(&json!({"project":"demo", "kind":kind, "title":"Policy fixture"}))
+            .send()
+            .await
+            .unwrap();
+        let status = created.status();
+        let body = created.text().await.unwrap();
+        assert!(status.is_success(), "{kind} create: {body}");
+        let created: Value = serde_json::from_str(&body).unwrap();
+        let id = created["id"].as_str().unwrap();
+        let doc: Value = client
+            .get(format!("{base}/org/node"))
+            .header("cookie", &viewer)
+            .query(&[("project", "demo"), ("id", id)])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(doc["sections"].is_array());
+        for (cookie, expected) in [(&viewer, 403), (&editor, 200)] {
+            let response = client
+                .post(format!("{base}/org/node/{id}/delete"))
+                .header("cookie", cookie)
+                .json(&json!({"project":"demo", "base_version":doc["source"]["base_version"]}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), expected, "{kind} delete");
+        }
+    }
     let metadata = client
         .get(format!("{base}/node-types?project=demo"))
         .header("cookie", &viewer)
