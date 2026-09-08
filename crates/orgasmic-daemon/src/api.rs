@@ -3920,7 +3920,7 @@ async fn post_manager_chat_launch(
     Json(req): Json<ManagerChatLaunchRequest>,
 ) -> Result<Json<ManagerLaunchResponse>, ApiError> {
     let provider = req.provider.trim().to_ascii_lowercase();
-    let driver = orgasmic_drivers::chat_driver(&provider).ok_or_else(|| {
+    let driver = crate::driver_resolution::resolve_chat_driver(&provider).ok_or_else(|| {
         ApiError::bad_request(format!(
             "unsupported Chat provider '{}'; expected codex, claude, opencode, cursor-agent, or hermes",
             req.provider
@@ -5119,7 +5119,7 @@ async fn probe_acp_chat_catalog(
     boot_id: &str,
 ) -> ManagerChatCatalogProvider {
     let result: Result<RuntimeOptionsCatalog, String> = async {
-        let driver = orgasmic_drivers::chat_driver(provider)
+        let driver = crate::driver_resolution::resolve_chat_driver(provider)
             .ok_or_else(|| "ACP driver unavailable".to_string())?;
         let id = format!("chat-catalog-{}", uuid::Uuid::new_v4().simple());
         let context = DriverContext {
@@ -5588,13 +5588,13 @@ fn canonical_runtime_provider(worker: &StageWorker) -> Option<&'static str> {
 
 fn resolve_persisted_run_driver(mode: &str, harness: &str) -> Option<Box<dyn WorkerDriver>> {
     canonical_runtime_provider_address(mode, harness)
-        .and_then(orgasmic_drivers::chat_driver)
+        .and_then(crate::driver_resolution::resolve_chat_driver)
         .or_else(|| resolve_driver(mode, harness))
 }
 
 fn resolve_worker_launch_driver(worker: &StageWorker) -> Option<Box<dyn WorkerDriver>> {
     canonical_runtime_provider(worker)
-        .and_then(orgasmic_drivers::chat_driver)
+        .and_then(crate::driver_resolution::resolve_chat_driver)
         .or_else(|| resolve_launch_driver(&worker.driver, &worker.harness))
 }
 

@@ -47,6 +47,20 @@
 
 use orgasmic_drivers::WorkerDriver;
 
+/// Canonical Chat must pass through the same default-deny test fence as
+/// legacy transports; its ACP launcher can execute an authenticated provider.
+pub(crate) fn resolve_chat_driver(provider: &str) -> Option<Box<dyn WorkerDriver>> {
+    #[cfg(test)]
+    {
+        if orgasmic_drivers::adapters::acp::PROVIDERS.contains(&provider) {
+            panic!("{}", refusal_message(&format!("canonical-chat/{provider}")));
+        }
+        None
+    }
+    #[cfg(not(test))]
+    orgasmic_drivers::chat_driver(provider)
+}
+
 /// Resolve a first-class `(mode, harness)` pair to a driver.
 ///
 /// Production build: the registry lookup, unchanged.
@@ -505,6 +519,7 @@ mod tests {
         assert!(resolve_driver("stdio", "not-a-harness").is_none());
         assert!(resolve_driver("not-a-mode", "claude").is_none());
         assert!(resolve_driver_by_transport("not-a-transport").is_none());
+        assert!(resolve_chat_driver("not-a-provider").is_none());
     }
 
     #[test]
@@ -531,6 +546,7 @@ mod tests {
         // rather than special-cased later.
         const FORBIDDEN: &[&str] = &[
             "driver_for",
+            "orgasmic_drivers::chat_driver",
             "StdioDriver::",
             "WsDriver::",
             "SubprocessStreamJsonDriver::",
@@ -590,6 +606,12 @@ mod tests {
     #[should_panic(expected = "refuses to resolve the real transport tmux/claude")]
     fn spawning_tmux_claude_panics() {
         let _ = resolve_launch_driver("tmux", "claude");
+    }
+
+    #[test]
+    #[should_panic(expected = "refuses to resolve the real transport canonical-chat/codex")]
+    fn resolving_canonical_chat_panics() {
+        let _ = resolve_chat_driver("codex");
     }
 
     #[test]

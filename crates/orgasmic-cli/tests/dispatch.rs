@@ -115,6 +115,7 @@ async fn boot_on_port(home: Home, port: u16) -> RunningDaemon {
 }
 
 async fn boot_with_options(home: Home, options: DaemonOptions) -> RunningDaemon {
+    install_provider_fixtures();
     // Ensure the home config never defaults to port 4848 to avoid port
     // contention with a real daemon from the main checkout during
     // parallel test execution. Tests pass ORGASMIC_DAEMON_URL to CLI
@@ -126,6 +127,46 @@ async fn boot_with_options(home: Home, options: DaemonOptions) -> RunningDaemon 
     home.ensure().unwrap();
     std::fs::write(home.config(), "bind_host: 127.0.0.1\nbind_port: 65533\n").unwrap();
     Daemon::run(home, options).await.expect("boot daemon")
+}
+
+/// The daemon runs in this process: stubbing only the CLI's PATH does not
+/// intercept canonical Chat's npx/ACP launcher. Never let these tests resolve
+/// an installed, authenticated provider. Keep the fixture for the process's
+/// lifetime, including daemon restarts and tests with a deliberately empty PATH.
+fn install_provider_fixtures() {
+    static BIN: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    BIN.get_or_init(|| {
+        let bin = tempfile::tempdir().unwrap();
+        let python = Command::new("sh")
+            .args(["-c", "command -v python3"])
+            .output()
+            .expect("locate fixture Python");
+        assert!(python.status.success(), "dispatch fixtures require python3");
+        let python = String::from_utf8(python.stdout).unwrap();
+        let fixture = format!(
+            "#!{}\n{}",
+            python.trim(),
+            include_str!("fixtures/dispatch_acp.py")
+        );
+        for launcher in ["npx", "cursor-agent", "hermes", "opencode"] {
+            let path = bin.path().join(launcher);
+            write(&path, &fixture);
+            #[cfg(unix)]
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // The legacy stage/manager tests need a live process to finalize, not
+        // an ACP conversation. Reuse their existing sleeping Codex fixture.
+        write_sleeping_stub_codex(bin.path());
+        let path = bin.path().join("claude");
+        write(
+            &path,
+            "#!/bin/sh\necho 'unmocked provider launch refused' >&2\nexit 97\n",
+        );
+        #[cfg(unix)]
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("PATH", path_with_stub(bin.path()));
+        bin
+    });
 }
 
 struct InterceptingProxy {
