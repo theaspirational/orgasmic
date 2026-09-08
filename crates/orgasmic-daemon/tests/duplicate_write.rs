@@ -196,7 +196,7 @@ async fn task_create_retry_returns_original_identity_and_rejects_scope_mismatch(
         .send()
         .await
         .unwrap();
-    assert_eq!(altered.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(altered.status(), reqwest::StatusCode::CONFLICT);
     let cross_operation = client
         .post(format!("{base}/api/glossary"))
         .bearer_auth(&token)
@@ -208,7 +208,7 @@ async fn task_create_retry_returns_original_identity_and_rejects_scope_mismatch(
         .send()
         .await
         .unwrap();
-    assert_eq!(cross_operation.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(cross_operation.status(), reqwest::StatusCode::CONFLICT);
     let cross_project = client
         .post(format!("{base}/api/projects/project-b/tasks"))
         .bearer_auth(&token)
@@ -216,7 +216,7 @@ async fn task_create_retry_returns_original_identity_and_rejects_scope_mismatch(
         .send()
         .await
         .unwrap();
-    assert_eq!(cross_project.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(cross_project.status(), reqwest::StatusCode::CONFLICT);
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -516,7 +516,12 @@ async fn org_node_delete_requires_occ_records_tx_and_survives_reindex() {
     assert!(!deleted_body["tx_id"].as_str().unwrap().is_empty());
 
     let glossary = read_collection(&project_root, "glossary");
-    assert!(!glossary.contains("term_DEK01"));
+    // Deletion removes the heading atomically, retaining the file preamble
+    // and node journal. A title directive is not a surviving node.
+    assert!(orgasmic_core::org::OrgFile::parse(glossary, "glossary")
+        .unwrap()
+        .find_by_id("term_DEK01")
+        .is_none());
     let tx = read_project_tx(&project_root);
     assert!(
         tx.contains("graph.glossary.deleted") || tx.contains("deleted glossary"),

@@ -86,6 +86,7 @@ use crate::recovery_claim::{
     UnobservedEvidence, UnobservedSession,
 };
 use crate::runtime::BootIdentity;
+use crate::supervisor::SupervisorError;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
     CleanupHolderDiagnostic, DispatchCleanupOutcome, DispatchCleanupParams,
@@ -2144,7 +2145,7 @@ fn writer_drain_error(context: &str, error: impl std::fmt::Display) -> ApiError 
     ApiError::internal("failed to drain writer before restart")
 }
 
-fn supervisor_acquire_error(context: &str, error: impl std::fmt::Display) -> ApiError {
+fn supervisor_acquire_error(context: &str, error: SupervisorError) -> ApiError {
     tracing::error!(context = context, error = %error, "supervisor acquire failed");
     ApiError::internal_with_cause("failed to acquire worker run", error)
 }
@@ -22866,17 +22867,23 @@ impl ApiError {
             body: None,
         }
     }
-    /// A 500 that carries the inner error verbatim as `cause` and names the
+    /// A 500 that carries a safe inner error as `cause` and names the
     /// next command, instead of an opaque headline whose real reason sits in
     /// a daemon log nobody is tailing (TASK-XQCNA: `failed to acquire worker
     /// run` hid `Too many open files (os error 24)` for four days).
-    fn internal_with_cause(message: &str, cause: impl std::fmt::Display) -> Self {
+    fn internal_with_cause(message: &str, cause: SupervisorError) -> Self {
+        // Session errors carry internal paths in their anyhow context. Their
+        // full diagnostic is already logged by both acquire and recovery.
+        let cause = match cause {
+            SupervisorError::Session(_) => "session write failed; see daemon logs".to_string(),
+            other => other.to_string(),
+        };
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.to_string(),
             body: Some(json!({
                 "error": message,
-                "cause": cause.to_string(),
+                "cause": cause,
                 "next": "orgasmic daemon status",
             })),
         }
@@ -22930,6 +22937,20 @@ impl From<authz::Forbidden> for ApiError {
 #[cfg(test)]
 mod acquire_error_cause_tests {
     use super::*;
+
+    #[test]
+    fn session_write_cause_does_not_expose_internal_paths() {
+        let error = ApiError::internal_with_cause(
+            "failed to recover run",
+            SupervisorError::Session(anyhow::anyhow!(
+                "open session /private/ledger/session.jsonl"
+            )),
+        );
+        assert_eq!(
+            error.body.unwrap()["cause"],
+            "session write failed; see daemon logs"
+        );
+    }
 
     /// The exact incident: a spawn that failed on fd exhaustion answered
     /// `failed to acquire worker run` and nothing else. The body now carries

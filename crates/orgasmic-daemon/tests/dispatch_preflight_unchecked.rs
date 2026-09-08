@@ -197,6 +197,7 @@ async fn dispatch_and_read_run_meta(
             "kind": "implementer",
             "mode": "stdio",
             "harness": "claude",
+            "allow_simulated": true,
             "brief_path": brief,
             "worktree_path": worktree,
             "last_path": tmp.join(format!("{task_id}-last.txt")),
