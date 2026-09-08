@@ -71,8 +71,11 @@ node --test scripts/app-candidate.test.mjs
 step "Test classifier self-test"
 bash scripts/run-tests-selftest.sh
 
-step "Classified workspace suite"
-bash scripts/run-tests.sh
+step "Serial Rust batch planner/exact-tree receipt self-test"
+node --test scripts/certify-rust-batches.test.mjs
+
+step "Classified Rust suite (serial targets, serial test threads)"
+node scripts/certify-rust-batches.mjs
 
 step "Workspace MSRV ($MSRV_RUST)"
 rustup toolchain install "$MSRV_RUST" --profile minimal --no-self-update

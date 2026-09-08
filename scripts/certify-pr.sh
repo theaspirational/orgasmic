@@ -78,6 +78,15 @@ receipt_matches() {
     [[ -f "$RECEIPT" && "$(cat "$RECEIPT")" == "$RECEIPT_CONTENT" ]]
 }
 
+assert_source_unchanged() {
+    local head status
+    head=$(git rev-parse HEAD) && status=$(git status --porcelain --untracked-files=all) || exit 1
+    [[ "$head" == "$HEAD_SHA" && -z "$status" ]] || {
+        echo "certify-pr: source changed during certification; no receipt or success status" >&2
+        exit 1
+    }
+}
+
 resolve_remote() {
     command -v gh >/dev/null 2>&1 || { echo "certify-pr: missing gh" >&2; exit 2; }
     REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
@@ -113,6 +122,7 @@ if ! receipt_matches; then
         [[ "$MODE" == "no-publish" ]] || post_status failure "local certification failed for tree ${TREE_SHA:0:12}"
         exit 1
     fi
+    assert_source_unchanged
     mkdir -p "$RECEIPT_DIR"
     umask 077
     tmp="$(mktemp "$RECEIPT_DIR/.receipt.XXXXXX")"
@@ -123,6 +133,7 @@ else
     echo "✓ reusing exact local receipt $RECEIPT_KEY"
 fi
 
+assert_source_unchanged
 if [[ "$MODE" != "no-publish" ]]; then
     DESCRIPTION="tree=${TREE_SHA:0:12} base=${BASE_SHA:0:12} cert=${CERTIFIER_SHA:0:12} rust=$CERTIFICATION_RUST/$MSRV_RUST"
     post_status success "$DESCRIPTION"
