@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('@/components/NodeBacklinks', () => ({ NodeBacklinks: () => null }));
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => vi.fn(),

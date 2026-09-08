@@ -26,12 +26,16 @@ pub enum Action {
     ArtifactsGenerate,
     OrgWrite,
     NodesWrite,
+    LinksRead,
+    LinksWrite,
+    AttachmentsRead,
+    AttachmentsWrite,
     #[allow(dead_code)]
     MembersManage,
 }
 
 impl Action {
-    pub const ALL: [Action; 12] = [
+    pub const ALL: [Action; 16] = [
         Action::ProjectRead,
         Action::GraphRead,
         Action::TasksRead,
@@ -43,6 +47,10 @@ impl Action {
         Action::ArtifactsGenerate,
         Action::OrgWrite,
         Action::NodesWrite,
+        Action::LinksRead,
+        Action::LinksWrite,
+        Action::AttachmentsRead,
+        Action::AttachmentsWrite,
         Action::MembersManage,
     ];
 }
@@ -63,6 +71,10 @@ pub fn action_name(action: Action) -> &'static str {
         Action::ArtifactsGenerate => "artifacts.generate",
         Action::OrgWrite => "org.write",
         Action::NodesWrite => "nodes.write",
+        Action::LinksRead => "links.read",
+        Action::LinksWrite => "links.write",
+        Action::AttachmentsRead => "attachments.read",
+        Action::AttachmentsWrite => "attachments.write",
         Action::MembersManage => "members.manage",
     }
 }
@@ -80,6 +92,8 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
     use Action::*;
     match role {
         "viewer" => &[
+            LinksRead,
+            AttachmentsRead,
             ProjectRead,
             GraphRead,
             TasksRead,
@@ -89,6 +103,10 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             ArtifactsComment,
         ],
         "editor" => &[
+            LinksRead,
+            LinksWrite,
+            AttachmentsRead,
+            AttachmentsWrite,
             NodesWrite,
             ProjectRead,
             GraphRead,
@@ -99,7 +117,13 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             ArtifactsComment,
             ArtifactsGenerate,
         ],
-        "artifacts" => &[ProjectRead, ArtifactsRead, ArtifactsComment],
+        "artifacts" => &[
+            ProjectRead,
+            ArtifactsRead,
+            ArtifactsComment,
+            LinksRead,
+            AttachmentsRead,
+        ],
         _ => &[],
     }
 }
@@ -189,6 +213,10 @@ pub fn require(
                 "nodes.read"
             }
             Action::NodesWrite => "nodes.write",
+            Action::LinksRead => "links.read",
+            Action::LinksWrite => "links.write",
+            Action::AttachmentsRead => "attachments.read",
+            Action::AttachmentsWrite => "attachments.write",
             _ => {
                 return Err(Forbidden(
                     "action is unavailable to plugin principals".into(),

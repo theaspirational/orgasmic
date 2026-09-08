@@ -80,12 +80,19 @@ it('registers, atomically reloads current views, isolates failures, preserves dr
   expect(new URL(String(postUrl)).searchParams.get('project')).toBe('demo');
   expect(JSON.parse(String(postInit?.body)).project).toBe('demo');
   expect(() => replacement.get('https://unrelated.example/api')).toThrow('relative API path');
+  const uploading = replacement.putBytes('/attachments/uploads/id?offset=0&project=foreign', new Blob(['chunk'])).catch((e: Error) => e.name);
+  const deleting = replacement.delete('/attachments/uploads/id').catch((e: Error) => e.name);
+  const mediaUrl = await replacement.mediaUrl('MEET-1', 'id', 'revision');
+  expect(mediaUrl).toBe('http://localhost/api/attachments/MEET-1/id/revision/content?project=demo');
+  expect(fetchMock).toHaveBeenCalledTimes(4); // URL construction makes no grant request.
   let late!: Promise<void>;
   await act(async () => { late = runtime.reconcile([status('meetings', '3'), status('notes', 'late')]); });
   await act(async () => { await runtime.reconcile([]); });
   expect(requestSignal.aborted).toBe(true);
   expect(await request).toBe('AbortError');
   expect(await posting).toBe('AbortError');
+  expect(await uploading).toBe('AbortError');
+  expect(await deleting).toBe('AbortError');
   expect(screen.getByText('Generic meetings')).toBeInTheDocument();
   expect(screen.getByText('Generic notes')).toBeInTheDocument();
   expect(undo).toHaveBeenCalledOnce();

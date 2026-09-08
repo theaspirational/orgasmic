@@ -13,8 +13,8 @@ and `orgasmic plugin run`.
 Use the existing node API and CLI; do not write ledger files directly. Check
 `orgasmic plugin --help` and the relevant leaf command's `--help` against the
 installed runtime before executing. The foundation supports declarative
-collections, commands, and same-origin UI views with hot reload. Sidecars, attachments, and chat
-remain unavailable.
+collections, commands, same-origin UI views with hot reload, links, and attachments.
+Sidecars and chat remain unavailable.
 
 ## Build and verify
 
@@ -46,7 +46,9 @@ remain unavailable.
 One top-level `Plugin`, at most one nested node type. The folder name must match
 `ID`. Version is numeric major.minor.patch; schema numbers are positive.
 `COMMANDS`, `SCHEMA_ACCEPTS`, states, and transitions are optional. Currently
-only `core.nodes@1`, `nodes.read`, `nodes.write`, and implicit `ui.execute` are supported.
+services are `core.nodes@1`, `core.links@1`, and `core.attachments@1`. Capabilities
+are `nodes.read/write`, `links.read/write`, `attachments.read/write` (spell out
+each string, not the slash shorthand), and implicit `ui.execute`.
 
 ```org
 * Plugin
@@ -113,7 +115,8 @@ Import React from
 `react` (or `react/jsx-runtime`) and host APIs from `@orgasmic/plugin-sdk`.
 Do not bundle React. The SDK is built with the host and exposes the node
 client, transport, hooks, and existing Button/Card/Input/Textarea primitives.
-It does not export future P5 services. Open the app from the selected backend's
+It also exports `uploadAttachment`, `mediaTime`, and the attachment/link types.
+Open the app from the selected backend's
 origin; a remote-backend profile cannot load another origin's plugin UI.
 
 Export `register(ctx)`, optionally returning a disposer. Register a component
@@ -143,5 +146,67 @@ covers SDK registrations, not arbitrary JavaScript side effects. The host
 does not reattempt a failed revision until files change again.
 
 See `examples/plugins/meetings` for a plain-ESM list/detail view and a scoped
-notes importer. Test register, edit/reload with an unsaved draft, save, disable
+notes importer and recording player. Test register, edit/reload with an unsaved draft, save, disable
 to the read-only generic fallback, and re-enable before handing a plugin over.
+
+## Links and attachments
+
+Declare the required core services and approve their capabilities. All routes
+use the same node ownership/schema gates and caller authorization. Writes to
+another plugin's collection are refused. Disabled/unavailable nodes retain
+readable metadata, backlinks, and recordings.
+Service access also requires permission to read the owning node (`nodes.read`
+for command principals); an artifacts-only member cannot read meeting recordings.
+
+- `GET /links?node=ID&incoming=true` returns backlinks. Omit `incoming` for
+  outgoing links; `include_deleted=true` includes outgoing tombstones for a
+  deliberate restore. `POST /links` takes `source`, `target`, `kind`
+  (`RELATES_TO` or `PRODUCES`), `anchors`, `base_revision` (0 on create), and
+  `request_id`. Set `deleted:true` to retain a tombstone. There is one record per
+  directed source/target pair. A conflicting revision is 409; reload and ask
+  before replacing another edit. Keep the request id unchanged when retrying
+  the identical request.
+- A media anchor is `{attachment, revision, start_ms, end_ms?, label?}`.
+  Revision is the immutable payload SHA-256, not the plugin's UI revision.
+  Milliseconds are nonnegative safe integers; an end must follow the start.
+  The attachment must belong to the source node and be audio/video. Up to 256
+  anchors per link. Do not invent duration; the player checks known duration.
+  Core stores Org link records beside the source node and indexes backlinks
+  on targets. It never copies the recording into a task.
+- `GET /attachments?node=ID` lists immutable attachment metadata.
+  `uploadAttachment(ctx, node, file, uploadId, onProgress, isPaused?)` uploads
+  sequential 4 MiB checksummed chunks, then finalizes. Persist the UUID resume
+  handle and reselect the same file after a reload; retry reads the confirmed
+  server offset. Use `ctx.delete('/attachments/uploads/ID')` to cancel an
+  unfinished upload. Completed attachments are retained, not deleted by this
+  API. `ctx.putBytes(path, blob, checksum?)` is the bounded binary transport.
+- The protocol is POST `/attachments/uploads` with `node`, `name`, `size`,
+  `media_type`, `request_id` (UUID); GET the returned upload id; PUT chunks at
+  `/attachments/uploads/ID?offset=N`; POST `/attachments/uploads/ID/finish`
+  with optional `sha256`. Every raw request also needs `project` (ctx adds it).
+  Uploads are principal-bound, locked, and resumable across daemon restarts.
+- `ctx.mediaUrl(node, attachment, revision)` returns a plain content URL for
+  native `<audio>`/`<video>`. Media requests use the same-origin cookie session
+  established before plugin activation; no token or separate media expiry is
+  added to the URL. Normal session expiry and member revocation still apply.
+  Plugin command principals use bearer-authenticated content requests.
+  Content supports single byte ranges and HEAD, streams in bounded chunks,
+  and always uses `nosniff` and `Content-Disposition: attachment`.
+
+Limits: 8 GiB per file, 64 GiB per project's local asset store including
+reserved uploads, 4096 unfinished uploads (completed receipts do not count). Accepted
+types: WAV/MP3/Ogg/MP4/WebM audio, Ogg/MP4/WebM video, PNG/JPEG, PDF, plain text.
+Media signatures are checked; HTML, JS, SVG and arbitrary MIME types are not
+accepted. Browser codec support still applies. Native media playback is not a
+transcoder.
+
+Only `attachments.org` metadata and journals enter the ledger. Payloads and
+upload state live under `~/.orgasmic/assets/<sha256-project-id>/`, outside Git.
+Moving the project folder preserves access. Pre-merge Slice B builds used a
+folder-path hash; if you kept recordings from one, move that project's old
+asset directory to the project-ID key before using this build (never overwrite
+an existing destination). The ledger metadata and payload hashes stay unchanged.
+Back up that store separately; cloning the ledger does not transfer recordings.
+Restore assets on another machine before expecting playback. Automatic asset
+sync, garbage collection, transcoding, and arbitrary anchor schemas are not
+implemented.

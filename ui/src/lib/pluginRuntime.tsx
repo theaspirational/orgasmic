@@ -16,6 +16,9 @@ export type PluginContext = {
   registerStyles: (css: string) => () => void;
   get: <T>(path: string) => Promise<T>;
   post: <T>(path: string, body?: unknown) => Promise<T>;
+  putBytes: <T>(path: string, body: Blob, checksum?: string) => Promise<T>;
+  delete: <T>(path: string) => Promise<T>;
+  mediaUrl: (node: string, attachment: string, revision: string) => string;
   getDraft: <T>(nodeId: string) => T | undefined;
   setDraft: (nodeId: string, draft: unknown) => void;
   clearDraft: (nodeId: string) => void;
@@ -107,6 +110,19 @@ export function createPluginRuntime(projectId: string, profile: TransportProfile
         return undo;
       },
       get<T>(path: string) { alive(); return requestWithProfile<T>(profile, scoped(path), { signal: controller.signal }); },
+      putBytes<T>(path: string, body: Blob, checksum?: string) {
+        alive();
+        return requestWithProfile<T>(profile, scoped(path), { method: 'PUT', body, chunkSha256: checksum, signal: controller.signal });
+      },
+      delete<T>(path: string) {
+        alive();
+        return requestWithProfile<T>(profile, scoped(path), { method: 'DELETE', signal: controller.signal });
+      },
+      mediaUrl(node, attachment, revision) {
+        alive();
+        // Plugin activation already established the same-origin cookie session.
+        return new URL(`/api${scoped(`/attachments/${encodeURIComponent(node)}/${encodeURIComponent(attachment)}/${encodeURIComponent(revision)}/content`)}`, profile.baseUrl).toString();
+      },
       post<T>(path: string, body?: unknown) {
         alive();
         if (body != null && (typeof body !== 'object' || Array.isArray(body))) throw new Error('ctx.post requires a JSON object');

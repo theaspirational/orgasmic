@@ -4,8 +4,8 @@
 :VERSION: 0.1.0
 :PLUGIN_API: 1
 :SCHEMA: 1
-:REQUIRES: core.nodes@1
-:CAPABILITIES: nodes.read nodes.write
+:REQUIRES: core.nodes@1 core.links@1 core.attachments@1
+:CAPABILITIES: nodes.read nodes.write links.read links.write attachments.read attachments.write
 :UI: ui/index.js
 :SDK: ^1.0
 :COMMANDS: import

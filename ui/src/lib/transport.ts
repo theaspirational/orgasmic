@@ -30,6 +30,7 @@ type RequestInit = {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   body?: unknown;
   contentType?: string;
+  chunkSha256?: string;
 };
 
 type UnauthorizedHandler = (error: HttpError) => void;
@@ -111,7 +112,7 @@ type BuiltRequest = {
   init: {
     method: RequestInit['method'];
     headers: Record<string, string>;
-    body?: string;
+    body?: string | Blob;
     credentials?: RequestCredentials;
     signal?: AbortSignal;
   };
@@ -120,9 +121,13 @@ type BuiltRequest = {
 function buildRequest(path: string, init: RequestInit, profile: TransportProfile): BuiltRequest {
   const method = init.method ?? 'GET';
   const headers: Record<string, string> = {};
-  let body: string | undefined;
+  let body: string | Blob | undefined;
+  if (init.chunkSha256) headers['x-chunk-sha256'] = init.chunkSha256;
   if (init.body !== undefined && init.body !== null) {
-    if (typeof init.body === 'string') {
+    if (init.body instanceof Blob) {
+      body = init.body;
+      headers['content-type'] = init.contentType ?? 'application/octet-stream';
+    } else if (typeof init.body === 'string') {
       body = init.body;
       headers['content-type'] = init.contentType ?? 'text/plain';
     } else {

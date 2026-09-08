@@ -721,6 +721,10 @@ export type MemberCapability =
   | 'artifacts.generate'
   | 'org.write'
   | 'nodes.write'
+  | 'links.read'
+  | 'links.write'
+  | 'attachments.read'
+  | 'attachments.write'
   | 'members.manage';
 
 export type MeIdentity = 'admin' | 'member';

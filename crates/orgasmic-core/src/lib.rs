@@ -16,6 +16,7 @@ pub mod members;
 pub mod node_kernel;
 pub mod node_kind;
 pub mod node_registry;
+pub mod node_services;
 pub mod node_type;
 pub mod org;
 pub mod paths;

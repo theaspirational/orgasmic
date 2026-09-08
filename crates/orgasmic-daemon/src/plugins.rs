@@ -401,10 +401,13 @@ impl PluginRegistry {
             require(
                 caller,
                 Some(project),
-                if capability == "nodes.write" {
-                    Action::NodesWrite
-                } else {
-                    Action::GraphRead
+                match capability.as_str() {
+                    "nodes.write" => Action::NodesWrite,
+                    "links.write" => Action::LinksWrite,
+                    "attachments.write" => Action::AttachmentsWrite,
+                    "links.read" => Action::LinksRead,
+                    "attachments.read" => Action::AttachmentsRead,
+                    _ => Action::GraphRead,
                 },
             )?;
         }

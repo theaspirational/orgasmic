@@ -100,7 +100,7 @@ impl PluginManifest {
         );
         for service in words("REQUIRES") {
             anyhow::ensure!(
-                service == "core.nodes@1",
+                ["core.nodes@1", "core.links@1", "core.attachments@1"].contains(&service.as_str()),
                 "required service {service} is unavailable"
             );
         }
@@ -131,7 +131,16 @@ impl PluginManifest {
         }
         for capability in &capabilities {
             anyhow::ensure!(
-                ["nodes.read", "nodes.write", "ui.execute"].contains(&capability.as_str()),
+                [
+                    "nodes.read",
+                    "nodes.write",
+                    "ui.execute",
+                    "links.read",
+                    "links.write",
+                    "attachments.read",
+                    "attachments.write"
+                ]
+                .contains(&capability.as_str()),
                 "unknown or unavailable capability {capability}"
             );
         }
@@ -322,7 +331,7 @@ mod tests {
         for (before, after) in [
             ("meetings\n:VERSION", "../escape\n:VERSION"),
             ("nodes.write", "host.root"),
-            ("core.nodes@1", "core.links@1"),
+            ("core.nodes@1", "core.chat@1"),
             (":SCHEMA: 2", ":SCHEMA: 0"),
             (":VERSION: 0.1.0", ":VERSION: bad"),
         ] {

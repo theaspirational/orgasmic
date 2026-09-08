@@ -182,6 +182,9 @@ pub mod test_hooks {
     }
 }
 
+#[path = "node_services.rs"]
+mod node_services;
+
 #[derive(Clone)]
 pub struct ApiState {
     pub home: Home,
@@ -689,6 +692,7 @@ impl ApiState {
 pub fn router(state: ApiState) -> Router {
     let identity_state = state.clone();
     let protected = Router::new()
+        .merge(node_services::routes())
         // v0.0.1 priority: real handlers
         .route("/board", get(get_board))
         .route("/me", get(get_me))
@@ -970,6 +974,7 @@ fn member_route_allowed(method: &Method, pattern: &str) -> bool {
     let method = method.as_str();
     MEMBER_ALLOWED_ROUTES
         .iter()
+        .chain(node_services::ROUTES.iter())
         .any(|(m, p)| *m == method && *p == pattern)
 }
 
@@ -1036,6 +1041,7 @@ pub async fn identity_middleware(
             ("POST", "/id/mint"),
         ]
         .contains(&(request.method().as_str(), pattern))
+            && !node_services::ROUTES.contains(&(request.method().as_str(), pattern))
         {
             return ApiError::forbidden("route unavailable to plugin principals").into_response();
         }
@@ -9587,6 +9593,8 @@ fn event_routes_to_journal(ty: &str) -> bool {
             | "graph.convention.edited"
             | "reviewer.finding"
             | "review.verdict"
+            | "link.updated"
+            | "attachment.created"
     ) || ty.starts_with("artifact.")
         || ty.starts_with("graph.")
 }

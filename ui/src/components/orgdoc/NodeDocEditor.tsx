@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode, type WheelEvent } from 'r
 import { X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { NodeBacklinks } from '@/components/NodeBacklinks';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -403,6 +404,7 @@ export function NodeDocEditor({
         return null;
       })}
 
+      <NodeBacklinks projectId={projectId} nodeId={nodeId} />
       {editing && ops.length > 0 ? (
         <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-background/95 py-3 backdrop-blur">
           <span className="mr-auto text-xs text-muted-foreground">

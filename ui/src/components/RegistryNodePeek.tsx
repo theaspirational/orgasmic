@@ -5,6 +5,7 @@ import { NodeModal } from '@/components/node-views/NodeModal';
 import { GenericNodeDialog } from '@/components/GenericNodeView';
 import { TaskDialogChunkFallback } from '@/components/TaskDialogChunkFallback';
 import { PeekBackButton } from '@/components/PeekBackButton';
+import { NodeBacklinks } from '@/components/NodeBacklinks';
 import { fetchOrgNode } from '@/lib/api';
 import { useNodeTypes } from '@/lib/nodeTypes';
 import { useResource } from '@/lib/useResource';
@@ -44,6 +45,7 @@ export function RegistryNodePeek({ projectId, nodeId, historyDepth, onBack, onCl
     <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent aria-describedby={undefined} className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
       <DialogHeader><PeekBackButton depth={historyDepth} onBack={onBack} /><DialogTitle>{doc.title}</DialogTitle></DialogHeader>
       <div data-plugin={plugin.pluginId}><plugin.View projectId={projectId} collection={doc.collection ?? doc.kind} nodeId={nodeId} onOpenNode={onOpenNode} /></div>
+      <NodeBacklinks projectId={projectId} nodeId={nodeId} />
     </DialogContent></Dialog>
   </PluginViewBoundary>;
 }

@@ -1,5 +1,6 @@
 import { createElement as h, useEffect, useId, useState } from 'react';
 import { Button, Input, Textarea, useEventStream, useMe, useResource } from '@orgasmic/plugin-sdk';
+import { Player } from './player.js';
 
 export function register(ctx) {
   ctx.registerStyles(`
@@ -10,10 +11,15 @@ export function register(ctx) {
     .meetings .muted { color: var(--muted-foreground); font-size: .875rem; }
     .meetings .error { color: var(--destructive); }
     .meetings textarea { min-height: 16rem; }
+    .meetings h2 { font-weight: 600; }
+    .meetings audio, .meetings video { width: 100%; max-height: 24rem; }
+    .meetings select { min-height: 2.75rem; border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem; background: var(--background); color: var(--foreground); max-width: 100%; }
+    .meetings .recording { border-bottom: 1px solid var(--border); padding-bottom: 1rem; }
+    .meetings .upload-progress { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
     .meetings .meeting-row { width: 100%; min-height: 2.75rem; justify-content: start; white-space: normal; overflow-wrap: anywhere; height: auto; text-align: start; }
   `);
   return ctx.registerNodeView('meetings', function Meetings({ nodeId, projectId, onOpenNode }) {
-    return nodeId ? h(Detail, { nodeId, projectId }) : h(List, { onOpenNode });
+    return nodeId ? h(Detail, { nodeId, projectId, onOpenNode }) : h(List, { onOpenNode });
   });
 
   function List({ onOpenNode }) {
@@ -31,7 +37,7 @@ export function register(ctx) {
         h(Button, { variant: 'outline', className: 'meeting-row', onClick: () => onOpenNode(node.id) }, node.title || node.id)))));
   }
 
-  function Detail({ nodeId, projectId }) {
+  function Detail({ nodeId, projectId, onOpenNode }) {
     const { can } = useMe();
     const titleId = useId();
     const notesId = useId();
@@ -68,11 +74,11 @@ export function register(ctx) {
     }
     if (result.error) return h('p', { role: 'alert' }, String(result.error));
     if (!draft) return h('p', { role: 'status' }, 'Loading meeting…');
-    return h('form', { className: 'meetings', onSubmit: save },
+    return h('div', { className: 'meetings' }, h(Player, { ctx, nodeId, onOpenNode, writable }), h('form', { className: 'meetings', onSubmit: save },
       h('label', { htmlFor: titleId }, 'Title', h(Input, { id: titleId, value: draft.title, required: true, disabled: !writable || saving, onChange: (e) => change('title', e.target.value) })),
       h('label', { htmlFor: notesId }, 'Notes', h(Textarea, { id: notesId, value: draft.body, disabled: !writable || saving, onChange: (e) => change('body', e.target.value) })),
       error ? h('p', { role: 'alert', className: 'error' }, error) : null,
       h('p', { role: 'status', className: 'muted' }, writable ? message : 'Read only'),
-      writable ? h(Button, { type: 'submit', disabled: saving || !draft.title.trim() }, saving ? 'Saving…' : 'Save notes') : null);
+      writable ? h(Button, { type: 'submit', disabled: saving || !draft.title.trim() }, saving ? 'Saving…' : 'Save notes') : null));
   }
 }

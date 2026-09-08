@@ -13,3 +13,5 @@ export { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 export { Input } from '@/components/ui/input';
 export { Textarea } from '@/components/ui/textarea';
 export type { PluginContext, PluginViewProps } from '@/lib/pluginRuntime';
+export { mediaTime, uploadAttachment } from '@/lib/nodeServices';
+export type { Attachment, MediaAnchor, NodeLink } from '@/lib/nodeServices';
