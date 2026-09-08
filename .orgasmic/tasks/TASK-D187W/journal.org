@@ -90,3 +90,18 @@
 :NODE_ID: TASK-D187W
 :EVENT_ID: c2b2aaa8-b8aa-4308-910c-7b541249f3a6
 :END:
+
+* tx-20260908-orgasmic-5d149af2-84a7-49af-831a-3e31be74313a task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260908-orgasmic-5d149af2-84a7-49af-831a-3e31be74313a
+:TIME:    [2026-09-08 Tue 10:58:27]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-D187W
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-D187W/node.org
+:REASON: edited task node TASK-D187W
+:NODE_ID: TASK-D187W
+:EVENT_ID: 5939471c-c58f-4602-b841-d4654d13d7fc
+:END:
