@@ -1,0 +1,16 @@
+#+title: orgasmic journal TASK-D187W
+#+orgasmic_version: 2
+
+* tx-20260908-orgasmic-90b9fe19-0716-46f0-a953-8060124243bd task.created
+:PROPERTIES:
+:TX_ID:   tx-20260908-orgasmic-90b9fe19-0716-46f0-a953-8060124243bd
+:TIME:    [2026-09-08 Tue 03:34:34]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-D187W
+:TARGET: .orgasmic/tasks/TASK-D187W/node.org
+:REASON: Record the five deferred P2 findings from the approved P0 review; do not expand P0.
+:EVENT_ID: 36b94aaf-99fd-49d9-ac40-d90aa628b827
+:END:
