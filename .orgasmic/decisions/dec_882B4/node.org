@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_882B4
+#+orgasmic_version: 2
+
+* dec_882B4 Plugin node collections share one descriptor registry and write path
+:PROPERTIES:
+:ID: dec_882B4
+:END:
+
+** Context
+The first plugin implementation introduced a parallel write path and left the registry-collapse gate incomplete. The P0 rebuild was reviewed on plugins/p0-registry and committed as 453b8d9ba4f6689bef0ab4ef9c9bb72342a470b7, without merging or deploying.
+** Decision
+Use one core descriptor registry for collection ownership, prefixes, states, loading, and resolution. NodeKind is open; compiled constants select existing behavior only. Existing /org/node create and edit routes handle registered collections; unknown prefixes are refused rather than sent to glossary. Compiled creators and registry validate_write/validate_transition hooks retain task and artifact safety. Generic task state edits delegate to the compiled lifecycle handler, with version checks and validation inside the writer transaction. Custom nodes declare Org TODO keywords. Indexing, watching, and repair-ids share the collection predicate.
+P1 will consume registry metadata through GET /api/node-types and reuse the existing node editor and write routes. Registry reconciliation and descriptor override policy remain P2 work.
+** Consequences
+Authorized members can read every node kind, including project and handoff files. Editors can mutate collection nodes and delete decisions and glossary terms. This policy change is explicit in the commit and requires follow-up review.
+** Verification
+Serial daemon node, graph, and task gates passed. Fresh registry HTTP, CLI parity, command-guide coverage, reindex guard, and legacy close-repair tests passed; clippy has one pre-existing transcript_stream warning. The wider serial CLI gate is not green: three model-wire dispatch failures and timeout branch cleanup reproduce on unchanged d12baf6d and in isolation. No flake exemption was added. No merge, push, or runtime deployment was performed.
