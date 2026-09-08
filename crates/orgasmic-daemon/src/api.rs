@@ -849,6 +849,7 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/grill", post(post_grill))
         .route("/plan", post(post_plan))
+        .route("/node-types", get(get_node_types))
         .route(
             "/graph/nodes",
             get(get_graph_nodes).post(post_org_node_create),
@@ -925,6 +926,7 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("POST", "/tasks/:id/comments/:entry_id/edit"),
     ("POST", "/tasks/:id/comments/:entry_id/delete"),
     ("GET", "/graph/nodes"),
+    ("GET", "/node-types"),
     ("POST", "/graph/nodes"),
     ("GET", "/graph/edges"),
     ("GET", "/decisions"),
@@ -3046,6 +3048,8 @@ pub struct TxQuery {
 pub struct GraphQuery {
     #[serde(default)]
     pub project: Option<String>,
+    #[serde(default)]
+    pub layer: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -15462,6 +15466,16 @@ fn org_file_artifact_label(relative_path: &FsPath) -> &'static str {
     }
 }
 
+async fn get_node_types(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Query(q): Query<GraphQuery>,
+) -> Result<Json<Vec<orgasmic_core::NodeTypeDescriptor>>, ApiError> {
+    resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::ProjectRead)
+        .await?;
+    Ok(Json(state.node_types.descriptors().cloned().collect()))
+}
+
 async fn get_graph_nodes(
     State(state): State<ApiState>,
     Extension(identity): Extension<Identity>,
@@ -15471,7 +15485,15 @@ async fn get_graph_nodes(
         resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::GraphRead)
             .await?;
     let project = select_loaded_project(&snap, &project_id)?;
-    Ok(Json(project.graph.nodes.clone()))
+    Ok(Json(
+        project
+            .graph
+            .nodes
+            .iter()
+            .filter(|node| q.layer.as_ref().is_none_or(|layer| node.layer == *layer))
+            .cloned()
+            .collect(),
+    ))
 }
 
 async fn get_graph_edges(
@@ -16680,6 +16702,7 @@ pub struct NodeDescriptorSummary {
 pub struct NodeDoc {
     pub id: String,
     pub kind: String,
+    pub collection: Option<String>,
     pub title: String,
     pub todo: Option<String>,
     pub tags: Vec<String>,
@@ -17054,6 +17077,7 @@ fn org_node_doc(
     NodeDoc {
         id: heading.property("ID").unwrap_or_default().to_string(),
         kind: layer.layer_name().to_string(),
+        collection: layer.collection_name().map(str::to_string),
         title: node_display_title(heading, layer),
         todo: heading.todo.clone(),
         tags: heading.tags.clone(),
@@ -23466,6 +23490,8 @@ pub(crate) mod tests {
             });
             graph.nodes.push(crate::index::GraphNodeSummary {
                 id: (*id).to_string(),
+                title: (*id).to_string(),
+                todo: None,
                 layer: "decision".to_string(),
                 outgoing: Vec::new(),
                 source_file: decisions_file.clone(),
@@ -23484,6 +23510,8 @@ pub(crate) mod tests {
             });
             graph.nodes.push(crate::index::GraphNodeSummary {
                 id: (*id).to_string(),
+                title: (*id).to_string(),
+                todo: None,
                 layer: "glossary".to_string(),
                 outgoing: Vec::new(),
                 source_file: glossary_file.clone(),
@@ -41434,6 +41462,7 @@ pub(crate) mod tests {
     fn graph_query(project: &str) -> GraphQuery {
         GraphQuery {
             project: Some(project.into()),
+            layer: None,
         }
     }
 
@@ -41517,7 +41546,10 @@ pub(crate) mod tests {
             State(state.clone()),
             Extension(id),
             Path("TASK-001".into()),
-            Query(GraphQuery { project: None }),
+            Query(GraphQuery {
+                project: None,
+                layer: None,
+            }),
         )
         .await
         .expect("legacy lookup resolves inside member-visible coverage");

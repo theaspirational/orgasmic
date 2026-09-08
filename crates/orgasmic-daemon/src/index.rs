@@ -232,6 +232,8 @@ pub struct GlossarySummary {
 #[derive(Debug, Clone, Serialize)]
 pub struct GraphNodeSummary {
     pub id: String,
+    pub title: String,
+    pub todo: Option<String>,
     pub layer: String,
     pub outgoing: Vec<String>,
     pub source_file: PathBuf,
@@ -3231,6 +3233,8 @@ fn load_decisions(
         let id = node.id.to_string();
         graph.nodes.push(GraphNodeSummary {
             id: id.clone(),
+            title: node.title.to_string(),
+            todo: heading.todo.clone(),
             layer: "decision".to_string(),
             outgoing: Vec::new(),
             source_file: source.to_path_buf(),
@@ -3411,6 +3415,8 @@ fn load_glossary(file: &OrgFile, source: &Path, graph: &mut GraphIndex) {
         };
         graph.nodes.push(GraphNodeSummary {
             id: term.id.to_string(),
+            title: term.canonical.unwrap_or(term.id).to_string(),
+            todo: heading.todo.clone(),
             layer: "glossary".to_string(),
             outgoing: own_vec(&term.relates_to),
             source_file: source.to_path_buf(),
@@ -3441,6 +3447,13 @@ fn load_generic_nodes(file: &OrgFile, source: &Path, collection: &str, graph: &m
             .collect();
         graph.nodes.push(GraphNodeSummary {
             id: id.to_string(),
+            title: heading
+                .title
+                .strip_prefix(id)
+                .unwrap_or(&heading.title)
+                .trim()
+                .to_string(),
+            todo: heading.todo.clone(),
             layer: collection.to_string(),
             outgoing,
             source_file: source.to_path_buf(),
@@ -3493,6 +3506,8 @@ fn load_task_graph(project: &mut ProjectIndex) {
         outgoing.extend(task.produces.clone());
         project.graph.nodes.push(GraphNodeSummary {
             id: task.id.clone(),
+            title: task.title.clone(),
+            todo: Some(task.lifecycle_stage.as_str().to_ascii_uppercase()),
             layer: "task".to_string(),
             outgoing,
             source_file: task.source_file.clone(),
@@ -3550,6 +3565,8 @@ fn load_task_graph(project: &mut ProjectIndex) {
             continue;
         }
         project.graph.nodes.push(GraphNodeSummary {
+            title: id.clone(),
+            todo: None,
             id,
             layer: "artifact".to_string(),
             outgoing: Vec::new(),
@@ -3562,6 +3579,8 @@ fn load_task_graph(project: &mut ProjectIndex) {
             continue;
         }
         project.graph.nodes.push(GraphNodeSummary {
+            title: id.clone(),
+            todo: None,
             id,
             layer: "external".to_string(),
             outgoing: Vec::new(),

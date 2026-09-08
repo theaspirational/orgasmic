@@ -21,7 +21,7 @@ pub fn validate_component(value: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct NodeTypeDescriptor {
     pub collection: String,
     pub id_prefix: String,

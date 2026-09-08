@@ -15,10 +15,12 @@ import { RunsView } from '@/components/RunsView';
 import { SettingsView } from '@/components/SettingsView';
 import { StatusView } from '@/components/StatusView';
 import { TasksPage } from '@/components/TasksPage';
+import { GenericNodeView } from '@/components/GenericNodeView';
+import { useBackendProfiles } from '@/lib/backend';
 import { fetchProjects } from '@/lib/api';
 import { withEntityPeek } from '@/lib/entityPeek';
 import { routeSearch } from '@/lib/searchState';
-import { DEFAULT_TAB_VIEW, getSnapshot as getTabsSnapshot } from '@/lib/tabsStore';
+import { DEFAULT_TAB_VIEW, getSnapshot as getTabsSnapshot, projectTabTarget } from '@/lib/tabsStore';
 import type { Me, ProjectCatalogEntry } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 import { useMe } from '@/hooks/useMe';
@@ -275,11 +277,7 @@ const indexRoute = createRoute({
       rememberProject(projectId);
       // Restore the project's last view (session restore) instead of always tasks.
       const view = getTabsSnapshot().lastView[projectId] ?? DEFAULT_TAB_VIEW;
-      void navigate({
-        to: `/projects/$projectId/${view}` as '/projects/$projectId/tasks',
-        params: { projectId },
-        replace: true,
-      });
+      void navigate({ ...projectTabTarget(projectId, view), replace: true });
     }, [navigate, isMember, me, visibleProjects, projects.data]);
 
     if (!isMember && projects.error) return <ErrorPanel error={projects.error} />;
@@ -473,6 +471,18 @@ const orgRoute = createRoute({
   },
 });
 
+const collectionRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'nodes/$collection',
+  validateSearch: glossarySearch,
+  component: function CollectionRoute() {
+    const { projectId, collection } = collectionRoute.useParams();
+    const { activeProfile } = useBackendProfiles();
+    rememberProject(projectId);
+    return <GenericNodeView key={`${activeProfile.id}:${activeProfile.baseUrl}:${projectId}:${collection}`} projectId={projectId} collection={collection} />;
+  },
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'settings',
@@ -501,6 +511,7 @@ const routeTree = rootRoute.addChildren([
     projectOverviewRoute,
     decisionsRoute,
     glossaryRoute,
+    collectionRoute,
     artifactsRoute,
     artifactViewRoute,
     tasksRoute,

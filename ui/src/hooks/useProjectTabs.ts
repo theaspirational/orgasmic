@@ -42,7 +42,7 @@ function projectFromPath(pathname: string): { projectId: string; view: ProjectTa
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
   if (parts[0] !== 'projects' || !parts[1]) return null;
   // Bare `/projects/$id` renders the decisions index; otherwise parts[2] is the view.
-  const view = parts[2] ? parseView(parts[2]) ?? 'decisions' : 'decisions';
+  const view = parseView(parts[2] === 'nodes' ? parts.slice(2).join('/') : parts[2]) ?? 'decisions';
   return { projectId: parts[1], view };
 }
 

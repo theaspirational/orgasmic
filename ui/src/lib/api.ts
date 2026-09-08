@@ -17,6 +17,7 @@ import type {
   FilesystemRoot,
   FilesystemValidateProjectResponse,
   GlossarySummary,
+  GraphNodeSummary,
   ManagerDriversResponse,
   ManagerChatCatalogResponse,
   ManagerLaunchResponse,
@@ -436,6 +437,25 @@ export function fetchOrgFile(
   return get<OrgFileResponse>(`/org/file${q(project, { path })}`);
 }
 
+export type NodeTypeDescriptor = {
+  collection: string;
+  id_prefix: string;
+  label: string;
+  label_plural: string;
+  required_properties: string[];
+  states: string[];
+  transitions: Record<string, string[]>;
+  regenerate_prompt: string | null;
+};
+
+export function fetchNodeTypes(project: string): Promise<NodeTypeDescriptor[]> {
+  return get(`/node-types${q(project)}`);
+}
+
+export function fetchGraphNodes(project: string, layer?: string): Promise<GraphNodeSummary[]> {
+  return get(`/graph/nodes${q(project, { layer })}`);
+}
+
 export function fetchOrgNode(
   id: string,
   project?: string | null,
@@ -450,7 +470,7 @@ export function postOrgNodeEdit(
   project?: string | null,
   kind?: string,
 ): Promise<OrgNodeDoc> {
-  return post<OrgNodeDoc>(`/org/node/${encodeURIComponent(id)}/edit`, {
+  return post<OrgNodeDoc>(`/org/node/${encodeURIComponent(id)}/edit?json=true`, {
     project,
     kind,
     base_version: body.baseVersion,

@@ -36,10 +36,14 @@ async fn user_descriptor_uses_existing_node_routes_and_preserves_state() {
         "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:END:\n",
     );
     write(
+        tmp.path().join("elsewhere/.orgasmic/project.org"),
+        "* PROJECT elsewhere\n:PROPERTIES:\n:ID: elsewhere\n:END:\n",
+    );
+    write(
         home.board(),
         format!(
-            "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:PATH: {}\n:BRANCH: main\n:END:\n",
-            project.display()
+            "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:PATH: {}\n:BRANCH: main\n:END:\n* PROJECT elsewhere\n:PROPERTIES:\n:ID: elsewhere\n:PATH: {}\n:BRANCH: main\n:END:\n",
+            project.display(), tmp.path().join("elsewhere").display()
         ),
     );
     write(home.user().join("schema/node-types/meetings.org"), "* NODE-TYPE meeting\n:PROPERTIES:\n:COLLECTION: meetings\n:ID_PREFIX: MEET-\n:LABEL: Meeting\n:LABEL_PLURAL: Meetings\n:REQUIRED_PROPERTIES: ID\n:STATES: active archived\n:TRANSITIONS: active>archived archived>active\n:END:\n");
@@ -65,6 +69,40 @@ async fn user_descriptor_uses_existing_node_routes_and_preserves_state() {
             .unwrap();
     let editor = cookie(&client, &base, &editor_token).await;
     let viewer = cookie(&client, &base, &viewer_token).await;
+    let metadata = client
+        .get(format!("{base}/node-types?project=demo"))
+        .header("cookie", &viewer)
+        .send()
+        .await
+        .unwrap();
+    assert!(metadata.status().is_success());
+    let descriptors: Vec<Value> = metadata.json().await.unwrap();
+    let meetings = descriptors
+        .iter()
+        .find(|item| item["collection"] == "meetings")
+        .unwrap();
+    assert_eq!(meetings["label_plural"], "Meetings");
+    assert_eq!(meetings["states"], json!(["active", "archived"]));
+    assert_eq!(meetings["transitions"]["active"], json!(["archived"]));
+    assert_eq!(
+        client
+            .get(format!("{base}/node-types?project=demo"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}/node-types?project=elsewhere"))
+            .header("cookie", &viewer)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
     let payload = json!({"project":"demo", "kind":"meetings", "title":"Member meeting", "request_id":"member-meeting"});
     let denied = client
         .post(format!("{base}/org/node"))
@@ -154,6 +192,20 @@ async fn user_descriptor_uses_existing_node_routes_and_preserves_state() {
         .unwrap();
     assert_eq!(doc["title"], "First meeting");
     assert_eq!(doc["todo"], "ACTIVE");
+    assert_eq!(doc["collection"], "meetings");
+    let nodes: Vec<Value> = client
+        .get(format!("{base}/graph/nodes?project=demo"))
+        .header("cookie", &viewer)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let meeting = nodes.iter().find(|node| node["id"] == id).unwrap();
+    assert_eq!(meeting["layer"], "meetings");
+    assert_eq!(meeting["title"], "First meeting");
+    assert_eq!(meeting["todo"], "ACTIVE");
     let edited = client.post(format!("{base}/org/node/{id}/edit?json=true")).bearer_auth(token.trim())
         .json(&json!({"project":"demo", "base_version":doc["source"]["base_version"], "ops":[{"op":"set_title", "title":"Corrected"}]}))
         .send().await.unwrap();
@@ -208,6 +260,22 @@ async fn user_descriptor_uses_existing_node_routes_and_preserves_state() {
         .json()
         .await
         .unwrap();
+    assert_eq!(art_doc["kind"], "artifact");
+    assert_eq!(art_doc["collection"], "artifacts");
+    for layer in ["meetings", "artifacts", "missing"] {
+        let nodes: Vec<Value> = client
+            .get(format!("{base}/graph/nodes"))
+            .header("cookie", &viewer)
+            .query(&[("project", "demo"), ("layer", layer)])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(nodes.iter().all(|node| node["layer"] == layer));
+        assert_eq!(nodes.is_empty(), layer == "missing");
+    }
     let bypass = client.post(format!("{base}/org/node/{art_id}/edit")).bearer_auth(token.trim())
         .json(&json!({"project":"demo", "base_version":art_doc["source"]["base_version"], "ops":[{"op":"set_property", "key":"VERSION", "value":"99"}]}))
         .send().await.unwrap();

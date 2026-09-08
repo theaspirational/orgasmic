@@ -7,6 +7,7 @@
 // bound value out of the document and turns edits back into NodeEditOps.
 
 import type { NodeKind } from '@/components/node-views/orgNodes';
+import type { NodeTypeDescriptor } from '@/lib/api';
 
 export type FieldBinding =
   | { kind: 'title' }
@@ -23,7 +24,7 @@ export type FieldEditor = 'prose' | 'text' | 'chips';
 export type ChipSeparator = 'space' | 'comma';
 
 /** Which node list backs a link-chip's labels and autocomplete. */
-export type SuggestSource = 'glossary' | 'decision' | 'task';
+export type SuggestSource = string;
 
 export type NodeFieldDescriptor = {
   label: string;
@@ -45,7 +46,7 @@ export type NodeFieldDescriptor = {
 };
 
 export type NodeDescriptor = {
-  kind: NodeKind | 'project' | 'task';
+  kind: string;
   editableTitle?: boolean;
   fields: NodeFieldDescriptor[];
   /** Render an editable prose field for every `**` section in the document that
@@ -53,7 +54,24 @@ export type NodeDescriptor = {
    *  fields. Use for free-form documents (e.g. project.org) whose section set
    *  is authored rather than fixed by schema. */
   dynamicSections?: boolean;
+  dynamicProperties?: boolean;
 };
+
+export function collectionDescriptor(type: NodeTypeDescriptor): NodeDescriptor {
+  return {
+    kind: type.collection,
+    editableTitle: true,
+    dynamicSections: true,
+    dynamicProperties: true,
+    fields: [
+      { label: 'Body', binding: { kind: 'body' }, editor: 'prose' },
+      { label: 'Tags', binding: { kind: 'tags' }, editor: 'chips' },
+      ...type.required_properties.filter((key) => key !== 'ID').map((key): NodeFieldDescriptor => ({
+        label: key, binding: { kind: 'property', key }, editor: 'text',
+      })),
+    ],
+  };
+}
 
 export const DECISION_DESCRIPTOR: NodeDescriptor = {
   kind: 'decision',
