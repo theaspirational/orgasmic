@@ -44,3 +44,34 @@
 :NODE_ID: TASK-D187W
 :EVENT_ID: 5170ef96-0792-4828-aef2-92a05ce8716e
 :END:
+
+* tx-20260908-orgasmic-a054de5f-1991-4d76-958e-875470946e5a task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260908-orgasmic-a054de5f-1991-4d76-958e-875470946e5a
+:TIME:    [2026-09-08 Tue 06:34:16]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-D187W
+:TARGET: .orgasmic/tasks/TASK-D187W/node.org
+:REASON: P2 reload/packaging and scoped command execution implemented on plugins/p0-registry; awaiting review, remaining consolidated follow-ups still open
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: bdaa091a-b117-48f0-b2d8-2a1e7a134483
+:END:
+
+* tx-20260908-orgasmic-127ee260-f661-4cfb-bfdb-501aa2dafefa task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260908-orgasmic-127ee260-f661-4cfb-bfdb-501aa2dafefa
+:TIME:    [2026-09-08 Tue 06:34:16]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-D187W
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-D187W/node.org
+:REASON: edited task node TASK-D187W
+:NODE_ID: TASK-D187W
+:EVENT_ID: 1ea4d7df-94fe-4ace-b4a9-df9e45b87d79
+:END:

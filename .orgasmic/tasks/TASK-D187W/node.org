@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-D187W
 #+orgasmic_version: 2
 
-* BACKLOG TASK-D187W Plugins P2: reconcile registry reload and descriptor authority
+* IN_PROGRESS TASK-D187W Plugins P2: reconcile registry reload and descriptor authority
 :PROPERTIES:
 :ID: TASK-D187W
 :IMPLEMENTS: dec_882B4
@@ -19,3 +19,4 @@ Follow up on the P0 registry review after the UI registry slice. P0 commit: 453b
 ** Notes
 P0 remains branch-only and is not deployed. This is one consolidated P2 task, not authorization to pull loader, sidecar, attachment, or chat work into P0/P1.
 P1 review follow-ups (deferred, do not fold into the three P1 fixes): generic peeks still load the document twice; make NodeDocEditor the only loader for generic kinds. Replace remaining inferNodeKind prefix guessing and ArtifactsView subject labels with graph-provided titles. Revisit the residual ViewName union and old-kind-keyed descriptor record when compiled decision/glossary views are extracted. Show a toast when node-types fails instead of silently removing generic navigation. P2 is authorized in two halves: reloadable registry plus per-ledger activation and packaging CLI first, then plugin run with a scoped principal. Sidecars, UI bundles, attachments, and chat remain out of scope.
+P2 scope boundary: supports core.nodes@1 and nodes.read/nodes.write. Commands run with full OS-user filesystem access, not a sandbox; daemon credentials are scoped and expire after 24 hours or on revoke/disable/removal/manifest change. Removal moves plugin code to recoverable user/plugins-removed storage and disables registered ledgers. Registry reconciliation checks manifest/config metadata once per second, and CLI activation/removal reconcile synchronously; no per-request plugin tree walk or file hashing. P1 double generic fetch, remaining inferNodeKind labels and unions, and metadata-error toast remain deferred, as do the other original follow-ups. Sidecars, UI bundles, attachments and chat were not added.
