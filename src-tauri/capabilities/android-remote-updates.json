@@ -1,0 +1,21 @@
+{
+  "identifier": "android-remote-updates",
+  "description": "Remote Android UI may read the installed version, check our release manifest, and open only our APK download URLs. No local runtime or filesystem authority.",
+  "local": false,
+  "remote": {
+    "urls": ["http://*/*", "https://*/*"]
+  },
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": [
+    "core:app:allow-version",
+    "allow-check-android-update",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://github.com/theaspirational/orgasmic/releases/download/apps-stable/orgasmic_android_aarch64.apk" },
+        { "url": "https://github.com/theaspirational/orgasmic/releases/download/apps-nightly/orgasmic_android_aarch64.apk" }
+      ]
+    }
+  ]
+}
