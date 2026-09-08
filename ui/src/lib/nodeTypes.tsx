@@ -2,13 +2,15 @@ import { createContext, useContext } from 'react';
 import { fetchNodeTypes, type NodeTypeDescriptor } from '@/lib/api';
 import { useBackendProfiles } from '@/lib/backend';
 import { useResource, type UseResourceResult } from '@/lib/useResource';
+import { useRefreshToken } from '@/hooks/useRefreshBus';
 
 export const NodeTypesContext = createContext<UseResourceResult<NodeTypeDescriptor[]> | null>(null);
 
 export function useNodeTypesResource(projectId: string | null, enabled: boolean) {
   const { activeProfile } = useBackendProfiles();
+  const refresh = useRefreshToken();
   const scope = `${activeProfile.id}:${activeProfile.baseUrl}:${projectId}:${enabled}`;
-  const resource = useResource(scope, async () => ({ scope, types: await fetchNodeTypes(projectId!) }), {
+  const resource = useResource(`${scope}:${refresh}`, async () => ({ scope, types: await fetchNodeTypes(projectId!) }), {
     enabled: enabled && Boolean(projectId),
   });
   // useResource retains its last result during a key change. Never expose a

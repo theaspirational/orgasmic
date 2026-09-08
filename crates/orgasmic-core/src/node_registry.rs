@@ -133,8 +133,8 @@ impl NodeTypeRegistry {
         }
         Ok(())
     }
-    /// One loader shared by daemon and CLI. User files replace shipped files
-    /// with the same relative name; ownership collisions are always refused.
+    /// Load compiled and legacy declarative types. Packaged plugins require
+    /// per-ledger activation and are reconciled by the daemon, never by mint.
     pub fn for_home(home: &Home) -> Result<Self> {
         let mut registry = Self::embedded()?;
         let relative = Path::new("schema/node-types");
@@ -166,46 +166,11 @@ impl NodeTypeRegistry {
             }
             registry.register(descriptor, true)?;
         }
-        let plugins = home.user().join("plugins");
-        if let Ok(entries) = std::fs::read_dir(plugins) {
-            for entry in entries {
-                let path = entry?.path().join("plugin.org");
-                if path.is_file() {
-                    let source = std::fs::read_to_string(&path)?;
-                    let file = crate::OrgFile::parse(&source, path.display().to_string())?;
-                    if file.headings.iter().any(|heading| {
-                        heading
-                            .sections
-                            .iter()
-                            .any(|section| section.property("COLLECTION").is_some())
-                    }) {
-                        registry.register(
-                            NodeTypeDescriptor::parse(&source, &path.display().to_string())?,
-                            false,
-                        )?;
-                    }
-                }
-            }
-        }
-        // Compiled behavior still interprets legacy IDs and task stages.
-        // User overrides may change presentation, but cannot silently make
-        // those compiled readers disagree with the registry.
+        // Compiled behavior and its descriptor are one authority. A user
+        // override cannot remove required properties or weaken transitions.
         for builtin in Self::embedded()?.descriptors() {
             let loaded = registry.descriptor(&builtin.collection).unwrap();
-            if loaded.id_prefix != builtin.id_prefix {
-                bail!(
-                    "compiled collection {} must retain prefix {}",
-                    builtin.collection,
-                    builtin.id_prefix
-                );
-            }
-            if builtin.collection == "tasks" {
-                let actual: std::collections::BTreeSet<_> = loaded.states.iter().collect();
-                let expected: std::collections::BTreeSet<_> = builtin.states.iter().collect();
-                if actual != expected {
-                    bail!("task descriptor states must agree with compiled lifecycle behavior");
-                }
-            }
+            anyhow::ensure!(loaded == builtin, "compiled collection {} descriptor is pinned; user descriptors may only add new collections", builtin.collection);
         }
         Ok(registry)
     }
@@ -381,6 +346,25 @@ impl NodeTypeRegistry {
 mod tests {
     use super::*;
 
+    #[test]
+    fn compiled_descriptor_is_pinned_in_full() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = Home::at(temp.path().to_owned());
+        let dir = home.user().join("schema/node-types");
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = include_str!("../../../shipped/schema/node-types/task.org");
+        for changed in [
+            source.replace(":REQUIRED_PROPERTIES: ID", ":REQUIRED_PROPERTIES:"),
+            source.replace("done>-", "done>in_progress"),
+        ] {
+            std::fs::write(dir.join("task.org"), changed).unwrap();
+            assert!(NodeTypeRegistry::for_home(&home)
+                .unwrap_err()
+                .to_string()
+                .contains("pinned"));
+        }
+    }
+
     fn repo_root() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
@@ -413,13 +397,13 @@ mod tests {
     }
 
     #[test]
-    fn user_tier_and_nested_plugins_share_ownership_and_resolution() {
+    fn user_tier_ownership_and_resolution() {
         let temp = tempfile::tempdir().unwrap();
         let home = Home::at(temp.path().to_owned());
-        let root = home.user().join("plugins/meetings");
+        let root = home.user().join("schema/node-types");
         std::fs::create_dir_all(&root).unwrap();
         let source = "* Plugin\n:PROPERTIES:\n:ID: meetings\n:END:\n** Node type\n:PROPERTIES:\n:COLLECTION: meetings\n:ID_PREFIX: MEET-\n:LABEL: Meeting\n:LABEL_PLURAL: Meetings\n:REQUIRED_PROPERTIES: ID\n:STATES: active archived\n:TRANSITIONS: active>archived archived>-\n:END:\n";
-        std::fs::write(root.join("plugin.org"), source).unwrap();
+        std::fs::write(root.join("meetings.org"), source).unwrap();
         let registry = NodeTypeRegistry::for_home(&home).unwrap();
         assert_eq!(
             registry
@@ -445,10 +429,8 @@ mod tests {
         assert!(registry
             .resolve_node(Some("meetings"), "../escape")
             .is_err());
-        let duplicate = home.user().join("plugins/duplicate");
-        std::fs::create_dir_all(&duplicate).unwrap();
         std::fs::write(
-            duplicate.join("plugin.org"),
+            root.join("duplicate.org"),
             source.replace(":COLLECTION: meetings", ":COLLECTION: other"),
         )
         .unwrap();

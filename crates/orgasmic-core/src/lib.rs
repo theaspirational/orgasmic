@@ -19,6 +19,7 @@ pub mod node_registry;
 pub mod node_type;
 pub mod org;
 pub mod paths;
+pub mod plugin;
 pub mod projects;
 pub mod run_id;
 // orgasmic:dec_WDR5K — residue left behind by hard cutovers

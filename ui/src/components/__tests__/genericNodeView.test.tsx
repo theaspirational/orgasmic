@@ -100,3 +100,12 @@ it('does not fetch collection data without graph permission', async () => {
   expect(screen.getByRole('alert')).toHaveTextContent('permission');
   expect(mocks.graph).not.toHaveBeenCalled();
 });
+
+it('keeps a node with an incompatible stored plugin schema read only', async () => {
+  const incompatible = { ...doc, schema_matches: false };
+  mocks.node.mockResolvedValue(incompatible);
+  render(<GenericNodeDialog projectId="demo" type={type} initialDocument={incompatible} {...callbacks} />);
+  expect(await screen.findByText('Meeting notes')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'State' })).toBeDisabled();
+});

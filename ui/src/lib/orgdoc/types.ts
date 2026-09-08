@@ -15,6 +15,7 @@ export type OrgNodeDoc = {
   kind: string;
   /** Registry collection; singletons have none. */
   collection?: string | null;
+  schema_matches?: boolean;
   title: string;
   todo?: string | null;
   tags: string[];

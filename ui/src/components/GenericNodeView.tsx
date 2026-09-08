@@ -74,7 +74,7 @@ export function GenericNodeDialog({ projectId, initialDocument, type, historyDep
     required_properties: [], states: [], transitions: {}, regenerate_prompt: null,
   }), [type, doc.kind]);
   const state = doc.todo?.toLowerCase() ?? '';
-  const schemaMatches = Boolean(type && (!type.states.length || type.states.includes(state)));
+  const schemaMatches = Boolean(doc.schema_matches !== false && type && (!type.states.length || type.states.includes(state)));
   const canEdit = can(projectId, 'nodes.write') && schemaMatches;
   const nextStates = type?.transitions[state] ?? [];
 

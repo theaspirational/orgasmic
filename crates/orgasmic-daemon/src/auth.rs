@@ -255,10 +255,20 @@ impl AuthState {
         if self.check_headers(headers) {
             return Some(Identity::Admin);
         }
-        let member_name = self.check_member_session(headers)?;
-        let entry = orgasmic_core::find_member_by_name(home, &member_name)
-            .ok()
-            .flatten()?;
+        let entry = if let Some(member_name) = self.check_member_session(headers) {
+            orgasmic_core::find_member_by_name(home, &member_name)
+                .ok()
+                .flatten()?
+        } else {
+            let token = headers
+                .get(header::AUTHORIZATION)?
+                .to_str()
+                .ok()?
+                .strip_prefix("Bearer ")?;
+            orgasmic_core::find_member_by_token(home, token)
+                .ok()
+                .flatten()?
+        };
         Some(Identity::Member {
             name: entry.name,
             grants: entry.grants,

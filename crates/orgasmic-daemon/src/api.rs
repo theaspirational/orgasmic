@@ -186,6 +186,7 @@ pub mod test_hooks {
 pub struct ApiState {
     pub home: Home,
     pub node_types: Arc<crate::node_types::NodeTypeRegistry>,
+    pub plugins: Arc<crate::plugins::PluginRegistry>,
     pub index: Index,
     pub writer: WriterHandle,
     pub supervisor: Supervisor,
@@ -850,6 +851,13 @@ pub fn router(state: ApiState) -> Router {
         .route("/grill", post(post_grill))
         .route("/plan", post(post_plan))
         .route("/node-types", get(get_node_types))
+        .route("/plugins", get(get_plugins))
+        .route("/plugins/reconcile", post(post_plugins_reconcile))
+        .route("/plugins/:id/activation", post(post_plugin_activation))
+        .route("/plugins/:id/run", post(post_plugin_run))
+        .route("/plugins/:id/remove", post(post_plugin_remove))
+        .route("/plugins/run/revoke", post(post_plugin_run_revoke))
+        .route("/id/mint", post(post_id_mint))
         .route(
             "/graph/nodes",
             get(get_graph_nodes).post(post_org_node_create),
@@ -927,6 +935,10 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("POST", "/tasks/:id/comments/:entry_id/delete"),
     ("GET", "/graph/nodes"),
     ("GET", "/node-types"),
+    ("GET", "/plugins"),
+    ("POST", "/plugins/:id/run"),
+    ("POST", "/plugins/run/revoke"),
+    ("POST", "/id/mint"),
     ("POST", "/graph/nodes"),
     ("GET", "/graph/edges"),
     ("GET", "/decisions"),
@@ -968,9 +980,26 @@ pub async fn identity_middleware(
         || path == "/ws"
         || path.starts_with("/ws/");
 
-    let identity = match state.auth.resolve_identity(request.headers(), &state.home) {
+    let plugin_token = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.split_once(' '))
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        .map(|(_, token)| token.trim())
+        .filter(|token| token.starts_with("plugin-"));
+    // A plugin bearer never falls back to an accompanying admin session.
+    let resolved = if let Some(token) = plugin_token {
+        state.plugins.identity(token)
+    } else {
+        state.auth.resolve_identity(request.headers(), &state.home)
+    };
+    let identity = match resolved {
         Some(identity) => identity,
-        None if query_token_allowed && state.auth.check_query_token(request.uri().query()) => {
+        None if plugin_token.is_none()
+            && query_token_allowed
+            && state.auth.check_query_token(request.uri().query()) =>
+        {
             Identity::Admin
         }
         None => {
@@ -983,6 +1012,24 @@ pub async fn identity_middleware(
         }
     };
 
+    if matches!(identity, Identity::Plugin { .. }) {
+        let raw = matched_path.as_ref().map(|m| m.as_str()).unwrap_or(&path);
+        let pattern = raw.strip_prefix("/api").unwrap_or(raw);
+        if ![
+            ("GET", "/org/node"),
+            ("GET", "/graph/nodes"),
+            ("GET", "/node-types"),
+            ("POST", "/org/node"),
+            ("POST", "/graph/nodes"),
+            ("POST", "/org/node/:id/edit"),
+            ("POST", "/org/node/:id/delete"),
+            ("POST", "/id/mint"),
+        ]
+        .contains(&(request.method().as_str(), pattern))
+        {
+            return ApiError::forbidden("route unavailable to plugin principals").into_response();
+        }
+    }
     if matches!(identity, Identity::Member { .. }) {
         // `MatchedPath` reports the route template *including* the `/api` nest
         // prefix (e.g. `/api/ws`, `/api/projects/:id`), while
@@ -1070,6 +1117,7 @@ async fn get_me(
         .map(|project_id| {
             let role = match &identity {
                 Identity::Admin => "admin".to_string(),
+                Identity::Plugin { .. } => "plugin".to_string(),
                 Identity::Member { .. } => identity.role_for(project_id).unwrap_or("").to_string(),
             };
             let capabilities = match &identity {
@@ -1078,6 +1126,7 @@ async fn get_me(
                     .copied()
                     .map(authz::action_name)
                     .collect(),
+                Identity::Plugin { .. } => Vec::new(),
                 Identity::Member { .. } => authz::role_capabilities(&role)
                     .iter()
                     .copied()
@@ -1095,9 +1144,10 @@ async fn get_me(
     Json(MeResponse {
         identity: match identity {
             Identity::Admin => "admin",
+            Identity::Plugin { .. } => "plugin",
             Identity::Member { .. } => "member",
         },
-        name: identity.member_name().map(str::to_string),
+        name: identity.member_name(),
         projects,
     })
 }
@@ -9173,7 +9223,6 @@ async fn prepare_api_tx_as(
     let time_str = tx_time_string_utc(&now);
     let actor = identity
         .member_name()
-        .map(str::to_string)
         .unwrap_or_else(|| choose_actor(&pseudo_req, project_entry.as_ref(), state));
     // dec_Q78QN — same journal `:ACTOR:` namespace guard as
     // `prepare_tx_append_request`, on the same `choose_actor` chain. A member
@@ -9191,6 +9240,13 @@ async fn prepare_api_tx_as(
     entry.target = pseudo_req.target;
     entry.reason = pseudo_req.reason;
     entry.extra = pseudo_req.extra;
+    if let Identity::Plugin { caller, .. } = identity {
+        entry.extra.retain(|(key, _)| key != "PLUGIN_CALLER");
+        entry.extra.push((
+            "PLUGIN_CALLER".into(),
+            caller.member_name().unwrap_or_else(|| state.actor.clone()),
+        ));
+    }
     ensure_event_id(&mut entry).map_err(ApiError::bad_request)?;
     Ok(PreparedApiTx {
         tx: TxAppend {
@@ -15473,7 +15529,216 @@ async fn get_node_types(
 ) -> Result<Json<Vec<orgasmic_core::NodeTypeDescriptor>>, ApiError> {
     resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::ProjectRead)
         .await?;
-    Ok(Json(state.node_types.descriptors().cloned().collect()))
+    let (_, plugins) =
+        node_scope(state, &identity, q.project.as_deref(), Action::ProjectRead).await?;
+    Ok(Json(
+        plugins
+            .registry
+            .descriptors()
+            .filter(|d| plugins.descriptor(&d.collection).is_some())
+            .cloned()
+            .collect(),
+    ))
+}
+
+async fn node_scope(
+    mut state: ApiState,
+    identity: &Identity,
+    project: Option<&str>,
+    action: Action,
+) -> Result<(ApiState, Arc<crate::plugins::ProjectPlugins>), ApiError> {
+    let (id, snapshot) = resolve_authorized_project(&state, identity, project, action).await?;
+    let root = &select_loaded_project(&snapshot, &id)?.root;
+    let plugins = state
+        .plugins
+        .project(root)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    state.node_types = plugins.registry.clone();
+    Ok((state, plugins))
+}
+
+async fn get_plugins(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Query(q): Query<GraphQuery>,
+) -> Result<Json<Vec<crate::plugins::PluginStatus>>, ApiError> {
+    let (id, snapshot) =
+        resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::ProjectRead)
+            .await?;
+    Ok(Json(
+        state
+            .plugins
+            .list(&select_loaded_project(&snapshot, &id)?.root)
+            .map_err(|e| ApiError::bad_request(e.to_string()))?,
+    ))
+}
+
+async fn post_plugins_reconcile(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+) -> Result<Json<Value>, ApiError> {
+    authz::require(&identity, None, Action::MembersManage)
+        .map_err(|e| ApiError::forbidden(e.to_string()))?;
+    let _guard = state.plugins.operations.write().await;
+    state
+        .plugins
+        .reconcile(true)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    state
+        .events
+        .publish(Topic::Board, EventPayload::BoardRefreshed);
+    Ok(Json(json!({"reconciled": true})))
+}
+
+#[derive(Deserialize)]
+struct PluginActivationRequest {
+    project: String,
+    enabled: bool,
+    #[serde(default)]
+    approved_capabilities: BTreeSet<String>,
+}
+
+async fn post_plugin_activation(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Path(id): Path<String>,
+    Json(req): Json<PluginActivationRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let (project, snapshot) =
+        resolve_authorized_project(&state, &identity, Some(&req.project), Action::MembersManage)
+            .await?;
+    let _guard = state.plugins.operations.write().await;
+    state
+        .plugins
+        .activate(
+            &select_loaded_project(&snapshot, &project)?.root,
+            &id,
+            req.enabled,
+            &req.approved_capabilities,
+        )
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    state
+        .events
+        .publish(Topic::Board, EventPayload::BoardRefreshed);
+    Ok(Json(
+        json!({"id": id, "enabled": req.enabled, "data_retained": true}),
+    ))
+}
+
+async fn post_plugin_remove(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    authz::require(&identity, None, Action::MembersManage)
+        .map_err(|e| ApiError::forbidden(e.to_string()))?;
+    let _guard = state.plugins.operations.write().await;
+    let roots = state
+        .index
+        .snapshot()
+        .await
+        .board
+        .into_iter()
+        .map(|p| p.path)
+        .collect::<Vec<_>>();
+    let backup = state
+        .plugins
+        .remove(&id, &roots)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    state
+        .events
+        .publish(Topic::Board, EventPayload::BoardRefreshed);
+    Ok(Json(
+        json!({"id":id, "removed":true, "recoverable_at":backup, "data_retained":true}),
+    ))
+}
+
+fn plugin_collection_write(
+    identity: &Identity,
+    plugins: &crate::plugins::ProjectPlugins,
+    collection: Option<&str>,
+) -> Result<(), ApiError> {
+    if let Identity::Plugin { id, .. } = identity {
+        if collection.and_then(|c| plugins.owner(c)) != Some(id.as_str()) {
+            return Err(ApiError::forbidden(
+                "plugin cannot write another collection",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct PluginRunRequest {
+    project: String,
+    command: String,
+}
+async fn post_plugin_run(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Path(id): Path<String>,
+    Json(req): Json<PluginRunRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let (project, snapshot) =
+        resolve_authorized_project(&state, &identity, Some(&req.project), Action::ProjectRead)
+            .await?;
+    let _guard = state.plugins.operations.read().await;
+    let (lease, token) = state
+        .plugins
+        .issue(
+            &select_loaded_project(&snapshot, &project)?.root,
+            &project,
+            &id,
+            &req.command,
+            &identity,
+        )
+        .map_err(|e| ApiError::forbidden(e.to_string()))?;
+    Ok(Json(json!({"lease": lease, "token": token})))
+}
+#[derive(Deserialize)]
+struct PluginRevokeRequest {
+    lease: String,
+}
+async fn post_plugin_run_revoke(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Json(req): Json<PluginRevokeRequest>,
+) -> Result<Json<Value>, ApiError> {
+    state
+        .plugins
+        .revoke(&req.lease, &identity)
+        .map_err(|e| ApiError::forbidden(e.to_string()))?;
+    Ok(Json(json!({"revoked": true})))
+}
+
+#[derive(Deserialize)]
+struct MintRequest {
+    project: Option<String>,
+    class: String,
+}
+async fn post_id_mint(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Json(req): Json<MintRequest>,
+) -> Result<Json<Value>, ApiError> {
+    resolve_authorized_project(
+        &state,
+        &identity,
+        req.project.as_deref(),
+        Action::NodesWrite,
+    )
+    .await?;
+    let (state, plugins) =
+        node_scope(state, &identity, req.project.as_deref(), Action::NodesWrite).await?;
+    let descriptor = state
+        .node_types
+        .collection_for_kind(&req.class)
+        .ok_or_else(|| ApiError::bad_request("unknown node class"))?;
+    plugin_collection_write(&identity, &plugins, Some(&descriptor.collection))?;
+    plugins
+        .check_write(&descriptor.collection, None)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(json!({"id": orgasmic_core::mint_node_id(descriptor)})))
 }
 
 async fn get_graph_nodes(
@@ -16403,6 +16668,9 @@ async fn post_org_node_create(
     Extension(identity): Extension<Identity>,
     Json(req): Json<NodeCreateRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let _plugin_guard = state.plugins.operations.clone().read_owned().await;
+    let (state, plugins) =
+        node_scope(state, &identity, req.project.as_deref(), Action::NodesWrite).await?;
     let (project_id, snapshot) = resolve_authorized_project(
         &state,
         &identity,
@@ -16416,6 +16684,10 @@ async fn post_org_node_create(
         .collection_for_kind(&req.kind)
         .ok_or_else(|| ApiError::bad_request("unknown node collection"))?;
     let kind = NodeKind::collection(&descriptor.collection);
+    plugin_collection_write(&identity, &plugins, Some(&descriptor.collection))?;
+    plugins
+        .check_write(&descriptor.collection, None)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
     validate_node_title(&req.title)?;
     if kind == NodeKind::Task {
         let response = post_task_create_as(
@@ -16505,6 +16777,9 @@ async fn post_org_node_create(
         .map_err(|error| ApiError::internal(format!("reserve node: {error}")))?;
     let path = dir.join(NODE_FILE);
     let mut source = orgasmic_core::node_kernel::node_org_header(&descriptor.label, &id);
+    if let Some(header) = plugins.header(&descriptor.collection) {
+        source.push_str(&header);
+    }
     if !descriptor.states.is_empty() {
         source.push_str(&format!(
             "#+todo: {}\n",
@@ -16703,6 +16978,7 @@ pub struct NodeDoc {
     pub id: String,
     pub kind: String,
     pub collection: Option<String>,
+    pub schema_matches: bool,
     pub title: String,
     pub todo: Option<String>,
     pub tags: Vec<String>,
@@ -17078,6 +17354,7 @@ fn org_node_doc(
         id: heading.property("ID").unwrap_or_default().to_string(),
         kind: layer.layer_name().to_string(),
         collection: layer.collection_name().map(str::to_string),
+        schema_matches: true,
         title: node_display_title(heading, layer),
         todo: heading.todo.clone(),
         tags: heading.tags.clone(),
@@ -17171,6 +17448,8 @@ async fn get_org_node(
     Extension(identity): Extension<Identity>,
     Query(q): Query<NodeQuery>,
 ) -> Result<Json<NodeDoc>, ApiError> {
+    let (state, plugins) =
+        node_scope(state, &identity, q.project.as_deref(), Action::ProjectRead).await?;
     let layer = resolve_node_layer(&state.node_types, q.kind.as_deref(), &q.id)?;
     resolve_authorized_project(
         &state,
@@ -17187,18 +17466,24 @@ async fn get_org_node(
     let (_project_id, path, source_file) =
         org_node_path(&state, q.project.as_deref(), &q.id, layer).await?;
     let source = read_artifact(&path, layer.artifact_name())?;
-    let file = OrgFile::parse(source, path.to_string_lossy())
+    let file = OrgFile::parse(&source, path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
     let heading = file
         .find_by_id(&q.id)
         .ok_or_else(|| ApiError::not_found(format!("node {}", q.id)))?;
-    Ok(Json(org_node_doc(
+    let mut doc = org_node_doc(
         &file,
         heading,
         layer,
         source_file,
-        descriptor_for_layer(&state, layer),
-    )))
+        layer
+            .collection_name()
+            .and_then(|collection| plugins.descriptor(collection)),
+    );
+    doc.schema_matches = layer
+        .collection_name()
+        .is_none_or(|collection| plugins.check_write(collection, Some(&source)).is_ok());
+    Ok(Json(doc))
 }
 
 async fn post_org_node_edit(
@@ -17208,7 +17493,11 @@ async fn post_org_node_edit(
     Query(q): Query<MutationOutputQuery>,
     Json(req): Json<NodeEditRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let _plugin_guard = state.plugins.operations.clone().read_owned().await;
+    let (state, plugins) =
+        node_scope(state, &identity, req.project.as_deref(), Action::NodesWrite).await?;
     let layer = resolve_node_layer(&state.node_types, req.kind.as_deref(), &id)?;
+    plugin_collection_write(&identity, &plugins, layer.collection_name())?;
     resolve_authorized_project(
         &state,
         &identity,
@@ -17532,6 +17821,7 @@ async fn post_org_node_edit(
         .ok_or_else(|| ApiError::bad_request("ID is immutable"))?;
     let tx_id = write_org_node_edit_and_record(NodeEditWriteRequest {
         state: &state,
+        plugin_scope: Some(plugins),
         identity: &identity,
         layer,
         project_id: project_id.clone(),
@@ -17588,8 +17878,12 @@ async fn post_org_node_delete(
     Query(q): Query<MutationOutputQuery>,
     Json(req): Json<NodeDeleteRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let _plugin_guard = state.plugins.operations.clone().read_owned().await;
+    let (state, plugins) =
+        node_scope(state, &identity, req.project.as_deref(), Action::NodesWrite).await?;
     // orgasmic:TASK-N4TGD
     let layer = resolve_node_layer(&state.node_types, req.kind.as_deref(), &id)?;
+    plugin_collection_write(&identity, &plugins, layer.collection_name())?;
     resolve_authorized_project(
         &state,
         &identity,
@@ -17659,6 +17953,7 @@ async fn post_org_node_delete(
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
     let tx_id = write_org_node_edit_and_record(NodeEditWriteRequest {
         state: &state,
+        plugin_scope: Some(plugins),
         identity: &identity,
         layer,
         project_id: project_id.clone(),
@@ -17799,6 +18094,7 @@ struct NodeWriteInvalid(String);
 
 struct NodeEditWriteRequest<'a> {
     state: &'a ApiState,
+    plugin_scope: Option<Arc<crate::plugins::ProjectPlugins>>,
     identity: &'a Identity,
     layer: NodeKind<'a>,
     project_id: String,
@@ -17816,11 +18112,17 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
     let node_id = req.node_id.clone();
     let proposed = req.source.clone();
     let base_version = req.base_version;
+    let plugins = req.plugin_scope;
     let mutation = MutationIdentity::new("node.edited", &req.project_id, proposed.clone());
     let primary_mutation = FileMutate {
         path: req.path.clone(),
         transform: Box::new(move |current| {
             let before = OrgFile::parse(current, "node.org")?;
+            if let (Some(plugins), Some(collection)) = (&plugins, collection.as_deref()) {
+                plugins
+                    .check_write(collection, Some(before.source()))
+                    .map_err(|e| NodeWriteInvalid(e.to_string()))?;
+            }
             let old = before
                 .find_by_id(&node_id)
                 .ok_or_else(|| anyhow::anyhow!("node not found"))?;
@@ -19291,6 +19593,7 @@ async fn sync_handoff_goal_id(
     let updated = rw.finish();
     write_org_node_edit_and_record(NodeEditWriteRequest {
         state,
+        plugin_scope: None,
         identity: &Identity::Admin,
         layer: NodeKind::Handoff,
         project_id: project_id.to_string(),
@@ -20875,7 +21178,9 @@ async fn post_artifact_comment_resolve(
     let project_date = now.format("%Y%m%d").to_string();
     let tx_path = art_dir.join("journal.org");
 
-    let resolved_by = identity.member_name().unwrap_or(&state.actor).to_string();
+    let resolved_by = identity
+        .member_name()
+        .unwrap_or_else(|| state.actor.clone());
     let mut tx_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
         "artifact.comment.resolved",
@@ -20997,6 +21302,20 @@ async fn assemble_artifact_context(
     project_id: &str,
     node_ids: &[String],
 ) -> String {
+    if node_ids.is_empty() {
+        return String::new();
+    }
+    let scoped = node_scope(
+        state.clone(),
+        &Identity::Admin,
+        Some(project_id),
+        Action::ProjectRead,
+    )
+    .await;
+    let state = match &scoped {
+        Ok((state, _)) => state,
+        Err(_) => return "(node registry unavailable)\n".into(),
+    };
     let mut out = String::new();
     for id in node_ids {
         out.push_str(&format!("### {id}\n"));
@@ -21990,6 +22309,14 @@ async fn post_node_submit(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<NodeSubmitRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let _plugin_guard = state.plugins.operations.clone().read_owned().await;
+    let (state, plugins) = node_scope(
+        state,
+        &Identity::Admin,
+        q.project.as_deref(),
+        Action::NodesWrite,
+    )
+    .await?;
     orgasmic_core::node_type::validate_component(&node_id)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let entry = resolve_artifact_project(&state, q.project.as_deref()).await?;
@@ -22011,6 +22338,12 @@ async fn post_node_submit(
     let _guard = lock.lock().await;
     let current = std::fs::read_to_string(&node_path)
         .map_err(|error| ApiError::not_found(format!("node {node_id} not found: {error}")))?;
+    plugins
+        .check_write(&descriptor.collection, Some(&current))
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    plugins
+        .check_write(&descriptor.collection, Some(&body.content))
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
     let (replacement, version) =
         prepare_regenerated_node(&current, &body.content, &node_id, descriptor)?;
     let before = OrgFile::parse(&current, NODE_FILE)
@@ -22112,6 +22445,14 @@ async fn post_node_regenerate(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactRegenerateRequest>,
 ) -> Result<Json<NodeRegenerateResponse>, ApiError> {
+    let _plugin_guard = state.plugins.operations.clone().read_owned().await;
+    let (state, plugins) = node_scope(
+        state,
+        &Identity::Admin,
+        q.project.as_deref(),
+        Action::NodesWrite,
+    )
+    .await?;
     orgasmic_core::node_type::validate_component(&node_id)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let entry = resolve_artifact_project(&state, q.project.as_deref()).await?;
@@ -22121,6 +22462,14 @@ async fn post_node_regenerate(
         .ok_or_else(|| {
             ApiError::bad_request(format!("node {node_id} has no shipped type descriptor"))
         })?;
+    let source = read_artifact(
+        &orgasmic_core::node_kernel::node_dir(&entry.path, &descriptor.collection, &node_id)
+            .join(NODE_FILE),
+        "node file",
+    )?;
+    plugins
+        .check_write(&descriptor.collection, Some(&source))
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
     let run_id = regenerate_node(&state, &entry, descriptor, &node_id, body).await?;
     Ok(Json(NodeRegenerateResponse { node_id, run_id }))
 }
@@ -23960,6 +24309,7 @@ pub(crate) mod tests {
         ApiState {
             home: home.clone(),
             node_types: Arc::new(crate::node_types::load(&home).unwrap()),
+            plugins: crate::plugins::PluginRegistry::new(&home).unwrap(),
             index,
             writer,
             supervisor,
