@@ -15,9 +15,12 @@ pub mod identity_lint;
 pub mod members;
 pub mod node_kernel;
 pub mod node_kind;
+pub mod node_registry;
+pub mod node_services;
 pub mod node_type;
 pub mod org;
 pub mod paths;
+pub mod plugin;
 pub mod projects;
 pub mod run_id;
 // orgasmic:dec_WDR5K — residue left behind by hard cutovers
@@ -52,6 +55,7 @@ pub use members::{
     MemberEntry,
 };
 pub use node_kind::NodeKind;
+pub use node_registry::NodeTypeRegistry;
 pub use node_type::{create_node_dir, mint_node_id, NodeTypeDescriptor};
 pub use org::{
     body_heading_lines, wrap_raw_body, Heading, HeadingLine, HeadingLineEdit, OrgError, OrgFile,

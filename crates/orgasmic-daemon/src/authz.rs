@@ -25,12 +25,17 @@ pub enum Action {
     ArtifactsComment,
     ArtifactsGenerate,
     OrgWrite,
+    NodesWrite,
+    LinksRead,
+    LinksWrite,
+    AttachmentsRead,
+    AttachmentsWrite,
     #[allow(dead_code)]
     MembersManage,
 }
 
 impl Action {
-    pub const ALL: [Action; 11] = [
+    pub const ALL: [Action; 16] = [
         Action::ProjectRead,
         Action::GraphRead,
         Action::TasksRead,
@@ -41,6 +46,11 @@ impl Action {
         Action::ArtifactsComment,
         Action::ArtifactsGenerate,
         Action::OrgWrite,
+        Action::NodesWrite,
+        Action::LinksRead,
+        Action::LinksWrite,
+        Action::AttachmentsRead,
+        Action::AttachmentsWrite,
         Action::MembersManage,
     ];
 }
@@ -60,6 +70,11 @@ pub fn action_name(action: Action) -> &'static str {
         Action::ArtifactsComment => "artifacts.comment",
         Action::ArtifactsGenerate => "artifacts.generate",
         Action::OrgWrite => "org.write",
+        Action::NodesWrite => "nodes.write",
+        Action::LinksRead => "links.read",
+        Action::LinksWrite => "links.write",
+        Action::AttachmentsRead => "attachments.read",
+        Action::AttachmentsWrite => "attachments.write",
         Action::MembersManage => "members.manage",
     }
 }
@@ -77,6 +92,8 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
     use Action::*;
     match role {
         "viewer" => &[
+            LinksRead,
+            AttachmentsRead,
             ProjectRead,
             GraphRead,
             TasksRead,
@@ -86,6 +103,11 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             ArtifactsComment,
         ],
         "editor" => &[
+            LinksRead,
+            LinksWrite,
+            AttachmentsRead,
+            AttachmentsWrite,
+            NodesWrite,
             ProjectRead,
             GraphRead,
             TasksRead,
@@ -95,7 +117,13 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             ArtifactsComment,
             ArtifactsGenerate,
         ],
-        "artifacts" => &[ProjectRead, ArtifactsRead, ArtifactsComment],
+        "artifacts" => &[
+            ProjectRead,
+            ArtifactsRead,
+            ArtifactsComment,
+            LinksRead,
+            AttachmentsRead,
+        ],
         _ => &[],
     }
 }
@@ -107,6 +135,12 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Identity {
     Admin,
+    Plugin {
+        id: String,
+        project: String,
+        capabilities: std::collections::BTreeSet<String>,
+        caller: Box<Identity>,
+    },
     Member {
         name: String,
         /// `(project-or-*, role)` pairs, in `members.org` file order.
@@ -115,10 +149,11 @@ pub enum Identity {
 }
 
 impl Identity {
-    pub fn member_name(&self) -> Option<&str> {
+    pub fn member_name(&self) -> Option<String> {
         match self {
             Identity::Admin => None,
-            Identity::Member { name, .. } => Some(name),
+            Identity::Member { name, .. } => Some(name.clone()),
+            Identity::Plugin { id, .. } => Some(format!("plugin:{id}")),
         }
     }
 
@@ -163,6 +198,36 @@ pub fn require(
     if matches!(identity, Identity::Admin) {
         return Ok(());
     }
+    if let Identity::Plugin {
+        project: allowed,
+        capabilities,
+        caller,
+        ..
+    } = identity
+    {
+        if project != Some(allowed.as_str()) {
+            return Err(Forbidden("plugin is scoped to another project".into()));
+        }
+        let capability = match action {
+            Action::ProjectRead | Action::GraphRead | Action::TasksRead | Action::ArtifactsRead => {
+                "nodes.read"
+            }
+            Action::NodesWrite => "nodes.write",
+            Action::LinksRead => "links.read",
+            Action::LinksWrite => "links.write",
+            Action::AttachmentsRead => "attachments.read",
+            Action::AttachmentsWrite => "attachments.write",
+            _ => {
+                return Err(Forbidden(
+                    "action is unavailable to plugin principals".into(),
+                ))
+            }
+        };
+        if !capabilities.contains(capability) {
+            return Err(Forbidden(format!("plugin lacks {capability}")));
+        }
+        return require(caller, project, action);
+    }
     let Some(project) = project else {
         return Err(Forbidden("action requires a project".into()));
     };
@@ -186,6 +251,7 @@ where
 {
     match identity {
         Identity::Admin => all.into_iter().collect(),
+        Identity::Plugin { project, .. } => all.into_iter().filter(|id| *id == project).collect(),
         Identity::Member { grants, .. } => {
             let wildcard = grants.iter().any(|(p, _)| p == "*");
             all.into_iter()
@@ -201,6 +267,7 @@ where
 pub fn allowed_topics(identity: &Identity) -> HashSet<Topic> {
     match identity {
         Identity::Admin => Topic::ALL.into_iter().collect(),
+        Identity::Plugin { .. } => HashSet::new(),
         Identity::Member { grants, .. } => {
             let mut topics = HashSet::new();
             for (_, role) in grants {
@@ -233,6 +300,7 @@ pub fn event_visible(identity: &Identity, topic: Topic, payload: &EventPayload) 
     }
     match (identity, payload.project_id()) {
         (Identity::Admin, _) => true,
+        (Identity::Plugin { .. }, _) => false,
         (Identity::Member { .. }, None) => true,
         (Identity::Member { grants, .. }, Some(project)) => {
             grants.iter().any(|(p, _)| p == project || p == "*")

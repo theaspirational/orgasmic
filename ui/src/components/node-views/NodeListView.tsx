@@ -48,6 +48,7 @@ export function NodeListView<T>({
                   <Search className="size-4" aria-hidden="true" />
                 </span>
                 <Input
+                  aria-label={`Search ${ariaLabel}`}
                   value={search ?? ''}
                   onChange={(event) => onSearchChange(event.target.value)}
                   placeholder="Search"

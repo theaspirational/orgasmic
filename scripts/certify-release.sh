@@ -11,7 +11,7 @@ REPO=$(git rev-parse --show-toplevel 2>/dev/null) || {
 cd "$REPO"
 
 CERTIFICATION_RUST="1.97.1"
-MSRV_RUST="1.87.0"
+MSRV_RUST="1.88.0"
 # `rustup run cargo` selects the requested Cargo binary, but Cargo resolves its
 # child `rustc` through PATH. On this maintainer Mac Homebrew precedes the rustup
 # proxies, so without this prefix Cargo can silently compile with a different
@@ -65,11 +65,17 @@ bash scripts/assert-ci-certified-selftest.sh
 step "Runtime candidate/publisher self-test"
 bash scripts/publish-runtime-selftest.sh
 
+step "App candidate/publisher self-test"
+node --test scripts/app-candidate.test.mjs
+
 step "Test classifier self-test"
 bash scripts/run-tests-selftest.sh
 
-step "Classified workspace suite"
-bash scripts/run-tests.sh
+step "Serial Rust batch planner/exact-tree receipt self-test"
+node --test scripts/certify-rust-batches.test.mjs
+
+step "Classified Rust suite (serial targets, serial test threads)"
+node scripts/certify-rust-batches.mjs
 
 step "Workspace MSRV ($MSRV_RUST)"
 rustup toolchain install "$MSRV_RUST" --profile minimal --no-self-update

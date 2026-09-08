@@ -13,6 +13,7 @@ const STORAGE_KEY = 'orgasmic.openTabs';
 
 /** Project-scoped views a tab can point at (mirrors the router's project routes). */
 export type TabView =
+  | `nodes/${string}`
   | 'decisions'
   | 'tasks'
   | 'glossary'
@@ -41,7 +42,17 @@ const VIEW_SET = new Set<TabView>([
 ]);
 
 export function parseView(raw: unknown): TabView | null {
+  if (typeof raw === 'string' && raw.startsWith('nodes/')) {
+    const collection = raw.slice(6);
+    return collection && !['.', '..'].includes(collection) && !/[\\/\u0000-\u001f\u007f]/.test(collection) ? raw as TabView : null;
+  }
   return typeof raw === 'string' && VIEW_SET.has(raw as TabView) ? (raw as TabView) : null;
+}
+
+export function projectTabTarget(projectId: string, view: TabView) {
+  return view.startsWith('nodes/')
+    ? { to: '/projects/$projectId/nodes/$collection' as const, params: { projectId, collection: view.slice(6) } }
+    : { to: `/projects/$projectId/${view}` as '/projects/$projectId/decisions', params: { projectId } };
 }
 
 export type ProjectTab = {

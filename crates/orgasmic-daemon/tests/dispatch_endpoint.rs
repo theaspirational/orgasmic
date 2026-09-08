@@ -232,6 +232,9 @@ fn dispatch_body(
         "kind": kind,
         "mode": mode,
         "harness": harness,
+        // No WebSocket endpoint is configured: these fixtures deliberately
+        // exercise the simulated transport, never a paid provider session.
+        "allow_simulated": mode == "ws",
         "brief_path": brief,
         "worktree_path": worktree,
         "last_path": last,
@@ -343,6 +346,25 @@ async fn dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
+    let mut without_opt_in = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some(worker_id),
+    );
+    without_opt_in
+        .as_object_mut()
+        .unwrap()
+        .remove("allow_simulated");
+    let refused = post_dispatch(&running, &token, "proj-dispatch", task_id, without_opt_in).await;
+    assert_eq!(refused.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert!(refused.text().await.unwrap().contains("--allow-simulated"));
+    assert!(get_runs_json(&running, &token).await["live"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     let response = post_dispatch(
         &running,
         &token,
@@ -1722,6 +1744,7 @@ async fn dispatch_back_to_back_implementer_and_reviewer_emit_dispatch_started_an
             "kind": "reviewer",
             "mode": "ws",
             "harness": "codex",
+            "allow_simulated": true,
             "brief_path": review_brief,
             "worktree_path": review_worktree,
             "last_path": review_last,

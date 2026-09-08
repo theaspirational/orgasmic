@@ -6,8 +6,10 @@ export default defineConfig({
     environment: 'node',
   },
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@orgasmic/plugin-sdk': fileURLToPath(new URL('./src/plugin-sdk/index.ts', import.meta.url)),
     },
   },
 });

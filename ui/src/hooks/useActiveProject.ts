@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 
-import { openTab } from '@/lib/tabsStore';
+import { openTab, projectTabTarget } from '@/lib/tabsStore';
 
 const LAST_PROJECT_KEYS = ['orgasmic.lastProject', 'orgasmic.active_project'];
 
@@ -48,10 +48,7 @@ export function useActiveProject() {
       writeStoredProject(projectId);
       // Open (or focus) the tab and land on its remembered view.
       const view = openTab(projectId);
-      void navigate({
-        to: `/projects/$projectId/${view}` as '/projects/$projectId/decisions',
-        params: { projectId },
-      });
+      void navigate(projectTabTarget(projectId, view));
     },
     [navigate],
   );

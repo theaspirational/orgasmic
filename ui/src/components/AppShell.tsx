@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, Outlet, useNavigate, useRouterState, type LinkProps } from '@tanstack/react-router';
 import {
   BookOpen,
   ChevronDown,
@@ -62,13 +62,14 @@ import {
   backEntityPeek,
   closeEntityPeek,
   getEntityPeek,
-  isTaskNodeId,
   pushEntityPeek,
 } from '@/lib/entityPeek';
 import { THEME_OPTIONS, useTheme, type ThemePreference } from '@/lib/theme';
 import { setUnauthorizedHandler } from '@/lib/transport';
 import type { DaemonEvent, ViewName, WsConnectionState } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { NodeTypesContext, useNodeTypesResource } from '@/lib/nodeTypes';
+import { PluginRuntimeContext, usePluginRuntime } from '@/lib/pluginRuntime';
 
 import { ConnectGate } from './ConnectGate';
 import { ConnectionBanner } from './ConnectionBanner';
@@ -78,42 +79,14 @@ import { RunDock } from './manager/RunDock';
 import { RunDockProvider } from '@/lib/runDock';
 import { NotificationBell } from './notifications/NotificationBell';
 import { ProjectTabs } from './ProjectTabs';
-import { TaskDialogChunkFallback } from './TaskDialogChunkFallback';
-import { NodeModal } from './node-views/NodeModal';
-
-const TaskDialog = lazy(() =>
-  import('@/components/TaskDialog').then((module) => ({ default: module.TaskDialog })),
-);
-
-type ProjectPage =
-  | 'decisions'
-  | 'tasks'
-  | 'glossary'
-  | 'artifacts'
-  | 'project'
-  | 'runs'
-  | 'prompts'
-  | 'org'
-  | 'activity'
-  | 'status'
-  | 'settings';
+import { RegistryNodePeek } from './RegistryNodePeek';
 
 type NavItem = {
-  page: ProjectPage;
+  page: string;
   label: string;
   icon: LucideIcon;
-  to:
-    | '/projects/$projectId/decisions'
-    | '/projects/$projectId/tasks'
-    | '/projects/$projectId/glossary'
-    | '/projects/$projectId/artifacts'
-    | '/projects/$projectId/project'
-    | '/projects/$projectId/runs'
-    | '/projects/$projectId/prompts'
-    | '/projects/$projectId/org'
-    | '/projects/$projectId/activity'
-    | '/projects/$projectId/status'
-    | '/projects/$projectId/settings';
+  to: Extract<NonNullable<LinkProps['to']>, `/projects/$projectId/${string}`>;
+  collection?: string;
 };
 
 const PRIMARY: NavItem[] = [
@@ -138,7 +111,7 @@ function pathParts(pathname: string): string[] {
 function pageFromPath(pathname: string): string {
   const parts = pathParts(pathname);
   if (parts[0] === 'board') return 'board';
-  if (parts[0] === 'projects') return parts[2] ?? 'decisions';
+  if (parts[0] === 'projects') return parts[2] === 'nodes' ? `nodes/${parts[3]}` : parts[2] ?? 'decisions';
   return 'board';
 }
 
@@ -177,7 +150,6 @@ export function AppShell() {
   const entityPeek = getEntityPeek(pathname, location.search ?? {});
   const activeEntityId = entityPeek?.activeId ?? null;
   const entityHistoryDepth = entityPeek?.stack.length ?? 0;
-  const activeEntityIsTask = isTaskNodeId(activeEntityId);
   const { activeProjectId } = useActiveProject();
   const projectId = activeProjectId;
   const page = pageFromPath(pathname);
@@ -194,7 +166,23 @@ export function AppShell() {
   const needsToken =
     !checkingSession && !isMember && !hasAdminSession && (!activeProfile.token || Boolean(authError));
   const blockProtectedRoutes = checkingSession || needsToken;
-  const visiblePrimary = PRIMARY.filter((item) => navPageVisible(me, projectId, item.page));
+  const registry = useNodeTypesResource(projectId, !blockProtectedRoutes);
+  const pluginRuntime = usePluginRuntime(projectId, activeProfile, !blockProtectedRoutes && can(projectId, 'graph.read'), `${me?.identity}:${me?.name}`);
+  const collectionNav: NavItem[] = registry.data
+    ? registry.data.map((type): NavItem => {
+        const builtin = PRIMARY.find((item) => item.page === type.collection);
+        return builtin ? { ...builtin, label: type.label_plural } : {
+          page: `nodes/${type.collection}`, label: type.label_plural, icon: FileStack,
+          to: '/projects/$projectId/nodes/$collection', collection: type.collection,
+        };
+      }).sort((a, b) => {
+        const rank = (item: NavItem) => { const index = PRIMARY.findIndex((entry) => entry.page === item.page); return index < 0 ? PRIMARY.length : index; };
+        return rank(a) - rank(b);
+      })
+    : PRIMARY.slice(1);
+  const visiblePrimary = [PRIMARY[0], ...collectionNav].filter((item) => item.collection
+    ? can(projectId, 'graph.read')
+    : navPageVisible(me, projectId, item.page));
   const visibleMore = MORE.filter((item) => navPageVisible(me, projectId, item.page));
   const canWatchSessions = can(projectId, 'sessions.watch');
 
@@ -332,6 +320,8 @@ export function AppShell() {
   }, [entityPeek, navigate, pathname]);
 
   return (
+    <NodeTypesContext.Provider value={registry}>
+    <PluginRuntimeContext.Provider value={pluginRuntime}>
     <TooltipProvider>
       <RichTextProvider projectId={projectId} canReadGraph={can(projectId, 'graph.read')}>
       <RunDockProvider>
@@ -451,32 +441,10 @@ export function AppShell() {
             {blockProtectedRoutes ? null : <Outlet />}
           </div>
         </SidebarInset>
-        {!blockProtectedRoutes && projectId && activeEntityId && activeEntityIsTask ? (
-          <Suspense
-            fallback={
-              <TaskDialogChunkFallback
-                taskId={activeEntityId}
-                historyDepth={entityHistoryDepth}
-                onBack={backFromPeek}
-                onClose={closeEntityPeekRoute}
-              />
-            }
-          >
-            <TaskDialog
-              projectId={projectId}
-              taskId={activeEntityId}
-              historyDepth={entityHistoryDepth}
-              onBack={backFromPeek}
-              onClose={closeEntityPeekRoute}
-              onSelectTask={openPeekEntity}
-            />
-          </Suspense>
-        ) : null}
-        {!blockProtectedRoutes && projectId && activeEntityId && !activeEntityIsTask ? (
-          <NodeModal
-            projectId={projectId}
-            nodeKind={activeEntityId.startsWith('dec_') ? 'decision' : 'glossary'}
-          />
+        {!blockProtectedRoutes && projectId && activeEntityId ? (
+          <RegistryNodePeek key={`${activeProfile.id}:${activeProfile.baseUrl}:${projectId}:${activeEntityId}`}
+            projectId={projectId} nodeId={activeEntityId} historyDepth={entityHistoryDepth}
+            onBack={backFromPeek} onClose={closeEntityPeekRoute} onOpenNode={openPeekEntity} />
         ) : null}
         {/* The run dock is an admin/manager surface — it polls admin-only
             manager + runs state, so members never mount it (a member's
@@ -487,6 +455,8 @@ export function AppShell() {
       </RunDockProvider>
       </RichTextProvider>
     </TooltipProvider>
+    </PluginRuntimeContext.Provider>
+    </NodeTypesContext.Provider>
   );
 }
 
@@ -508,7 +478,7 @@ function NavMenuItem({
         <SidebarMenuButton asChild isActive={active} tooltip={item.label}>
           <Link
             to={item.to}
-            params={{ projectId }}
+            params={{ projectId, collection: item.collection ?? '' }}
             activeProps={{ className: 'font-medium' }}
           >
             <Icon />

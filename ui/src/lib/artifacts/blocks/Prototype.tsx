@@ -55,8 +55,10 @@ export function Prototype({ node }: { node: Extract<MdxNode, { kind: 'element' }
         </div>
       ) : null}
       <iframe
+        key={html}
         title={asOptionalString(active?.props.label) ?? 'Prototype screen'}
-        srcDoc={html}
+        src={`${import.meta.env.BASE_URL}prototype-frame.html`}
+        onLoad={(event) => event.currentTarget.contentWindow?.postMessage(html, '*')}
         sandbox="allow-scripts"
         className="h-80 w-full resize-y overflow-auto rounded-md border bg-background"
       />

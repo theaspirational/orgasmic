@@ -13,6 +13,9 @@ export type NodeSource = {
 export type OrgNodeDoc = {
   id: string;
   kind: string;
+  /** Registry collection; singletons have none. */
+  collection?: string | null;
+  schema_matches?: boolean;
   title: string;
   todo?: string | null;
   tags: string[];
@@ -29,6 +32,7 @@ export type OrgNodeDoc = {
 };
 
 export type NodeEditOp =
+  | { op: 'set_state'; state: string }
   | { op: 'set_body'; body: string }
   | { op: 'set_section_body'; title: string; body: string }
   | { op: 'add_section'; title: string; body: string }

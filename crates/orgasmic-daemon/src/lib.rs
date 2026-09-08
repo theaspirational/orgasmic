@@ -26,6 +26,7 @@ pub mod logging;
 pub mod manager_registration;
 pub mod native_evidence;
 pub mod node_types;
+pub mod plugins;
 pub mod prompt_compiler;
 pub mod provider_quota;
 pub mod recovery_claim;
@@ -1040,12 +1041,7 @@ impl Daemon {
 
         boot_progress.set_phase("loading project catalog")?;
         boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
-        let descriptor_dir = home.source().join("shipped/schema/node-types");
-        let node_types = if descriptor_dir.is_dir() {
-            node_types::NodeTypeRegistry::load(&descriptor_dir)?
-        } else {
-            node_types::NodeTypeRegistry::embedded()?
-        };
+        let node_types = node_types::load(&home)?;
         let index = Index::new(home.clone());
         // TASK-AJP4A: boot publishes registration plus home-owned safety state.
         // No ProjectIndex is built before the listener binds.
@@ -1146,6 +1142,7 @@ impl Daemon {
         let api_state = ApiState {
             home: home.clone(),
             node_types: Arc::new(node_types),
+            plugins: plugins::PluginRegistry::new(&home)?,
             index: index.clone(),
             writer: writer.clone(),
             supervisor,
@@ -1197,6 +1194,7 @@ impl Daemon {
         // finalizations. Taken before the state moves into the router.
         let release_tasks = api_state.release_tasks.clone();
 
+        api_state.plugins.start(events.clone());
         let app: Router = router(api_state);
         let addr = SocketAddr::new(cfg.bind, cfg.port);
         // The pre-bind delay can be deliberately slow in tests and can also

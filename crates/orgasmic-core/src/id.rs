@@ -24,21 +24,25 @@ pub enum NodeIdClass {
 
 impl NodeIdClass {
     pub fn prefix(self) -> &'static str {
-        match self {
-            Self::Task => "TASK-",
-            Self::Decision => "dec_",
-            Self::Term => "term_",
-            Self::Artifact => "ART-",
-        }
+        // Legacy compiled callers retain their class vocabulary; prefix
+        // authority belongs to the same descriptors as open collections.
+        static BUILTINS: std::sync::OnceLock<crate::NodeTypeRegistry> = std::sync::OnceLock::new();
+        let registry = BUILTINS
+            .get_or_init(|| crate::NodeTypeRegistry::embedded().expect("embedded descriptors"));
+        let collection = match self {
+            Self::Task => "tasks",
+            Self::Decision => "decisions",
+            Self::Term => "glossary",
+            Self::Artifact => "artifacts",
+        };
+        &registry
+            .descriptor(collection)
+            .expect("compiled node descriptor")
+            .id_prefix
     }
 
     pub fn matches_id_prefix(self, id: &str) -> bool {
-        match self {
-            Self::Task => id.starts_with("TASK-"),
-            Self::Decision => id.starts_with("dec_"),
-            Self::Term => id.starts_with("term_") || id.starts_with("term:"),
-            Self::Artifact => id.starts_with("ART-"),
-        }
+        id.starts_with(self.prefix()) || (self == Self::Term && id.starts_with("term:"))
     }
 }
 
@@ -46,17 +50,14 @@ impl NodeIdClass {
 /// prefix-based (not full greenfield-id validation) so legacy/test ids such as
 /// `dec_X` can still participate in class checks.
 pub fn node_id_class_by_prefix(id: &str) -> Option<NodeIdClass> {
-    if id.starts_with("TASK-") {
-        Some(NodeIdClass::Task)
-    } else if id.starts_with("dec_") {
-        Some(NodeIdClass::Decision)
-    } else if id.starts_with("term_") || id.starts_with("term:") {
-        Some(NodeIdClass::Term)
-    } else if id.starts_with("ART-") {
-        Some(NodeIdClass::Artifact)
-    } else {
-        None
-    }
+    [
+        NodeIdClass::Task,
+        NodeIdClass::Decision,
+        NodeIdClass::Term,
+        NodeIdClass::Artifact,
+    ]
+    .into_iter()
+    .find(|class| class.matches_id_prefix(id))
 }
 
 /// Split a cross-project reference token `<project-id>:<node-id>` into

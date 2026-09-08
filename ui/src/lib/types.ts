@@ -247,6 +247,8 @@ export type GlossarySummary = {
 
 export type GraphNodeSummary = {
   id: string;
+  title?: string;
+  todo?: string | null;
   layer: string;
   outgoing: string[];
   source_file: string;
@@ -718,6 +720,11 @@ export type MemberCapability =
   | 'artifacts.comment'
   | 'artifacts.generate'
   | 'org.write'
+  | 'nodes.write'
+  | 'links.read'
+  | 'links.write'
+  | 'attachments.read'
+  | 'attachments.write'
   | 'members.manage';
 
 export type MeIdentity = 'admin' | 'member';

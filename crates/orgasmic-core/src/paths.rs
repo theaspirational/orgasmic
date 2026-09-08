@@ -26,6 +26,56 @@ pub const DEFAULT_TASK_FILE_REL: &str = ".orgasmic/tasks/backlog.org";
 
 const DOTORG: &str = ".orgasmic";
 
+/// Shared by discovery, watcher routing, and ID repair. Infrastructure is not
+/// a node collection even when it happens to contain Org documents.
+pub fn is_node_collection(name: &str) -> bool {
+    crate::node_type::validate_component(name).is_ok()
+        && !matches!(
+            name,
+            "machines"
+                | "project"
+                | "goal"
+                | "handoff"
+                | "task"
+                | "decision"
+                | "term"
+                | "artifact"
+                | "tx"
+                | "tmp"
+                | "views"
+                | "attachments"
+                | "chat"
+                | "conventions"
+                | "schema"
+                | "skills"
+                | "prompts"
+                | "plugins"
+                | "sessions"
+                | "runs"
+                | "dispatches"
+                | "dispatch-records"
+                | "repairs"
+                | "claims"
+                | "hooks"
+                | "config"
+                | "history"
+        )
+        && !name.starts_with('.')
+}
+
+pub fn node_collections(project_root: &Path) -> std::io::Result<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(project_root.join(DOTORG))? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type()?.is_dir() && is_node_collection(&name) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 pub fn lifecycle_stage_file_name(stage: LifecycleStage) -> &'static str {
     match stage {
         LifecycleStage::Backlog => "backlog.org",

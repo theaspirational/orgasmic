@@ -17,6 +17,8 @@ TARGET="all"
 CHANNEL="stable"
 REPO="${ORGASMIC_RELEASE_REPO:-}"
 DRY_RUN=0
+CANDIDATE=""
+BUILD_OPTIONS=0
 ALLOW_HEAD_MISMATCH="${ORGASMIC_PUBLISH_ALLOW_HEAD_MISMATCH:-0}"
 
 # Toolchain locations (Homebrew-managed on this host). Overridable via env.
@@ -37,15 +39,17 @@ Options:
   --target <mac|android|all>  Which app(s) to build/publish (default: all)
   --tag <tag>                 Release tag override (default: derived from --channel)
   --repo <owner/name>         GitHub repo (default: gh repo view / ORGASMIC_RELEASE_REPO)
-  --dry-run                   Build + sign + stage, but do NOT touch the release
+  --dry-run                   Build + sign an immutable candidate; no release changes
+  --candidate <directory>     Promote a candidate without building or signing
+                              (--dry-run verifies it without publishing)
   -h, --help                  Show this help
 
-Signing material (must exist in ~/.tauri):
+Signing material (build only; promotion does not read keys):
   macOS updater : orgasmic-updater.key (+ .password)   -> TAURI_SIGNING_PRIVATE_KEY
   Android APK   : org-shell-android-upload.jks (+ .password), alias org-shell
 
 Env escape hatches:
-  ORGASMIC_PUBLISH_ALLOW_HEAD_MISMATCH=1   publish even if HEAD != origin tip
+  ORGASMIC_PUBLISH_ALLOW_HEAD_MISMATCH=1   allow an unpushed build (never promotion)
   ANDROID_SDK_ROOT / ANDROID_HOME          override the Android SDK location
   ANDROID_NDK_VERSION                       NDK to use (default: 29.0.14206865)
 EOF
@@ -53,15 +57,25 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --channel) CHANNEL="$2"; shift 2 ;;
-        --target) TARGET="$2"; shift 2 ;;
-        --tag) TAG="$2"; shift 2 ;;
-        --repo) REPO="$2"; shift 2 ;;
+        --channel) CHANNEL="$2"; BUILD_OPTIONS=1; shift 2 ;;
+        --target) TARGET="$2"; BUILD_OPTIONS=1; shift 2 ;;
+        --tag) TAG="$2"; BUILD_OPTIONS=1; shift 2 ;;
+        --repo) REPO="$2"; BUILD_OPTIONS=1; shift 2 ;;
+        --candidate) CANDIDATE="${2:?--candidate requires a directory}"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
 done
+
+if [[ -n "$CANDIDATE" ]]; then
+    [[ "$BUILD_OPTIONS" == 0 ]] || { echo 'error: --candidate cannot be combined with build options' >&2; exit 1; }
+    # Resolve before changing directory; metadata is data, never sourced as shell.
+    CANDIDATE="$(cd "$CANDIDATE" && pwd)"
+elif [[ "$CHANNEL" == stable && "$DRY_RUN" == 0 ]]; then
+    echo 'error: stable publication requires --candidate; first create one with --dry-run' >&2
+    exit 1
+fi
 
 case "$TARGET" in
     mac|android|all) ;;
@@ -83,6 +97,59 @@ BUILD_MAC=0; BUILD_ANDROID=0
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+check_source() {
+    local source_status branch remote_sha
+    source_status="$(git status --porcelain)"
+    if [[ -n "$source_status" ]]; then
+        echo 'error: working tree is dirty; commit or stash before publishing' >&2
+        git status --short >&2
+        exit 1
+    fi
+    HEAD_SHA="$(git rev-parse HEAD)"
+    branch="$(git symbolic-ref --quiet --short HEAD || echo main)"
+    if [[ "$ALLOW_HEAD_MISMATCH" != 1 || -n "$CANDIDATE" ]]; then
+        git fetch --quiet origin "$branch"
+        remote_sha="$(git rev-parse "origin/$branch")"
+        [[ "$HEAD_SHA" == "$remote_sha" ]] || { echo 'error: push HEAD before publishing' >&2; exit 1; }
+    fi
+    echo "✓ clean tree at $HEAD_SHA"
+}
+
+if [[ -n "$CANDIDATE" ]]; then
+    # Snapshot before any network mutation, then verify the exact upload inputs.
+    node scripts/app-candidate.mjs verify "$CANDIDATE" >/dev/null
+    PROMOTION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orgasmic-app-promotion.XXXXXX")"
+    trap 'rm -rf "$PROMOTION_DIR"' EXIT
+    cp -R "$CANDIDATE/." "$PROMOTION_DIR/"
+    metadata="$(node scripts/app-candidate.mjs verify "$PROMOTION_DIR")"
+    IFS=$'\t' read -r REPO TAG CHANNEL VERSION CANDIDATE_SHA TARGET <<<"$metadata"
+    check_source
+    [[ "$HEAD_SHA" == "$CANDIDATE_SHA" ]] || { echo 'error: candidate commit is not HEAD' >&2; exit 1; }
+    if [[ "$DRY_RUN" == 1 ]]; then
+        echo "✓ candidate verified: $CANDIDATE ($VERSION, $TARGET); no release changes"
+        exit 0
+    fi
+    if [[ "$CHANNEL" == stable ]]; then
+        bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA"
+    fi
+    # Upload only the selected target's frozen assets, never the local receipt.
+    assets=()
+    if [[ "$TARGET" != android ]]; then
+        for name in orgasmic_darwin_aarch64.dmg orgasmic.app.tar.gz orgasmic.app.tar.gz.sig latest.json; do
+            assets+=("$PROMOTION_DIR/$name")
+        done
+    fi
+    if [[ "$TARGET" != mac ]]; then
+        assets+=("$PROMOTION_DIR/orgasmic_android_aarch64.apk" "$PROMOTION_DIR/android-latest.json")
+    fi
+    bash scripts/sync-release-metadata.sh --repo "$REPO" --tag "$TAG" --line apps \
+        --channel "$CHANNEL" --version "$VERSION" --commit "$HEAD_SHA"
+    gh release upload "$TAG" -R "$REPO" "${assets[@]}" --clobber
+    bash scripts/refresh-release-publication.sh --repo "$REPO" --tag "$TAG" --line apps --channel "$CHANNEL"
+    echo "✓ promoted apps candidate: $CANDIDATE ($VERSION, $TARGET)"
+    exit 0
+fi
 
 # Prefer the rustup-managed toolchain. `tauri android build` and the darwin app
 # build need the per-target std libs that `rustup target add` installs; a
@@ -152,23 +219,9 @@ echo "→ targets = $([[ $BUILD_MAC == 1 ]] && printf 'mac ')$([[ $BUILD_ANDROID
 # --- clean-tree + HEAD guard -------------------------------------------------
 # A published app must correspond to a clean, pushed commit so the version +
 # commit recorded in the manifests is reproducible from public history.
-if [[ -n "$(git status --porcelain)" ]]; then
-    echo "error: working tree is dirty; commit or stash before publishing" >&2
-    git status --short >&2
-    exit 1
-fi
-HEAD_SHA="$(git rev-parse HEAD)"
-DEFAULT_BRANCH="$(git symbolic-ref --quiet --short HEAD || echo main)"
-if [[ "$ALLOW_HEAD_MISMATCH" != "1" ]]; then
-    git fetch --quiet origin "$DEFAULT_BRANCH" || true
-    REMOTE_SHA="$(git rev-parse "origin/${DEFAULT_BRANCH}" 2>/dev/null || echo "")"
-    if [[ -z "$REMOTE_SHA" || "$HEAD_SHA" != "$REMOTE_SHA" ]]; then
-        echo "error: HEAD ($HEAD_SHA) does not match origin/${DEFAULT_BRANCH} (${REMOTE_SHA:-unknown})" >&2
-        echo "       push your commit first, or set ORGASMIC_PUBLISH_ALLOW_HEAD_MISMATCH=1 for testing" >&2
-        exit 1
-    fi
-fi
-echo "✓ clean tree at $HEAD_SHA"
+check_source
+CANDIDATE_DEST="dist/app-candidates/$CHANNEL/$VERSION/$HEAD_SHA/$TARGET"
+[[ ! -e "$CANDIDATE_DEST" ]] || { echo "error: candidate already exists: $CANDIDATE_DEST; use --candidate" >&2; exit 1; }
 
 # App builds can refresh the nested Cargo.lock, and the Android build stamps
 # versionCode into tracked files. Restore all build-touched tracked files on exit
@@ -210,9 +263,6 @@ OUT_DIR="dist/apps"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# track which asset patterns each built target owns, for merge-not-clobber publish
-MAC_BUILT=0
-ANDROID_BUILT=0
 ANDROID_APK_NAME=""
 
 # --- macOS app ---------------------------------------------------------------
@@ -268,7 +318,6 @@ const manifest = {
 };
 fs.writeFileSync(process.env.MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
-    MAC_BUILT=1
     echo "✓ staged macOS app ${VERSION}"
 fi
 
@@ -367,56 +416,21 @@ const manifest = {
 };
 fs.writeFileSync(process.env.MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
-    ANDROID_BUILT=1
     echo "✓ staged Android APK ${VERSION} (code ${VERSION_CODE})"
 fi
 
-# --- publish (clobber onto the apps release) ---------------------------------
+# --- freeze the signed bytes (promotion never invokes the builders) ----------
 echo ""; echo "=== staged assets ==="
 ls -1 "$OUT_DIR"
+node scripts/app-candidate.mjs create "$CANDIDATE_DEST" "$OUT_DIR" \
+    "$REPO" "$TAG" "$CHANNEL" "$VERSION" "$HEAD_SHA" "$TARGET"
 
 if [[ "$DRY_RUN" == "1" ]]; then
-    echo ""
-    echo "→ DRY RUN: would publish to $TAG (target $HEAD_SHA, --latest=false) and clobber:"
-    for a in "$OUT_DIR"/*; do echo "    $(basename "$a")"; done
-    echo "✓ dry run complete (no release changes)"
+    echo "✓ candidate ready; promote with: bash scripts/publish-apps.sh --candidate $CANDIDATE_DEST"
     exit 0
 fi
 
-echo ""; echo "=== publishing to $TAG ==="
-# Stable artifacts must come from the exact public commit certified locally. Keep this
-# immediately before the first release mutation; dry-runs exit above and nightly
-# remains available for its intentionally fast, prerelease path.
-if [[ "$CHANNEL" == "stable" ]]; then
-    bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA"
-fi
-# Refresh release metadata on EVERY publish through the shared policy helper so
-# local and CI publishers keep title/notes/latest/prerelease in sync.
-bash scripts/sync-release-metadata.sh \
-    --repo "$REPO" \
-    --tag "$TAG" \
-    --line apps \
-    --channel "$CHANNEL" \
-    --version "$VERSION" \
-    --commit "$HEAD_SHA"
-
-# Version-less asset names (dec_B4147): --clobber overwrites each built target's
-# assets in place; a target not built this run (e.g. android when --target mac)
-# keeps its existing assets. Nothing ever orphans, so there is no delete/prune step.
-gh release upload "$TAG" -R "$REPO" "$OUT_DIR"/* --clobber
-bash scripts/refresh-release-publication.sh \
-    --repo "$REPO" \
-    --tag "$TAG" \
-    --line apps \
-    --channel "$CHANNEL"
-
-echo ""
-echo "✓ published apps to $TAG ($VERSION):"
-# Use `if` (not `[[ ]] && echo`): a false test as the script's last command
-# would make a successful single-target publish exit non-zero.
-if [[ "$MAC_BUILT" == "1" ]]; then
-    echo "    macOS:   orgasmic_darwin_aarch64.dmg, orgasmic.app.tar.gz(.sig), latest.json"
-fi
-if [[ "$ANDROID_BUILT" == "1" ]]; then
-    echo "    Android: $ANDROID_APK_NAME, android-latest.json"
-fi
+# Nightly's one-command path uses the same promotion after restoring stamps.
+cleanup
+trap - EXIT
+bash scripts/publish-apps.sh --candidate "$CANDIDATE_DEST"

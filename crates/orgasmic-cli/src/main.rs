@@ -27,6 +27,7 @@ mod manager;
 mod member;
 mod node;
 mod path_env;
+mod plugin;
 mod project_migrate;
 mod project_repair_ids;
 mod retro;
@@ -372,6 +373,11 @@ Examples:
         #[command(subcommand)]
         cmd: NodeCmd,
     },
+    /// Install, validate, enable, disable and execute scoped plugins.
+    Plugin {
+        #[command(subcommand)]
+        cmd: plugin::PluginCmd,
+    },
     /// Replay a task's shipped injection proof: red under the injection,
     /// green without it, tree byte-identical afterwards.
     #[command(after_help = VERIFY_AFTER_HELP)]
@@ -702,32 +708,16 @@ enum TaskCommentCmd {
 
 #[derive(Subcommand, Debug)]
 enum IdCmd {
-    /// Print one minted node id to stdout (no daemon required).
+    /// Mint an id: compiled classes work offline; custom classes use the active daemon registry.
     Mint {
         /// Node class the id is minted for; fixes the id prefix
         /// (`task` → `TASK-…`, `decision` → `dec_…`, `term` → `term_…`).
-        #[arg(long, value_enum)]
-        class: MintClassArg,
+        #[arg(long)]
+        class: String,
+        /// Ledger whose enabled collection owns the prefix; otherwise resolved from cwd.
+        #[arg(long)]
+        project: Option<String>,
     },
-}
-
-#[derive(clap::ValueEnum, Clone, Debug)]
-enum MintClassArg {
-    Task,
-    Decision,
-    Term,
-    Artifact,
-}
-
-impl MintClassArg {
-    fn collection(&self) -> &'static str {
-        match self {
-            Self::Task => "tasks",
-            Self::Decision => "decisions",
-            Self::Term => "glossary",
-            Self::Artifact => "artifacts",
-        }
-    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -1192,6 +1182,7 @@ enum RunCmd {
 enum RunEvidenceCmd {
     /// Convert verified Claude native history into a bounded derived cache.
     Materialize {
+        /// Run id whose native evidence should be materialized.
         #[arg(long)]
         run: String,
     },
@@ -1597,6 +1588,7 @@ fn main() -> Result<()> {
         Cmd::Decision { cmd } => cmd_decision(&home, cmd),
         Cmd::Graph { cmd } => cmd_graph(&home, cmd),
         Cmd::Node { cmd } => cmd_node(&home, cmd),
+        Cmd::Plugin { cmd } => plugin::cmd_plugin(&home, cmd),
         Cmd::Verify(args) => cmd_verify(args),
         Cmd::Artifact { cmd } => cmd_artifact(&home, cmd),
         Cmd::Member { cmd } => cmd_member(&home, cmd),
@@ -3382,18 +3374,24 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
 
 fn cmd_id(home: &Home, cmd: IdCmd) -> Result<()> {
     match cmd {
-        IdCmd::Mint { class } => {
-            let descriptor_dir = home.source().join("shipped/schema/node-types");
-            let registry = if descriptor_dir.is_dir() {
-                orgasmic_daemon::node_types::NodeTypeRegistry::load(&descriptor_dir)?
-            } else {
-                orgasmic_daemon::node_types::NodeTypeRegistry::embedded()?
-            };
-            let descriptor = registry.descriptor(class.collection()).with_context(|| {
-                format!("missing shipped descriptor for {}", class.collection())
-            })?;
-            println!("{}", orgasmic_core::mint_node_id(descriptor));
-            Ok(())
+        IdCmd::Mint { class, project } => {
+            let builtins = orgasmic_core::NodeTypeRegistry::embedded()?;
+            if let Some(descriptor) = builtins.collection_for_kind(&class) {
+                println!("{}", orgasmic_core::mint_node_id(descriptor));
+                return Ok(());
+            }
+            tokio::runtime::Runtime::new()?.block_on(async {
+                let client = DaemonClient::from_home_autostart_async(home).await?;
+                let project = manager::resolve_project(project)?;
+                let result: serde_json::Value = client
+                    .post_json(
+                        "/id/mint",
+                        &serde_json::json!({"class": class, "project": project}),
+                    )
+                    .await?;
+                println!("{}", result["id"].as_str().context("missing minted id")?);
+                Ok(())
+            })
         }
     }
 }
@@ -4322,12 +4320,16 @@ mod okf_bundle_tests {
     }
 
     #[test]
-    fn every_visible_cli_subcommand_is_named_in_the_shipped_okf_bundle() {
+    fn every_visible_cli_subcommand_is_named_in_the_shipped_skills() {
         let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../shipped/skills/orgasmic");
         let mut docs = String::new();
         for path in ["SKILL.md", "operations", "recipes", "references"] {
             read_markdown(&bundle.join(path), &mut docs);
         }
+        read_markdown(
+            &bundle.join("../orgasmic-plugin-author/SKILL.md"),
+            &mut docs,
+        );
 
         let mut paths = Vec::new();
         command_paths(&Cli::command(), &mut Vec::new(), &mut paths);
@@ -4338,7 +4340,7 @@ mod okf_bundle_tests {
 
         assert!(
             missing.is_empty(),
-            "CLI subcommand(s) missing from shipped/skills/orgasmic concepts: {missing:?}"
+            "CLI subcommand(s) missing from shipped skills: {missing:?}"
         );
     }
 }

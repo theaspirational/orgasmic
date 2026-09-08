@@ -11,7 +11,6 @@
 :STATES:
 :TRANSITIONS:
 :REGENERATE_PROMPT: artifact-generator
-:RESERVED_FILES: artifact.mdx versions
 :END:
 
 Artifacts retain their MDX content and version archive as type-specific files.

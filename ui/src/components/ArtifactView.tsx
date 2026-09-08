@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Loader2, MessageSquarePlus, RefreshCw, Reply, RotateC
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
+import { NodeBacklinks } from '@/components/NodeBacklinks';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import {
@@ -224,6 +225,7 @@ export function ArtifactView({ projectId }: { projectId: string }) {
         {isArchivedVersion ? <Badge variant="outline">archived version {search.version}</Badge> : null}
         {data.subject_nodes.length === 0 ? <Badge variant="secondary">prompt-only</Badge> : null}
       </div>
+      <NodeBacklinks projectId={projectId} nodeId={artifactId} />
       <ArtifactComments
         data={data}
         projectId={projectId}

@@ -177,6 +177,8 @@ pub enum ActivityKind {
 
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct GraphIndex {
+    #[serde(skip)]
+    pub links: Vec<orgasmic_core::node_services::LinkRecord>,
     pub decisions: Vec<DecisionSummary>,
     pub decision_tree: BTreeMap<String, DecisionTreeEntry>,
     pub edges: Vec<GraphEdgeSummary>,
@@ -232,6 +234,8 @@ pub struct GlossarySummary {
 #[derive(Debug, Clone, Serialize)]
 pub struct GraphNodeSummary {
     pub id: String,
+    pub title: String,
+    pub todo: Option<String>,
     pub layer: String,
     pub outgoing: Vec<String>,
     pub source_file: PathBuf,
@@ -1015,6 +1019,9 @@ impl Index {
             return Ok(true);
         }
         if let (Some(collection), Some(node_id)) = (parts.get(1), parts.get(2)) {
+            if !orgasmic_core::paths::is_node_collection(collection) {
+                return Ok(false);
+            }
             if !node_id.ends_with(".org") {
                 return self.reload_node_dir(&entry, collection, node_id).await;
             }
@@ -1075,6 +1082,7 @@ impl Index {
             .join(node_id);
         let node_path = node_dir.join(orgasmic_core::node_kernel::NODE_FILE);
         let journal_path = node_dir.join(orgasmic_core::node_kernel::JOURNAL_FILE);
+        let links_path = node_dir.join("links.org");
         let read_optional = |path: &Path| match std::fs::read_to_string(path) {
             Ok(contents) => Ok(Some(contents)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -1082,11 +1090,18 @@ impl Index {
         };
         let node_contents = read_optional(&node_path)?;
         let journal_contents = read_optional(&journal_path)?;
+        let links_contents =
+            if std::fs::symlink_metadata(&links_path).is_ok_and(|m| m.file_type().is_symlink()) {
+                None
+            } else {
+                read_optional(&links_path)?
+            };
         let artifact = (collection == "artifacts").then(|| load_artifact(&node_dir));
 
         let mut snap = self.inner.write().await;
         if node_contents.as_ref() == snap.file_contents.get(&node_path)
             && journal_contents.as_ref() == snap.file_contents.get(&journal_path)
+            && links_contents.as_ref() == snap.file_contents.get(&links_path)
         {
             return Ok(false);
         }
@@ -1100,6 +1115,7 @@ impl Index {
         for (path, contents) in [
             (&node_path, node_contents.as_ref()),
             (&journal_path, journal_contents.as_ref()),
+            (&links_path, links_contents.as_ref()),
         ] {
             if let Some(contents) = contents {
                 snap.file_contents
@@ -1189,8 +1205,22 @@ impl Index {
             } else {
                 remove_graph_node_source(&mut project.graph, &node_dir);
             }
+        } else if orgasmic_core::paths::is_node_collection(collection) {
+            remove_graph_node_source(&mut project.graph, &node_dir);
+            if let Some(contents) = node_contents.as_ref() {
+                match OrgFile::parse(contents, node_path.to_string_lossy()) {
+                    Ok(file) => {
+                        load_generic_nodes(&file, &node_path, collection, &mut project.graph)
+                    }
+                    Err(error) => push_parse_error(&mut snap, node_path.clone(), error.to_string()),
+                }
+            }
         }
 
+        project.graph.links.retain(|r| r.source != node_id);
+        if node_contents.is_some() {
+            load_node_links(&node_dir, node_id, &mut project.graph, &mut snap);
+        }
         project
             .graph
             .nodes
@@ -1205,6 +1235,21 @@ impl Index {
             .collect::<HashSet<_>>();
         apply_superseded_flags(&mut project.graph, &superseded);
         build_decision_tree_index(&mut project.graph, &board_entry.path, &mut snap);
+        project
+            .graph
+            .edges
+            .extend(
+                project
+                    .graph
+                    .links
+                    .iter()
+                    .filter(|r| !r.deleted)
+                    .map(|r| GraphEdgeSummary {
+                        kind: r.kind.clone(),
+                        from: r.source.clone(),
+                        to: r.target.clone(),
+                    }),
+            );
         project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, &mut snap);
         project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
         lint_dangling_graph_edges(&project, &mut snap);
@@ -3051,7 +3096,35 @@ impl Index {
             }
         }
         self.load_graph(board_entry, &mut project, snap);
+        for collection in
+            orgasmic_core::paths::node_collections(&board_entry.path).unwrap_or_default()
+        {
+            for path in
+                collection_node_file_paths(&board_entry.path, &collection).unwrap_or_default()
+            {
+                if let Some(dir) = path.parent() {
+                    if let Some(id) = dir.file_name().and_then(|id| id.to_str()) {
+                        load_node_links(dir, id, &mut project.graph, snap);
+                    }
+                }
+            }
+        }
         load_task_graph(&mut project);
+        project
+            .graph
+            .edges
+            .extend(
+                project
+                    .graph
+                    .links
+                    .iter()
+                    .filter(|r| !r.deleted)
+                    .map(|r| GraphEdgeSummary {
+                        kind: r.kind.clone(),
+                        from: r.source.clone(),
+                        to: r.target.clone(),
+                    }),
+            );
         lint_dangling_graph_edges(&project, snap);
         let dotorg = board_entry.path.join(".orgasmic");
         for project_tx_dir in project_tx_dirs(&dotorg, snap) {
@@ -3130,6 +3203,41 @@ impl Index {
                 Err(err) => push_parse_error(snap, glossary, err),
             }
         }
+        match orgasmic_core::paths::node_collections(&board_entry.path) {
+            Ok(collections) => {
+                for collection in collections {
+                    if matches!(
+                        collection.as_str(),
+                        "tasks" | "decisions" | "glossary" | "artifacts"
+                    ) {
+                        continue;
+                    }
+                    match collection_node_file_paths(&board_entry.path, &collection) {
+                        Ok(paths) => {
+                            for path in paths {
+                                match read_org_tracked(&path, snap) {
+                                    Ok(file) => load_generic_nodes(
+                                        &file,
+                                        &path,
+                                        &collection,
+                                        &mut project.graph,
+                                    ),
+                                    Err(error) => push_parse_error(snap, path, error),
+                                }
+                            }
+                        }
+                        Err(error) => push_parse_error(
+                            snap,
+                            board_entry.path.join(".orgasmic").join(collection),
+                            error.to_string(),
+                        ),
+                    }
+                }
+            }
+            Err(error) => {
+                push_parse_error(snap, board_entry.path.join(".orgasmic"), error.to_string())
+            }
+        }
     }
 
     fn load_home_tx(&self, snap: &mut IndexSnapshot) {
@@ -3183,6 +3291,8 @@ fn load_decisions(
         let id = node.id.to_string();
         graph.nodes.push(GraphNodeSummary {
             id: id.clone(),
+            title: node.title.to_string(),
+            todo: heading.todo.clone(),
             layer: "decision".to_string(),
             outgoing: Vec::new(),
             source_file: source.to_path_buf(),
@@ -3363,6 +3473,8 @@ fn load_glossary(file: &OrgFile, source: &Path, graph: &mut GraphIndex) {
         };
         graph.nodes.push(GraphNodeSummary {
             id: term.id.to_string(),
+            title: term.canonical.unwrap_or(term.id).to_string(),
+            todo: heading.todo.clone(),
             layer: "glossary".to_string(),
             outgoing: own_vec(&term.relates_to),
             source_file: source.to_path_buf(),
@@ -3376,6 +3488,62 @@ fn load_glossary(file: &OrgFile, source: &Path, graph: &mut GraphIndex) {
             definition: term.definition.map(str::to_string),
             source_file: source.to_path_buf(),
         });
+    }
+}
+
+fn load_generic_nodes(file: &OrgFile, source: &Path, collection: &str, graph: &mut GraphIndex) {
+    for heading in &file.headings {
+        let Some(id) = heading.property("ID") else {
+            continue;
+        };
+        let outgoing = heading
+            .property_entries()
+            .filter(|property| {
+                orgasmic_core::REFERENCE_PROPERTY_KEYS.contains(&property.key.as_str())
+            })
+            .flat_map(|property| property.value.split_whitespace().map(str::to_string))
+            .collect();
+        graph.nodes.push(GraphNodeSummary {
+            id: id.to_string(),
+            title: heading
+                .title
+                .strip_prefix(id)
+                .unwrap_or(&heading.title)
+                .trim()
+                .to_string(),
+            todo: heading.todo.clone(),
+            layer: collection.to_string(),
+            outgoing,
+            source_file: source.to_path_buf(),
+            superseded: false,
+        });
+    }
+}
+
+fn load_node_links(dir: &Path, node_id: &str, graph: &mut GraphIndex, snap: &mut IndexSnapshot) {
+    let path = dir.join("links.org");
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        push_parse_error(snap, path, "service records must not be symlinks".into());
+        return;
+    }
+    // Node extras are indexed on the same full-scan and incremental seam.
+    if !path.exists() {
+        return;
+    }
+    let result = std::fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|source| {
+            let links =
+                orgasmic_core::node_services::read_links(&source).map_err(|e| e.to_string())?;
+            if links.iter().any(|r| r.source != node_id) {
+                return Err("link source does not match owning node".into());
+            }
+            snap.file_contents.insert(path.clone(), source);
+            Ok(links)
+        });
+    match result {
+        Ok(links) => graph.links.extend(links),
+        Err(error) => push_parse_error(snap, path, error),
     }
 }
 
@@ -3423,6 +3591,8 @@ fn load_task_graph(project: &mut ProjectIndex) {
         outgoing.extend(task.produces.clone());
         project.graph.nodes.push(GraphNodeSummary {
             id: task.id.clone(),
+            title: task.title.clone(),
+            todo: Some(task.lifecycle_stage.as_str().to_ascii_uppercase()),
             layer: "task".to_string(),
             outgoing,
             source_file: task.source_file.clone(),
@@ -3480,6 +3650,8 @@ fn load_task_graph(project: &mut ProjectIndex) {
             continue;
         }
         project.graph.nodes.push(GraphNodeSummary {
+            title: id.clone(),
+            todo: None,
             id,
             layer: "artifact".to_string(),
             outgoing: Vec::new(),
@@ -3492,6 +3664,8 @@ fn load_task_graph(project: &mut ProjectIndex) {
             continue;
         }
         project.graph.nodes.push(GraphNodeSummary {
+            title: id.clone(),
+            todo: None,
             id,
             layer: "external".to_string(),
             outgoing: Vec::new(),

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><title>Prototype screen</title></head><body>
+<script>
+window.addEventListener('message', function receive(event) {
+  if (event.source !== parent || typeof event.data !== 'string') return;
+  window.removeEventListener('message', receive);
+  document.open();
+  document.write(event.data);
+  document.close();
+});
+</script>
+</body></html>

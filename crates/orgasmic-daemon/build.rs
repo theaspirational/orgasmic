@@ -73,7 +73,8 @@ fn main() {
         fs::create_dir_all(&placeholder).unwrap();
         fs::write(
             placeholder.join("index.html"),
-            b"<!-- placeholder UI: rebuild with `cargo build --release` or ORGASMIC_EMBED_UI=1 -->\n",
+            // Exercise the import-map nonce seam even without the npm build.
+            b"<!-- placeholder UI: rebuild with `cargo build --release` or ORGASMIC_EMBED_UI=1 -->\n<script type=\"importmap\">{}</script>\n",
         )
         .unwrap();
         placeholder

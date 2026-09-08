@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Import a UTF-8 notes file through the existing, scoped node API."""
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import urllib.error
+import urllib.request
+import uuid
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("file", type=Path)
+parser.add_argument("--title")
+parser.add_argument("--request-id", default=None, help="Reuse for an idempotent retry")
+args = parser.parse_args()
+try:
+    # ponytail: notes only, 1 MiB ceiling; large media belongs in the attachment slice.
+    with args.file.open("rb") as source:
+        content = source.read(1024 * 1024 + 1)
+    if len(content) > 1024 * 1024:
+        raise ValueError("Notes must be at most 1 MiB")
+    body = json.dumps({
+        "project": os.environ["ORGASMIC_PROJECT"], "kind": "meetings",
+        "title": args.title or args.file.stem, "body": content.decode("utf-8"),
+        "request_id": args.request_id or str(uuid.uuid4()),
+    }, ensure_ascii=False).encode("utf-8")
+    # Never fall back to an admin credential when run outside `plugin run`.
+    request = urllib.request.Request(
+        os.environ["ORGASMIC_DAEMON_URL"].rstrip("/") + "/api/org/node",
+        data=body, headers={"Content-Type": "application/json",
+                            "Authorization": "Bearer " + os.environ["ORGASMIC_PLUGIN_TOKEN"]})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        print(response.read().decode("utf-8"))
+except (OSError, ValueError, KeyError) as error:
+    # HTTPError's text does not contain the request's Authorization header.
+    print(f"Import failed: {error}", file=sys.stderr)
+    sys.exit(1)

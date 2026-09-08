@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode, type WheelEvent } from 'r
 import { X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { NodeBacklinks } from '@/components/NodeBacklinks';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -87,6 +88,14 @@ function effectiveFields(descriptor: NodeDescriptor, doc: OrgNodeDoc): NodeField
       }
     }
   }
+  if (descriptor.dynamicProperties) {
+    const bound = new Set(fields.flatMap((field) => field.binding.kind === 'property' ? [field.binding.key] : []));
+    for (const property of doc.properties) {
+      if (property.key !== 'ID' && !bound.has(property.key)) {
+        fields.push({ label: property.key, binding: { kind: 'property', key: property.key }, editor: 'text' });
+      }
+    }
+  }
   return fields;
 }
 
@@ -161,6 +170,7 @@ export function NodeDocEditor({
   mode,
   apiKind,
   onDocumentChange,
+  readOnly = false,
 }: {
   projectId: string;
   nodeId: string;
@@ -172,6 +182,7 @@ export function NodeDocEditor({
    *  `.org` file the daemon can't infer from the id prefix (e.g. project). */
   apiKind?: string;
   onDocumentChange?: (document: OrgNodeDoc | null) => void;
+  readOnly?: boolean;
 }) {
   const refreshBump = useRefreshBump();
   const { isMember } = useMe();
@@ -209,7 +220,7 @@ export function NodeDocEditor({
     () => (baseline && draft ? computeOps(baseline, draft, descriptor, fields) : []),
     [baseline, draft, descriptor, fields],
   );
-  const editing = mode === 'edit';
+  const editing = mode === 'edit' && !readOnly;
 
   useEffect(() => {
     if (!editing && baseline) {
@@ -280,7 +291,7 @@ export function NodeDocEditor({
       {notice ? <Banner tone="info">{notice}</Banner> : null}
       {saveError ? <Banner tone="error">{saveError}</Banner> : null}
 
-      {!editing && baseline.descriptor?.can_regenerate && !isMember ? (
+      {!readOnly && !editing && baseline.descriptor?.can_regenerate && !isMember ? (
         <div className="flex justify-end">
           <NodeRegenerateControl
             projectId={projectId}
@@ -323,7 +334,7 @@ export function NodeDocEditor({
           return (
             <FieldShell key={field.label} label={field.label}>
               {editing ? (
-                <Textarea value={value} onChange={(event) => onChange(event.target.value)} placeholder={field.placeholder} />
+                <Textarea aria-label={field.label} value={value} onChange={(event) => onChange(event.target.value)} placeholder={field.placeholder} />
               ) : (
                 <ProseValue value={value} placeholder={field.placeholder} />
               )}
@@ -337,6 +348,7 @@ export function NodeDocEditor({
             <FieldShell key={field.label} label={field.label}>
               {editing ? (
                 <Input
+                  aria-label={field.label}
                   value={value}
                   onChange={(event) => setProperty(binding.key, event.target.value)}
                   placeholder={field.placeholder}
@@ -353,7 +365,7 @@ export function NodeDocEditor({
             return (
               <FieldShell key={field.label} label={field.label}>
                 {editing ? (
-                  <ChipsField values={draft.tags} onChange={setTags} placeholder={field.placeholder} />
+                  <ChipsField label={field.label} values={draft.tags} onChange={setTags} placeholder={field.placeholder} />
                 ) : (
                   <ChipsValue values={draft.tags} placeholder={field.placeholder} />
                 )}
@@ -367,6 +379,7 @@ export function NodeDocEditor({
               <FieldShell key={field.label} label={field.label}>
                 {editing ? (
                   <ChipsField
+                    label={field.label}
                     values={tokens}
                     onChange={(next) => setProperty(binding.key, joinTokens(next, separator))}
                     placeholder={field.placeholder}
@@ -391,6 +404,7 @@ export function NodeDocEditor({
         return null;
       })}
 
+      <NodeBacklinks projectId={projectId} nodeId={nodeId} />
       {editing && ops.length > 0 ? (
         <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-background/95 py-3 backdrop-blur">
           <span className="mr-auto text-xs text-muted-foreground">
@@ -485,6 +499,7 @@ function Banner({ tone, children }: { tone: 'info' | 'error'; children: ReactNod
 }
 
 function ChipsField({
+  label,
   values,
   onChange,
   placeholder,
@@ -493,6 +508,7 @@ function ChipsField({
   suggestions,
   maxItems,
 }: {
+  label: string;
   values: string[];
   onChange: (next: string[]) => void;
   placeholder?: string;
@@ -563,6 +579,7 @@ function ChipsField({
             </span>
           ))}
           <input
+            aria-label={label}
             value={text}
             onChange={(event) => {
               setText(event.target.value);

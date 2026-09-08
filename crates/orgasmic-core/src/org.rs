@@ -306,6 +306,7 @@ struct Parser<'a> {
     display: &'a str,
     lines: Vec<LineSpan>,
     in_block: Vec<bool>,
+    todo_keywords: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -337,6 +338,7 @@ impl<'a> Parser<'a> {
             display,
             lines,
             in_block,
+            todo_keywords: Vec::new(),
         }
     }
 
@@ -368,6 +370,14 @@ impl<'a> Parser<'a> {
                         line: idx + 1,
                         detail: text.into(),
                     })?;
+                if key.eq_ignore_ascii_case("todo") {
+                    self.todo_keywords.extend(
+                        value
+                            .split_whitespace()
+                            .filter(|word| *word != "|")
+                            .map(str::to_string),
+                    );
+                }
                 keywords.push(Keyword {
                     key,
                     value,
@@ -446,11 +456,14 @@ impl<'a> Parser<'a> {
     fn parse_heading(&self, start_line: usize, level: usize) -> Result<(Heading, usize), OrgError> {
         let title_line_span = self.lines[start_line];
         let title_text = self.line_text(start_line);
-        let parsed = parse_heading_line(title_text, level).ok_or_else(|| OrgError::BadHeading {
-            file: self.display.into(),
-            line: start_line + 1,
-            detail: title_text.into(),
-        })?;
+        let parsed =
+            parse_heading_line(title_text, level, &self.todo_keywords).ok_or_else(|| {
+                OrgError::BadHeading {
+                    file: self.display.into(),
+                    line: start_line + 1,
+                    detail: title_text.into(),
+                }
+            })?;
 
         let mut idx = start_line + 1;
 
@@ -610,7 +623,7 @@ struct ParsedHeadingLine {
     tags: Vec<String>,
 }
 
-fn parse_heading_line(text: &str, level: usize) -> Option<ParsedHeadingLine> {
+fn parse_heading_line(text: &str, level: usize, declared: &[String]) -> Option<ParsedHeadingLine> {
     // Skip the leading `*`s and the single mandatory space.
     let mut chars = text.char_indices();
     let mut stars = 0usize;
@@ -647,11 +660,13 @@ fn parse_heading_line(text: &str, level: usize) -> Option<ParsedHeadingLine> {
     // Pull off optional TODO keyword (uppercase letters/digits/_).
     let body_trimmed = body.trim_end();
     let (todo, title) = match body_trimmed.split_once(' ') {
-        Some((first, remainder)) if is_todo_keyword(first) => {
+        Some((first, remainder))
+            if is_todo_keyword(first) || declared.iter().any(|word| word == first) =>
+        {
             (Some(first.to_string()), remainder.trim_start().to_string())
         }
         _ => {
-            if is_todo_keyword(body_trimmed) {
+            if is_todo_keyword(body_trimmed) || declared.iter().any(|word| word == body_trimmed) {
                 (Some(body_trimmed.to_string()), String::new())
             } else {
                 (None, body_trimmed.to_string())

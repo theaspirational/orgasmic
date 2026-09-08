@@ -71,6 +71,15 @@ post_status() {
 if [[ "$MODE" != "no-publish" ]]; then resolve_remote; fi
 receipt_matches() { [[ -f "$RECEIPT" && "$(cat "$RECEIPT")" == "$RECEIPT_CONTENT" ]]; }
 
+assert_source_unchanged() {
+    local head status
+    head=$(git rev-parse HEAD) && status=$(git status --porcelain --untracked-files=all) || exit 1
+    [[ "$head" == "$HEAD_SHA" && -z "$status" ]] || {
+        echo "certify-runtime-fast: source changed during certification; no receipt or success status" >&2
+        exit 1
+    }
+}
+
 if ! receipt_matches; then
     if [[ "$MODE" == "publish-only" ]]; then
         post_status error "runtime-fast receipt missing for tree ${TREE_SHA:0:12}"
@@ -78,7 +87,7 @@ if ! receipt_matches; then
     fi
 
     CHANGED="$(git diff --name-only "$BASE_SHA..$HEAD_SHA")"
-    if printf '%s\n' "$CHANGED" | grep -Eq '^(Cargo\.(toml|lock)|rust-toolchain\.toml|provider-host/|scripts/(assert-ci-certified|certify-|integrate-main|package-runtime|publish-runtime|runtime-candidate|release-runtime-fast|sync-release|refresh-release|release-channel)|\.github/workflows/runtime-bundles\.yml)'; then
+    if printf '%s\n' "$CHANGED" | grep -Eq '^(Cargo\.(toml|lock)|rust-toolchain\.toml|provider-host/|scripts/(assert-ci-certified|certify-|integrate-main|package-runtime|publish-runtime|runtime-candidate|publish-apps|app-candidate|release-runtime-fast|sync-release|refresh-release|release-channel)|\.github/workflows/runtime-bundles\.yml)'; then
         echo "→ release infrastructure changed; requiring the full certification gate"
         if [[ "$MODE" != "no-publish" ]] && bash scripts/assert-ci-certified.sh \
             --repo "$REPO" --sha "$HEAD_SHA" --context local/release-certified; then
@@ -119,6 +128,7 @@ if ! receipt_matches; then
         fi
     fi
 
+    assert_source_unchanged
     mkdir -p "$RECEIPT_DIR"; umask 077
     tmp="$(mktemp "$RECEIPT_DIR/.runtime-fast.XXXXXX")"
     printf '%s\n' "$RECEIPT_CONTENT" >"$tmp"; mv "$tmp" "$RECEIPT"
@@ -127,6 +137,7 @@ else
     echo "✓ reusing runtime-fast receipt $RECEIPT_KEY"
 fi
 
+assert_source_unchanged
 if [[ "$MODE" != "no-publish" ]]; then
     post_status success "runtime-fast tree=${TREE_SHA:0:12} base=${BASE_SHA:0:12} rust=$CERTIFICATION_RUST"
     bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA" --context "$CONTEXT"

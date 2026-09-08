@@ -11,7 +11,6 @@
 :STATES: backlog todo in_progress in_review done cancelled
 :TRANSITIONS: backlog>todo,in_progress,cancelled todo>in_progress,cancelled in_progress>in_review,todo,cancelled in_review>in_progress,done,cancelled done>- cancelled>-
 :REGENERATE_PROMPT: task-regenerate
-:RESERVED_FILES: dispatches
 :END:
 
 Task headings use the lifecycle state as their Org TODO keyword. Dotted subtask

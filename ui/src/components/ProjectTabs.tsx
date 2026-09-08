@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { FolderOpen, Plus, X } from 'lucide-react';
 
@@ -18,7 +18,8 @@ import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { useMe } from '@/hooks/useMe';
 import { fetchProjects } from '@/lib/api';
 import { projectChipStyle, projectInitial } from '@/lib/projectColor';
-import { DEFAULT_TAB_VIEW, type ProjectTab, type TabView } from '@/lib/tabsStore';
+import { DEFAULT_TAB_VIEW, projectTabTarget, type ProjectTab, type TabView } from '@/lib/tabsStore';
+import { NodeTypesContext } from '@/lib/nodeTypes';
 import type { ProjectCatalogEntry } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 import { cn } from '@/lib/utils';
@@ -38,18 +39,6 @@ const VIEW_LABELS: Record<TabView, string> = {
   status: 'Status',
   settings: 'Settings',
 };
-
-type NavTarget = {
-  to: '/projects/$projectId/decisions';
-  params: { projectId: string };
-};
-
-// Every project view is a real route that takes `projectId`; cast the dynamic
-// view onto one route literal so TanStack's types are satisfied (the runtime
-// `to` string is what actually drives navigation).
-function navTarget(projectId: string, view: TabView): NavTarget {
-  return { to: `/projects/$projectId/${view}` as NavTarget['to'], params: { projectId } };
-}
 
 function focusSibling(el: HTMLElement, dir: 1 | -1) {
   const strip = el.closest('[data-tabstrip]');
@@ -88,7 +77,7 @@ export function ProjectTabs() {
   const [overIndex, setOverIndex] = useState<number | null>(null);
 
   const goTo = useCallback(
-    (projectId: string, view: TabView) => void navigate(navTarget(projectId, view)),
+    (projectId: string, view: TabView) => void navigate(projectTabTarget(projectId, view)),
     [navigate],
   );
 
@@ -218,7 +207,10 @@ function ProjectTabItem({
   onDrop: () => void;
   onDragEnd: () => void;
 }) {
-  const viewLabel = VIEW_LABELS[tab.view];
+  const registry = useContext(NodeTypesContext);
+  const viewLabel = tab.view.startsWith('nodes/')
+    ? registry?.data?.find((type) => type.collection === tab.view.slice(6))?.label_plural ?? tab.view.slice(6)
+    : VIEW_LABELS[tab.view];
   const taskCount = meta?.task_stats?.total;
   const title = meta
     ? `${tab.projectId} · ${meta.branch}${

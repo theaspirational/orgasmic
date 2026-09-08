@@ -150,6 +150,10 @@ function installFetch(handler?: (path: string, init?: RequestInit) => Response |
     if (handled) return handled;
 
     if (path === '/api/projects') return jsonResponse([]);
+    if (path === '/api/node-types?project=orsl') return jsonResponse([
+      { collection: 'artifacts', label_plural: 'Artifacts', states: [] },
+      { collection: 'meetings', label_plural: 'Meeting records', states: ['active', 'archived'] },
+    ]);
     if (path === '/api/login') {
       events.push('login');
       return jsonResponse({ name: 'member', expires_at: '2099-01-01T00:00:00Z' });
@@ -242,6 +246,25 @@ afterEach(() => {
 });
 
 describe('AppShell protected-route auth gate', () => {
+  it('builds collection navigation from metadata for admins, gated behind authentication', async () => {
+    const probe = defer<Response>();
+    const fetch = installFetch((path) => path === '/api/auth/whoami' ? probe.promise : undefined);
+    renderShell();
+    expect(fetch.mock.calls.some(([input]) => pathOf(input).includes('/node-types'))).toBe(false);
+    await act(async () => probe.resolve(jsonResponse({ authenticated: true, boot_id: 'boot-test' })));
+    expect(await screen.findByRole('link', { name: 'Meeting records' })).toHaveAttribute('href', '/projects/$projectId/nodes/$collection');
+  });
+
+  it('does not show generic collection navigation to an artifacts-only member', async () => {
+    window.localStorage.setItem('orgasmic.member.session', '1');
+    window.localStorage.setItem('orgasmic.member.me', JSON.stringify(memberMe()));
+    const fetch = installFetch();
+    renderShell();
+    await waitFor(() => expect(fetch.mock.calls.some(([input]) => pathOf(input).includes('/node-types'))).toBe(true));
+    await screen.findByText('Protected artifact loaded');
+    expect(screen.queryByRole('link', { name: 'Meeting records' })).not.toBeInTheDocument();
+  });
+
   it('keeps routed content beneath an opaque project-tabs header', async () => {
     installFetch((path) => {
       if (path === '/api/auth/whoami') {

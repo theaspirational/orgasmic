@@ -119,16 +119,16 @@ async fn serve(
                     })
                     .collect();
                 let mut batches = envelopes.chunks(128).peekable();
-                if replay && batches.peek().is_none() {
-                    if sender
+                if replay
+                    && batches.peek().is_none()
+                    && sender
                         .send(Message::Text(
                             json!({"type":"snapshot","envelopes":[]}).to_string(),
                         ))
                         .await
                         .is_err()
-                    {
-                        return;
-                    }
+                {
+                    return;
                 }
                 for (index, batch) in batches.enumerate() {
                     let kind = if replay && index == 0 {

@@ -47,6 +47,20 @@
 
 use orgasmic_drivers::WorkerDriver;
 
+/// Canonical Chat must pass through the same default-deny test fence as
+/// legacy transports; its ACP launcher can execute an authenticated provider.
+pub(crate) fn resolve_chat_driver(provider: &str) -> Option<Box<dyn WorkerDriver>> {
+    #[cfg(test)]
+    {
+        if orgasmic_drivers::adapters::acp::PROVIDERS.contains(&provider) {
+            panic!("{}", refusal_message(&format!("canonical-chat/{provider}")));
+        }
+        None
+    }
+    #[cfg(not(test))]
+    orgasmic_drivers::chat_driver(provider)
+}
+
 /// Resolve a first-class `(mode, harness)` pair to a driver.
 ///
 /// Production build: the registry lookup, unchanged.
@@ -208,6 +222,64 @@ fn refusal_message(named: &str) -> String {
          ({STUB_MODE}/{STUB_HARNESS}) instead — see \
          `crate::driver_resolution::stub_driver` (TASK-3NJ9K)."
     )
+}
+
+/// Closed test fixture: these adapters execute only the fixed /bin/sh script below.
+/// Keep transport construction here; callers cannot supply a provider adapter.
+#[cfg(test)]
+pub(crate) fn report_fixture_drivers() -> [Box<dyn WorkerDriver>; 2] {
+    use orgasmic_core::DriverEvent;
+    use orgasmic_drivers::{
+        DriverConfig, DriverContext, DriverError, HarnessEventAdapter, HarnessRequest, StdioDriver,
+        SubprocessStreamJsonDriver,
+    };
+    struct ReportAdapter;
+    #[async_trait::async_trait]
+    impl HarnessEventAdapter for ReportAdapter {
+        fn harness(&self) -> &'static str {
+            "report-fixture"
+        }
+        fn clone_box(&self) -> Box<dyn HarnessEventAdapter> {
+            Box::new(Self)
+        }
+        async fn parse_event(&mut self, raw: serde_json::Value) -> Vec<DriverEvent> {
+            vec![serde_json::from_value(raw).unwrap()]
+        }
+        fn compose_request(
+            &mut self,
+            _ctx: &DriverContext,
+            config: &DriverConfig,
+        ) -> Result<HarnessRequest, DriverError> {
+            Ok(HarnessRequest::Subprocess {
+                binary: "/bin/sh".into(),
+                args: vec![
+                    "-c".into(),
+                    r#"printf '%s' "$ORGASMIC_REPORT_PATH" > "$REPORT_FIXTURE_OBSERVATION"
+if [ -n "$ORGASMIC_REPORT_PATH" ]; then
+    printf 'worker report: %s' "$ORGASMIC_REPORT_PATH" > "$ORGASMIC_REPORT_PATH"
+fi
+printf '%s\n' '{"type":"text_chunk","stream":"assistant","chunk":"transport text","seq":0}'
+"#
+                    .into(),
+                ],
+                env: [
+                    ("ORGASMIC_REPORT_PATH".into(), "wrong inherited path".into()),
+                    (
+                        "REPORT_FIXTURE_OBSERVATION".into(),
+                        config.0["observation_path"].as_str().unwrap().into(),
+                    ),
+                ]
+                .into(),
+                cwd: None,
+                stdin_payload: None,
+                close_stdin: true,
+            })
+        }
+    }
+    [
+        Box::new(StdioDriver::new(Box::new(ReportAdapter))) as Box<dyn WorkerDriver>,
+        Box::new(SubprocessStreamJsonDriver::new(Box::new(ReportAdapter))),
+    ]
 }
 
 /// The in-process stub transport, and the fixtures that address it.
@@ -447,6 +519,7 @@ mod tests {
         assert!(resolve_driver("stdio", "not-a-harness").is_none());
         assert!(resolve_driver("not-a-mode", "claude").is_none());
         assert!(resolve_driver_by_transport("not-a-transport").is_none());
+        assert!(resolve_chat_driver("not-a-provider").is_none());
     }
 
     #[test]
@@ -473,6 +546,7 @@ mod tests {
         // rather than special-cased later.
         const FORBIDDEN: &[&str] = &[
             "driver_for",
+            "orgasmic_drivers::chat_driver",
             "StdioDriver::",
             "WsDriver::",
             "SubprocessStreamJsonDriver::",
@@ -532,6 +606,12 @@ mod tests {
     #[should_panic(expected = "refuses to resolve the real transport tmux/claude")]
     fn spawning_tmux_claude_panics() {
         let _ = resolve_launch_driver("tmux", "claude");
+    }
+
+    #[test]
+    #[should_panic(expected = "refuses to resolve the real transport canonical-chat/codex")]
+    fn resolving_canonical_chat_panics() {
+        let _ = resolve_chat_driver("codex");
     }
 
     #[test]

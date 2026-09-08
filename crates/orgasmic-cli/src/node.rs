@@ -6,39 +6,44 @@ use crate::daemon_client::DaemonClient;
 use crate::home::Home;
 use crate::manager::resolve_project;
 
-/// `--kind` selector for `node body`/`node prop`. Mirrors
-/// [`orgasmic_core::NodeKind`] one variant at a time (parity-tested in
-/// `node_kind_parity` below) so `--help` lists exactly what the daemon
-/// accepts, including `handoff` and `goal` (TASK-JJ9RD).
-#[derive(clap::ValueEnum, Clone, Copy, Debug)]
-pub enum NodeKindArg {
-    Decision,
-    Glossary,
-    Project,
-    Task,
-    Goal,
-    Handoff,
-}
-
-impl From<NodeKindArg> for orgasmic_core::NodeKind {
-    fn from(value: NodeKindArg) -> Self {
-        match value {
-            NodeKindArg::Decision => Self::Decision,
-            NodeKindArg::Glossary => Self::Glossary,
-            NodeKindArg::Project => Self::Project,
-            NodeKindArg::Task => Self::Task,
-            NodeKindArg::Goal => Self::Goal,
-            NodeKindArg::Handoff => Self::Handoff,
-        }
-    }
-}
-
-fn kind_str(kind: Option<NodeKindArg>) -> Option<&'static str> {
-    kind.map(|kind| orgasmic_core::NodeKind::from(kind).as_str())
-}
+// The daemon registry resolves both built-in kinds and user collections.
 
 #[derive(Subcommand, Debug)]
 pub enum NodeCmd {
+    /// Create a node using a registered collection and its initial state.
+    Create {
+        /// Registered collection name or built-in kind.
+        #[arg(long)]
+        kind: String,
+        /// Heading title without the id or lifecycle keyword.
+        #[arg(long)]
+        title: String,
+        /// Node body in Org markup; nested sections use two stars.
+        #[arg(long, default_value = "")]
+        body: String,
+        /// Required or optional descriptor drawer values (repeatable KEY=value).
+        #[arg(long = "property")]
+        properties: Vec<String>,
+        /// Project id; omitted resolves from the current project.
+        #[arg(long)]
+        project: Option<String>,
+        /// Stable idempotency key for retrying the same creation.
+        #[arg(long)]
+        request_id: Option<String>,
+    },
+    /// Transition a node through its descriptor and compiled validation hooks.
+    State {
+        /// Existing node id.
+        id: String,
+        /// Target state declared by the collection descriptor.
+        state: String,
+        /// Project id; omitted resolves from the current project.
+        #[arg(long)]
+        project: Option<String>,
+        /// Explicit collection; omitted resolves from the id prefix.
+        #[arg(long)]
+        kind: Option<String>,
+    },
     /// Read/write node bodies through the daemon org-node editor.
     Body {
         #[command(subcommand)]
@@ -102,8 +107,8 @@ pub enum NodeCmd {
         project: Option<String>,
         /// Node layer to address (task, decision, glossary, artifact); omitted
         /// → inferred from the id prefix.
-        #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        #[arg(long)]
+        kind: Option<String>,
         /// Optimistic-concurrency token from `org node get` / prior edit; fetched when omitted.
         #[arg(long = "base-version")]
         base_version: Option<String>,
@@ -129,8 +134,8 @@ pub enum NodeBodyCmd {
         #[arg(long)]
         project: Option<String>,
         /// Explicit layer selector; see daemon registry for the accepted set.
-        #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        #[arg(long)]
+        kind: Option<String>,
         /// Target a named `**` section instead of the free prose body.
         #[arg(long)]
         section: Option<String>,
@@ -167,8 +172,8 @@ pub enum NodeBodyCmd {
         project: Option<String>,
         /// Node layer to address (task, decision, glossary, artifact); omitted
         /// → inferred from the id prefix.
-        #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        #[arg(long)]
+        kind: Option<String>,
         /// Target a named `**` section instead of the free prose body.
         #[arg(long)]
         section: Option<String>,
@@ -205,8 +210,8 @@ pub enum NodeBodyCmd {
         #[arg(long)]
         project: Option<String>,
         /// Explicit layer selector; see daemon registry for the accepted set.
-        #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        #[arg(long)]
+        kind: Option<String>,
         /// Section title to remove. Required: this verb never clears a node's
         /// free prose body by omission.
         #[arg(long)]
@@ -245,8 +250,8 @@ pub enum NodePropCmd {
         project: Option<String>,
         /// Node layer to address (task, decision, glossary, artifact); omitted
         /// → inferred from the id prefix.
-        #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        #[arg(long)]
+        kind: Option<String>,
         /// Optimistic-concurrency token from a prior read/edit; fetched when
         /// omitted. The write is refused if the node moved underneath it.
         #[arg(long = "base-version")]
@@ -278,8 +283,8 @@ pub enum NodePropCmd {
         project: Option<String>,
         /// Node layer to address (task, decision, glossary, artifact); omitted
         /// → inferred from the id prefix.
-        #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        #[arg(long)]
+        kind: Option<String>,
         /// Optimistic-concurrency token from a prior read/edit; fetched when
         /// omitted. The write is refused if the node moved underneath it.
         #[arg(long = "base-version")]
@@ -317,8 +322,8 @@ pub enum NodeTitleCmd {
         #[arg(long)]
         project: Option<String>,
         /// Node layer to address; omitted → inferred from the id prefix.
-        #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        #[arg(long)]
+        kind: Option<String>,
         /// Optimistic-concurrency token from a prior read/edit; fetched when
         /// omitted. The write is refused if the node moved underneath it.
         #[arg(long = "base-version")]
@@ -364,6 +369,25 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
         match cmd {
+            NodeCmd::Create { kind, title, body, properties, project, request_id } => {
+                let project = resolve_project(project)?;
+                let properties: std::collections::BTreeMap<_, _> = crate::parse_key_values(properties)?.into_iter().collect();
+                let response: serde_json::Value = client.post_json("/org/node", &serde_json::json!({
+                    "project": project, "kind": kind, "title": title, "body": body,
+                    "properties": properties,
+                    "request_id": request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                })).await?;
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            }
+            NodeCmd::State { id, state, project, kind } => {
+                let (base_version, project) = resolve_base_version(&client, project, &id, kind.as_deref(), None).await?;
+                let response: serde_json::Value = client.post_json(&edit_path(&id, true), &serde_json::json!({
+                    "project": project, "kind": kind, "base_version": base_version,
+                    "ops": [{"op":"set_state", "state":state}],
+                    "request_id": uuid::Uuid::new_v4().to_string(),
+                })).await?;
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            }
             NodeCmd::Body { cmd } => match cmd {
                 NodeBodyCmd::Set {
                     id,
@@ -378,7 +402,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     json,
                 } => {
                     let (base_version, project) =
-                        resolve_base_version(&client, project, &id, kind_str(kind), base_version)
+                        resolve_base_version(&client, project, &id, kind.as_deref(), base_version)
                             .await?;
                     let body_format = if raw { "raw" } else { "default" };
                     let op = body_op(section.as_deref(), &body, body_format, create);
@@ -387,7 +411,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                             &edit_path(&id, json),
                             &edit_request(
                                 &project,
-                                kind_str(kind),
+                                kind.as_deref(),
                                 &base_version,
                                 &request_id,
                                 op,
@@ -415,7 +439,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     }
                     let project = Some(resolve_project(project)?);
                     let doc: NodeDoc = client
-                        .get(&node_get_path(&id, project.as_deref(), kind_str(kind)))
+                        .get(&node_get_path(&id, project.as_deref(), kind.as_deref()))
                         .await?;
                     let base_version = base_version
                         .filter(|value| !value.trim().is_empty())
@@ -431,7 +455,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                             &edit_path(&id, json),
                             &edit_request(
                                 &project,
-                                kind_str(kind),
+                                kind.as_deref(),
                                 &base_version,
                                 &request_id,
                                 op,
@@ -451,14 +475,14 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     json,
                 } => {
                     let (base_version, project) =
-                        resolve_base_version(&client, project, &id, kind_str(kind), base_version)
+                        resolve_base_version(&client, project, &id, kind.as_deref(), base_version)
                             .await?;
                     let response: serde_json::Value = client
                         .post_json(
                             &edit_path(&id, json),
                             &edit_request(
                                 &project,
-                                kind_str(kind),
+                                kind.as_deref(),
                                 &base_version,
                                 &request_id,
                                 remove_section_op(&section),
@@ -482,7 +506,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     json,
                 } => {
                     let (base_version, project) =
-                        resolve_base_version(&client, project, &id, kind_str(kind), base_version)
+                        resolve_base_version(&client, project, &id, kind.as_deref(), base_version)
                             .await?;
                     let op = serde_json::json!({ "op": "set_property", "key": key, "value": value });
                     let response: serde_json::Value = client
@@ -490,7 +514,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                             &edit_path(&id, json),
                             &edit_request(
                                 &project,
-                                kind_str(kind),
+                                kind.as_deref(),
                                 &base_version,
                                 &request_id,
                                 op,
@@ -510,7 +534,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     json,
                 } => {
                     let (base_version, project) =
-                        resolve_base_version(&client, project, &id, kind_str(kind), base_version)
+                        resolve_base_version(&client, project, &id, kind.as_deref(), base_version)
                             .await?;
                     let op = serde_json::json!({ "op": "remove_property", "key": key });
                     let response: serde_json::Value = client
@@ -518,7 +542,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                             &edit_path(&id, json),
                             &edit_request(
                                 &project,
-                                kind_str(kind),
+                                kind.as_deref(),
                                 &base_version,
                                 &request_id,
                                 op,
@@ -544,7 +568,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                 // orgasmic:TASK-P0Q5C
                 // The daemon's /org/node editor refuses goal nodes wholesale;
                 // say up front that no supported tooling can retitle one yet.
-                if matches!(kind, Some(NodeKindArg::Goal))
+                if kind.as_deref() == Some("goal")
                     || (kind.is_none() && id.starts_with("goal-"))
                 {
                     anyhow::bail!(
@@ -558,7 +582,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     NodeTitleWrite {
                         id: &id,
                         project,
-                        kind: kind_str(kind),
+                        kind: kind.as_deref(),
                         title: &title,
                         base_version,
                         request_id,
@@ -616,7 +640,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
             } => {
                 // orgasmic:TASK-N4TGD
                 let (base_version, project) =
-                    resolve_base_version(&client, project, &id, kind_str(kind), base_version)
+                    resolve_base_version(&client, project, &id, kind.as_deref(), base_version)
                         .await?;
                 let path = if json {
                     format!("/org/node/{id}/delete?json=true")
@@ -628,7 +652,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                         &path,
                         &serde_json::json!({
                             "project": project,
-                            "kind": kind_str(kind),
+                            "kind": kind.as_deref(),
                             "base_version": base_version,
                             "request_id": request_id,
                         }),
@@ -883,28 +907,28 @@ mod append_round_trip {
 
 #[cfg(test)]
 mod node_kind_parity {
-    use super::NodeKindArg;
-    use clap::ValueEnum;
-    use std::collections::BTreeSet;
-
-    /// Anti-drift guarantee (TASK-JJ9RD): the CLI `--kind` enum must offer
-    /// exactly the kinds the daemon accepts (`orgasmic_daemon::api::
-    /// accepted_node_kinds`). Core keeps historical kinds parseable even when
-    /// they are no longer accepted by the daemon.
+    use super::*;
+    use clap::{CommandFactory, FromArgMatches};
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        command: NodeCmd,
+    }
     #[test]
-    fn cli_kind_arg_matches_daemon_registry() {
-        let cli_kinds: BTreeSet<&str> = NodeKindArg::value_variants()
-            .iter()
-            .map(|arg| orgasmic_core::NodeKind::from(*arg).as_str())
-            .collect();
-        let daemon_kinds: BTreeSet<&str> = orgasmic_daemon::api::accepted_node_kinds()
-            .iter()
-            .map(|kind| kind.as_str())
-            .collect();
-        assert_eq!(
-            cli_kinds, daemon_kinds,
-            "CLI --kind enum and daemon-accepted kinds drifted apart"
-        );
+    fn cli_accepts_user_collection_kind() {
+        let matches = TestCli::command()
+            .try_get_matches_from([
+                "test",
+                "body",
+                "set",
+                "MEET-ABCDE",
+                "--kind",
+                "meetings",
+                "--body",
+                "notes",
+            ])
+            .unwrap();
+        assert!(TestCli::from_arg_matches(&matches).is_ok());
     }
 }
 
@@ -941,6 +965,7 @@ mod node_edit_op_parity {
             // node title set / task update --title / --tag
             "set_title",
             "set_tags",
+            "set_state",
         ])
     }
 

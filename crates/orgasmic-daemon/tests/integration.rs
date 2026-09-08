@@ -2232,7 +2232,17 @@ async fn stub_routes_return_501_with_tracking_task() {
     let token = read_token(&home);
     let client = reqwest::Client::new();
 
-    for route in &["/api/graph/nodes", "/api/runs"] {
+    // Graph creation is implemented; malformed input reaches validation.
+    let graph = client
+        .post(format!("http://{}/api/graph/nodes", running.addr))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(graph.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+
+    for route in &["/api/runs"] {
         let resp = client
             .post(format!("http://{}{}", running.addr, route))
             .bearer_auth(&token)
@@ -2903,6 +2913,7 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
             "kind": "implementer",
             "mode": "ws",
             "harness": "codex",
+            "allow_simulated": true,
             "brief_path": brief,
             "worktree_path": worktree,
             "last_path": last,

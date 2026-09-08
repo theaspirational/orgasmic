@@ -30,27 +30,30 @@ export function useResource<T>(
   fetcherRef.current = fetcher;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
-  const activeKeyRef = useRef(key);
+  const activeScopeRef = useRef<symbol | null>(null);
 
   const refresh = useRef(async () => {
-    const myKey = activeKeyRef.current;
+    const scope = activeScopeRef.current;
+    if (scope === null) return;
     setLoading(true);
     try {
       const next = await fetcherRef.current();
-      if (activeKeyRef.current !== myKey) return;
+      if (activeScopeRef.current !== scope) return;
       setData(next);
       setError(null);
     } catch (err) {
-      if (activeKeyRef.current !== myKey) return;
+      if (activeScopeRef.current !== scope) return;
       setError(err);
       onErrorRef.current?.(err);
     } finally {
-      if (activeKeyRef.current === myKey) setLoading(false);
+      if (activeScopeRef.current === scope) setLoading(false);
     }
   }).current;
 
   useEffect(() => {
-    activeKeyRef.current = key;
+    // A fresh identity also fences off an old request when the same key is
+    // disabled/re-enabled or replayed by StrictMode.
+    activeScopeRef.current = enabled ? Symbol(key) : null;
     if (!enabled) {
       setData(null);
       setError(null);
@@ -58,7 +61,7 @@ export function useResource<T>(
       return;
     }
     if (immediate) void refresh();
-    return undefined;
+    return () => { activeScopeRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled, immediate]);
 
