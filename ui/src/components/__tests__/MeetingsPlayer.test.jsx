@@ -9,8 +9,10 @@ vi.mock('@orgasmic/plugin-sdk', async () => ({
   useMe: () => ({ can: () => true }), useEventStream: () => {},
   Button: ({ variant, size, ...props }) => <button {...props} />,
   Input: (props) => <input {...props} />,
+  Textarea: (props) => <textarea {...props} />,
 }));
 import { Player } from '../../../../examples/plugins/meetings/ui/player.js';
+import { register } from '../../../../examples/plugins/meetings/ui/index.js';
 afterEach(cleanup);
 it('loads the task graph layer and writes the current immutable recording timestamp', async () => {
   const recording = { id: 'recording', name: 'Planning.wav', media_type: 'audio/wav', revision: 'sha' };
@@ -55,8 +57,62 @@ it('opens the meeting chat without a range chip when the playhead is at the end'
   expect(ctx.openChat).toHaveBeenCalledWith({ node: 'MEET-1', purpose: 'meeting' });
 });
 
-it('hides the chat control on a host without core.chat', async () => {
+it('opens the meeting chat with the recording as an attachment chip', async () => {
+  const ctx = recordingCtx({ openChat: vi.fn() });
+  render(<Player ctx={ctx} nodeId="MEET-1" onOpenNode={vi.fn()} writable />);
+  await screen.findByLabelText('Planning.wav');
+  fireEvent.click(screen.getByRole('button', { name: 'Chat about this recording' }));
+  expect(ctx.openChat).toHaveBeenCalledWith({ node: 'MEET-1', purpose: 'meeting',
+    context: [{ kind: 'attachment', node: 'MEET-1', id: 'recording', revision: 'sha' }] });
+});
+
+it('hides the chat controls on a host without core.chat', async () => {
   render(<Player ctx={recordingCtx()} nodeId="MEET-1" onOpenNode={vi.fn()} writable />);
   await screen.findByLabelText('Planning.wav');
-  expect(screen.queryByRole('button', { name: 'Chat about this moment' })).toBeNull();
+  expect(screen.queryByRole('button', { name: /^Chat about/ })).toBeNull();
+});
+
+function detailView(body, extra = {}) {
+  let View;
+  const ctx = { projectId: 'demo', signal: new AbortController().signal, mediaUrl: vi.fn(),
+    registerStyles: vi.fn(), registerNodeView: vi.fn((_, view) => { View = view; return () => {}; }),
+    get: vi.fn(async (path) => (path.startsWith('/org/node?') ? { id: 'MEET-1', title: 'Planning', body, schema_matches: true, source: { base_version: 'v1' } } : [])),
+    post: vi.fn(), getDraft: () => undefined, setDraft: vi.fn(), clearDraft: vi.fn(), ...extra };
+  register(ctx);
+  return { ctx, View };
+}
+
+it('chats about the selected notes text, capped at 4 KiB on a character boundary', async () => {
+  const { ctx, View } = detailView(`${'€'.repeat(2000)} tail`, { openChat: vi.fn() });
+  render(<View nodeId="MEET-1" projectId="demo" onOpenNode={vi.fn()} />);
+  const notes = await screen.findByLabelText('Notes');
+  const button = screen.getByRole('button', { name: 'Chat about selection' });
+  expect(button).toBeDisabled();
+  notes.setSelectionRange(0, 3);
+  fireEvent.select(notes);
+  expect(button).toBeEnabled();
+  fireEvent.click(button);
+  expect(ctx.openChat).toHaveBeenLastCalledWith({ node: 'MEET-1', purpose: 'meeting', context: [{ kind: 'selection', text: '€€€' }] });
+
+  notes.setSelectionRange(0, notes.value.length);
+  fireEvent.select(notes);
+  fireEvent.click(button);
+  const { text } = ctx.openChat.mock.lastCall[0].context[0];
+  expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(4096);
+  expect(text.endsWith('…')).toBe(true);
+  expect(text.startsWith('€€€')).toBe(true);
+  expect(text.includes('�')).toBe(false);
+
+  // Editing collapses the selection.
+  fireEvent.change(notes, { target: { value: 'rewritten' } });
+  expect(button).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
+  expect(ctx.openChat).toHaveBeenLastCalledWith({ node: 'MEET-1', purpose: 'meeting' });
+});
+
+it('hides the detail chat controls on a host without core.chat', async () => {
+  const { View } = detailView('notes');
+  render(<View nodeId="MEET-1" projectId="demo" onOpenNode={vi.fn()} />);
+  await screen.findByLabelText('Notes');
+  expect(screen.queryByRole('button', { name: /Chat/ })).toBeNull();
 });

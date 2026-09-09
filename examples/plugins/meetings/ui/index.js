@@ -2,6 +2,14 @@ import { createElement as h, useEffect, useId, useState } from 'react';
 import { Button, Input, Textarea, useEventStream, useMe, useResource } from '@orgasmic/plugin-sdk';
 import { Player } from './player.js';
 
+// A selection chip is capped at 4096 bytes by the daemon: cut on a character
+// boundary and mark the cut.
+function selectionChip(text) {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= 4096) return text;
+  return `${new TextDecoder().decode(bytes.slice(0, 4093)).replace(/�$/, '')}…`;
+}
+
 export function register(ctx) {
   ctx.registerStyles(`
     .meetings { display: grid; gap: 1rem; }
@@ -17,6 +25,7 @@ export function register(ctx) {
     .meetings .recording { border-bottom: 1px solid var(--border); padding-bottom: 1rem; }
     .meetings .upload-progress { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
     .meetings .meeting-row { width: 100%; min-height: 2.75rem; justify-content: start; white-space: normal; overflow-wrap: anywhere; height: auto; text-align: start; }
+    .meetings .chat-row { display: flex; flex-wrap: wrap; gap: .5rem; }
   `);
   return ctx.registerNodeView('meetings', function Meetings({ nodeId, projectId, onOpenNode }) {
     return nodeId ? h(Detail, { nodeId, projectId, onOpenNode }) : h(List, { onOpenNode });
@@ -46,6 +55,8 @@ export function register(ctx) {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
+    // The notes text currently selected in the textarea, for a selection chip.
+    const [selection, setSelection] = useState('');
     useEffect(() => {
       if (result.data && !draft) setDraft({ title: result.data.title, body: result.data.body, base_version: result.data.source.base_version });
     }, [result.data, draft]);
@@ -57,6 +68,7 @@ export function register(ctx) {
       ctx.setDraft(nodeId, next);
       setDraft(next);
       setMessage('Unsaved changes');
+      if (key === 'body') setSelection('');
     };
     async function save(event) {
       event.preventDefault();
@@ -77,10 +89,14 @@ export function register(ctx) {
     if (result.error) return h('p', { role: 'alert' }, String(result.error));
     if (!draft) return h('p', { role: 'status' }, 'Loading meeting…');
     return h('div', { className: 'meetings' },
-      chat ? h('div', null, h(Button, { type: 'button', variant: 'outline', onClick: () => ctx.openChat({ node: nodeId, purpose: 'meeting' }) }, 'Chat')) : null,
+      chat ? h('div', { className: 'chat-row' },
+        h(Button, { type: 'button', variant: 'outline', onClick: () => ctx.openChat({ node: nodeId, purpose: 'meeting' }) }, 'Chat'),
+        h(Button, { type: 'button', variant: 'outline', disabled: !selection,
+          onClick: () => ctx.openChat({ node: nodeId, purpose: 'meeting', context: [{ kind: 'selection', text: selectionChip(selection) }] }) }, 'Chat about selection')) : null,
       h(Player, { ctx, nodeId, onOpenNode, writable }), h('form', { className: 'meetings', onSubmit: save },
       h('label', { htmlFor: titleId }, 'Title', h(Input, { id: titleId, value: draft.title, required: true, disabled: !writable || saving, onChange: (e) => change('title', e.target.value) })),
-      h('label', { htmlFor: notesId }, 'Notes', h(Textarea, { id: notesId, value: draft.body, disabled: !writable || saving, onChange: (e) => change('body', e.target.value) })),
+      h('label', { htmlFor: notesId }, 'Notes', h(Textarea, { id: notesId, value: draft.body, disabled: !writable || saving, onChange: (e) => change('body', e.target.value),
+        onSelect: (e) => setSelection(e.target.value.slice(e.target.selectionStart, e.target.selectionEnd)) })),
       error ? h('p', { role: 'alert', className: 'error' }, error) : null,
       h('p', { role: 'status', className: 'muted' }, writable ? message : 'Read only'),
       writable ? h(Button, { type: 'submit', disabled: saving || !draft.title.trim() }, saving ? 'Saving…' : 'Save notes') : null));
