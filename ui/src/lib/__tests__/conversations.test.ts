@@ -97,6 +97,21 @@ describe('context chips', () => {
     expect(parseContextBlock('<<<orgasmic-context\n>>>\nplain')).toEqual({ chips: [], message: 'plain', prefix: '' });
   });
 
+  it('anchors on the last block when the scope prompt quotes the delimiter', () => {
+    const prompt = [
+      'Messages carry a delimited <<<orgasmic-context block naming ids.',
+      '{"kind":"node","id":"NOT-A-CHIP"}',
+      '>>>',
+      'more prompt',
+    ].join('\n');
+    const sent = `${prompt}\n\n<<<orgasmic-context\n{"kind":"node","id":"MEET-1"}\n>>>\nwhat was decided?`;
+    expect(parseContextBlock(sent)).toEqual({
+      chips: [{ kind: 'node', id: 'MEET-1' }],
+      message: 'what was decided?',
+      prefix: prompt,
+    });
+  });
+
   it('leaves text without a complete block alone and skips malformed chip lines', () => {
     expect(parseContextBlock('just a message')).toBeNull();
     expect(parseContextBlock('<<<orgasmic-context\n{"kind":"node","id":"dec_1"}\nnever closed')).toBeNull();

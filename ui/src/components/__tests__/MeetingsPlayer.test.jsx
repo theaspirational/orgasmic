@@ -36,14 +36,14 @@ function recordingCtx(extra = {}) {
     get: vi.fn(async (path) => (path.startsWith('/attachments?') ? [recording] : [])), post: vi.fn(), ...extra };
 }
 
-it('opens the meeting chat with a 30 s range chip at the playhead', async () => {
+it('opens the meeting chat with a 30 s range chip at the playhead, clamped to the recording', async () => {
   const ctx = recordingCtx({ openChat: vi.fn() });
   render(<Player ctx={ctx} nodeId="MEET-1" onOpenNode={vi.fn()} writable />);
   const media = await screen.findByLabelText('Planning.wav');
-  Object.defineProperty(media, 'duration', { value: 120 }); media.currentTime = 90;
+  Object.defineProperty(media, 'duration', { value: 120 }); media.currentTime = 100;
   fireEvent.click(screen.getByRole('button', { name: 'Chat about this moment' }));
   expect(ctx.openChat).toHaveBeenCalledWith({ node: 'MEET-1', purpose: 'meeting',
-    context: [{ kind: 'range', node: 'MEET-1', attachment: 'recording', revision: 'sha', start_ms: 90000, end_ms: 120000 }] });
+    context: [{ kind: 'range', node: 'MEET-1', attachment: 'recording', revision: 'sha', start_ms: 100000, end_ms: 120000 }] });
 });
 
 it('hides the chat control on a host without core.chat', async () => {

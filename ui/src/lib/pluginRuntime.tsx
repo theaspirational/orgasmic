@@ -24,9 +24,13 @@ export type PluginContext = {
   setDraft: (nodeId: string, draft: unknown) => void;
   clearDraft: (nodeId: string) => void;
   /** `core.chat@1`: open the node's newest OPEN conversation (or its scoped
-   * setup) in the dock; `context` chips become removable chips on the composer. */
+   * setup) in the dock; `context` chips become removable chips on the composer.
+   * This is the reliable way to attach chips when opening by node. */
   openChat: (options?: PluginOpenChatOptions) => void;
-  /** `core.chat@1`: set or clear the optional chips on the open conversation's composer. */
+  /** `core.chat@1`: set or clear the optional chips on the composer of a
+   * conversation ALREADY open in the dock. A warning no-op otherwise, including
+   * right after `openChat({ node })` while the dock is still resolving the
+   * node's conversation; pass `context` to `openChat` for that case. */
   chatContext: (chips: ConversationContextChip[] | null) => void;
 };
 export type PluginOpenChatOptions = { node?: string; purpose?: string; context?: ConversationContextChip[] };

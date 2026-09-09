@@ -85,13 +85,15 @@ export function Player({ ctx, nodeId, onOpenNode, writable }) {
     finally { setLinking(false); }
   }
   // Open the meeting's chat with a range chip at the playhead: 30 s from the
-  // current time. The daemon anchors the moment on the conversation's link.
+  // current time, clamped to the recording's end when the duration is known.
+  // The daemon anchors the moment on the conversation's link.
   function chatAboutMoment() {
     if (!recording || !media.current) return;
     const start = Math.round(media.current.currentTime * 1000);
     if (!Number.isSafeInteger(start) || start < 0) return;
+    const end = Math.min(start + 30000, Number.isFinite(media.current.duration) ? Math.round(media.current.duration * 1000) : Infinity);
     ctx.openChat({ node: nodeId, purpose: 'meeting', context: [{ kind: 'range', node: nodeId,
-      attachment: recording.id, revision: recording.revision, start_ms: start, end_ms: start + 30000 }] });
+      attachment: recording.id, revision: recording.revision, start_ms: start, end_ms: end }] });
   }
   return h('section', { className: 'meetings recording', 'aria-label': 'Recording' },
     h('h2', null, 'Recording'),
