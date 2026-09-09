@@ -7,6 +7,13 @@ use std::path::Path;
 
 pub const PLUGIN_API: u32 = 1;
 pub const PLUGIN_SDK_VERSION: &str = "1.0.0";
+/// Core services a manifest may name in `:REQUIRES:` (and `:OPTIONAL:`).
+pub const KNOWN_SERVICES: [&str; 4] = [
+    "core.nodes@1",
+    "core.links@1",
+    "core.attachments@1",
+    "core.chat@1",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -100,7 +107,7 @@ impl PluginManifest {
         );
         for service in words("REQUIRES") {
             anyhow::ensure!(
-                ["core.nodes@1", "core.links@1", "core.attachments@1"].contains(&service.as_str()),
+                KNOWN_SERVICES.contains(&service.as_str()),
                 "required service {service} is unavailable"
             );
         }
@@ -158,7 +165,7 @@ impl PluginManifest {
             );
             anyhow::ensure!(unique.insert(command), "duplicate command {command}");
         }
-        let node_type = if root
+        let mut node_type = if root
             .sections
             .iter()
             .any(|h| h.property("COLLECTION").is_some())
@@ -167,6 +174,17 @@ impl PluginManifest {
         } else {
             None
         };
+        // `:CHAT_PROMPT:` may sit on the Plugin heading instead of the node
+        // type section; either way it names a spec file inside the folder.
+        if let Some(descriptor) = node_type.as_mut() {
+            if descriptor.chat_prompt.is_none() {
+                descriptor.chat_prompt = root
+                    .property("CHAT_PROMPT")
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string);
+            }
+        }
         Ok(Self {
             id,
             version,
@@ -230,6 +248,16 @@ impl PluginManifest {
         Ok(path)
     }
 
+    /// A `:CHAT_PROMPT:` spec file, resolved inside the plugin folder.
+    pub fn chat_prompt_path(&self, dir: &Path) -> Result<std::path::PathBuf> {
+        let relative = self
+            .node_type
+            .as_ref()
+            .and_then(|d| d.chat_prompt.as_deref())
+            .context("plugin has no CHAT_PROMPT")?;
+        plugin_file_path(dir, relative)
+    }
+
     pub fn command_path(&self, dir: &Path, command: &str) -> Result<std::path::PathBuf> {
         anyhow::ensure!(
             self.commands.iter().any(|c| c == command),
@@ -251,6 +279,30 @@ impl PluginManifest {
         }
         Ok(path)
     }
+}
+
+/// Resolve a manifest-relative file (`prompts/chat.org`) to a regular file
+/// inside the plugin folder; symlink roots and escaping paths are refused.
+pub fn plugin_file_path(dir: &Path, relative: &str) -> Result<std::path::PathBuf> {
+    anyhow::ensure!(
+        !relative.is_empty()
+            && !relative.starts_with('/')
+            && relative.split('/').all(|part| {
+                !part.is_empty() && part != "." && part != ".." && !part.contains('\\')
+            }),
+        "invalid plugin file path"
+    );
+    anyhow::ensure!(
+        !dir.symlink_metadata()?.file_type().is_symlink(),
+        "plugin root must not be a symlink"
+    );
+    let root = dir.canonicalize()?;
+    let path = root.join(relative).canonicalize()?;
+    anyhow::ensure!(
+        path.starts_with(&root) && path.is_file(),
+        "plugin file escapes plugin folder"
+    );
+    Ok(path)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -326,6 +378,38 @@ mod tests {
     }
 
     #[test]
+    fn chat_service_and_chat_prompt_resolve_inside_the_plugin_folder() {
+        let source = SOURCE.replace(
+            ":REQUIRES: core.nodes@1",
+            ":REQUIRES: core.nodes@1 core.chat@1\n:OPTIONAL: core.attachments@1\n:CHAT_PROMPT: prompts/chat.org",
+        );
+        let manifest = PluginManifest::parse(&source, "plugin.org").unwrap();
+        assert_eq!(
+            manifest.node_type.as_ref().unwrap().chat_prompt.as_deref(),
+            Some("prompts/chat.org"),
+            "a root-heading CHAT_PROMPT reaches the descriptor"
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("meetings");
+        std::fs::create_dir_all(dir.join("prompts")).unwrap();
+        std::fs::write(dir.join("prompts/chat.org"), "* PROMPT-SPEC x\n").unwrap();
+        std::fs::write(temp.path().join("outside.org"), "* PROMPT-SPEC y\n").unwrap();
+        assert_eq!(
+            manifest.chat_prompt_path(&dir).unwrap(),
+            dir.join("prompts/chat.org").canonicalize().unwrap()
+        );
+        for escaping in [
+            "../outside.org",
+            "/etc/passwd",
+            "prompts/../../outside.org",
+            "prompts",
+        ] {
+            assert!(plugin_file_path(&dir, escaping).is_err(), "{escaping}");
+        }
+        assert!(plugin_file_path(&dir, "prompts/missing.org").is_err());
+    }
+
+    #[test]
     fn manifest_validates_scope_and_paths() {
         let m = PluginManifest::parse(SOURCE, "plugin.org").unwrap();
         assert_eq!(m.schema_accepts, BTreeSet::from([1, 2]));
@@ -333,7 +417,7 @@ mod tests {
         for (before, after) in [
             ("meetings\n:VERSION", "../escape\n:VERSION"),
             ("nodes.write", "host.root"),
-            ("core.nodes@1", "core.chat@1"),
+            ("core.nodes@1", "core.magic@1"),
             (":SCHEMA: 2", ":SCHEMA: 0"),
             (":VERSION: 0.1.0", ":VERSION: bad"),
         ] {

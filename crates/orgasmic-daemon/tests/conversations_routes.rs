@@ -552,7 +552,7 @@ async fn cold_continue_carries_scope_context_and_bounded_tail() {
         &base,
         &token,
         "/conversations",
-        json!({"project":"demo","purpose":"implement","provider":"opencode","access":"auto","title":"Project talk","message":first,"request_id":request_id()}),
+        json!({"project":"demo","purpose":"discuss","provider":"opencode","access":"auto","title":"Project talk","message":first,"request_id":request_id()}),
         200,
     )
     .await;

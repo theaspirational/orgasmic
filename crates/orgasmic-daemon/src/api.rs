@@ -3908,6 +3908,7 @@ async fn post_manager_launch(
                 last_path: None,
                 stdout_path: None,
                 dispatch_attempt_token: None,
+                conversation_id: None,
                 session_path,
                 driver_config,
                 // The manager is interactive and operator-paced: it idles at a
@@ -5363,6 +5364,7 @@ async fn post_stage(
                 last_path,
                 stdout_path: None,
                 dispatch_attempt_token: None,
+                conversation_id: None,
                 session_path: session_path.clone(),
                 driver_config,
                 stall_timeout_secs: worker.stall_timeout_secs,
@@ -6211,6 +6213,9 @@ struct DispatchResponse {
     pub driver: String,
     pub harness: String,
     pub dispatch_tx_id: String,
+    /// The attempt's conversation node (CHAT-SCOPE C2), `null` when its
+    /// record could not be written.
+    pub conversation_id: Option<String>,
 }
 
 /// The kinds `POST /dispatch` will spawn.
@@ -6238,6 +6243,14 @@ impl DispatchEndpointKind {
         match self {
             Self::Implementer => WorkerKind::Implementer,
             Self::Reviewer => WorkerKind::Reviewer,
+        }
+    }
+
+    /// The conversation purpose that records this attempt kind.
+    fn purpose(self) -> &'static str {
+        match self {
+            Self::Implementer => "implement",
+            Self::Reviewer => "review",
         }
     }
 
@@ -6280,6 +6293,8 @@ struct SpawnWorkerRequest<'a> {
     last_path: Option<&'a FsPath>,
     stdout_path: Option<&'a FsPath>,
     dispatch_attempt_token: Option<&'a str>,
+    /// The conversation that records this run, when one owns it.
+    conversation_id: Option<&'a str>,
     origin: &'static str,
     /// Session-path fragment for CLI dispatch (`implementer` / `reviewer`).
     dispatch_kind: Option<&'a str>,
@@ -6461,6 +6476,7 @@ async fn spawn_worker_run(
                 last_path: req.last_path.map(|p| p.to_path_buf()),
                 stdout_path: req.stdout_path.map(|p| p.to_path_buf()),
                 dispatch_attempt_token: req.dispatch_attempt_token.map(str::to_string),
+                conversation_id: req.conversation_id.map(str::to_string),
                 session_path: session_path.clone(),
                 driver_config,
                 // Only the persistent hot-session artifactor (tmux) spawn
@@ -6607,6 +6623,7 @@ async fn spawn_worker_run(
 /// validation (dec_WDR5K item 9). Transport is addressed by `(mode, harness)`.
 async fn post_task_dispatch(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path((project_id, task_id)): Path<(String, String)>,
     Json(req): Json<DispatchRequest>,
 ) -> Result<Json<DispatchResponse>, ApiError> {
@@ -6668,6 +6685,31 @@ async fn post_task_dispatch(
         effort: verbatim_optional(req.effort_override.clone()),
         credential_mode: verbatim_optional(req.credential_mode_override.clone()),
     };
+    // The attempt's conversation is a record, not a gate (CHAT-SCOPE C2): a
+    // node that cannot be written is logged and the dispatch proceeds.
+    let conversation_id = match conversations::dispatch_conversation(
+        &state,
+        &identity,
+        &project_id,
+        &project.root,
+        &task_id,
+        kind.purpose(),
+        &worker_for_bundle,
+        &req.worktree_path,
+    )
+    .await
+    {
+        Ok(id) => Some(id),
+        Err(error) => {
+            tracing::warn!(
+                task_id = %task_id,
+                kind = kind.as_str(),
+                error = %error.message,
+                "dispatch conversation record unavailable; dispatching without it"
+            );
+            None
+        }
+    };
     let spawn = spawn_worker_run(
         &state,
         SpawnWorkerRequest {
@@ -6682,6 +6724,7 @@ async fn post_task_dispatch(
             last_path: Some(&req.last_path),
             stdout_path: Some(&req.stdout_path),
             dispatch_attempt_token: req.dispatch_attempt_token.as_deref(),
+            conversation_id: conversation_id.as_deref(),
             origin: "cli_dispatch",
             dispatch_kind: Some(kind.as_str()),
             task_sandbox_permissions,
@@ -6719,6 +6762,27 @@ async fn post_task_dispatch(
             )
             .await;
         return Err(error);
+    }
+
+    if let Some(conversation_id) = conversation_id.as_deref() {
+        if let Err(error) = conversations::note_dispatch_run(
+            &state,
+            &identity,
+            &project_id,
+            &project.root,
+            conversation_id,
+            &acquire.run_id,
+            &req.worktree_path,
+        )
+        .await
+        {
+            tracing::warn!(
+                conversation = conversation_id,
+                run_id = %acquire.run_id,
+                error = %error.message,
+                "dispatch attempt not recorded on its conversation"
+            );
+        }
     }
 
     let dispatch_tx_id = record_dispatch_started(
@@ -6793,6 +6857,7 @@ async fn post_task_dispatch(
         driver: worker.driver,
         harness: worker.harness,
         dispatch_tx_id,
+        conversation_id,
     }))
 }
 
@@ -9997,8 +10062,15 @@ async fn get_live_runs(
 ) -> Json<Value> {
     let mut live = state.supervisor.snapshot().await;
     if !matches!(identity, Identity::Admin) {
-        live.runs
-            .retain(|run| run_readable(&identity, run.project_id.as_deref(), &run.task_id).is_ok());
+        live.runs.retain(|run| {
+            run_readable(
+                &identity,
+                run.project_id.as_deref(),
+                &run.task_id,
+                run.conversation_id.as_deref(),
+            )
+            .is_ok()
+        });
     }
     Json(json!({
         "boot_id": state.boot.boot_id,
@@ -10312,15 +10384,16 @@ async fn get_run_authorized(
 }
 
 /// One rule for every run read (`GET /runs/:id`, `/ws/transcript/:id`,
-/// the `GET /runs/live` filter): a conversation run (task id `CONV-…`) needs
-/// chat.read on its project and nothing more; every other run needs
-/// sessions.watch.
+/// the `GET /runs/live` filter): a conversation run (`conversation_id` set,
+/// or task id `CONV-…`) needs chat.read on its project and nothing more;
+/// every other run needs sessions.watch.
 pub(crate) fn run_readable(
     identity: &Identity,
     project: Option<&str>,
     task_id: &str,
+    conversation_id: Option<&str>,
 ) -> Result<(), ApiError> {
-    if task_id.starts_with(conversations::CONVERSATION_PREFIX) {
+    if conversation_id.is_some() || task_id.starts_with(conversations::CONVERSATION_PREFIX) {
         authz::require(identity, project, Action::ChatRead)
             .map_err(|_| ApiError::forbidden("chat.read is required to read a conversation run"))
     } else {
@@ -10334,6 +10407,7 @@ pub(crate) fn authorize_run_read(identity: &Identity, run: &Value) -> Result<(),
         identity,
         run["project_id"].as_str(),
         run["task_id"].as_str().unwrap_or_default(),
+        run["conversation_id"].as_str(),
     )
 }
 
@@ -12649,6 +12723,7 @@ async fn execute_run_recover_action(
                     last_path,
                     stdout_path,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: session_path.clone(),
                     driver_config,
                     stall_timeout_secs: recovery_run_options.stall_timeout_secs,
@@ -21851,6 +21926,7 @@ async fn launch_artifact_generation(
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
+            conversation_id: Some(task_id),
             origin: "artifact_generate",
             dispatch_kind: Some("artifactor"),
             task_sandbox_permissions: None,
@@ -22001,6 +22077,7 @@ async fn launch_node_regeneration(
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
+            conversation_id: Some(task_id),
             origin: "node_regenerate",
             dispatch_kind: Some("artifactor"),
             task_sandbox_permissions: None,
@@ -25639,6 +25716,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
                     stall_timeout_secs: Some(0),
@@ -25713,6 +25791,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
                     stall_timeout_secs: Some(0),
@@ -25807,6 +25886,7 @@ pub(crate) mod tests {
                         last_path: None,
                         stdout_path: None,
                         dispatch_attempt_token: None,
+                        conversation_id: None,
                         session_path: session_path.clone(),
                         driver_config: DriverConfig::from_value(json!({})),
                         stall_timeout_secs: Some(0),
@@ -25987,6 +26067,7 @@ pub(crate) mod tests {
                         last_path: acquire_last,
                         stdout_path: None,
                         dispatch_attempt_token: None,
+                        conversation_id: None,
                         session_path: session_path.clone(),
                         driver_config: DriverConfig::from_value(json!({})),
                         stall_timeout_secs: Some(0),
@@ -26048,6 +26129,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: session_path.clone(),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     stall_timeout_secs: Some(0),
@@ -26096,6 +26178,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: project_sessions_dir(&project_root)
                         .join("claimed-terminal.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
@@ -26267,6 +26350,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: project_sessions_dir(&project_root).join("claim-blocker.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     stall_timeout_secs: Some(0),
@@ -26996,6 +27080,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: session_path.clone(),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     stall_timeout_secs: Some(0),
@@ -27174,6 +27259,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: home.sessions().join("manager-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     stall_timeout_secs: None,
@@ -27344,6 +27430,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path,
                     driver_config: orgasmic_drivers::adapters::cursor_acp::simulated_config(),
                     stall_timeout_secs: None,
@@ -27431,6 +27518,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: home.sessions().join("unsupported-runtime.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     stall_timeout_secs: None,
@@ -27704,6 +27792,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: home.sessions().join("reviewer-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     stall_timeout_secs: None,
@@ -27745,6 +27834,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: home.sessions().join("manager-restart-guard.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     stall_timeout_secs: None,
@@ -30220,6 +30310,7 @@ pub(crate) mod tests {
                 last_path: None,
                 stdout_path: None,
                 dispatch_attempt_token: None,
+                conversation_id: None,
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
@@ -30346,6 +30437,7 @@ pub(crate) mod tests {
                 last_path: None,
                 stdout_path: None,
                 dispatch_attempt_token: None,
+                conversation_id: None,
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
@@ -30463,6 +30555,7 @@ pub(crate) mod tests {
                     last_path: None,
                     stdout_path: None,
                     dispatch_attempt_token: None,
+                    conversation_id: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
                     // Every sweep off: the incident's run was invisible to all
@@ -32901,6 +32994,7 @@ pub(crate) mod tests {
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
+            conversation_id: None,
             origin: "cli_dispatch",
             dispatch_kind: Some("implementer"),
             task_sandbox_permissions: None,
@@ -32980,6 +33074,7 @@ pub(crate) mod tests {
                 last_path: Some(&last_path),
                 stdout_path: None,
                 dispatch_attempt_token: None,
+                conversation_id: None,
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,

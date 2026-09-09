@@ -163,7 +163,7 @@ pub(super) fn actor_key(identity: &Identity) -> String {
     }
 }
 
-async fn commit_extra(
+pub(super) async fn commit_extra(
     state: &ApiState,
     identity: &Identity,
     path: PathBuf,
@@ -287,7 +287,7 @@ async fn post_link(
         true,
     )
     .await?;
-    node(
+    let target = node(
         &state,
         &identity,
         &req.project,
@@ -317,8 +317,16 @@ async fn post_link(
         true,
     )
     .await?;
-    let assets =
+    // An anchor may point into media on either end of the link (C2): a
+    // conversation anchors moments in the meeting it is about.
+    let mut assets =
         records::read_attachments(&optional_text(&dir.join("attachments.org"))?).map_err(bad)?;
+    assets.extend(
+        records::read_attachments(&optional_text(
+            &target.path.parent().unwrap().join("attachments.org"),
+        )?)
+        .map_err(bad)?,
+    );
     for anchor in &req.anchors {
         single_line(&anchor.label, 512)?;
         if anchor.start_ms > 9_007_199_254_740_991
@@ -328,13 +336,9 @@ async fn post_link(
         {
             return Err(ApiError::bad_request("invalid media anchor range"));
         }
-        if !assets.iter().any(|a| {
-            a.id == anchor.attachment
-                && a.revision == anchor.revision
-                && (a.media_type.starts_with("audio/") || a.media_type.starts_with("video/"))
-        }) {
+        if !media_revision_owned(&assets, &anchor.attachment, &anchor.revision) {
             return Err(ApiError::bad_request(
-                "anchor must reference an immutable media revision owned by the source node",
+                "anchor must reference an immutable media revision owned by the source or target node",
             ));
         }
     }
@@ -384,6 +388,100 @@ async fn post_link(
     )
     .await?;
     Ok(Json(json!({"id": id, "tx_id": tx})))
+}
+
+/// The exact-revision, audio/video rule every media anchor must satisfy.
+pub(super) fn media_revision_owned(
+    assets: &[records::AttachmentRecord],
+    attachment: &str,
+    revision: &str,
+) -> bool {
+    assets.iter().any(|a| {
+        a.id == attachment
+            && a.revision == revision
+            && (a.media_type.starts_with("audio/") || a.media_type.starts_with("video/"))
+    })
+}
+
+/// Append `anchors` to the live `source -> target` link beside `source`,
+/// deduped on attachment+revision+range, through the `POST /links` write
+/// path (revision bump, index refresh, graph event). `Ok(false)` when every
+/// anchor was already on file and nothing was written.
+pub(super) async fn append_link_anchors(
+    state: &ApiState,
+    identity: &Identity,
+    project: &str,
+    source_dir: &FsPath,
+    source: &str,
+    target: &str,
+    anchors: Vec<MediaAnchor>,
+) -> Result<bool, ApiError> {
+    let same = |a: &MediaAnchor, b: &MediaAnchor| {
+        a.attachment == b.attachment
+            && a.revision == b.revision
+            && a.start_ms == b.start_ms
+            && a.end_ms == b.end_ms
+    };
+    let id = digest(format!("{source}\0{target}").as_bytes());
+    let lock = state.node_write_lock(source_dir);
+    let _lock = lock.lock().await;
+    let path = source_dir.join("links.org");
+    let links = records::read_links(&optional_text(&path)?).map_err(bad)?;
+    let Some(link) = links.iter().find(|r| r.id == id && !r.deleted) else {
+        return Err(bad("scope link is missing"));
+    };
+    let fresh: Vec<MediaAnchor> = anchors.into_iter().fold(Vec::new(), |mut fresh, anchor| {
+        if !link
+            .anchors
+            .iter()
+            .chain(fresh.iter())
+            .any(|b| same(b, &anchor))
+        {
+            fresh.push(anchor);
+        }
+        fresh
+    });
+    if fresh.is_empty() {
+        return Ok(false);
+    }
+    let actor = identity
+        .member_name()
+        .unwrap_or_else(|| state.actor.clone());
+    let payload = json!({"source": source, "target": target, "anchors": fresh});
+    commit_extra(
+        state,
+        identity,
+        path,
+        ApiTxRequest {
+            ty: "link.updated".into(),
+            actor: None,
+            project: Some(project.to_string()),
+            task: None,
+            target: Some(source.to_string()),
+            reason: "link.updated".into(),
+            request_id: None,
+            extra: vec![],
+        },
+        payload,
+        move |current| {
+            let mut links = records::read_links(current)?;
+            let link = links
+                .iter_mut()
+                .find(|r| r.id == id && !r.deleted)
+                .ok_or_else(|| anyhow::anyhow!("scope link is missing"))?;
+            for anchor in fresh {
+                if !link.anchors.iter().any(|b| same(b, &anchor)) {
+                    link.anchors.push(anchor);
+                }
+            }
+            link.revision += 1;
+            link.actor = actor;
+            link.updated_at = Utc::now().to_rfc3339();
+            Ok(records::render_links(&links))
+        },
+    )
+    .await?;
+    Ok(true)
 }
 
 fn store_root(state: &ApiState, project: &str) -> PathBuf {

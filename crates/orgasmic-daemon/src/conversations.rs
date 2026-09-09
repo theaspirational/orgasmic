@@ -6,8 +6,8 @@
 //! serialized ledger writer with the rest of the node surface.
 use super::node_services::{actor_key, digest, node};
 use super::*;
-use crate::supervisor::DEFAULT_IDLE_TIMEOUT_SECS;
-use orgasmic_core::node_services::{self as records, LinkRecord};
+use crate::supervisor::{RunSummary, DEFAULT_IDLE_TIMEOUT_SECS};
+use orgasmic_core::node_services::{self as records, LinkRecord, MediaAnchor};
 use std::collections::HashSet;
 
 pub(super) const ROUTES: &[(&str, &str)] = &[
@@ -27,6 +27,8 @@ const CONTEXT_OPEN: &str = "<<<orgasmic-context";
 const CONTEXT_CLOSE: &str = ">>>";
 const SELECTION_LIMIT_BYTES: usize = 4096;
 const RELATES_TO: &str = "RELATES_TO";
+/// Media anchor labels keep this many characters of the message.
+const ANCHOR_LABEL_CHARS: usize = 80;
 
 /// Shared in-flight set: one launch per conversation at a time (409 otherwise).
 pub type LaunchSet = Arc<std::sync::Mutex<HashSet<String>>>;
@@ -83,18 +85,36 @@ pub(crate) enum ContextChip {
     Attachment {
         node: String,
         id: String,
-        revision: u64,
+        #[serde(deserialize_with = "revision_string")]
+        revision: String,
     },
     Range {
         node: String,
         attachment: String,
-        revision: u64,
+        #[serde(deserialize_with = "revision_string")]
+        revision: String,
         start_ms: u64,
         end_ms: u64,
     },
     Selection {
         text: String,
     },
+}
+
+/// Attachment revisions are content hashes on the wire (`GET /attachments`,
+/// upload finish, `MediaAnchor`). A JSON number still parses, stringified, so
+/// an older sender is not refused; it simply never matches a media revision.
+fn revision_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Revision {
+        Text(String),
+        Number(u64),
+    }
+    Ok(match Revision::deserialize(d)? {
+        Revision::Text(text) => text,
+        Revision::Number(number) => number.to_string(),
+    })
 }
 
 pub(super) struct Created {
@@ -115,6 +135,9 @@ struct Conversation {
     access: Option<String>,
     mode: String,
     machine: String,
+    /// Where new runs start: the attempt worktree for implement/review, the
+    /// project root otherwise.
+    worktree: Option<PathBuf>,
     runs: Vec<String>,
     scope: Option<String>,
 }
@@ -128,6 +151,7 @@ struct RecordSpec {
     effort: Option<String>,
     access: Option<String>,
     mode: String,
+    worktree: Option<PathBuf>,
     request_id: String,
 }
 
@@ -195,10 +219,13 @@ async fn post_conversation_input(
     let context = (!req.context.is_empty()).then(|| json!(req.context));
 
     let live = state.supervisor.snapshot().await;
-    if let Some(run) = live.runs.iter().find(|run| run.task_id == conv.id) {
+    if let Some(run) = live.runs.iter().find(|run| owns_run(&conv, run)) {
         let text = compose(None, None, &req.context, message);
         send(&state, &run.run_id, &run.identity, text, context).await?;
-        return Ok(Json(json!({"run_id": run.run_id, "mode": "live"})));
+        let run_id = run.run_id.clone();
+        drop(live);
+        record_range_anchors(&state, &identity, &project_id, &conv, &req.context, message).await;
+        return Ok(Json(json!({"run_id": run_id, "mode": "live"})));
     }
     drop(live);
     let _launch = claim_launch(&state, &conv.id)?;
@@ -207,6 +234,7 @@ async fn post_conversation_input(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let prior = prior_session(&root, &conv);
+    let cwd = conv.worktree.clone().unwrap_or_else(|| root.clone());
 
     if conv.machine == state.machine {
         if let Some(prior) = prior.as_ref() {
@@ -214,6 +242,7 @@ async fn post_conversation_input(
                 &state,
                 &project_id,
                 &root,
+                &cwd,
                 &conv,
                 prior,
                 &request_id,
@@ -233,16 +262,27 @@ async fn post_conversation_input(
                     ":resumed",
                     "conversation.run_resumed",
                     "run resumed",
+                    None,
                 )
                 .await?;
+                record_range_anchors(&state, &identity, &project_id, &conv, &req.context, message)
+                    .await;
                 return Ok(Json(json!({"run_id": run_id, "mode": "resumed"})));
             }
         }
     }
+    if is_dispatch_purpose(&conv.purpose) {
+        // A worker attempt has no cold mode: its memory is the worktree and
+        // the harness session, and only a new attempt rebuilds those.
+        return Err(ApiError::conflict_json(json!({
+            "error": "no native session to resume; dispatch a new attempt",
+            "code": "no_resume",
+        })));
+    }
 
     let plan = plan_launch(
         &state,
-        &root,
+        &cwd,
         &conv.mode,
         &conv.provider,
         conv.model.clone(),
@@ -263,9 +303,17 @@ async fn post_conversation_input(
     let tail = prior
         .as_ref()
         .and_then(|prior| transcript_tail(&prior.envelopes));
-    let (acquire, _) = acquire_run(&state, &project_id, &root, &conv.id, &conv.purpose, plan)
-        .await
-        .map_err(acquire_error)?;
+    let (acquire, _) = acquire_run(
+        &state,
+        &project_id,
+        &root,
+        &cwd,
+        &conv.id,
+        &conv.purpose,
+        plan,
+    )
+    .await
+    .map_err(acquire_error)?;
     let text = compose(Some(&scope), tail.as_deref(), &req.context, message);
     send(&state, &acquire.run_id, &acquire.identity, text, context).await?;
     append_run(
@@ -278,9 +326,34 @@ async fn post_conversation_input(
         ":cold",
         "conversation.run_cold",
         "continued without native memory",
+        None,
     )
     .await?;
+    record_range_anchors(&state, &identity, &project_id, &conv, &req.context, message).await;
     Ok(Json(json!({"run_id": acquire.run_id, "mode": "cold"})))
+}
+
+/// Purposes whose runs are dispatched worker attempts (C2): never cold.
+fn is_dispatch_purpose(purpose: &str) -> bool {
+    matches!(purpose, "implement" | "review")
+}
+
+/// The live run this conversation continues: keyed by conversation id, by
+/// the chat lease (`task_id == id`), or, for a worker attempt reattached after
+/// a daemon restart (its record carries no conversation id), by the task
+/// lease plus the attempt role.
+fn owns_run(conv: &Conversation, run: &RunSummary) -> bool {
+    if run.conversation_id.as_deref() == Some(conv.id.as_str()) || run.task_id == conv.id {
+        return true;
+    }
+    let role = match conv.purpose.as_str() {
+        "implement" => "implementer",
+        "review" => "reviewer",
+        _ => return false,
+    };
+    run.conversation_id.is_none()
+        && run.role == role
+        && Some(run.task_id.as_str()) == conv.scope.as_deref()
 }
 
 // ---- create -----------------------------------------------------------------
@@ -401,6 +474,7 @@ pub(super) async fn create_authorized(
             effort: req.effort.clone(),
             access,
             mode: mode.clone(),
+            worktree: Some(root.clone()),
             request_id: req.request_id.clone(),
         },
     )
@@ -416,7 +490,7 @@ pub(super) async fn create_authorized(
     }
     drop(live);
     let _launch = claim_launch(&state, &id)?;
-    let (acquire, _) = acquire_run(&state, &project_id, &root, &id, &purpose, plan)
+    let (acquire, _) = acquire_run(&state, &project_id, &root, &root, &id, &purpose, plan)
         .await
         .map_err(acquire_error)?;
     append_run(
@@ -429,6 +503,7 @@ pub(super) async fn create_authorized(
         "",
         "conversation.run_started",
         "run started",
+        None,
     )
     .await?;
     if let Some(message) = req
@@ -530,7 +605,10 @@ async fn write_record(
         spec.access.as_deref().unwrap_or("").trim(),
         spec.mode.trim(),
         state.machine,
-        root.display(),
+        spec.worktree
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
     ));
     let mut rewrites = vec![FileRewrite {
         path: path.clone(),
@@ -624,8 +702,20 @@ pub(super) async fn find_regenerate_conversation(
     entry: &BoardEntry,
     node_id: &str,
 ) -> Result<Option<String>, ApiError> {
-    let (_, snap) = ensure_loaded_snapshot(state, Some(&entry.id)).await?;
-    let project = select_loaded_project(&snap, &entry.id)?;
+    find_conversation(state, &entry.id, &entry.path, node_id, "regenerate").await
+}
+
+/// The OPEN conversation about `node_id` with `purpose`, found through the
+/// links index (backlinks whose source is a `CONV-` node).
+async fn find_conversation(
+    state: &ApiState,
+    project_id: &str,
+    root: &FsPath,
+    node_id: &str,
+    purpose: &str,
+) -> Result<Option<String>, ApiError> {
+    let (_, snap) = ensure_loaded_snapshot(state, Some(project_id)).await?;
+    let project = select_loaded_project(&snap, project_id)?;
     for link in &project.graph.links {
         if link.deleted
             || link.kind != RELATES_TO
@@ -634,14 +724,92 @@ pub(super) async fn find_regenerate_conversation(
         {
             continue;
         }
-        let dir = orgasmic_core::node_kernel::node_dir(&entry.path, COLLECTION, &link.source);
+        let dir = orgasmic_core::node_kernel::node_dir(root, COLLECTION, &link.source);
         if let Ok(conv) = parse_conversation(&dir, &link.source) {
-            if !conv.archived && conv.purpose == "regenerate" {
+            if !conv.archived && conv.purpose == purpose {
                 return Ok(Some(conv.id));
             }
         }
     }
     Ok(None)
+}
+
+// ---- dispatch integration ----------------------------------------------------
+
+/// Find or create the task's OPEN `implement`/`review` conversation for a
+/// dispatch attempt (C2). The worker lease stays on the task id; this record
+/// only lists the attempt's runs. The dispatcher is the owner.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn dispatch_conversation(
+    state: &ApiState,
+    identity: &Identity,
+    project_id: &str,
+    root: &FsPath,
+    task_id: &str,
+    purpose: &str,
+    worker: &StageWorker,
+    worktree: &FsPath,
+) -> Result<String, ApiError> {
+    if let Some(id) = find_conversation(state, project_id, root, task_id, purpose).await? {
+        return Ok(id);
+    }
+    let label = match purpose {
+        "implement" => "Implement",
+        "review" => "Review",
+        other => other,
+    };
+    let mode = if worker.driver == "tmux" {
+        "tmux"
+    } else {
+        "chat"
+    };
+    let (id, _) = write_record(
+        state,
+        identity,
+        project_id,
+        root,
+        RecordSpec {
+            purpose: purpose.to_string(),
+            scope: Some(task_id.to_string()),
+            title: format!("{label} {task_id}"),
+            provider: worker.harness.clone(),
+            model: None,
+            effort: None,
+            access: None,
+            mode: mode.to_string(),
+            worktree: Some(worktree.to_path_buf()),
+            request_id: uuid::Uuid::new_v4().to_string(),
+        },
+    )
+    .await?;
+    Ok(id)
+}
+
+/// Record one dispatch attempt: append its run (plain `<run_id>`) and point
+/// `WORKTREE` at this attempt's checkout.
+pub(super) async fn note_dispatch_run(
+    state: &ApiState,
+    identity: &Identity,
+    project_id: &str,
+    root: &FsPath,
+    conversation_id: &str,
+    run_id: &str,
+    worktree: &FsPath,
+) -> Result<(), ApiError> {
+    let dir = orgasmic_core::node_kernel::node_dir(root, COLLECTION, conversation_id);
+    append_run(
+        state,
+        identity,
+        project_id,
+        &dir,
+        conversation_id,
+        run_id,
+        "",
+        "conversation.run_started",
+        "dispatch attempt started",
+        Some(worktree),
+    )
+    .await
 }
 
 /// Find or create the node's `regenerate` conversation. The caller's own
@@ -670,6 +838,7 @@ pub(super) async fn regenerate_conversation(
             effort: None,
             access: None,
             mode: String::new(),
+            worktree: Some(entry.path.clone()),
             request_id: uuid::Uuid::new_v4().to_string(),
         },
     )
@@ -711,6 +880,7 @@ pub(super) async fn note_regenerate_run(
         &suffix,
         ty,
         reason,
+        None,
     )
     .await
 }
@@ -772,6 +942,7 @@ fn parse_conversation(dir: &FsPath, id: &str) -> Result<Conversation, ApiError> 
         access: prop("ACCESS"),
         mode: prop("MODE").unwrap_or_default(),
         machine: prop("MACHINE").unwrap_or_default(),
+        worktree: prop("WORKTREE").map(PathBuf::from),
         runs: prop("RUNS")
             .unwrap_or_default()
             .split_whitespace()
@@ -784,8 +955,9 @@ fn parse_conversation(dir: &FsPath, id: &str) -> Result<Conversation, ApiError> 
     })
 }
 
-/// Daemon-owned RUNS append: a direct writer transaction under the per-node
-/// lock, validated as a write (the transition hook is the user-edit fence).
+/// Daemon-owned RUNS append (and WORKTREE rewrite when given): a direct
+/// writer transaction under the per-node lock, validated as a write (the
+/// transition hook is the user-edit fence).
 #[allow(clippy::too_many_arguments)]
 async fn append_run(
     state: &ApiState,
@@ -797,6 +969,7 @@ async fn append_run(
     suffix: &str,
     ty: &str,
     reason: &str,
+    worktree: Option<&FsPath>,
 ) -> Result<(), ApiError> {
     let lock = state.node_write_lock(dir);
     let _guard = lock.lock().await;
@@ -813,14 +986,22 @@ async fn append_run(
         .split_whitespace()
         .map(str::to_string)
         .collect();
-    if runs.iter().any(|run| run_base(run) == run_id) {
+    let known = runs.iter().any(|run| run_base(run) == run_id);
+    if known && worktree.is_none() {
         return Ok(());
     }
-    runs.push(format!("{run_id}{suffix}"));
+    if !known {
+        runs.push(format!("{run_id}{suffix}"));
+    }
     let mut rewriter = OrgRewriter::new(&file, NODE_FILE);
     rewriter
         .upsert_property(id, "RUNS", &runs.join(" "))
         .map_err(|error| org_rewriter_error("append conversation run", id, error))?;
+    if let Some(worktree) = worktree {
+        rewriter
+            .upsert_property(id, "WORKTREE", &worktree.display().to_string())
+            .map_err(|error| org_rewriter_error("set conversation worktree", id, error))?;
+    }
     let rendered = rewriter.finish();
     let after = OrgFile::parse(&rendered, NODE_FILE).map_err(bad)?;
     let heading = after
@@ -1015,13 +1196,15 @@ fn plan_launch(
     }
 }
 
-/// Acquire one run leased on the conversation id. The session file is
+/// Acquire one run leased on the conversation id, started in `cwd`. The
+/// session file lives under the project root as
 /// `conversation-<id>-<uuid>.jsonl` so a same-second restart never appends
 /// to the previous run's transcript.
 async fn acquire_run(
     state: &ApiState,
     project_id: &str,
     root: &FsPath,
+    cwd: &FsPath,
     id: &str,
     purpose: &str,
     plan: LaunchPlan,
@@ -1044,10 +1227,11 @@ async fn acquire_run(
                 worker_id: "manager".into(),
                 role: "manager".into(),
                 project_id: Some(project_id.to_string()),
-                worktree: Some(root.to_path_buf()),
+                worktree: Some(cwd.to_path_buf()),
                 last_path: None,
                 stdout_path: None,
                 dispatch_attempt_token: None,
+                conversation_id: Some(id.to_string()),
                 session_path: session_path.clone(),
                 driver_config: plan.config,
                 stall_timeout_secs: Some(0),
@@ -1107,18 +1291,18 @@ async fn release_failed_resume(state: &ApiState, run_id: &str) {
 // ---- resume ------------------------------------------------------------------
 
 /// The last run's session, located by its first envelope's run id among the
-/// conversation's own `conversation-<id>-*.jsonl` files.
-// ponytail: scans the sessions dir per continue; index by run id if it grows.
+/// project's session files (`conversation-<id>-*.jsonl`, or a dispatch
+/// attempt's `dispatch-*.jsonl`).
+// ponytail: reads one line per session file per continue; index by run id if it grows.
 fn prior_session(root: &FsPath, conv: &Conversation) -> Option<PriorSession> {
     let run_id = run_base(conv.runs.last()?).to_string();
-    let prefix = format!("conversation-{}-", conv.id);
     for entry in std::fs::read_dir(project_sessions_dir(root))
         .ok()?
         .flatten()
     {
         let path = entry.path();
         let name = path.file_name()?.to_string_lossy().to_string();
-        if !name.starts_with(&prefix) || !name.ends_with(".jsonl") {
+        if !name.ends_with(".jsonl") {
             continue;
         }
         let first = {
@@ -1149,6 +1333,7 @@ async fn try_resume(
     state: &ApiState,
     project_id: &str,
     root: &FsPath,
+    cwd: &FsPath,
     conv: &Conversation,
     prior: &PriorSession,
     request_id: &str,
@@ -1161,11 +1346,12 @@ async fn try_resume(
         if let Some(session_id) =
             validated_claude_native_session_id(state.trusted_claude_binary.as_ref(), &native)
         {
-            if let Some(plan) = claude_native_plan(state, root, &session_id)? {
+            if let Some(plan) = claude_native_plan(state, cwd, &session_id)? {
                 let (acquire, session_path) = match acquire_run(
                     state,
                     project_id,
                     root,
+                    cwd,
                     &conv.id,
                     &conv.purpose,
                     plan,
@@ -1218,7 +1404,7 @@ async fn try_resume(
     }
     let plan = match plan_launch(
         state,
-        root,
+        cwd,
         "chat",
         &resume.provider,
         conv.model.clone(),
@@ -1234,8 +1420,16 @@ async fn try_resume(
             return Ok(None);
         }
     };
-    let (acquire, _) = match acquire_run(state, project_id, root, &conv.id, &conv.purpose, plan)
-        .await
+    let (acquire, _) = match acquire_run(
+        state,
+        project_id,
+        root,
+        cwd,
+        &conv.id,
+        &conv.purpose,
+        plan,
+    )
+    .await
     {
         Ok(acquired) => acquired,
         Err(error @ SupervisorError::LeaseHeld { .. }) => return Err(acquire_error(error)),
@@ -1437,6 +1631,109 @@ pub(crate) fn transcript_tail(envelopes: &[SessionEnvelope]) -> Option<String> {
     tail_summary(&joined)
 }
 
+// ---- media anchors ------------------------------------------------------------
+
+/// Anchors for the `range` chips on `scope`, labelled with the message's
+/// first [`ANCHOR_LABEL_CHARS`] characters (whitespace collapsed), deduped on
+/// attachment+revision+range. Chips on other nodes are ignored.
+fn range_anchors(scope: &str, chips: &[ContextChip], message: &str) -> Vec<MediaAnchor> {
+    let label: String = message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(ANCHOR_LABEL_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string();
+    let mut anchors: Vec<MediaAnchor> = Vec::new();
+    for chip in chips {
+        let ContextChip::Range {
+            node,
+            attachment,
+            revision,
+            start_ms,
+            end_ms,
+        } = chip
+        else {
+            continue;
+        };
+        if node != scope {
+            continue;
+        }
+        let anchor = MediaAnchor {
+            attachment: attachment.clone(),
+            revision: revision.clone(),
+            start_ms: *start_ms,
+            end_ms: Some(*end_ms),
+            label: label.clone(),
+        };
+        if !anchors.iter().any(|a| {
+            a.attachment == anchor.attachment
+                && a.revision == anchor.revision
+                && a.start_ms == anchor.start_ms
+                && a.end_ms == anchor.end_ms
+        }) {
+            anchors.push(anchor);
+        }
+    }
+    anchors
+}
+
+/// After an accepted send, range chips on the scoped node become media
+/// anchors on the scope link (C2 §2). Best effort: a chip naming no
+/// audio/video revision on the scoped node is dropped with a warning, and a
+/// failed link write never fails the send that already happened.
+async fn record_range_anchors(
+    state: &ApiState,
+    identity: &Identity,
+    project_id: &str,
+    conv: &Conversation,
+    chips: &[ContextChip],
+    message: &str,
+) {
+    let Some(scope) = conv.scope.as_deref() else {
+        return;
+    };
+    let candidates = range_anchors(scope, chips, message);
+    if candidates.is_empty() {
+        return;
+    }
+    let assets = match node(state, identity, project_id, scope, Action::LinksRead, false).await {
+        Ok(target) => target
+            .path
+            .parent()
+            .and_then(|dir| std::fs::read_to_string(dir.join("attachments.org")).ok())
+            .and_then(|source| records::read_attachments(&source).ok())
+            .unwrap_or_default(),
+        Err(error) => {
+            tracing::warn!(conversation = %conv.id, error = %error.message, "range chips ignored: scoped node unreadable");
+            return;
+        }
+    };
+    let (valid, invalid): (Vec<_>, Vec<_>) = candidates.into_iter().partition(|anchor| {
+        super::node_services::media_revision_owned(&assets, &anchor.attachment, &anchor.revision)
+    });
+    for anchor in &invalid {
+        tracing::warn!(
+            conversation = %conv.id,
+            attachment = %anchor.attachment,
+            revision = %anchor.revision,
+            "range chip names no audio/video revision on the scoped node; ignored"
+        );
+    }
+    if valid.is_empty() {
+        return;
+    }
+    if let Err(error) = super::node_services::append_link_anchors(
+        state, identity, project_id, &conv.dir, &conv.id, scope, valid,
+    )
+    .await
+    {
+        tracing::warn!(conversation = %conv.id, error = %error.message, "range anchors not recorded on the scope link");
+    }
+}
+
 // ---- scope context ---------------------------------------------------------
 
 /// Compile the conversation's scope context: the node's chat prompt spec
@@ -1453,6 +1750,7 @@ async fn scope_context(
     let project = select_loaded_project(&snap, project_id)?;
     let mut values = SlotValues::new();
     values.insert("conversation.purpose".into(), purpose.to_string());
+    let mut spec_file: Option<PathBuf> = None;
     let spec = match scope {
         Some(node_id) => {
             let layer = resolve_node_layer(&state.node_types, None, node_id)?;
@@ -1479,24 +1777,49 @@ async fn scope_context(
             values.insert("node.content".into(), prompt_value_or_not_set(content));
             values.insert("node.comments".into(), open_comment_context(&journal)?);
             values.insert("node.links".into(), links_summary(project, node_id));
-            descriptor
+            let spec = descriptor
                 .and_then(|d| d.chat_prompt.clone())
-                .unwrap_or_else(|| "node-chat".to_string())
+                .unwrap_or_else(|| "node-chat".to_string());
+            match plugin_chat_prompt(state, &project.root, layer.collection_name(), &spec) {
+                None => spec,
+                Some(Ok(path)) => {
+                    spec_file = Some(path);
+                    spec
+                }
+                Some(Err(error)) => {
+                    tracing::warn!(conversation = %conversation_id, chat_prompt = %spec, %error, "plugin chat prompt unavailable; using node-chat");
+                    "node-chat".to_string()
+                }
+            }
         }
         None => "project-chat".to_string(),
     };
-    let compiled = crate::prompt_compiler::compile_prompt_spec(
-        &state.home,
-        &spec,
-        crate::prompt_compiler::PromptCompileRequest {
-            project: Some(project_id.to_string()),
-            mode: Some("conversation".to_string()),
-            worker: Some("manager".to_string()),
-            reason: Some(format!("conversation {conversation_id} ({purpose})")),
-            values,
-            ..Default::default()
-        },
-    )
+    let request = || crate::prompt_compiler::PromptCompileRequest {
+        project: Some(project_id.to_string()),
+        mode: Some("conversation".to_string()),
+        worker: Some("manager".to_string()),
+        reason: Some(format!("conversation {conversation_id} ({purpose})")),
+        values: values.clone(),
+        ..Default::default()
+    };
+    let compiled = match spec_file.as_deref() {
+        Some(path) => {
+            match crate::prompt_compiler::compile_prompt_spec_path(&state.home, path, request()) {
+                Ok(compiled) if !crate::prompt_compiler::has_error(&compiled.diagnostics) => {
+                    Ok(compiled)
+                }
+                Ok(compiled) => {
+                    tracing::warn!(conversation = %conversation_id, path = %path.display(), diagnostics = ?compiled.diagnostics, "plugin chat prompt invalid; using node-chat");
+                    crate::prompt_compiler::compile_prompt_spec(&state.home, "node-chat", request())
+                }
+                Err(error) => {
+                    tracing::warn!(conversation = %conversation_id, path = %path.display(), %error, "plugin chat prompt unreadable; using node-chat");
+                    crate::prompt_compiler::compile_prompt_spec(&state.home, "node-chat", request())
+                }
+            }
+        }
+        None => crate::prompt_compiler::compile_prompt_spec(&state.home, &spec, request()),
+    }
     .map_err(|error| content_list_error(error, "conversation prompt spec"))?;
     if crate::prompt_compiler::has_error(&compiled.diagnostics) {
         let messages = compiled
@@ -1515,6 +1838,33 @@ async fn scope_context(
         compiled.spec.id,
         compiled.text.trim()
     ))
+}
+
+/// A plugin's `:CHAT_PROMPT:` is a file path inside its folder (it contains
+/// a `/` or ends in `.org`); core descriptors name a prompt-studio id, for
+/// which this is `None`. `Some(Err)` is a path that does not resolve.
+fn plugin_chat_prompt(
+    state: &ApiState,
+    root: &FsPath,
+    collection: Option<&str>,
+    spec: &str,
+) -> Option<Result<PathBuf, String>> {
+    if !(spec.contains('/') || spec.ends_with(".org")) {
+        return None;
+    }
+    let resolved = (|| {
+        let collection = collection.ok_or("singleton nodes have no plugin folder")?;
+        let plugins = state
+            .plugins
+            .project(root)
+            .map_err(|error| error.to_string())?;
+        let id = plugins
+            .owner(collection)
+            .ok_or_else(|| format!("collection {collection} is not owned by a plugin"))?;
+        let folder = state.home.user().join("plugins").join(id);
+        orgasmic_core::plugin::plugin_file_path(&folder, spec).map_err(|error| error.to_string())
+    })();
+    Some(resolved)
 }
 
 /// Linked ids and titles in both directions from the project's links index.
@@ -1585,7 +1935,7 @@ mod tests {
             ContextChip::Range {
                 node: "MTG-1".into(),
                 attachment: "att".into(),
-                revision: 2,
+                revision: "rev2".into(),
                 start_ms: 10,
                 end_ms: 20,
             },
@@ -1620,6 +1970,98 @@ mod tests {
         let err: Result<ContextChip, _> =
             serde_json::from_str(r#"{"kind":"node","id":"x","extra":1}"#);
         assert!(err.is_err(), "unknown chip fields are refused");
+        let numeric: ContextChip =
+            serde_json::from_str(r#"{"kind":"attachment","node":"MTG-1","id":"att","revision":7}"#)
+                .unwrap();
+        assert!(matches!(numeric, ContextChip::Attachment { revision, .. } if revision == "7"));
+    }
+
+    #[test]
+    fn range_chips_on_the_scoped_node_become_labelled_deduped_anchors() {
+        let range = |node: &str, start: u64| ContextChip::Range {
+            node: node.into(),
+            attachment: "att".into(),
+            revision: "sha".into(),
+            start_ms: start,
+            end_ms: start + 5,
+        };
+        let chips = vec![
+            range("MTG-1", 10),
+            range("MTG-1", 10),
+            range("MTG-9", 10),
+            range("MTG-1", 20),
+            ContextChip::Node { id: "MTG-1".into() },
+        ];
+        let message = format!("  first\nline   of {}", "x".repeat(200));
+        let anchors = range_anchors("MTG-1", &chips, &message);
+        assert_eq!(anchors.len(), 2, "{anchors:?}");
+        assert_eq!(anchors[0].start_ms, 10);
+        assert_eq!(anchors[0].end_ms, Some(15));
+        assert_eq!(anchors[1].start_ms, 20);
+        assert_eq!(anchors[0].label.chars().count(), ANCHOR_LABEL_CHARS);
+        assert!(anchors[0].label.starts_with("first line of xxx"));
+        assert!(range_anchors("MTG-9", &[range("MTG-1", 1)], "m").is_empty());
+    }
+
+    #[test]
+    fn dispatch_purposes_never_go_cold_and_own_their_attempt_runs() {
+        assert!(is_dispatch_purpose("implement") && is_dispatch_purpose("review"));
+        assert!(!is_dispatch_purpose("discuss") && !is_dispatch_purpose("meeting"));
+        let conv = Conversation {
+            id: "CONV-1".into(),
+            dir: PathBuf::new(),
+            archived: false,
+            owner: "admin".into(),
+            purpose: "implement".into(),
+            provider: "codex".into(),
+            model: None,
+            effort: None,
+            access: None,
+            mode: "chat".into(),
+            machine: "m".into(),
+            worktree: None,
+            runs: Vec::new(),
+            scope: Some("TASK-1".into()),
+        };
+        let run = |task_id: &str, role: &str, conversation_id: Option<&str>| RunSummary {
+            run_id: "r".into(),
+            task_id: task_id.into(),
+            kind: role.into(),
+            run_kind: RunKind::Worker,
+            worker_id: "w".into(),
+            role: role.into(),
+            driver: "stdio".into(),
+            harness: None,
+            model: None,
+            effort: None,
+            project_id: None,
+            worktree: None,
+            sub_state: None,
+            identity: RuntimeIdentity::default(),
+            session_path: PathBuf::new(),
+            event_count: 0,
+            last_path: None,
+            stdout_path: None,
+            dispatch_attempt_token: None,
+            conversation_id: conversation_id.map(str::to_string),
+            preflight: None,
+            claimed_manager: false,
+        };
+        assert!(owns_run(
+            &conv,
+            &run("TASK-1", "implementer", Some("CONV-1"))
+        ));
+        assert!(owns_run(&conv, &run("CONV-1", "manager", None)));
+        assert!(
+            owns_run(&conv, &run("TASK-1", "implementer", None)),
+            "a reattached attempt is found by task lease and role"
+        );
+        assert!(!owns_run(&conv, &run("TASK-1", "reviewer", None)));
+        assert!(!owns_run(
+            &conv,
+            &run("TASK-1", "implementer", Some("CONV-2"))
+        ));
+        assert!(!owns_run(&conv, &run("TASK-2", "implementer", None)));
     }
 
     #[test]

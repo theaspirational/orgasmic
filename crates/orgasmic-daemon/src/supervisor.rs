@@ -181,6 +181,10 @@ pub struct AcquireRequest {
     /// Full UUID attempt token minted by the CLI for this dispatch. Fences
     /// delayed cleanup against a newer live attempt (TASK-ZGT1X).
     pub dispatch_attempt_token: Option<String>,
+    /// The `CONV-` node this run belongs to, when a conversation owns it
+    /// (CHAT-SCOPE C2). Equals `task_id` for chat runs; set beside a task
+    /// lease for dispatched implementer/reviewer attempts.
+    pub conversation_id: Option<String>,
     /// Where the per-run JSONL lives. The supervisor opens this through
     /// the daemon writer so concurrent runs don't race on the file
     /// descriptor.
@@ -1143,6 +1147,9 @@ struct RunRecord {
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
     dispatch_attempt_token: Option<String>,
+    /// Mirrors [`AcquireRequest::conversation_id`]. Not persisted in
+    /// `RunMeta`, so a boot reattach restores `None`.
+    conversation_id: Option<String>,
     /// The dispatch preflight's one-word verdict (see `Lifecycle::RunMeta`).
     /// `None` for runs that were not dispatched through a probe.
     preflight: Option<String>,
@@ -1843,6 +1850,7 @@ impl Supervisor {
                 last_path: req.last_path.clone(),
                 stdout_path: req.stdout_path.clone(),
                 dispatch_attempt_token: req.dispatch_attempt_token.clone(),
+                conversation_id: req.conversation_id.clone(),
                 preflight,
                 requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
                 terminal_round: 0,
@@ -2553,6 +2561,7 @@ impl Supervisor {
             last_path: recovery_last_path,
             stdout_path: recovery_stdout_path,
             dispatch_attempt_token: None,
+            conversation_id: None,
             preflight: preflight_from_driver_config(&driver_config),
             requires_worker_finalize,
             terminal_round: 0,
@@ -3257,6 +3266,7 @@ impl Supervisor {
                 last_path: rec.last_path.clone(),
                 stdout_path: rec.stdout_path.clone(),
                 dispatch_attempt_token: rec.dispatch_attempt_token.clone(),
+                conversation_id: rec.conversation_id.clone(),
                 preflight: rec.preflight.clone(),
                 claimed_manager: rec.manager_terminal_claim.is_some(),
             })
@@ -4708,6 +4718,9 @@ pub struct RunSummary {
     pub stdout_path: Option<PathBuf>,
     #[serde(default)]
     pub dispatch_attempt_token: Option<String>,
+    /// The conversation (`CONV-` node) that owns this run, `null` otherwise.
+    #[serde(default)]
+    pub conversation_id: Option<String>,
     /// The dispatch preflight's one-word verdict (`ok`, `unchecked:<why>`),
     /// `None` when the run was not admitted through a probe (TASK-AP298).
     #[serde(default)]
@@ -9188,6 +9201,7 @@ mod tests {
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
+            conversation_id: None,
             session_path: dir.join(format!("{task}.jsonl")),
             driver_config: tmux::inert_config(),
             stall_timeout_secs: None,
@@ -13840,6 +13854,7 @@ mod tests {
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
+            conversation_id: None,
             preflight: None,
             requires_worker_finalize: true,
             terminal_round: 0,
