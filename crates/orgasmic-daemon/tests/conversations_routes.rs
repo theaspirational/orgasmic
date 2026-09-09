@@ -616,7 +616,7 @@ async fn two_live_conversations_and_the_chat_launch_shim() {
         &base,
         &token,
         "/conversations",
-        json!({"project":"demo","purpose":"discuss","node":task,"provider":"hermes","request_id":request_id()}),
+        json!({"project":"demo","purpose":"discuss","node":task,"provider":"hermes","harness_args":null,"request_id":request_id()}),
         200,
     )
     .await;
@@ -880,7 +880,7 @@ async fn members_and_plugins_are_gated_by_chat_actions_and_ownership() {
         &home,
         "reader",
         &[("demo".into(), "artifacts".into())],
-        &["chat.read".into()],
+        &["chat.read".into(), "graph.read".into()],
     )
     .unwrap();
     let registered = post(
@@ -911,7 +911,17 @@ async fn members_and_plugins_are_gated_by_chat_actions_and_ownership() {
     );
     let seen = ids(&get(&client, &base, &artifacts, "/runs/live", 200).await);
     assert!(seen.is_empty(), "{seen:?}");
-    get(&client, &base, &reader, &format!("/runs/{run}"), 200).await;
+    let public = get(&client, &base, &reader, &format!("/runs/{run}"), 200).await;
+    assert!(public["run"]["session_path"].is_null(), "{public}");
+    assert!(public["run"]["worktree"].is_null(), "{public}");
+    assert_eq!(public["run"]["task_id"], conv);
+    let admin_view = get(&client, &base, &token, &format!("/runs/{run}"), 200).await;
+    assert!(
+        admin_view["run"]["session_path"].is_string(),
+        "{admin_view}"
+    );
+    let listed = get(&client, &base, &reader, "/runs/live", 200).await;
+    assert!(listed["live"][0]["session_path"].is_null(), "{listed}");
     get(
         &client,
         &base,
@@ -1059,6 +1069,46 @@ async fn members_and_plugins_are_gated_by_chat_actions_and_ownership() {
     )
     .await;
     assert_eq!(doc["title"], "Standup notes");
+
+    // Stop run: the owner with chat.write, or an admin; nobody else, and no
+    // member stops a non-conversation run.
+    post(
+        &client,
+        &base,
+        &bob,
+        &format!("/runs/{run}/release"),
+        json!({}),
+        403,
+    )
+    .await;
+    post(
+        &client,
+        &base,
+        &viewer,
+        &format!("/runs/{run}/release"),
+        json!({}),
+        403,
+    )
+    .await;
+    post(
+        &client,
+        &base,
+        &anna,
+        &format!("/runs/{manager_run}/release"),
+        json!({}),
+        403,
+    )
+    .await;
+    post(
+        &client,
+        &base,
+        &anna,
+        &format!("/runs/{run}/release"),
+        json!({"finalized_by_worker":true}),
+        403,
+    )
+    .await;
+    release_run(&client, &base, &anna, &run).await;
 
     let _ = running.shutdown.send(());
 }

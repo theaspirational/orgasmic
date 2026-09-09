@@ -976,6 +976,7 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("GET", "/ws/transcript/:run_id"),
     ("GET", "/runs/:id"),
     ("GET", "/runs/live"),
+    ("POST", "/runs/:id/release"),
     ("POST", "/manager/chat/launch"),
 ];
 
@@ -3953,7 +3954,7 @@ async fn post_manager_chat_launch(
             service_tier: req.service_tier,
             mode: Some("chat".into()),
             harness: None,
-            harness_args: Vec::new(),
+            harness_args: None,
             title: Some("Chat".into()),
             message: None,
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -10060,22 +10061,34 @@ async fn get_live_runs(
     State(state): State<ApiState>,
     Extension(identity): Extension<Identity>,
 ) -> Json<Value> {
-    let mut live = state.supervisor.snapshot().await;
-    if !matches!(identity, Identity::Admin) {
-        live.runs.retain(|run| {
-            run_readable(
-                &identity,
-                run.project_id.as_deref(),
-                &run.task_id,
-                run.conversation_id.as_deref(),
-            )
-            .is_ok()
-        });
-    }
+    let live = state.supervisor.snapshot().await;
+    let runs = if matches!(identity, Identity::Admin) {
+        serde_json::to_value(&live.runs).unwrap_or_default()
+    } else {
+        Value::Array(
+            live.runs
+                .iter()
+                .filter(|run| {
+                    run_readable(
+                        &identity,
+                        run.project_id.as_deref(),
+                        &run.task_id,
+                        run.conversation_id.as_deref(),
+                    )
+                    .is_ok()
+                })
+                .map(|run| {
+                    let mut run = serde_json::to_value(run).unwrap_or_default();
+                    strip_run_internals(&mut run);
+                    run
+                })
+                .collect(),
+        )
+    };
     Json(json!({
         "boot_id": state.boot.boot_id,
         "acquisition_paused": live.acquisition_paused,
-        "live": live.runs,
+        "live": runs,
     }))
 }
 
@@ -10378,15 +10391,34 @@ async fn get_run_authorized(
     Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let detail = get_run(State(state), Path(id)).await?;
+    let mut detail = get_run(State(state), Path(id)).await?;
     authorize_run_read(&identity, &detail.0["run"])?;
+    if !matches!(identity, Identity::Admin) {
+        strip_run_internals(&mut detail.0["run"]);
+    }
     Ok(detail)
+}
+
+/// Members see a run's public shape: daemon-local paths and the dispatch
+/// attempt token stay admin-only.
+fn strip_run_internals(run: &mut Value) {
+    if let Some(run) = run.as_object_mut() {
+        for key in [
+            "session_path",
+            "worktree",
+            "stdout_path",
+            "last_path",
+            "dispatch_attempt_token",
+        ] {
+            run.remove(key);
+        }
+    }
 }
 
 /// One rule for every run read (`GET /runs/:id`, `/ws/transcript/:id`,
 /// the `GET /runs/live` filter): a conversation run (`conversation_id` set,
-/// or task id `CONV-…`) needs chat.read on its project and nothing more;
-/// every other run needs sessions.watch.
+/// or task id `CONV-…`) needs chat.read and graph.read on its project (the
+/// node behind it needs the latter); every other run needs sessions.watch.
 pub(crate) fn run_readable(
     identity: &Identity,
     project: Option<&str>,
@@ -10395,7 +10427,9 @@ pub(crate) fn run_readable(
 ) -> Result<(), ApiError> {
     if conversation_id.is_some() || task_id.starts_with(conversations::CONVERSATION_PREFIX) {
         authz::require(identity, project, Action::ChatRead)
-            .map_err(|_| ApiError::forbidden("chat.read is required to read a conversation run"))
+            .map_err(|_| ApiError::forbidden("chat.read is required to read a conversation run"))?;
+        authz::require(identity, project, Action::GraphRead)
+            .map_err(|_| ApiError::forbidden("graph.read is required to read a conversation run"))
     } else {
         authz::require(identity, project, Action::SessionsWatch)
             .map_err(|_| ApiError::forbidden("sessions.watch is required to stream this run"))
@@ -10936,6 +10970,7 @@ async fn get_run_runtime_options(
 
 async fn post_run_release(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Json(req): Json<RunReleaseRequest>,
 ) -> Result<Json<RunReleaseResponse>, ApiError> {
@@ -10982,6 +11017,20 @@ async fn post_run_release(
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("active run {id}")))?;
     let task_id = run.task_id.clone();
+    // Members stop only the conversation runs they own (C1 review H1); the
+    // worker-finalize fields stay admin-only.
+    if !matches!(identity, Identity::Admin) {
+        if req.finalized_by_worker || req.terminal_tx.is_some() || req.caller_identity.is_some() {
+            return Err(ApiError::forbidden("worker finalize fields are admin-only"));
+        }
+        conversations::authorize_member_release(
+            &state,
+            &identity,
+            run.project_id.as_deref(),
+            &task_id,
+        )
+        .await?;
+    }
     // orgasmic:TASK-37TAF — the OTHER version-skew direction, fail-closed on
     // this side because only this side can see it.
     //
@@ -22488,6 +22537,7 @@ async fn post_artifact_generate(
     // caller can reference this freshly minted id, so any launch failure
     // here (there is no 409 case: the lease key is brand new) must revert it
     // — unlike regenerate, which mutates only after a successful launch.
+    let _regenerate = conversations::claim_launch(&state, &format!("regenerate:{art_id}"))?;
     let launched =
         match conversations::regenerate_conversation(&state, &identity, &entry, &art_id).await {
             Ok(conversation_id) => launch_artifact_generation(
@@ -22525,8 +22575,7 @@ async fn post_artifact_generate(
             return Err(error);
         }
     };
-    conversations::note_regenerate_run(&state, &identity, &entry, &conversation_id, &run_id)
-        .await?;
+    conversations::note_regenerate_run(&state, &identity, &entry, &conversation_id, &run_id).await;
 
     Ok(Json(ArtifactGenerateResponse {
         artifact_id: art_id,
@@ -22895,6 +22944,7 @@ async fn regenerate_node(
         &subject_context,
         &user_prompt,
     )?;
+    let _regenerate = conversations::claim_launch(state, &format!("regenerate:{node_id}"))?;
     let conversation_id =
         conversations::regenerate_conversation(state, identity, entry, node_id).await?;
     let task_id = conversation_id.clone();
@@ -22957,7 +23007,7 @@ async fn regenerate_node(
             &conversation_id,
             &live_run.run_id,
         )
-        .await?;
+        .await;
         return Ok((live_run.run_id.clone(), conversation_id));
     }
 
@@ -22990,7 +23040,7 @@ async fn regenerate_node(
         )
         .await?
     };
-    conversations::note_regenerate_run(state, identity, entry, &conversation_id, &run_id).await?;
+    conversations::note_regenerate_run(state, identity, entry, &conversation_id, &run_id).await;
     close_out_node_regenerate_round(NodeRegenerateCloseOut {
         state,
         entry,
@@ -25226,6 +25276,7 @@ pub(crate) mod tests {
 
         let error = post_run_release(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(run_id.clone()),
             Json(RunReleaseRequest {
                 reason: Some("release with terminal tx refresh failure".to_string()),
@@ -30754,6 +30805,7 @@ pub(crate) mod tests {
 
         let release_error = post_run_release(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(run_id.clone()),
             Json(RunReleaseRequest {
                 reason: Some("manager cancel while the finalize is wedged".into()),
@@ -30823,6 +30875,7 @@ pub(crate) mod tests {
         // distinguish "this run is over" from "never heard of it".
         let release_error = post_run_release(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(run_id.clone()),
             Json(RunReleaseRequest {
                 reason: Some("manager cancel after the wedge cleared".into()),

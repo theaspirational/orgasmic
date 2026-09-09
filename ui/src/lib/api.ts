@@ -421,16 +421,6 @@ export function postManagerLaunch(body: {
   return post<ManagerLaunchResponse>('/manager/launch', body);
 }
 
-export function postManagerChatLaunch(body: {
-  project_id: string;
-  provider: 'codex' | 'claude' | 'opencode' | 'cursor-agent' | 'hermes';
-  model?: string | null;
-  effort?: string | null;
-  access?: string | null;
-  service_tier?: string | null;
-}): Promise<ManagerLaunchResponse> {
-  return post<ManagerLaunchResponse>('/manager/chat/launch', body);
-}
 
 export function postTx(body: Record<string, unknown>): Promise<unknown> {
   return post('/tx', body);
@@ -546,19 +536,11 @@ export function postConversationInput(
   );
 }
 
-export function fetchConversations(project: string): Promise<GraphNodeSummary[]> {
-  return fetchGraphNodes(project, 'conversations');
-}
-
-export function fetchConversation(conversationId: string, project: string): Promise<OrgNodeDoc> {
-  return fetchOrgNode(conversationId, project);
-}
-
 /** The newest OPEN conversation about a node, or null when none exists. */
 export async function findNodeConversation(project: string, node: string): Promise<string | null> {
   const links = await fetchNodeLinks(project, node, true);
   const ids = [...new Set(links.filter((link) => !link.deleted && link.source.startsWith('CONV-')).map((link) => link.source))];
-  const docs = await Promise.all(ids.map((id) => fetchConversation(id, project).catch(() => null)));
+  const docs = await Promise.all(ids.map((id) => fetchOrgNode(id, project).catch(() => null)));
   return newestOpenConversation(docs.filter((doc): doc is OrgNodeDoc => doc !== null));
 }
 

@@ -542,9 +542,6 @@ fn compile_values(view: &PromptSpecView, req: &PromptCompileRequest) -> SlotValu
         .entry("conversation.purpose".to_string())
         .or_default();
     values
-        .entry("conversation.instructions".to_string())
-        .or_insert_with(|| "not set".to_string());
-    values
 }
 
 fn load_prompt_spec_full(home: &Home, id: &str) -> PromptResult<LoadedPromptSpec> {
