@@ -410,6 +410,23 @@ mod tests {
     }
 
     #[test]
+    fn the_example_meetings_plugin_declares_chat_and_ships_its_prompt() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/plugins/meetings");
+        let source = std::fs::read_to_string(dir.join("plugin.org")).unwrap();
+        assert!(source.contains(":OPTIONAL: core.chat@1"), "{source}");
+        let manifest = PluginManifest::parse(&source, "plugin.org").unwrap();
+        assert_eq!(
+            manifest.node_type.as_ref().unwrap().chat_prompt.as_deref(),
+            Some("prompts/meeting-chat.org")
+        );
+        assert_eq!(
+            manifest.chat_prompt_path(&dir).unwrap(),
+            dir.join("prompts/meeting-chat.org").canonicalize().unwrap()
+        );
+    }
+
+    #[test]
     fn manifest_validates_scope_and_paths() {
         let m = PluginManifest::parse(SOURCE, "plugin.org").unwrap();
         assert_eq!(m.schema_accepts, BTreeSet::from([1, 2]));

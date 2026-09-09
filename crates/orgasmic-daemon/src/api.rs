@@ -3957,6 +3957,7 @@ async fn post_manager_chat_launch(
             harness_args: None,
             title: Some("Chat".into()),
             message: None,
+            context: Vec::new(),
             request_id: uuid::Uuid::new_v4().to_string(),
         },
     )

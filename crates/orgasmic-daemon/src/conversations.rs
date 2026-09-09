@@ -60,6 +60,9 @@ pub(super) struct ConversationCreateRequest {
     pub title: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+    /// Chips sent with `message`; the scoped node's own chip is pinned here.
+    #[serde(default)]
+    pub context: Vec<ContextChip>,
     pub request_id: String,
 }
 
@@ -396,6 +399,10 @@ pub(super) async fn create_authorized(
 
     let purpose = req.purpose.trim().to_string();
     validate_purpose(&purpose)?;
+    validate_chips(&req.context)?;
+    if !req.context.is_empty() && req.message.as_deref().unwrap_or("").trim().is_empty() {
+        return Err(ApiError::bad_request("context requires a message"));
+    }
     let mode = req
         .mode
         .as_deref()
@@ -518,10 +525,11 @@ pub(super) async fn create_authorized(
         .map(str::trim)
         .filter(|m| !m.is_empty())
     {
-        let chips: Vec<ContextChip> = scope
+        let mut chips: Vec<ContextChip> = scope
             .as_ref()
             .map(|(node, _)| vec![ContextChip::Node { id: node.clone() }])
             .unwrap_or_default();
+        chips.extend(req.context.iter().cloned());
         let context = scope_context(
             &state,
             &project_id,
@@ -539,6 +547,9 @@ pub(super) async fn create_authorized(
             (!chips.is_empty()).then(|| json!(chips)),
         )
         .await?;
+        if let Ok(conv) = parse_conversation(&dir, &id) {
+            record_range_anchors(&state, identity, &project_id, &conv, &req.context, message).await;
+        }
     }
     Ok(Created {
         id,
