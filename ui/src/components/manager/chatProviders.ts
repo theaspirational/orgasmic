@@ -53,18 +53,6 @@ export function chatProviderLabel(provider: ChatProviderId): string {
   ];
 }
 
-export function isNativeChatRun(
-  run: Pick<RunSummary, 'driver' | 'harness'>,
-): boolean {
-  return (
-    run.driver === 'stdio' &&
-    (run.harness === 'codex-chat' ||
-      run.harness === 'claude-sdk' ||
-      run.harness === 'opencode' ||
-      run.harness === 'cursor-acp-chat' ||
-      run.harness === 'hermes-acp-chat')
-  );
-}
 
 export function chatProviderFromRun(
   run: Pick<RunSummary, 'driver' | 'harness'>,
