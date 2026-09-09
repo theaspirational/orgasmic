@@ -184,7 +184,7 @@ pub mod test_hooks {
 }
 
 #[path = "conversations.rs"]
-mod conversations;
+pub(crate) mod conversations;
 #[path = "node_services.rs"]
 mod node_services;
 
@@ -244,6 +244,9 @@ pub struct ApiState {
     /// Answers already given to a conversation input `request_id`, so a retry
     /// replays instead of sending the message twice.
     pub conversation_inputs: conversations::InputReplays,
+    /// Who asked to release each run, read by the task that journals the
+    /// release the supervisor reports.
+    pub release_actors: conversations::ReleaseActors,
     /// Per-node locks serializing node.org/journal.org read-modify-write.
     pub node_write_locks:
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
@@ -11102,6 +11105,10 @@ async fn post_run_release(
     // `release_tasks` tracker, not bare `tokio::spawn`: the JoinHandle below
     // dies with the request future, so it is graceful shutdown's only handle on
     // this work. See [`ReleaseTaskTracker`].
+    // The supervisor reports this release to the conversation journal and
+    // cannot see who asked for it; record that here, while the identity is in
+    // hand.
+    conversations::note_release_actor(&state, &id, &identity);
     let release_tasks = state.release_tasks.clone();
     let handle = release_tasks.spawn_release(admission, async move {
         release_run_and_record_tx(state, id, req).await
@@ -24791,6 +24798,7 @@ pub(crate) mod tests {
             ledger_sync: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
             conversation_launches: Default::default(),
             conversation_inputs: Default::default(),
+            release_actors: Default::default(),
         }
     }
 

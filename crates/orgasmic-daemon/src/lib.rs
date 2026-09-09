@@ -1180,6 +1180,7 @@ impl Daemon {
             ledger_sync,
             conversation_launches: Default::default(),
             conversation_inputs: Default::default(),
+            release_actors: Default::default(),
         };
 
         // Boot auto-reattach runs *after* the listener is bound (see below). It
@@ -1191,6 +1192,15 @@ impl Daemon {
         // `read_session_file` -> `read_to_string` on the main thread inside
         // `block_on`, which also starved the boot-progress heartbeat, so even
         // the phase readout froze. TASK-KKGKM.
+        // Conversation-owned runs journal their own release, with the reason
+        // the supervisor released them for and the actor who asked.
+        let (release_notices, release_notice_rx) = tokio::sync::mpsc::unbounded_channel();
+        api_state.supervisor.report_releases_to(release_notices);
+        tokio::spawn(api::conversations::journal_run_releases(
+            api_state.clone(),
+            release_notice_rx,
+        ));
+
         let reattach_state = api_state.clone();
         // orgasmic:TASK-WGXKD.1 — shutdown's handle on the detached release
         // finalizations. Taken before the state moves into the router.

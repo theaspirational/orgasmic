@@ -248,6 +248,23 @@ async fn wait_for_log(log: &Path, needle: &str) -> String {
     }
 }
 
+/// The release journal entry is written by a daemon task the release does not
+/// wait for, so a test polls for it.
+async fn wait_for_journal(path: &Path, needle: &str) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let body = std::fs::read_to_string(path).unwrap_or_default();
+        if body.contains(needle) {
+            return body;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "journal never recorded {needle:?}: {body}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 async fn release_run(client: &reqwest::Client, base: &str, token: &str, run_id: &str) {
     post(
         client,
@@ -497,15 +514,24 @@ async fn create_continue_live_resume_and_archive() {
     )
     .await;
     assert_eq!(property(&doc, "RUNS"), format!("{run1} {run2}:resumed"));
-    let journal = std::fs::read_to_string(
-        temp.path()
-            .join("project/.orgasmic/conversations")
-            .join(&id)
-            .join("journal.org"),
-    )
-    .unwrap();
+    let journal_path = temp
+        .path()
+        .join("project/.orgasmic/conversations")
+        .join(&id)
+        .join("journal.org");
+    // Every run start AND every release is on the record, with the reason the
+    // supervisor released for.
+    let journal = wait_for_journal(&journal_path, "conversation.run_released").await;
     assert!(journal.contains("conversation.run_started"), "{journal}");
     assert!(journal.contains("conversation.run_resumed"), "{journal}");
+    assert!(
+        journal.contains(&run1),
+        "the released run is named: {journal}"
+    );
+    assert!(
+        journal.contains(":REASON: test release"),
+        "the reason the run was released for: {journal}"
+    );
     assert!(
         !journal.contains(".jsonl"),
         "no session paths in journals: {journal}"

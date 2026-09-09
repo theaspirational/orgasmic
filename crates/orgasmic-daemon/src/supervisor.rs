@@ -161,6 +161,19 @@ pub fn record_spawn_pipeline_poll() {
     SPAWN_PIPELINE_POLLS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// What a released conversation-owned run tells the daemon, so the
+/// conversation's journal can record the release with its reason and actor.
+/// Every release path (route, manager, idle sweep, driver exit) funnels
+/// through [`Supervisor::release_one`], which is where this is sent.
+#[derive(Debug, Clone)]
+pub struct ReleaseNotice {
+    pub run_id: String,
+    pub project_id: Option<String>,
+    pub task_id: String,
+    pub conversation_id: Option<String>,
+    pub reason: String,
+}
+
 /// What a caller hands the supervisor to start a run.
 #[derive(Debug, Clone)]
 pub struct AcquireRequest {
@@ -395,6 +408,12 @@ pub struct Supervisor {
     /// production implementation is proven separately against a real process
     /// subtree.
     work_probe: Arc<std::sync::RwLock<Arc<dyn WorkEvidenceProbe>>>,
+    /// Where [`ReleaseNotice`]s go, once the daemon has an `ApiState` to
+    /// journal them with. Outside `Inner` so reporting a release never waits
+    /// on the run lock, and optional because every supervisor in a unit test
+    /// runs without one.
+    release_notices:
+        Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ReleaseNotice>>>>,
 }
 
 // orgasmic:TASK-AK6EM
@@ -1441,6 +1460,32 @@ impl Supervisor {
             work_probe: Arc::new(std::sync::RwLock::new(Arc::new(
                 ProcessSubtreeCpuProbe::default(),
             ))),
+            release_notices: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Send every conversation-owned run's release to `notices`. Called once
+    /// at boot, when the daemon has the state to journal a release with.
+    pub fn report_releases_to(&self, notices: tokio::sync::mpsc::UnboundedSender<ReleaseNotice>) {
+        if let Ok(mut guard) = self.release_notices.lock() {
+            *guard = Some(notices);
+        }
+    }
+
+    /// Report one release, if it belongs to a conversation and anyone is
+    /// listening. Never fails a release.
+    fn report_release(&self, notice: ReleaseNotice) {
+        if notice.conversation_id.is_none()
+            && !notice
+                .task_id
+                .starts_with(crate::api::conversations::CONVERSATION_PREFIX)
+        {
+            return;
+        }
+        if let Ok(guard) = self.release_notices.lock() {
+            if let Some(notices) = guard.as_ref() {
+                let _ = notices.send(notice);
+            }
         }
     }
 
@@ -3209,7 +3254,7 @@ impl Supervisor {
         // Producer completion proves every sender is gone. Drain the receiver
         // to closure; never abort the receiver while an event can still land.
         let _ = (&mut drain).await;
-        let final_outcome = {
+        let (final_outcome, notice) = {
             let mut g = self.inner.lock().await;
             let rec = g
                 .runs
@@ -3220,7 +3265,19 @@ impl Supervisor {
                 &rec.task_id,
                 rec.kind,
             ));
-            (rec.terminal_outcome.unwrap_or(outcome), rec.first_error)
+            // The record is the only place the conversation is named; it is
+            // gone by the time the release event is written.
+            let notice = ReleaseNotice {
+                run_id: run_id.to_string(),
+                project_id: rec.project_id.clone(),
+                task_id: rec.task_id.clone(),
+                conversation_id: rec.conversation_id.clone(),
+                reason: reason.to_string(),
+            };
+            (
+                (rec.terminal_outcome.unwrap_or(outcome), rec.first_error),
+                notice,
+            )
         };
         let (final_outcome, first_error) = final_outcome;
         let evt = Lifecycle::Release {
@@ -3245,6 +3302,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
+        self.report_release(notice);
         Ok(())
     }
 

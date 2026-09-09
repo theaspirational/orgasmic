@@ -47,6 +47,14 @@ pub type InputReplays = Arc<std::sync::Mutex<VecDeque<(String, String, Value)>>>
 /// behaviour.
 const MAX_INPUT_REPLAYS: usize = 1024;
 
+/// Who asked for a run's release, until the supervisor's notice arrives.
+/// Bounded; an entry outlives its release only when the release failed.
+pub type ReleaseActors = Arc<std::sync::Mutex<VecDeque<(String, Identity)>>>;
+
+/// Bound on [`ReleaseActors`]; past it the oldest is dropped and its release
+/// journals as the daemon.
+const MAX_RELEASE_ACTORS: usize = 256;
+
 /// The trimmed message, or 400 when it is empty or over [`MAX_MESSAGE_BYTES`].
 fn checked_message(message: &str) -> Result<&str, ApiError> {
     let message = message.trim();
@@ -1207,6 +1215,131 @@ async fn append_run(
             layer: COLLECTION.into(),
             node_id: id.to_string(),
             action: ty.to_string(),
+            tx_id,
+        },
+    );
+    Ok(())
+}
+
+/// Remember who asked to release `run_id`, so the journal entry the release
+/// produces names them and not the daemon.
+pub(super) fn note_release_actor(state: &ApiState, run_id: &str, identity: &Identity) {
+    if let Ok(mut guard) = state.release_actors.lock() {
+        while guard.len() >= MAX_RELEASE_ACTORS {
+            guard.pop_front();
+        }
+        guard.push_back((run_id.to_string(), identity.clone()));
+    }
+}
+
+/// Who released `run_id`: the caller a route recorded, else the daemon.
+fn take_release_actor(state: &ApiState, run_id: &str) -> Identity {
+    let Ok(mut guard) = state.release_actors.lock() else {
+        return Identity::Admin;
+    };
+    match guard.iter().position(|(id, _)| id == run_id) {
+        Some(index) => guard
+            .remove(index)
+            .map(|(_, identity)| identity)
+            .unwrap_or(Identity::Admin),
+        None => Identity::Admin,
+    }
+}
+
+/// A release reason fit for the ledger: one line, bounded, and free of the
+/// paths a driver error may carry.
+fn release_reason(reason: &str) -> String {
+    let line = reason.lines().next().unwrap_or_default();
+    let cleaned = line
+        .split_whitespace()
+        .filter(|word| !word.contains('/') && !word.contains('\\'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cleaned = if cleaned.is_empty() {
+        "released".to_string()
+    } else {
+        cleaned
+    };
+    cleaned.chars().take(120).collect()
+}
+
+/// Journal every conversation-owned run release with its reason and actor.
+///
+/// One task rather than a call at each release site: a run is released by the
+/// route, by the manager, by the idle sweep and by its own driver exiting, and
+/// all four funnel through the supervisor, which is what feeds this.
+pub(crate) async fn journal_run_releases(
+    state: ApiState,
+    mut notices: tokio::sync::mpsc::UnboundedReceiver<crate::supervisor::ReleaseNotice>,
+) {
+    while let Some(notice) = notices.recv().await {
+        if let Err(error) = journal_release(&state, &notice).await {
+            tracing::warn!(
+                run = %notice.run_id,
+                error = %error.message,
+                "conversation run release not journalled"
+            );
+        }
+    }
+}
+
+async fn journal_release(
+    state: &ApiState,
+    notice: &crate::supervisor::ReleaseNotice,
+) -> Result<(), ApiError> {
+    let Some(conversation) = notice.conversation_id.clone().or_else(|| {
+        notice
+            .task_id
+            .starts_with(CONVERSATION_PREFIX)
+            .then(|| notice.task_id.clone())
+    }) else {
+        return Ok(());
+    };
+    let Some(project) = notice.project_id.as_deref() else {
+        return Ok(());
+    };
+    let identity = take_release_actor(state, &notice.run_id);
+    let (project_id, snapshot) = ensure_loaded_snapshot(state, Some(project)).await?;
+    let root = select_loaded_project(&snapshot, &project_id)?.root.clone();
+    drop(snapshot);
+    let dir = orgasmic_core::node_kernel::node_dir(&root, COLLECTION, &conversation);
+    let path = dir.join(NODE_FILE);
+    if !path.exists() {
+        return Ok(());
+    }
+    let prepared = prepare_api_tx_as(
+        state,
+        &identity,
+        ApiTxRequest {
+            ty: "conversation.run_released".to_string(),
+            actor: None,
+            project: Some(project_id.clone()),
+            task: None,
+            target: Some(path.display().to_string()),
+            reason: release_reason(&notice.reason),
+            request_id: None,
+            extra: vec![
+                ("NODE_ID".to_string(), conversation.clone()),
+                ("RUN_ID".to_string(), notice.run_id.clone()),
+            ],
+        },
+    )
+    .await?;
+    // No file changes: the release is an event on the conversation, and the
+    // run already left RUNS in place as its own history.
+    let tx_id = state
+        .writer
+        .transaction(Vec::new(), prepared.tx)
+        .await
+        .map_err(|error| ApiError::internal(format!("journal conversation release: {error}")))?;
+    refresh_after_project_mutation(state, &project_id, prepared.project_tx, &tx_id).await?;
+    state.events.publish(
+        Topic::Graph,
+        EventPayload::GraphNodeRevised {
+            project_id,
+            layer: COLLECTION.into(),
+            node_id: conversation,
+            action: "conversation.run_released".into(),
             tx_id,
         },
     );
