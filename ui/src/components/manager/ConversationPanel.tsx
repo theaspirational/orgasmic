@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/button';
 import { useEventStream } from '@/hooks/useEventStream';
 import { useMe } from '@/hooks/useMe';
 import {
-  fetchConversation,
-  fetchConversations,
+  fetchGraphNodes,
   fetchNodeLinks,
+  fetchOrgNode,
   fetchRun,
   findNodeConversation,
   isNoResumeError,
@@ -76,7 +76,7 @@ export function ConversationPanel({
 
   const conversations = useResource(
     `conversations:${projectId ?? 'none'}`,
-    () => fetchConversations(projectId ?? ''),
+    () => fetchGraphNodes(projectId ?? '', 'conversations'),
     { enabled: Boolean(projectId) },
   );
   useEventStream(
@@ -284,7 +284,7 @@ function ConversationView({
 }) {
   const { identity, me } = useMe();
   const doc = useResource(`conversation:${projectId}:${conversationId}`, () =>
-    fetchConversation(conversationId, projectId),
+    fetchOrgNode(conversationId, projectId),
   );
   const scope = useResource(`conversation-scope:${projectId}:${conversationId}`, () =>
     fetchNodeLinks(projectId, conversationId),

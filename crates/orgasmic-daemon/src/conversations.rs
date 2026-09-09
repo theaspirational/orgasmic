@@ -53,7 +53,7 @@ pub(super) struct ConversationCreateRequest {
     #[serde(default)]
     pub harness: Option<String>,
     #[serde(default)]
-    pub harness_args: Vec<String>,
+    pub harness_args: Option<Vec<String>>,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -83,12 +83,12 @@ pub(crate) enum ContextChip {
     Attachment {
         node: String,
         id: String,
-        revision: u64,
+        revision: String,
     },
     Range {
         node: String,
         attachment: String,
-        revision: u64,
+        revision: String,
         start_ms: u64,
         end_ms: u64,
     },
@@ -179,11 +179,7 @@ async fn post_conversation_input(
     let root = select_loaded_project(&snapshot, &project_id)?.root.clone();
     drop(snapshot);
     let conv = load_conversation(&state, &identity, &project_id, &id).await?;
-    if !matches!(identity, Identity::Admin) && conv.owner != actor_key(&identity) {
-        return Err(ApiError::forbidden(
-            "conversation belongs to another principal",
-        ));
-    }
+    input_allowed(&identity, &project_id, &conv)?;
     if conv.archived {
         return Err(ApiError::bad_request("conversation is archived"));
     }
@@ -201,6 +197,11 @@ async fn post_conversation_input(
         return Ok(Json(json!({"run_id": run.run_id, "mode": "live"})));
     }
     drop(live);
+    if conv.purpose == "regenerate" {
+        return Err(ApiError::bad_request(
+            "the artifactor is not running; use Regenerate to start a new round",
+        ));
+    }
     let _launch = claim_launch(&state, &conv.id)?;
     let request_id = req
         .request_id
@@ -266,8 +267,6 @@ async fn post_conversation_input(
     let (acquire, _) = acquire_run(&state, &project_id, &root, &conv.id, &conv.purpose, plan)
         .await
         .map_err(acquire_error)?;
-    let text = compose(Some(&scope), tail.as_deref(), &req.context, message);
-    send(&state, &acquire.run_id, &acquire.identity, text, context).await?;
     append_run(
         &state,
         &identity,
@@ -280,7 +279,47 @@ async fn post_conversation_input(
         "continued without native memory",
     )
     .await?;
+    let text = compose(Some(&scope), tail.as_deref(), &req.context, message);
+    send(&state, &acquire.run_id, &acquire.identity, text, context).await?;
     Ok(Json(json!({"run_id": acquire.run_id, "mode": "cold"})))
+}
+
+/// Who may send into a conversation: a `regenerate` conversation belongs to
+/// its node (anyone who may regenerate it), every other purpose to its owner
+/// or an admin.
+fn input_allowed(
+    identity: &Identity,
+    project_id: &str,
+    conv: &Conversation,
+) -> Result<(), ApiError> {
+    if conv.purpose == "regenerate" {
+        authz::require(identity, Some(project_id), Action::ArtifactsGenerate)?;
+    } else if !matches!(identity, Identity::Admin) && conv.owner != actor_key(identity) {
+        return Err(ApiError::forbidden(
+            "conversation belongs to another principal",
+        ));
+    }
+    Ok(())
+}
+
+/// A member may stop only a conversation run they own, with chat.write.
+pub(super) async fn authorize_member_release(
+    state: &ApiState,
+    identity: &Identity,
+    project_id: Option<&str>,
+    task_id: &str,
+) -> Result<(), ApiError> {
+    let project_id = project_id
+        .filter(|_| task_id.starts_with(CONVERSATION_PREFIX))
+        .ok_or_else(|| ApiError::forbidden("members may only stop their own conversation runs"))?;
+    authz::require(identity, Some(project_id), Action::ChatWrite)?;
+    let conv = load_conversation(state, identity, project_id, task_id).await?;
+    if conv.owner != actor_key(identity) {
+        return Err(ApiError::forbidden(
+            "conversation belongs to another principal",
+        ));
+    }
+    Ok(())
 }
 
 // ---- create -----------------------------------------------------------------
@@ -299,7 +338,6 @@ pub(super) async fn create_authorized(
     let (project_id, snapshot) =
         resolve_authorized_project(&state, identity, project, Action::ChatExecute).await?;
     let root = select_loaded_project(&snapshot, &project_id)?.root.clone();
-    drop(snapshot);
 
     let purpose = req.purpose.trim().to_string();
     validate_purpose(&purpose)?;
@@ -318,7 +356,7 @@ pub(super) async fn create_authorized(
 
     let scope = match req.node.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         Some(node_id) => {
-            let target: super::node_services::Node = node(
+            node(
                 &state,
                 identity,
                 &project_id,
@@ -336,27 +374,13 @@ pub(super) async fn create_authorized(
                     "conversation scope must be a collection node",
                 ));
             }
-            let title = std::fs::read_to_string(&target.path)
-                .ok()
-                .and_then(|source| {
-                    let file = OrgFile::parse(source, NODE_FILE).ok()?;
-                    let heading = file.find_by_id(node_id)?;
-                    Some(
-                        heading
-                            .title
-                            .trim()
-                            .strip_prefix(node_id)
-                            .map(str::trim)
-                            .filter(|rest| !rest.is_empty())
-                            .unwrap_or(heading.title.trim())
-                            .to_string(),
-                    )
-                })
+            let title = index_title(select_loaded_project(&snapshot, &project_id)?, node_id)
                 .unwrap_or_else(|| node_id.to_string());
             Some((node_id.to_string(), title))
         }
         None => None,
     };
+    drop(snapshot);
     let title = req
         .title
         .as_deref()
@@ -379,7 +403,7 @@ pub(super) async fn create_authorized(
         req.effort.clone(),
         req.access.clone(),
         req.service_tier.as_deref(),
-        &req.harness_args,
+        req.harness_args.as_deref().unwrap_or(&[]),
         None,
     )?;
     let access = req
@@ -521,7 +545,7 @@ async fn write_record(
     let mut source = orgasmic_core::node_kernel::node_org_header(&descriptor.label, &id);
     source.push_str("#+todo: OPEN | ARCHIVED\n\n");
     source.push_str(&format!(
-        "* OPEN {}\n:PROPERTIES:\n:ID: {id}\n:PURPOSE: {}\n:OWNER: {owner}\n:PROVIDER: {}\n:MODEL: {}\n:EFFORT: {}\n:ACCESS: {}\n:MODE: {}\n:MACHINE: {}\n:WORKTREE: {}\n:RUNS: \n:CREATED_AT: {created_at}\n:END:\n",
+        "* OPEN {}\n:PROPERTIES:\n:ID: {id}\n:PURPOSE: {}\n:OWNER: {owner}\n:PROVIDER: {}\n:MODEL: {}\n:EFFORT: {}\n:ACCESS: {}\n:MODE: {}\n:MACHINE: {}\n:WORKTREE: \n:RUNS: \n:CREATED_AT: {created_at}\n:END:\n",
         spec.title.trim(),
         spec.purpose,
         spec.provider.trim(),
@@ -530,7 +554,6 @@ async fn write_record(
         spec.access.as_deref().unwrap_or("").trim(),
         spec.mode.trim(),
         state.machine,
-        root.display(),
     ));
     let mut rewrites = vec![FileRewrite {
         path: path.clone(),
@@ -636,7 +659,7 @@ pub(super) async fn find_regenerate_conversation(
         }
         let dir = orgasmic_core::node_kernel::node_dir(&entry.path, COLLECTION, &link.source);
         if let Ok(conv) = parse_conversation(&dir, &link.source) {
-            if !conv.archived && conv.purpose == "regenerate" {
+            if conv.purpose == "regenerate" {
                 return Ok(Some(conv.id));
             }
         }
@@ -679,7 +702,21 @@ pub(super) async fn regenerate_conversation(
 
 /// Record an artifactor run on its conversation: first run plain, later fresh
 /// runs `:cold`; a run already on file (a hot follow-up) is a no-op.
+/// Best-effort: the run is already live, so bookkeeping never fails it.
 pub(super) async fn note_regenerate_run(
+    state: &ApiState,
+    identity: &Identity,
+    entry: &BoardEntry,
+    conversation_id: &str,
+    run_id: &str,
+) {
+    if let Err(error) = record_regenerate_run(state, identity, entry, conversation_id, run_id).await
+    {
+        tracing::warn!(conversation = conversation_id, run = run_id, error = %error.message, "regenerate run not recorded on its conversation");
+    }
+}
+
+async fn record_regenerate_run(
     state: &ApiState,
     identity: &Identity,
     entry: &BoardEntry,
@@ -875,7 +912,7 @@ async fn append_run(
 
 // ---- launch ------------------------------------------------------------------
 
-struct LaunchGuard {
+pub(super) struct LaunchGuard {
     set: LaunchSet,
     id: String,
 }
@@ -888,16 +925,16 @@ impl Drop for LaunchGuard {
     }
 }
 
-fn claim_launch(state: &ApiState, id: &str) -> Result<LaunchGuard, ApiError> {
+/// One launch per key at a time; `regenerate:<node>` keys the find-or-create
+/// of a node's regenerate conversation.
+pub(super) fn claim_launch(state: &ApiState, id: &str) -> Result<LaunchGuard, ApiError> {
     let set = state.conversation_launches.clone();
     {
         let mut guard = set
             .lock()
             .map_err(|_| ApiError::internal("conversation launch set poisoned"))?;
         if !guard.insert(id.to_string()) {
-            return Err(ApiError::conflict(format!(
-                "conversation {id} launch already in flight"
-            )));
+            return Err(ApiError::conflict(format!("{id} launch already in flight")));
         }
     }
     Ok(LaunchGuard {
@@ -1030,36 +1067,51 @@ async fn acquire_run(
         "conversation-{id}-{}.jsonl",
         uuid::Uuid::new_v4().simple()
     ));
-    // Operator-paced runs idle at a prompt; only discuss/regenerate get an
-    // idle release, implement/review run until the operator ends them.
-    let idle_timeout_secs =
-        matches!(purpose, "discuss" | "regenerate").then_some(DEFAULT_IDLE_TIMEOUT_SECS);
+    let request = acquire_request(
+        project_id,
+        root,
+        id,
+        purpose,
+        session_path.clone(),
+        plan.config,
+    );
     let acquire = state
         .supervisor
-        .acquire(
-            plan.driver.as_ref(),
-            AcquireRequest {
-                task_id: id.to_string(),
-                kind: RunKind::Worker,
-                worker_id: "manager".into(),
-                role: "manager".into(),
-                project_id: Some(project_id.to_string()),
-                worktree: Some(root.to_path_buf()),
-                last_path: None,
-                stdout_path: None,
-                dispatch_attempt_token: None,
-                session_path: session_path.clone(),
-                driver_config: plan.config,
-                stall_timeout_secs: Some(0),
-                max_run_duration_secs: Some(0),
-                idle_timeout_secs,
-                applicable_states: Vec::new(),
-                max_iterations: None,
-                planned_identity: None,
-            },
-        )
+        .acquire(plan.driver.as_ref(), request)
         .await?;
     Ok((acquire, session_path))
+}
+
+/// Operator-paced runs never stall out or time out; only discuss/regenerate
+/// get an idle release, implement/review run until the operator ends them.
+fn acquire_request(
+    project_id: &str,
+    root: &FsPath,
+    id: &str,
+    purpose: &str,
+    session_path: PathBuf,
+    driver_config: DriverConfig,
+) -> AcquireRequest {
+    AcquireRequest {
+        task_id: id.to_string(),
+        kind: RunKind::Worker,
+        worker_id: "manager".into(),
+        role: "manager".into(),
+        project_id: Some(project_id.to_string()),
+        worktree: Some(root.to_path_buf()),
+        last_path: None,
+        stdout_path: None,
+        dispatch_attempt_token: None,
+        session_path,
+        driver_config,
+        stall_timeout_secs: Some(0),
+        max_run_duration_secs: Some(0),
+        idle_timeout_secs: matches!(purpose, "discuss" | "regenerate")
+            .then_some(DEFAULT_IDLE_TIMEOUT_SECS),
+        applicable_states: Vec::new(),
+        max_iterations: None,
+        planned_identity: None,
+    }
 }
 
 fn acquire_error(error: SupervisorError) -> ApiError {
@@ -1305,19 +1357,21 @@ fn validate_chips(chips: &[ContextChip]) -> Result<(), ApiError> {
     for chip in chips {
         match chip {
             ContextChip::Node { id } => bounded(id)?,
-            ContextChip::Attachment { node, id, .. } => {
+            ContextChip::Attachment { node, id, revision } => {
                 bounded(node)?;
                 bounded(id)?;
+                bounded(revision)?;
             }
             ContextChip::Range {
                 node,
                 attachment,
+                revision,
                 start_ms,
                 end_ms,
-                ..
             } => {
                 bounded(node)?;
                 bounded(attachment)?;
+                bounded(revision)?;
                 if end_ms <= start_ms {
                     return Err(ApiError::bad_request("range chip end must follow start"));
                 }
@@ -1334,8 +1388,9 @@ fn validate_chips(chips: &[ContextChip]) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// One JSON chip per line inside a delimited block; always present so the
-/// operator's own text is the part after the block.
+/// One JSON chip per line inside a delimited block. A send with a preamble
+/// (scope or tail) always carries the block, possibly empty, so the operator's
+/// own text is the part after it; a bare message goes out as itself.
 pub(crate) fn chips_block(chips: &[ContextChip]) -> String {
     let mut out = String::from(CONTEXT_OPEN);
     out.push('\n');
@@ -1364,6 +1419,9 @@ pub(crate) fn compose(
         parts.push(format!(
             "Earlier in this conversation (bounded tail, oldest first):\n{tail}"
         ));
+    }
+    if parts.is_empty() && chips.is_empty() {
+        return message.trim().to_string();
     }
     parts.push(format!("{}{}", chips_block(chips), message.trim()));
     parts.join("\n\n")
@@ -1518,23 +1576,25 @@ async fn scope_context(
 }
 
 /// Linked ids and titles in both directions from the project's links index.
+/// A node's title from the loaded index (graph nodes, then tasks).
+fn index_title(project: &ProjectIndex, id: &str) -> Option<String> {
+    project
+        .graph
+        .nodes
+        .iter()
+        .find(|node| node.id == id)
+        .map(|node| node.title.clone())
+        .or_else(|| {
+            project
+                .tasks
+                .iter()
+                .find(|task| task.id == id)
+                .map(|task| task.title.clone())
+        })
+}
+
 fn links_summary(project: &ProjectIndex, node_id: &str) -> String {
-    let title = |id: &str| {
-        project
-            .graph
-            .nodes
-            .iter()
-            .find(|node| node.id == id)
-            .map(|node| node.title.clone())
-            .or_else(|| {
-                project
-                    .tasks
-                    .iter()
-                    .find(|task| task.id == id)
-                    .map(|task| task.title.clone())
-            })
-            .unwrap_or_default()
-    };
+    let title = |id: &str| index_title(project, id).unwrap_or_default();
     let mut lines = Vec::new();
     for link in project.graph.links.iter().filter(|link| !link.deleted) {
         if link.source == node_id {
@@ -1585,7 +1645,7 @@ mod tests {
             ContextChip::Range {
                 node: "MTG-1".into(),
                 attachment: "att".into(),
-                revision: 2,
+                revision: "2".into(),
                 start_ms: 10,
                 end_ms: 20,
             },
@@ -1608,6 +1668,11 @@ mod tests {
         assert!(composed.ends_with(">>>\nhello"));
         assert_eq!(operator_message(&composed), "hello");
         assert_eq!(operator_message("plain"), "plain");
+        assert_eq!(compose(None, None, &[], " plain "), "plain");
+        assert!(compose(None, None, &chips, "x").starts_with(CONTEXT_OPEN));
+        let scoped = compose(Some("scope"), None, &[], "x");
+        assert!(scoped.ends_with(">>>\nx"), "{scoped}");
+        assert_eq!(operator_message(&scoped), "x");
 
         let big = ContextChip::Selection {
             text: "x".repeat(SELECTION_LIMIT_BYTES + 1),
@@ -1620,6 +1685,57 @@ mod tests {
         let err: Result<ContextChip, _> =
             serde_json::from_str(r#"{"kind":"node","id":"x","extra":1}"#);
         assert!(err.is_err(), "unknown chip fields are refused");
+    }
+
+    #[test]
+    fn regenerate_conversations_take_input_from_anyone_who_may_regenerate() {
+        let member = |name: &str, role: &str| Identity::Member {
+            name: name.into(),
+            grants: vec![("demo".into(), role.into())],
+            actions: Vec::new(),
+        };
+        let conv = |purpose: &str| Conversation {
+            id: "CONV-1".into(),
+            dir: PathBuf::new(),
+            archived: false,
+            owner: actor_key(&member("anna", "editor")),
+            purpose: purpose.into(),
+            provider: String::new(),
+            model: None,
+            effort: None,
+            access: None,
+            mode: String::new(),
+            machine: String::new(),
+            runs: Vec::new(),
+            scope: None,
+        };
+        assert!(input_allowed(&member("anna", "editor"), "demo", &conv("discuss")).is_ok());
+        assert!(input_allowed(&member("bob", "editor"), "demo", &conv("discuss")).is_err());
+        assert!(input_allowed(&Identity::Admin, "demo", &conv("discuss")).is_ok());
+        assert!(input_allowed(&member("bob", "editor"), "demo", &conv("regenerate")).is_ok());
+        assert!(input_allowed(&member("bob", "viewer"), "demo", &conv("regenerate")).is_err());
+    }
+
+    #[test]
+    fn conversation_runs_idle_out_but_never_stall_or_time_out() {
+        let request = |purpose: &str| {
+            acquire_request(
+                "demo",
+                FsPath::new("/project"),
+                "CONV-1",
+                purpose,
+                PathBuf::from("/session.jsonl"),
+                DriverConfig::empty(),
+            )
+        };
+        let discuss = request("discuss");
+        assert_eq!(discuss.idle_timeout_secs, Some(DEFAULT_IDLE_TIMEOUT_SECS));
+        assert_eq!(discuss.idle_timeout_secs, Some(900));
+        assert_eq!(discuss.stall_timeout_secs, Some(0));
+        assert_eq!(discuss.max_run_duration_secs, Some(0));
+        assert_eq!(discuss.task_id, "CONV-1");
+        assert_eq!(request("regenerate").idle_timeout_secs, Some(900));
+        assert_eq!(request("implement").idle_timeout_secs, None);
     }
 
     #[test]

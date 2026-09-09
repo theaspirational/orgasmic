@@ -6,7 +6,6 @@ import {
   availableChatAccess,
   availableChatProviders,
   chatProviderFromRun,
-  isNativeChatRun,
   setupModels,
 } from '../chatProviders';
 
@@ -44,10 +43,9 @@ describe('canonical chat providers', () => {
       { driver: 'stdio', harness: 'claude-sdk' },
       { driver: 'stdio', harness: 'opencode' },
     ];
-    expect(runs.every(isNativeChatRun)).toBe(true);
     expect(runs.map(chatProviderFromRun)).toEqual(['codex', 'claude', 'opencode']);
-    expect(isNativeChatRun({ driver: 'stdio', harness: 'claude' })).toBe(false);
-    expect(isNativeChatRun({ driver: 'tmux', harness: 'opencode' })).toBe(false);
+    expect(chatProviderFromRun({ driver: 'stdio', harness: 'claude' })).toBeNull();
+    expect(chatProviderFromRun({ driver: 'tmux', harness: 'opencode' })).toBeNull();
   });
 
   it('maps the SDK-backed catalog into picker models', () => {

@@ -8,8 +8,8 @@ import { HttpError } from '@/lib/transport';
 import type { ConversationContextChip, RunSummary } from '@/lib/types';
 
 const mocks = vi.hoisted(() => ({
-  fetchConversations: vi.fn(),
-  fetchConversation: vi.fn(),
+  fetchGraphNodes: vi.fn(),
+  fetchOrgNode: vi.fn(),
   fetchNodeLinks: vi.fn(),
   fetchRun: vi.fn(),
   findNodeConversation: vi.fn(),
@@ -20,8 +20,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/api', async () => ({
   ...(await vi.importActual<typeof import('@/lib/api')>('@/lib/api')),
-  fetchConversations: mocks.fetchConversations,
-  fetchConversation: mocks.fetchConversation,
+  fetchGraphNodes: mocks.fetchGraphNodes,
+  fetchOrgNode: mocks.fetchOrgNode,
   fetchNodeLinks: mocks.fetchNodeLinks,
   fetchRun: mocks.fetchRun,
   findNodeConversation: mocks.findNodeConversation,
@@ -86,12 +86,12 @@ beforeEach(() => {
   window.localStorage.clear();
   // A live RunSurface mounts the auto-scrolling transcript, which observes resizes.
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
-  mocks.fetchConversations.mockResolvedValue([
+  mocks.fetchGraphNodes.mockResolvedValue([
     { id: 'CONV-ARCH', title: 'Old archived', todo: 'ARCHIVED', layer: 'conversations', outgoing: [], source_file: '' },
     { id: 'CONV-LIVE', title: 'Live one', todo: 'OPEN', layer: 'conversations', outgoing: [], source_file: '' },
     { id: 'CONV-IDLE', title: 'Idle one', todo: 'OPEN', layer: 'conversations', outgoing: [], source_file: '' },
   ]);
-  mocks.fetchConversation.mockImplementation(async (id: string) => conversationDoc(id, 'run-a run-b:resumed run-c:cold'));
+  mocks.fetchOrgNode.mockImplementation(async (id: string) => conversationDoc(id, 'run-a run-b:resumed run-c:cold'));
   mocks.fetchNodeLinks.mockResolvedValue([]);
   mocks.fetchRun.mockResolvedValue({ source: '', run: {} });
 });
@@ -212,7 +212,7 @@ describe('ConversationPanel', () => {
   });
 
   it('shows the purpose and the short worktree in the conversation header', async () => {
-    mocks.fetchConversation.mockImplementation(async (id: string) =>
+    mocks.fetchOrgNode.mockImplementation(async (id: string) =>
       conversationDoc(id, 'run-a', { PURPOSE: 'implement', WORKTREE: '/tmp/wt/sprint-TASK-1' }));
     render(panel());
     fireEvent.click(await screen.findByRole('button', { name: /Idle one/ }));

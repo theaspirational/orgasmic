@@ -47,7 +47,7 @@ import { resolveTerminalDriver } from './terminalLaunch';
 
 export function RunDock() {
   const { activeProjectId } = useActiveProject();
-  const { can } = useMe();
+  const { can, isMember } = useMe();
   // The dock only renders when the viewer may watch sessions (see AppShell). A
   // member who can watch but lacks sessions.interact gets a read-only surface:
   // no composer, no PTY input, no launch/stop. Admin ⇒ can() true ⇒ interactive.
@@ -82,7 +82,8 @@ export function RunDock() {
     dragging: boolean;
   } | null>(null);
 
-  const manager = useResource('rundock-manager-state', fetchManagerState);
+  // Admin-only route; a member mounted for chat (AppShell) must not poll it.
+  const manager = useResource('rundock-manager-state', fetchManagerState, { enabled: !isMember });
   // Run buttons need summaries (driver/kind/task) to label and render.
   // orgasmic:task_6HJYT — the dock renders live runs only, so it reads the
   // supervisor-local live source rather than the recovery inventory. Tab

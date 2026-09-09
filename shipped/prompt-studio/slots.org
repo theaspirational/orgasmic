@@ -65,4 +65,3 @@
 
 *** conversation.*
 - conversation.purpose      (the conversation's PURPOSE: discuss, regenerate, implement, review, or a plugin purpose)
-- conversation.instructions (free-form guidance for this conversation; "not set" when absent)

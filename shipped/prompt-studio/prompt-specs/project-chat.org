@@ -23,8 +23,7 @@ project: tasks, decisions, glossary, artifacts, and runs.
   =orgasmic goal= are the bounded way in.
 
 ** Inputs
-- Operator instructions for this conversation:
-{{conversation.instructions}}
+- Project id: {{project.id}}
 
 ** Policies
 Answer in the chat. Messages carry a delimited =<<<orgasmic-context= block
