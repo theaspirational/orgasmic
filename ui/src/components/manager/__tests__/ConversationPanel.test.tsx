@@ -45,7 +45,7 @@ vi.mock('@/hooks/useMe', () => ({
   }),
 }));
 
-import { CHAT_EXECUTE_LABEL, ConversationPanel, NO_RESUME_LABEL } from '../ConversationPanel';
+import { CHAT_EXECUTE_LABEL, ConversationPanel, IN_FLIGHT_LABEL, NO_RESUME_LABEL } from '../ConversationPanel';
 
 function conversationDoc(id: string, runs: string, extra: Record<string, string> = {}) {
   return {
@@ -237,6 +237,25 @@ describe('ConversationPanel', () => {
     view.rerender(panel([liveRun('TASK-9', { run_id: 'run-attempt', harness: 'claude', conversation_id: 'CONV-IDLE' })]));
     await waitFor(() => expect(screen.getByPlaceholderText('Send to agent')).toBeEnabled());
     expect(screen.queryByText(NO_RESUME_LABEL)).toBeNull();
+  });
+
+  it('shows a retry notice for an in-flight 409 and the daemon text for a 400, leaving the composer enabled', async () => {
+    mocks.postConversationInput
+      .mockRejectedValueOnce(new HttpError(409, JSON.stringify({ error: 'CONV-IDLE launch already in flight' })))
+      .mockRejectedValueOnce(new HttpError(400, JSON.stringify({ error: 'the artifactor is not running; use Regenerate to start a new round' })));
+    render(panel());
+    fireEvent.click(await screen.findByRole('button', { name: /Idle one/ }));
+    const composer = await screen.findByPlaceholderText('Send to agent');
+    await waitFor(() => expect(composer).toBeEnabled());
+    fireEvent.change(composer, { target: { value: 'again' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(await screen.findByText(IN_FLIGHT_LABEL)).toBeInTheDocument();
+    await waitFor(() => expect(composer).toBeEnabled());
+    expect(composer).toHaveValue('again');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(await screen.findByText('the artifactor is not running; use Regenerate to start a new round')).toBeInTheDocument();
+    await waitFor(() => expect(composer).toBeEnabled());
   });
 
   it('disables the composer with the host-agent notice when chat.execute is missing', async () => {

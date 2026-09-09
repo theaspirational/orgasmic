@@ -29,6 +29,7 @@ import {
 } from '@/lib/conversations';
 import { useRunDock, type ChatTarget } from '@/lib/runDock';
 import { runConversationId } from '@/lib/runLabels';
+import { HttpError } from '@/lib/transport';
 import { parseSessionSource } from '@/lib/transcriptParts';
 import { TranscriptStream } from '@/lib/transcriptStream';
 import type { ConversationContextChip, DaemonEvent, RunSummary } from '@/lib/types';
@@ -45,6 +46,7 @@ import type { ChatSelection } from './chatProviders';
 
 export const CHAT_EXECUTE_LABEL = 'Chat runs an agent on the host. Ask an admin to grant chat.execute.';
 export const NO_RESUME_LABEL = 'No native session to resume. Dispatch a new attempt.';
+export const IN_FLIGHT_LABEL = 'A continuation is starting; try again in a moment.';
 
 /** The target with its optional chips replaced; none → the field is dropped. */
 function withContext<T extends ChatTarget>(target: T, chips: ConversationContextChip[]): T {
@@ -343,6 +345,10 @@ function ConversationView({
         setNoResume(true);
         throw new Error(NO_RESUME_LABEL);
       }
+      // Any other 409 is a launch or live run racing this send: retry, not sticky.
+      if (err instanceof HttpError && err.status === 409) throw new Error(IN_FLIGHT_LABEL);
+      // The daemon's own words (e.g. the regenerate 400) beat "400 …".
+      if (err instanceof HttpError && err.detail) throw new Error(err.detail);
       throw err;
     }
     if (chips.length) onChipsChange([]);
