@@ -33,14 +33,16 @@ export type ParsedContextBlock = {
 };
 
 /** The daemon wraps every conversation send as `<<<orgasmic-context`, one JSON
- * chip per line, `>>>`, then the operator's text. Null when the text carries
- * no complete block; malformed chip lines are skipped. */
+ * chip per line, `>>>`, then the operator's text. Anchored on the LAST close
+ * and the last open before it, like the daemon's `operator_message`: the scope
+ * prompt before the block may quote the delimiter itself. Null when the text
+ * carries no complete block; malformed chip lines are skipped. */
 export function parseContextBlock(text: string): ParsedContextBlock | null {
-  const open = text.indexOf(CONTEXT_OPEN);
+  const close = text.lastIndexOf(`\n${CONTEXT_CLOSE}`);
+  if (close < 0) return null;
+  const open = text.lastIndexOf(CONTEXT_OPEN, close);
   if (open < 0) return null;
   const bodyStart = open + CONTEXT_OPEN.length;
-  const close = text.indexOf(`\n${CONTEXT_CLOSE}`, bodyStart);
-  if (close < 0) return null;
   const chips: ConversationContextChip[] = [];
   for (const line of text.slice(bodyStart, close).split('\n')) {
     if (!line.trim()) continue;
