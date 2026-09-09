@@ -329,6 +329,12 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         false
     }
 
+    /// JSON-RPC hook with the `initialize` response, before any session method
+    /// is sent. ACP adapters read `agentCapabilities` here.
+    fn on_jsonrpc_initialized(&mut self, _response: &Value) -> Result<(), DriverError> {
+        Ok(())
+    }
+
     /// JSON-RPC hook after a successful `thread/start` response.
     async fn on_ws_thread_started(
         &mut self,

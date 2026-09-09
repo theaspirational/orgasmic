@@ -46,8 +46,9 @@ pub use runtime_options::{
 };
 pub use sandbox::{allowlist_from_driver_config, ApprovalResponse, SandboxAllowlist};
 pub use transcript_finder::{
-    find_native_transcript, lookup_from_envelopes, NativeTranscriptHit, TranscriptConfidence,
-    TranscriptFindResult, TranscriptLookup, TranscriptRoots,
+    acp_session_resume, find_native_transcript, lookup_from_envelopes, AcpSessionResume,
+    NativeTranscriptHit, TranscriptConfidence, TranscriptFindResult, TranscriptLookup,
+    TranscriptRoots,
 };
 
 /// Stable legacy transport ids known to the registry.

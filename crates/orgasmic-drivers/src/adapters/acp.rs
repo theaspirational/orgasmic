@@ -23,6 +23,7 @@ pub struct AcpAdapter {
     seq: u64,
     finished: bool,
     released: bool,
+    load_session: bool,
 }
 impl AcpAdapter {
     pub fn new(provider: &str, chat: bool) -> Option<Self> {
@@ -36,7 +37,12 @@ impl AcpAdapter {
             seq: 0,
             finished: false,
             released: false,
+            load_session: false,
         })
+    }
+    /// Session id the daemon asked us to `session/load` instead of `session/new`.
+    fn load_target(&self) -> Option<&str> {
+        self.config.0["acp_load_session"].as_str()
     }
     fn record(&self, method: &str, value: Value) -> DriverEvent {
         DriverEvent::Acp {
@@ -156,6 +162,16 @@ impl HarnessEventAdapter for AcpAdapter {
     fn validate_config(&self, config: &DriverConfig) -> Result<(), DriverError> {
         crate::sandbox::allowlist_from_driver_config(config)
             .map_err(|e| DriverError::InvalidConfig(e.to_string()))?;
+        if let Some(value) = config.0.get("acp_load_session").filter(|v| !v.is_null()) {
+            let valid = value
+                .as_str()
+                .is_some_and(|id| !id.is_empty() && !id.chars().any(char::is_control));
+            if !valid {
+                return Err(DriverError::InvalidConfig(
+                    "acp_load_session must be a non-empty string without control characters".into(),
+                ));
+            }
+        }
         Ok(())
     }
     fn stdio_spawn(&self) -> Option<StdioSpawn> {
@@ -254,14 +270,34 @@ impl HarnessEventAdapter for AcpAdapter {
                 post.push(json!({"method":"session/set_config_option","params":{"category":category,"value":value}}));
             }
         }
+        let mut thread_start = json!({"cwd":ctx.worktree.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"/".into()),"mcpServers":[]});
+        if let Some(id) = self.load_target() {
+            thread_start["sessionId"] = json!(id);
+        }
         Ok(json!({
             "initialize":{"protocolVersion":1,"clientInfo":{"name":"orgasmic","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{}},
-            "thread_start":{"cwd":ctx.worktree.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"/".into()),"mcpServers":[]},
+            "thread_start":thread_start,
             "post_session":post,"auto_turn":config.0["auto_start_turn"].as_bool().unwrap_or(true)
         }))
     }
     fn jsonrpc_session_start_method(&self) -> &'static str {
-        "session/new"
+        if self.load_target().is_some() {
+            agent_client_protocol_schema::v1::AGENT_METHOD_NAMES.session_load
+        } else {
+            "session/new"
+        }
+    }
+    fn on_jsonrpc_initialized(&mut self, response: &Value) -> Result<(), DriverError> {
+        self.load_session = response["agentCapabilities"]["loadSession"]
+            .as_bool()
+            .unwrap_or(false);
+        match self.load_target() {
+            Some(id) if !self.load_session => Err(DriverError::InvalidConfig(format!(
+                "ACP {} does not advertise loadSession; cannot resume session {id}",
+                self.provider
+            ))),
+            _ => Ok(()),
+        }
     }
     fn jsonrpc_turn_start_method(&self) -> &'static str {
         "session/prompt"
@@ -271,9 +307,11 @@ impl HarnessEventAdapter for AcpAdapter {
         _endpoint: &str,
         response: &Value,
     ) -> Result<Vec<DriverEvent>, DriverError> {
+        // session/load replies without a sessionId; the loaded id is the one we asked for.
+        let loaded = self.load_target().is_some();
         self.session = Some(
-            response["sessionId"]
-                .as_str()
+            self.load_target()
+                .or_else(|| response["sessionId"].as_str())
                 .ok_or_else(|| DriverError::Transport("ACP session/new omitted sessionId".into()))?
                 .into(),
         );
@@ -281,9 +319,9 @@ impl HarnessEventAdapter for AcpAdapter {
         Ok(vec![
             DriverEvent::Ready {
                 protocol_version: "acp/1".into(),
-                capabilities: json!({"canonical_events":true,"provider":self.provider,"session_id":self.session,"acp":true}),
+                capabilities: json!({"canonical_events":true,"provider":self.provider,"session_id":self.session,"acp":true,"load_session":self.load_session,"loaded":loaded}),
             },
-            self.record("session/new", response.clone()),
+            self.record(self.jsonrpc_session_start_method(), response.clone()),
         ])
     }
     fn jsonrpc_post_session_request(
@@ -308,6 +346,11 @@ impl HarnessEventAdapter for AcpAdapter {
     async fn parse_event(&mut self, raw: Value) -> Vec<DriverEvent> {
         let method = raw["method"].as_str().unwrap_or_default();
         if method.is_empty() {
+            return Vec::new();
+        }
+        if method == "session/update" && self.load_target().is_some() && self.session.is_none() {
+            // session/load replays history as session/update before it responds.
+            // The daemon renders the previous run's own transcript; drop the replay.
             return Vec::new();
         }
         let mut events = Vec::new();
