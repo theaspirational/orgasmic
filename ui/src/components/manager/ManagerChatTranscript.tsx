@@ -25,6 +25,7 @@ import {
   ToolOutput,
 } from '@/components/ai-elements/tool';
 import { useTranscriptStream } from '@/hooks/useTranscriptStream';
+import { parseContextBlock } from '@/lib/conversations';
 import {
   type TranscriptPart,
   type TranscriptReasoningPart,
@@ -32,6 +33,9 @@ import {
   type TranscriptTextPart,
   type TranscriptToolPart,
 } from '@/lib/transcriptParts';
+
+import { ContextChips } from './ContextChips';
+
 export function ManagerChatTranscript({
   runId,
   initialSource,
@@ -170,19 +174,26 @@ function TranscriptPartView({ part }: { part: TranscriptPart }) {
 }
 
 function TranscriptMessage({ part }: { part: TranscriptTextPart }) {
-  const fullText = part.fullText;
-  const showFullText = Boolean(fullText && fullText !== part.text);
+  // A conversation send carries its chips in a delimited block (CHAT-SCOPE
+  // C2): show them as chips and only the operator's text as the message. The
+  // scope prompt or tail the daemon put before the block stays under "Full
+  // content".
+  const block = part.role === 'user' ? parseContextBlock(part.text) : null;
+  const text = block ? block.message : part.text;
+  const fullText = part.fullText ?? (block?.prefix ? part.text : undefined);
+  const showFullText = Boolean(fullText && fullText !== text);
   return (
     <Message className="max-w-[min(720px,95%)]" from={part.role}>
       <MessageContent
         className={part.role === 'assistant' ? 'w-full' : undefined}
       >
         <TranscriptMeta label={part.label} time={part.time} />
+        {block?.chips.length ? <ContextChips chips={block.chips} className="mb-1" /> : null}
         {part.role === 'assistant' ? (
-          <MessageResponse>{part.text}</MessageResponse>
+          <MessageResponse>{text}</MessageResponse>
         ) : (
           <p className="whitespace-pre-wrap break-words leading-relaxed">
-            {part.text}
+            {text}
           </p>
         )}
         {showFullText ? (

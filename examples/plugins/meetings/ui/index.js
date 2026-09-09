@@ -50,6 +50,8 @@ export function register(ctx) {
       if (result.data && !draft) setDraft({ title: result.data.title, body: result.data.body, base_version: result.data.source.base_version });
     }, [result.data, draft]);
     const writable = can(projectId, 'nodes.write') && Boolean(result.data) && result.data.schema_matches !== false;
+    // core.chat@1 is optional: an older host has no ctx.openChat.
+    const chat = typeof ctx.openChat === 'function' && can(projectId, 'chat.write');
     const change = (key, value) => {
       const next = { ...draft, [key]: value };
       ctx.setDraft(nodeId, next);
@@ -74,7 +76,9 @@ export function register(ctx) {
     }
     if (result.error) return h('p', { role: 'alert' }, String(result.error));
     if (!draft) return h('p', { role: 'status' }, 'Loading meeting…');
-    return h('div', { className: 'meetings' }, h(Player, { ctx, nodeId, onOpenNode, writable }), h('form', { className: 'meetings', onSubmit: save },
+    return h('div', { className: 'meetings' },
+      chat ? h('div', null, h(Button, { type: 'button', variant: 'outline', onClick: () => ctx.openChat({ node: nodeId, purpose: 'meeting' }) }, 'Chat')) : null,
+      h(Player, { ctx, nodeId, onOpenNode, writable }), h('form', { className: 'meetings', onSubmit: save },
       h('label', { htmlFor: titleId }, 'Title', h(Input, { id: titleId, value: draft.title, required: true, disabled: !writable || saving, onChange: (e) => change('title', e.target.value) })),
       h('label', { htmlFor: notesId }, 'Notes', h(Textarea, { id: notesId, value: draft.body, disabled: !writable || saving, onChange: (e) => change('body', e.target.value) })),
       error ? h('p', { role: 'alert', className: 'error' }, error) : null,

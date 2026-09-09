@@ -2,7 +2,7 @@
 // use the same React and transport instances. No P5 service placeholders.
 export { fetchGraphNodes, fetchOrgNode, postOrgNodeEdit, postOrgNodeDelete } from '@/lib/api';
 export type { NodeEditOp, OrgNodeDoc } from '@/lib/orgdoc/types';
-export type { GraphNodeSummary, DaemonEvent } from '@/lib/types';
+export type { ConversationContextChip, GraphNodeSummary, DaemonEvent } from '@/lib/types';
 export { get, post } from '@/lib/transport';
 export { useResource } from '@/lib/useResource';
 export { useEventStream } from '@/hooks/useEventStream';

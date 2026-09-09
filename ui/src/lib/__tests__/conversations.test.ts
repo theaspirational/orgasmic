@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  chipLabel,
   conversationOwnedBy,
   conversationRuns,
   newestOpenConversation,
   orderConversations,
   parseConversationRuns,
+  parseContextBlock,
   segmentLabel,
+  worktreeLabel,
 } from '../conversations';
 import type { OrgNodeDoc } from '../orgdoc/types';
 
@@ -63,6 +66,49 @@ describe('conversation list', () => {
     ])).toBe('CONV-NEW');
     expect(newestOpenConversation([doc('CONV-ARCHIVED', 'ARCHIVED', {})])).toBeNull();
     expect(newestOpenConversation([])).toBeNull();
+  });
+});
+
+describe('context chips', () => {
+  it('labels chips by id, attachment@revision, time range, or the first 40 characters', () => {
+    expect(chipLabel({ kind: 'node', id: 'dec_1' })).toBe('dec_1');
+    expect(chipLabel({ kind: 'attachment', node: 'MEET-1', id: 'rec', revision: 'abcdef0123456789' })).toBe('rec@abcdef0');
+    expect(chipLabel({ kind: 'range', node: 'MEET-1', attachment: 'rec', revision: 'sha', start_ms: 90000, end_ms: 120000 })).toBe('1:30–2:00');
+    expect(chipLabel({ kind: 'selection', text: 'short' })).toBe('short');
+    expect(chipLabel({ kind: 'selection', text: 'x'.repeat(41) })).toBe(`${'x'.repeat(40)}…`);
+  });
+
+  it('parses the daemon context block out of a sent message', () => {
+    const block = [
+      'scope prompt', '', '<<<orgasmic-context',
+      '{"kind":"node","id":"dec_1"}',
+      '{"kind":"range","node":"MEET-1","attachment":"rec","revision":"sha","start_ms":0,"end_ms":30000}',
+      '>>>', 'hello there',
+    ].join('\n');
+    expect(parseContextBlock(block)).toEqual({
+      chips: [
+        { kind: 'node', id: 'dec_1' },
+        { kind: 'range', node: 'MEET-1', attachment: 'rec', revision: 'sha', start_ms: 0, end_ms: 30000 },
+      ],
+      message: 'hello there',
+      prefix: 'scope prompt',
+    });
+    // Always-present block, no chips.
+    expect(parseContextBlock('<<<orgasmic-context\n>>>\nplain')).toEqual({ chips: [], message: 'plain', prefix: '' });
+  });
+
+  it('leaves text without a complete block alone and skips malformed chip lines', () => {
+    expect(parseContextBlock('just a message')).toBeNull();
+    expect(parseContextBlock('<<<orgasmic-context\n{"kind":"node","id":"dec_1"}\nnever closed')).toBeNull();
+    expect(parseContextBlock('<<<orgasmic-context\nnot json\n{"no":"kind"}\n{"kind":"node","id":"dec_1"}\n>>>\nok')).toEqual({
+      chips: [{ kind: 'node', id: 'dec_1' }], message: 'ok', prefix: '',
+    });
+  });
+
+  it('shortens a worktree path to its directory name', () => {
+    expect(worktreeLabel('/tmp/wt/sprint-TASK-1')).toBe('sprint-TASK-1');
+    expect(worktreeLabel('/tmp/wt/sprint-TASK-1/')).toBe('sprint-TASK-1');
+    expect(worktreeLabel('relative')).toBe('relative');
   });
 });
 

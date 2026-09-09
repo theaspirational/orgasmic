@@ -11,7 +11,7 @@ import {
 
 import { fetchRecoveryStatus, fetchRecoveryInventory } from '@/lib/api';
 import { isRunDockEligible } from '@/lib/runLabels';
-import type { RunSummary } from '@/lib/types';
+import type { ConversationContextChip, RunSummary } from '@/lib/types';
 import { applyWorkerTabUpdate, clampDockHeight, DEFAULT_DOCK_HEIGHT } from '@/lib/runDockUtils';
 
 const OPEN_TABS_KEY = 'orgasmic.rundock.open-tabs.v1';
@@ -51,16 +51,19 @@ type OpenRunOptions = {
 
 /** What the Chat tab shows (CHAT-SCOPE C1). `lookup` is resolved by the dock
  * (it knows the project) into the node's newest OPEN conversation or a scoped
- * setup; only a chosen conversation id is persisted. */
+ * setup; only a chosen conversation id is persisted. `context` is the pending
+ * optional chips for the next send (C2): transient, removable, cleared on send. */
 export type ChatTarget =
-  | { kind: 'conversation'; conversationId: string }
-  | { kind: 'lookup'; node: string; purpose: string }
-  | { kind: 'setup'; node?: string; purpose?: string };
+  | { kind: 'conversation'; conversationId: string; context?: ConversationContextChip[] }
+  | { kind: 'lookup'; node: string; purpose: string; context?: ConversationContextChip[] }
+  | { kind: 'setup'; node?: string; purpose?: string; context?: ConversationContextChip[] };
 
 export type OpenChatOptions = {
   conversationId?: string;
   node?: string;
   purpose?: string;
+  /** Optional chips for the composer of the opened conversation. */
+  context?: ConversationContextChip[];
 };
 
 type RunDockContextValue = {
@@ -79,6 +82,9 @@ type RunDockContextValue = {
   openChat: (options?: OpenChatOptions) => void;
   chatTarget: ChatTarget;
   setChatTarget: (target: ChatTarget) => void;
+  /** Set or clear the optional chips on the open conversation's composer
+   * (plugin `core.chat@1`); a warning no-op when no conversation is open. */
+  chatContext: (chips: ConversationContextChip[] | null) => void;
   /** Replace the current live-run metadata used to guard dock eligibility. */
   replaceLiveRuns: (runs: RunSummary[]) => void;
   /** Collapse to the bare taskbar, keeping the active selection. */
@@ -162,6 +168,8 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
     readStoredActiveTab(),
   );
   const [chatTarget, setChatTargetState] = useState<ChatTarget>(() => readStoredChatTarget());
+  const chatTargetRef = useRef(chatTarget);
+  chatTargetRef.current = chatTarget;
   const validatedRef = useRef(false);
   const liveRunsRef = useRef<Map<string, RunSummary>>(new Map());
 
@@ -304,15 +312,31 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
 
   const openChat = useCallback(
     (options?: OpenChatOptions) => {
+      const context = options?.context?.length ? options.context : undefined;
       if (options?.conversationId) {
-        setChatTarget({ kind: 'conversation', conversationId: options.conversationId });
+        setChatTarget({ kind: 'conversation', conversationId: options.conversationId, context });
       } else if (options?.node) {
-        setChatTarget({ kind: 'lookup', node: options.node, purpose: options.purpose ?? 'discuss' });
+        setChatTarget({ kind: 'lookup', node: options.node, purpose: options.purpose ?? 'discuss', context });
+      } else if (options?.context) {
+        // Chips for whatever the tab already shows; a bare open keeps them.
+        setChatTarget({ ...chatTargetRef.current, context });
       }
       setActiveTabId(CHAT_TAB_ID);
       raise();
     },
     [raise, setActiveTabId, setChatTarget],
+  );
+
+  const chatContext = useCallback(
+    (chips: ConversationContextChip[] | null) => {
+      const current = chatTargetRef.current;
+      if (current.kind !== 'conversation') {
+        console.warn('chatContext ignored: no conversation is open in the dock');
+        return;
+      }
+      setChatTarget({ ...current, context: chips?.length ? chips : undefined });
+    },
+    [setChatTarget],
   );
 
   const closeTab = useCallback(
@@ -349,6 +373,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       openChat,
       chatTarget,
       setChatTarget,
+      chatContext,
       replaceLiveRuns,
       minimize,
       closeTab,
@@ -365,6 +390,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       openChat,
       chatTarget,
       setChatTarget,
+      chatContext,
       replaceLiveRuns,
       minimize,
       closeTab,

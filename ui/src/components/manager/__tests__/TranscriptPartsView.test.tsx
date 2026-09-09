@@ -59,3 +59,24 @@ it('groups tools without swallowing model text and keeps reasoning expandable', 
   fireEvent.click(screen.getByRole('button', { name: /thinking/i }));
   expect(screen.getByText('Vendor reasoning text')).toBeVisible();
 });
+
+it('renders a sent conversation message as its chips plus the operator text', () => {
+  const sent = ['<<<orgasmic-context', '{"kind":"node","id":"dec_1"}',
+    '{"kind":"range","node":"MEET-1","attachment":"rec","revision":"sha","start_ms":90000,"end_ms":120000}',
+    '>>>', 'what was decided?'].join('\n');
+  render(
+    <TranscriptPartsView
+      parts={[
+        { type: 'text', id: 'sent', role: 'user', label: 'user', text: sent },
+        { type: 'text', id: 'plain', role: 'user', label: 'user', text: 'no block here' },
+      ]}
+    />,
+  );
+  const chips = screen.getByTestId('context-chips');
+  expect(chips).toHaveTextContent('dec_1');
+  expect(chips).toHaveTextContent('1:30–2:00');
+  expect(screen.getByText('what was decided?')).toBeInTheDocument();
+  expect(screen.queryByText(/orgasmic-context/)).toBeNull();
+  expect(screen.getByText('no block here')).toBeInTheDocument();
+  expect(screen.getAllByTestId('context-chips')).toHaveLength(1);
+});

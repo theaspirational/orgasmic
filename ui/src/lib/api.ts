@@ -536,6 +536,17 @@ export function postConversationInput(
   );
 }
 
+/** 409 `{code:"no_resume"}`: an implement/review conversation whose worker is
+ * released and has no native session to resume (CHAT-SCOPE C2). */
+export function isNoResumeError(err: unknown): boolean {
+  if (!(err instanceof HttpError) || err.status !== 409) return false;
+  try {
+    return (JSON.parse(err.body) as { code?: unknown }).code === 'no_resume';
+  } catch {
+    return false;
+  }
+}
+
 /** The newest OPEN conversation about a node, or null when none exists. */
 export async function findNodeConversation(project: string, node: string): Promise<string | null> {
   const links = await fetchNodeLinks(project, node, true);
