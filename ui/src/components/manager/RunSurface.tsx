@@ -18,6 +18,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useMe } from '@/hooks/useMe';
 import { postRunInput } from '@/lib/api';
 import { runDriverTag, runUsesPtyTerminal } from '@/lib/runLabels';
 import type { RunSummary } from '@/lib/types';
@@ -76,6 +77,9 @@ export function RunSurface({
   /** Members without sessions.interact watch the stream but cannot send. */
   readOnly?: boolean;
 }) {
+  // Runtime options are an admin-only route; a member's live conversation
+  // keeps its composer and menu without the bar.
+  const { isMember } = useMe();
   if (runUsesPtyTerminal(run)) {
     return (
       <RunTmuxStack
@@ -103,7 +107,7 @@ export function RunSurface({
             {conversation?.chips}
             {chatProvider ? (
               <>
-                <RuntimeOptionsBar runId={run.run_id} provider={chatProvider} />
+                {!isMember ? <RuntimeOptionsBar runId={run.run_id} provider={chatProvider} /> : null}
                 {onStop ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
