@@ -17,9 +17,7 @@ import {
   fetchManagerState,
   fetchLiveRuns,
   isRunGoneError,
-  postManagerChatLaunch,
   postManagerLaunch,
-  postRunInput,
   postRunRelease,
 } from '@/lib/api';
 import { useContainedWheelRef } from '@/lib/containedWheel';
@@ -35,11 +33,7 @@ import { cn } from '@/lib/utils';
 import { useResource } from '@/lib/useResource';
 
 import { DockTaskbar, type TaskbarRunButton } from './DockTaskbar';
-import { ChatSetup } from './ChatSetup';
-import {
-  isNativeChatRun,
-  type ChatSelection,
-} from './chatProviders';
+import { ConversationPanel } from './ConversationPanel';
 import { RunningAgentsMenu } from './RunningAgentsMenu';
 import {
   isTerminalRun,
@@ -58,6 +52,8 @@ export function RunDock() {
   // member who can watch but lacks sessions.interact gets a read-only surface:
   // no composer, no PTY input, no launch/stop. Admin ⇒ can() true ⇒ interactive.
   const readOnly = !can(activeProjectId, 'sessions.interact');
+  // Conversations are nodes; seeing them is chat.read (CHAT-SCOPE §6).
+  const chatEnabled = can(activeProjectId, 'chat.read');
   const {
     open,
     height,
@@ -107,9 +103,13 @@ export function RunDock() {
     return map;
   }, [liveRuns, manager.data?.runs]);
 
+  // Live runs with the manager snapshot folded in (see runById): a conversation
+  // created a moment ago is already findable by its lease key here.
+  const knownRuns = useMemo(() => [...runById.values()], [runById]);
+
   useEffect(() => {
-    replaceLiveRuns([...runById.values()]);
-  }, [replaceLiveRuns, runById]);
+    replaceLiveRuns(knownRuns);
+  }, [replaceLiveRuns, knownRuns]);
 
   // Every live run of the active project earns a taskbar button the moment it
   // is dispatched — the Windows-taskbar model. Only clicking a button opens a
@@ -171,9 +171,7 @@ export function RunDock() {
 
   const activeTab = tabs.find((tab) => tab.tabId === activeTabId) ?? null;
   const activeRun = activeTab ? runById.get(activeTab.runId) ?? null : null;
-  const chatRun = projectRuns.managers.find(isNativeChatRun) ?? null;
-  const occupiedManager = projectRuns.managers.find((run) => !isNativeChatRun(run)) ?? null;
-  const chatActive = activeTabId === CHAT_TAB_ID && open;
+  const chatActive = activeTabId === CHAT_TAB_ID && open && chatEnabled;
   const maximized = height >= MAX_DOCK_HEIGHT;
 
   const raiseLastTab = useCallback(() => {
@@ -305,57 +303,6 @@ export function RunDock() {
     }
   }
 
-  async function handleStartChat(selection: ChatSelection, message: string): Promise<boolean> {
-    if (readOnly) return false;
-    if (!activeProjectId) throw new Error('Select a project before starting chat.');
-    const result = await postManagerChatLaunch({
-      project_id: activeProjectId,
-      provider: selection.provider,
-      model: selection.model || null,
-      effort: selection.effort || null,
-      access: selection.access,
-      service_tier: selection.serviceTier || null,
-    });
-    const accepted = await postRunInput(result.run_id, message);
-    if (!accepted.accepted) {
-      throw new Error(accepted.message ?? 'Provider rejected the first message.');
-    }
-    await Promise.allSettled([manager.refresh(), runs.refresh()]);
-    return true;
-  }
-
-  async function handleNewChat() {
-    if (!chatRun || readOnly) return;
-    try {
-      await postRunRelease(chatRun.run_id);
-      toast.success('Ready for a new chat');
-    } catch (err) {
-      if (!isRunGoneError(err)) {
-        toast.error('Ending chat failed', {
-          description: err instanceof Error ? err.message : String(err),
-        });
-        return;
-      }
-    }
-    refresh();
-  }
-
-  async function handleEndOccupiedManager() {
-    if (!occupiedManager || readOnly) return;
-    try {
-      await postRunRelease(occupiedManager.run_id);
-      toast.success('Existing manager ended');
-    } catch (err) {
-      if (!isRunGoneError(err)) {
-        toast.error('Ending manager failed', {
-          description: err instanceof Error ? err.message : String(err),
-        });
-        return;
-      }
-    }
-    refresh();
-  }
-
   async function handleStopRun(button: TaskbarRunButton) {
     const terminal = button.kind === 'terminal';
     try {
@@ -428,6 +375,7 @@ export function RunDock() {
       const known = new Set([
         ...buttons.map((button) => button.tabId),
         ...projectRuns.managers.map((run) => run.run_id),
+        ...projectRuns.conversations.map((run) => run.run_id),
       ]);
       for (const tab of tabs) {
         if (known.has(tab.tabId)) continue;
@@ -475,6 +423,7 @@ export function RunDock() {
         readOnly={readOnly}
         terminalBusy={terminalBusy}
         chatActive={chatActive}
+        chatVisible={chatEnabled}
         buttons={taskbarButtons}
         activeTabId={activeTabId}
         maximized={maximized}
@@ -495,26 +444,18 @@ export function RunDock() {
       {open ? (
         <div className="min-h-0 flex-1 overflow-hidden">
           {activeTabId === CHAT_TAB_ID ? (
-            chatRun ? (
-              <RunSurface
-                run={chatRun}
-                onPromptSent={() => {}}
-                onNewChat={handleNewChat}
-                readOnly={readOnly}
-              />
-            ) : occupiedManager ? (
-              <OccupiedManagerPanel
-                run={occupiedManager}
-                readOnly={readOnly}
-                onEnd={() => void handleEndOccupiedManager()}
-              />
-            ) : (
-              <ChatSetup
+            chatEnabled ? (
+              <ConversationPanel
                 key={activeProjectId ?? 'no-project'}
                 projectId={activeProjectId}
                 readOnly={readOnly}
-                onStart={handleStartChat}
+                liveRuns={knownRuns}
+                onRefresh={refresh}
               />
+            ) : (
+              <p className="p-6 text-center text-sm text-muted-foreground">
+                Chat requires the chat.read grant for this project.
+              </p>
             )
           ) : activeRun ? (
             <RunSurface
@@ -533,33 +474,6 @@ export function RunDock() {
         </div>
       ) : null}
     </aside>
-  );
-}
-
-function OccupiedManagerPanel({
-  run,
-  readOnly,
-  onEnd,
-}: {
-  run: RunSummary;
-  readOnly: boolean;
-  onEnd: () => void;
-}) {
-  return (
-    <div className="flex h-full flex-col items-center gap-4 overflow-y-auto p-6 text-center [justify-content:safe_center]">
-      <div className="max-w-md">
-        <h2 className="text-lg font-semibold tracking-tight">Chat is currently unavailable</h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {runTabTitle(run)} already owns this project’s manager session. End it before starting a
-          native Codex or Claude chat.
-        </p>
-      </div>
-      {!readOnly ? (
-        <Button type="button" variant="destructive" size="sm" onClick={onEnd}>
-          End existing manager
-        </Button>
-      ) : null}
-    </div>
   );
 }
 

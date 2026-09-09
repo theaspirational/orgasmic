@@ -1,5 +1,7 @@
 import { get, getWithHeader, HttpError, post } from './transport';
 import type { NodeEditOp, OrgNodeDoc } from './orgdoc/types';
+import type { NodeLink } from './nodeServices';
+import { newestOpenConversation } from './conversations';
 import type {
   ActivityEntry,
   ArtifactCommentRequest,
@@ -27,6 +29,10 @@ import type {
   ParseErrorsResult,
   CompiledPrompt,
   ContextPackSummary,
+  ConversationCreateRequest,
+  ConversationCreateResponse,
+  ConversationInputRequest,
+  ConversationInputResponse,
   PromptPartSummary,
   PromptSpecSummary,
   ProjectCatalogEntry,
@@ -446,6 +452,8 @@ export type NodeTypeDescriptor = {
   states: string[];
   transitions: Record<string, string[]>;
   regenerate_prompt: string | null;
+  /** Prompt spec rendered as fixed scope context for chats about this type. */
+  chat_prompt: string | null;
 };
 
 export function fetchNodeTypes(project: string): Promise<NodeTypeDescriptor[]> {
@@ -506,8 +514,52 @@ export function postOrgNodeRegenerate(
   id: string,
   body: NodeRegenerateRequest,
   project?: string | null,
-): Promise<{ node_id: string; run_id: string }> {
+): Promise<{ node_id: string; run_id: string; conversation_id?: string }> {
   return post(`/org/node/${encodeURIComponent(id)}/regenerate${q(project)}`, body);
+}
+
+/** Links touching a node: outgoing (source = node) by default, incoming (target = node) on request. */
+export function fetchNodeLinks(project: string, node: string, incoming = false): Promise<NodeLink[]> {
+  return get<NodeLink[]>(`/links${q(project, { node, incoming: incoming ? 'true' : undefined })}`);
+}
+
+// Conversations (CHAT-SCOPE C1) are nodes in the `conversations` collection;
+// only create and continue have their own routes. Everything else is generic.
+export function postConversationCreate(
+  project: string,
+  body: ConversationCreateRequest,
+): Promise<ConversationCreateResponse> {
+  return post<ConversationCreateResponse>(`/conversations${q(project)}`, {
+    ...body,
+    request_id: requestId('conversation'),
+  });
+}
+
+export function postConversationInput(
+  conversationId: string,
+  project: string,
+  body: ConversationInputRequest,
+): Promise<ConversationInputResponse> {
+  return post<ConversationInputResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/input${q(project)}`,
+    { ...body, request_id: requestId(`conversation-${conversationId}`) },
+  );
+}
+
+export function fetchConversations(project: string): Promise<GraphNodeSummary[]> {
+  return fetchGraphNodes(project, 'conversations');
+}
+
+export function fetchConversation(conversationId: string, project: string): Promise<OrgNodeDoc> {
+  return fetchOrgNode(conversationId, project);
+}
+
+/** The newest OPEN conversation about a node, or null when none exists. */
+export async function findNodeConversation(project: string, node: string): Promise<string | null> {
+  const links = await fetchNodeLinks(project, node, true);
+  const ids = [...new Set(links.filter((link) => !link.deleted && link.source.startsWith('CONV-')).map((link) => link.source))];
+  const docs = await Promise.all(ids.map((id) => fetchConversation(id, project).catch(() => null)));
+  return newestOpenConversation(docs.filter((doc): doc is OrgNodeDoc => doc !== null));
 }
 
 export function postOrgFile(

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode, type WheelEvent } from 'r
 import { X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ChatButton } from '@/components/ChatButton';
 import { NodeBacklinks } from '@/components/NodeBacklinks';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
@@ -185,7 +186,8 @@ export function NodeDocEditor({
   readOnly?: boolean;
 }) {
   const refreshBump = useRefreshBump();
-  const { isMember } = useMe();
+  const { isMember, can } = useMe();
+  const canChat = can(projectId, 'chat.write');
   const resource = useResource(
     `org-node:${projectId}:${apiKind ?? 'auto'}:${nodeId}`,
     () => fetchOrgNode(nodeId, projectId, apiKind),
@@ -291,13 +293,16 @@ export function NodeDocEditor({
       {notice ? <Banner tone="info">{notice}</Banner> : null}
       {saveError ? <Banner tone="error">{saveError}</Banner> : null}
 
-      {!readOnly && !editing && baseline.descriptor?.can_regenerate && !isMember ? (
-        <div className="flex justify-end">
-          <NodeRegenerateControl
-            projectId={projectId}
-            nodeId={nodeId}
-            label={baseline.descriptor.label}
-          />
+      {!readOnly && !editing && (canChat || (baseline.descriptor?.can_regenerate && !isMember)) ? (
+        <div className="flex justify-end gap-2">
+          <ChatButton projectId={projectId} node={nodeId} />
+          {baseline.descriptor?.can_regenerate && !isMember ? (
+            <NodeRegenerateControl
+              projectId={projectId}
+              nodeId={nodeId}
+              label={baseline.descriptor.label}
+            />
+          ) : null}
         </div>
       ) : null}
 

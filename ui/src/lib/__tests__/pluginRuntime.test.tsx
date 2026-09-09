@@ -6,7 +6,7 @@ import { createPluginRuntime, PluginRuntimeContext, usePluginView, type PluginCo
 
 afterEach(cleanup);
 function status(id: string, revision: string): PluginStatus {
-  return { id, revision, enabled: true, error: null, manifest: { ui: 'ui/index.js', node_type: { collection: id, id_prefix: `${id}-`, label: id, label_plural: id, required_properties: [], states: [], transitions: {}, regenerate_prompt: null } } };
+  return { id, revision, enabled: true, error: null, manifest: { ui: 'ui/index.js', node_type: { collection: id, id_prefix: `${id}-`, label: id, label_plural: id, required_properties: [], states: [], transitions: {}, regenerate_prompt: null, chat_prompt: null } } };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;

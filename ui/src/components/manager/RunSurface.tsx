@@ -8,7 +8,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from 'react';
-import { Bot, MoreHorizontal, Plus } from 'lucide-react';
+import { Bot, MoreHorizontal, Power } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -48,19 +48,31 @@ function readTmuxSplit(): number {
 // The Run Dock renders one of these per open tab; the only difference between a
 // manager and worker tab is provider-neutral composer copy and the role label
 // the dock supplies above this component.
+/** A conversation surface (CHAT-SCOPE C1) routes every send through
+ * POST /conversations/:id/input and pins its scope chip on the composer. */
+export type ConversationComposer = {
+  onSend: (text: string) => Promise<boolean>;
+  chips?: ReactNode;
+  /** Non-null disables the composer and shows this reason instead. */
+  disabledLabel?: string | null;
+};
+
 export function RunSurface({
   run,
   initialSource,
   initialDraft,
   onPromptSent,
-  onNewChat,
+  onStop,
+  conversation,
   readOnly = false,
 }: {
   run: RunSummary;
   initialSource?: string | null;
   initialDraft?: string | null;
   onPromptSent: () => void;
-  onNewChat?: () => void | Promise<void>;
+  /** Offers "Stop run" in the chat menu (POST /runs/:id/release). */
+  onStop?: () => void | Promise<void>;
+  conversation?: ConversationComposer;
   /** Members without sessions.interact watch the stream but cannot send. */
   readOnly?: boolean;
 }) {
@@ -72,6 +84,7 @@ export function RunSurface({
         initialDraft={initialDraft}
         onPromptSent={onPromptSent}
         readOnly={readOnly}
+        conversation={conversation}
       />
     );
   }
@@ -83,13 +96,15 @@ export function RunSurface({
       initialDraft={initialDraft}
       onPromptSent={onPromptSent}
       readOnly={readOnly}
+      conversation={conversation}
       composerControls={
         readOnly ? null : (
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+            {conversation?.chips}
             {chatProvider ? (
               <>
                 <RuntimeOptionsBar runId={run.run_id} provider={chatProvider} />
-                {onNewChat ? (
+                {onStop ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -105,9 +120,9 @@ export function RunSurface({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" side="top" className="w-44">
                       <DropdownMenuLabel>Conversation</DropdownMenuLabel>
-                      <DropdownMenuItem onSelect={() => void onNewChat()}>
-                        <Plus className="size-4" />
-                        New chat
+                      <DropdownMenuItem variant="destructive" onSelect={() => void onStop()}>
+                        <Power className="size-4" />
+                        Stop run
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -132,6 +147,7 @@ function RunChatStack({
   initialDraft,
   onPromptSent,
   readOnly,
+  conversation,
   composerControls,
 }: {
   runId: string;
@@ -139,6 +155,7 @@ function RunChatStack({
   initialDraft?: string | null;
   onPromptSent: () => void;
   readOnly: boolean;
+  conversation?: ConversationComposer;
   composerControls?: ReactNode;
 }) {
   const [pendingSince, setPendingSince] = useState<string | null>(null);
@@ -148,6 +165,7 @@ function RunChatStack({
   }, [runId]);
 
   async function handleSend(text: string): Promise<boolean> {
+    if (conversation) return conversation.onSend(text);
     // Chat-stack send. POST /runs/:id/input delivers to the driver and the
     // daemon records a composer_send lifecycle event (TASK-102 / dec_052).
     // The tmux stack reaches the same recording path via the WS send_keys
@@ -183,11 +201,12 @@ function RunChatStack({
             <ReadOnlySessionBar />
           ) : (
             <ManagerComposer
-              runId={runId}
+              runId={conversation?.disabledLabel ? null : runId}
               connectionState="open"
               initialDraft={initialDraft}
               placeholder="Send to agent"
               readyLabel="Enter to send · Shift+Enter for a new line · ↑ recalls last send"
+              unavailableLabel={conversation?.disabledLabel ?? undefined}
               onSend={handleSend}
               onSent={handleSent}
               controls={composerControls}
@@ -205,12 +224,14 @@ function RunTmuxStack({
   initialDraft,
   onPromptSent,
   readOnly,
+  conversation,
 }: {
   runId: string;
   runtimeId: string;
   initialDraft?: string | null;
   onPromptSent: () => void;
   readOnly: boolean;
+  conversation?: ConversationComposer;
 }) {
   const [split, setSplit] = useState(readTmuxSplit);
   const [connState, setConnState] = useState<TmuxPaneConnectionState>('connecting');
@@ -326,14 +347,17 @@ function RunTmuxStack({
           <ReadOnlySessionBar />
         ) : (
           <ManagerComposer
-            runId={runId}
+            runId={conversation?.disabledLabel ? null : runId}
             connectionState={connState}
             initialDraft={initialDraft}
             placeholder="Send to agent"
             readyLabel="Enter sends to the terminal. Shift+Enter adds a line. Arrow-up recalls the last send."
-            unavailableLabel="No tmux terminal attached."
-            onSend={(text) => sendRef.current?.(text) ?? false}
+            unavailableLabel={conversation?.disabledLabel ?? 'No tmux terminal attached.'}
+            // A tmux conversation still sends through the conversation route so
+            // the daemon can paste its chips (CHAT-SCOPE §2, decision 10).
+            onSend={conversation ? conversation.onSend : (text) => sendRef.current?.(text) ?? false}
             onSent={onPromptSent}
+            controls={conversation?.chips}
           />
         )}
       </div>

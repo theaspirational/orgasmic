@@ -509,6 +509,47 @@ export type ManagerDriversResponse = {
 
 export type ManagerLaunchResponse = {
   run_id: string;
+  /** Set by the conversation-backed chat launch shim (CHAT-SCOPE C1). */
+  conversation_id?: string;
+};
+
+/** A composer chip snapshotted into a conversation input (CHAT-SCOPE §5). */
+export type ConversationContextChip =
+  | { kind: 'node'; id: string }
+  | { kind: 'attachment'; node: string; id: string; revision: string }
+  | { kind: 'range'; node: string; attachment: string; revision: string; start_ms: number; end_ms: number }
+  | { kind: 'selection'; text: string };
+
+export type ConversationCreateRequest = {
+  purpose: string;
+  node?: string | null;
+  provider: string;
+  model?: string | null;
+  effort?: string | null;
+  access?: string | null;
+  service_tier?: string | null;
+  mode?: 'chat' | 'tmux';
+  harness?: string | null;
+  harness_args?: string[] | null;
+  title?: string | null;
+  /** Sent as the first input in the same call. */
+  message?: string | null;
+};
+
+export type ConversationCreateResponse = {
+  id: string;
+  run_id: string;
+  mode: 'cold';
+};
+
+export type ConversationInputRequest = {
+  message: string;
+  context?: ConversationContextChip[];
+};
+
+export type ConversationInputResponse = {
+  run_id: string;
+  mode: 'live' | 'resumed' | 'cold';
 };
 
 /** `GET /runs/live` — supervisor-local liveness. No durable history is read to
@@ -725,7 +766,10 @@ export type MemberCapability =
   | 'links.write'
   | 'attachments.read'
   | 'attachments.write'
-  | 'members.manage';
+  | 'members.manage'
+  | 'chat.read'
+  | 'chat.write'
+  | 'chat.execute';
 
 export type MeIdentity = 'admin' | 'member';
 

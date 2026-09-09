@@ -1,4 +1,5 @@
 import {
+  isConversationRun,
   isExternalManagerRun,
   isManagerRun,
   isRunDockEligible,
@@ -43,12 +44,15 @@ export function taskbarRunGroups(runs: RunSummary[]): {
   managers: RunSummary[];
   terminals: RunSummary[];
   workers: RunSummary[];
+  /** Live conversation runs live behind the Chat button, never as worker tabs. */
+  conversations: RunSummary[];
 } {
   const eligible = orderRunsByLaunch(runs.filter(isRunDockEligible));
   return {
     managers: eligible.filter((run) => isManagerRun(run) && !isTerminalRun(run)),
     terminals: eligible.filter(isTerminalRun),
-    workers: eligible.filter((run) => !isManagerRun(run)),
+    workers: eligible.filter((run) => !isManagerRun(run) && !isConversationRun(run)),
+    conversations: eligible.filter(isConversationRun),
   };
 }
 

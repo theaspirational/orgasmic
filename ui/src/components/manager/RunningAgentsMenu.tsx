@@ -14,7 +14,7 @@ import {
 import { useEventStream } from '@/hooks/useEventStream';
 import { fetchRecoveryInventory, isRunGoneError, postRunRelease } from '@/lib/api';
 import { useRunDock } from '@/lib/runDock';
-import { isManagerRun, runTabTitle } from '@/lib/runLabels';
+import { isConversationRun, isManagerRun, runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RecoveredRun, RunSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 
@@ -72,6 +72,10 @@ export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
       toast.info('This manager runs outside orgasmic', {
         description: 'It registered itself; attach is unavailable. Use End to clear a stale registration.',
       });
+      return;
+    }
+    if (isConversationRun(run)) {
+      openChat({ conversationId: run.task_id });
       return;
     }
     if (isManagerRun(run) && isNativeChatRun(run)) {
