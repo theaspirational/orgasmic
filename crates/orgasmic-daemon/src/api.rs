@@ -10417,24 +10417,32 @@ fn strip_run_internals(run: &mut Value) {
 }
 
 /// One rule for every run read (`GET /runs/:id`, `/ws/transcript/:id`,
-/// the `GET /runs/live` filter): a conversation run (`conversation_id` set,
-/// or task id `CONV-…`) needs chat.read and graph.read on its project (the
-/// node behind it needs the latter); every other run needs sessions.watch.
+/// the `GET /runs/live` filter): a conversation run (task id `CONV-…`) needs
+/// chat.read and graph.read on its project (the node behind it needs the
+/// latter); a task-leased run needs sessions.watch, or, when it is a
+/// dispatched attempt with a conversation on record (`conversation_id`
+/// set), the same chat pair.
 pub(crate) fn run_readable(
     identity: &Identity,
     project: Option<&str>,
     task_id: &str,
     conversation_id: Option<&str>,
 ) -> Result<(), ApiError> {
-    if conversation_id.is_some() || task_id.starts_with(conversations::CONVERSATION_PREFIX) {
+    let chat = || {
         authz::require(identity, project, Action::ChatRead)
             .map_err(|_| ApiError::forbidden("chat.read is required to read a conversation run"))?;
         authz::require(identity, project, Action::GraphRead)
             .map_err(|_| ApiError::forbidden("graph.read is required to read a conversation run"))
-    } else {
-        authz::require(identity, project, Action::SessionsWatch)
-            .map_err(|_| ApiError::forbidden("sessions.watch is required to stream this run"))
+    };
+    if task_id.starts_with(conversations::CONVERSATION_PREFIX) {
+        return chat();
     }
+    authz::require(identity, project, Action::SessionsWatch)
+        .map_err(|_| ApiError::forbidden("sessions.watch is required to stream this run"))
+        .or_else(|error| match conversation_id {
+            Some(_) => chat().map_err(|_| error),
+            None => Err(error),
+        })
 }
 
 pub(crate) fn authorize_run_read(identity: &Identity, run: &Value) -> Result<(), ApiError> {

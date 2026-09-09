@@ -23,6 +23,8 @@ fn fake_acp_script(load_session: bool) -> String {
         r#"#!/bin/sh
 mkdir -p .orgasmic/tmp
 LOG="$PWD/.orgasmic/tmp/fake-acp.log"
+LOAD={load_session}
+[ -f .orgasmic/tmp/load-session ] && LOAD=true
 MODES='[{{"id":"dont_ask","name":"Don'"'"'t ask"}},{{"id":"default","name":"Default"}},{{"id":"build","name":"Build"}}]'
 while IFS= read -r line; do
   [ -z "$line" ] && continue
@@ -33,7 +35,7 @@ while IFS= read -r line; do
   [ -z "$id" ] && continue
   case "$method" in
     initialize)
-      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":1,"agentCapabilities":{{"loadSession":{load_session}}}}}}}\n' "$id"
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":1,"agentCapabilities":{{"loadSession":%s}}}}}}\n' "$id" "$LOAD"
       ;;
     session/new)
       printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"sess-%s","modes":{{"currentModeId":"default","availableModes":%s}}}}}}\n' "$id" "$$" "$MODES"
@@ -55,7 +57,10 @@ done
 }
 
 /// `hermes` (loadSession true) for chats, `opencode` (loadSession false) for
-/// dispatched attempts, installed on PATH once per test process.
+/// dispatched attempts, installed on PATH once per test process. A
+/// `.orgasmic/tmp/load-session` marker in the agent's cwd turns loadSession
+/// on for that cwd (the `stdio/hermes` dispatch pair is not the ACP chat
+/// driver, so a resumable dispatch attempt needs the opencode fake).
 fn install_fake_agents() {
     static INSTALLED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     INSTALLED.get_or_init(|| {
@@ -144,7 +149,7 @@ struct Fixture {
     token: String,
 }
 
-async fn fixture(chat_prompt: Option<&str>) -> Fixture {
+async fn fixture() -> Fixture {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("error")
         .with_test_writer()
@@ -182,19 +187,11 @@ async fn fixture(chat_prompt: Option<&str>) -> Fixture {
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
         std::fs::copy(example.join(file), &dest).unwrap();
         if file == "plugin.org" {
-            let mut manifest = std::fs::read_to_string(&dest).unwrap().replacen(
+            let manifest = std::fs::read_to_string(&dest).unwrap().replacen(
                 ":CAPABILITIES: ",
                 ":CAPABILITIES: chat.read chat.write ",
                 1,
             );
-            if let Some(chat_prompt) = chat_prompt {
-                manifest = manifest.replacen(
-                    ":COLLECTION: meetings\n",
-                    &format!(":COLLECTION: meetings\n:CHAT_PROMPT: {chat_prompt}\n"),
-                    1,
-                );
-                assert!(manifest.contains(":CHAT_PROMPT:"), "{manifest}");
-            }
             std::fs::write(&dest, manifest).unwrap();
         }
     }
@@ -360,7 +357,7 @@ async fn upload_wav(
     (id, asset["revision"].as_str().unwrap().to_owned())
 }
 
-fn dispatch_body(kind: &str, temp: &Path, attempt: &str) -> (Value, PathBuf) {
+fn dispatch_body(kind: &str, temp: &Path, attempt: &str, harness: &str) -> (Value, PathBuf) {
     let worktree = temp.join(format!("worktree-{attempt}"));
     std::fs::create_dir_all(&worktree).unwrap();
     let brief = temp.join(format!("brief-{attempt}.md"));
@@ -368,7 +365,7 @@ fn dispatch_body(kind: &str, temp: &Path, attempt: &str) -> (Value, PathBuf) {
     let body = json!({
         "kind": kind,
         "mode": "stdio",
-        "harness": "opencode",
+        "harness": harness,
         "brief_path": brief,
         "worktree_path": worktree,
         "last_path": temp.join(format!("{attempt}-last.txt")),
@@ -393,13 +390,13 @@ fn conversation_backlinks(links: &Value) -> Vec<String> {
 
 #[tokio::test]
 async fn dispatch_attempts_are_recorded_as_task_conversations() {
-    let fx = fixture(None).await;
+    let fx = fixture().await;
     let (client, base, token) = (reqwest::Client::new(), fx.base.clone(), fx.token.clone());
     let task = create_node(&client, &base, &token, "task", "Build the thing").await;
     let dispatch_path = format!("/projects/demo/tasks/{task}/dispatch");
 
     // First implementer attempt.
-    let (body, worktree1) = dispatch_body("implementer", fx.temp.path(), "impl-1");
+    let (body, worktree1) = dispatch_body("implementer", fx.temp.path(), "impl-1", "opencode");
     let first = post(&client, &base, &token, &dispatch_path, body, 200).await;
     let run1 = first["run_id"].as_str().unwrap().to_owned();
     let conv = first["conversation_id"].as_str().unwrap().to_owned();
@@ -492,7 +489,7 @@ async fn dispatch_attempts_are_recorded_as_task_conversations() {
     assert_eq!(property(&doc, "RUNS"), run1, "no cold run was appended");
 
     // A second attempt appends to the same conversation and moves WORKTREE.
-    let (body, worktree2) = dispatch_body("implementer", fx.temp.path(), "impl-2");
+    let (body, worktree2) = dispatch_body("implementer", fx.temp.path(), "impl-2", "opencode");
     let second = post(&client, &base, &token, &dispatch_path, body, 200).await;
     let run2 = second["run_id"].as_str().unwrap().to_owned();
     assert_eq!(second["conversation_id"], conv);
@@ -530,7 +527,7 @@ async fn dispatch_attempts_are_recorded_as_task_conversations() {
     // A reviewer attempt gets its own conversation on the same task. It
     // shares the task's worker lease, so the implementer goes first.
     release_run(&client, &base, &token, &run2).await;
-    let (body, worktree3) = dispatch_body("reviewer", fx.temp.path(), "review-1");
+    let (body, worktree3) = dispatch_body("reviewer", fx.temp.path(), "review-1", "opencode");
     let review = post(&client, &base, &token, &dispatch_path, body, 200).await;
     let review_conv = review["conversation_id"].as_str().unwrap().to_owned();
     assert_ne!(review_conv, conv);
@@ -570,7 +567,7 @@ async fn dispatch_attempts_are_recorded_as_task_conversations() {
 
 #[tokio::test]
 async fn link_anchors_may_be_owned_by_the_target() {
-    let fx = fixture(None).await;
+    let fx = fixture().await;
     let (client, base, token) = (reqwest::Client::new(), fx.base.clone(), fx.token.clone());
     let meeting = create_node(&client, &base, &token, "meetings", "Planning").await;
     let (attachment, revision) = upload_wav(&client, &base, &token, &meeting).await;
@@ -643,7 +640,7 @@ async fn link_anchors_may_be_owned_by_the_target() {
 
 #[tokio::test]
 async fn range_chips_on_the_scoped_node_become_scope_link_anchors() {
-    let fx = fixture(None).await;
+    let fx = fixture().await;
     let (client, base, token) = (reqwest::Client::new(), fx.base.clone(), fx.token.clone());
     let log = fx.temp.path().join("project/.orgasmic/tmp/fake-acp.log");
     let meeting = create_node(&client, &base, &token, "meetings", "Standup").await;
@@ -776,7 +773,7 @@ async fn meeting_chat_prompt_spec(fx: &Fixture) -> String {
 #[tokio::test]
 async fn plugin_chat_prompt_inside_the_folder_compiles_the_chat_context() {
     // The example plugin's root `:CHAT_PROMPT: prompts/meeting-chat.org`.
-    let fx = fixture(None).await;
+    let fx = fixture().await;
     let types = get(
         &reqwest::Client::new(),
         &fx.base,
@@ -799,17 +796,214 @@ async fn plugin_chat_prompt_inside_the_folder_compiles_the_chat_context() {
 }
 
 #[tokio::test]
-async fn plugin_chat_prompt_escaping_the_folder_falls_back_to_node_chat() {
-    let fx = fixture(Some("../escape.org")).await;
+async fn plugin_chat_prompt_escaping_the_folder_is_refused_and_an_invalid_spec_falls_back() {
+    let fx = fixture().await;
+    let (client, base, token) = (reqwest::Client::new(), fx.base.clone(), fx.token.clone());
+    let plugin = fx.home.user().join("plugins/meetings");
+    let manifest = std::fs::read_to_string(plugin.join("plugin.org")).unwrap();
+    let activation = json!({"project":"demo","enabled":true,"approved_capabilities":["nodes.read","nodes.write","links.read","links.write","attachments.read","attachments.write","ui.execute","chat.read","chat.write"]});
+
+    // An escaping path is refused when the plugin is (re)read: it is no
+    // longer installable, so activation refuses it.
     std::fs::copy(
-        fx.home
-            .user()
-            .join("plugins/meetings/prompts/meeting-chat.org"),
+        plugin.join("prompts/meeting-chat.org"),
         fx.home.user().join("plugins/escape.org"),
     )
     .unwrap();
+    write(
+        plugin.join("plugin.org"),
+        &manifest.replace(
+            ":CHAT_PROMPT: prompts/meeting-chat.org",
+            ":CHAT_PROMPT: ../escape.org",
+        ),
+    );
+    post(&client, &base, &token, "/plugins/reconcile", json!({}), 200).await;
+    let (status, body) = request(
+        &client,
+        &base,
+        &token,
+        reqwest::Method::POST,
+        "/plugins/meetings/activation",
+        Some(activation.clone()),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+
+    // A spec that no longer compiles falls back to node-chat at chat time.
+    write(plugin.join("plugin.org"), &manifest);
+    write(
+        plugin.join("prompts/meeting-chat.org"),
+        "* PROMPT-SPEC meeting-chat\n:PROPERTIES:\n:ID: meeting-chat\n:KIND: chat\n:END:\n\n** Role\n{{no.such.slot}}\n",
+    );
+    post(&client, &base, &token, "/plugins/reconcile", json!({}), 200).await;
+    post(
+        &client,
+        &base,
+        &token,
+        "/plugins/meetings/activation",
+        activation,
+        200,
+    )
+    .await;
     let prompt = meeting_chat_prompt_spec(&fx).await;
     assert!(prompt.contains("prompt_spec: node-chat"), "{prompt}");
     assert!(!prompt.contains("meeting-chat"), "{prompt}");
+    let _ = fx.running.shutdown.send(());
+}
+
+/// M1: an OPEN `implement` conversation owned by another principal is not the
+/// dispatcher's; dispatch records the attempt on a fresh one.
+#[tokio::test]
+async fn dispatch_skips_a_conversation_owned_by_another_principal() {
+    let fx = fixture().await;
+    let (client, base, token) = (reqwest::Client::new(), fx.base.clone(), fx.token.clone());
+    let mine = create_node(&client, &base, &token, "task", "Mine").await;
+    let (body, worktree1) = dispatch_body("implementer", fx.temp.path(), "impl-1", "opencode");
+    let first = post(
+        &client,
+        &base,
+        &token,
+        &format!("/projects/demo/tasks/{mine}/dispatch"),
+        body,
+        200,
+    )
+    .await;
+    let conv = first["conversation_id"].as_str().unwrap().to_owned();
+    wait_for_log(
+        &worktree1.join(".orgasmic/tmp/fake-acp.log"),
+        "prompt_spec:",
+    )
+    .await;
+    release_run(&client, &base, &token, first["run_id"].as_str().unwrap()).await;
+
+    // Plant a copy of that record, owned by a member, about a second task.
+    let theirs = create_node(&client, &base, &token, "task", "Theirs").await;
+    let conversations = fx.temp.path().join("project/.orgasmic/conversations");
+    let foreign = "CONV-FORGN";
+    let source = std::fs::read_to_string(conversations.join(&conv).join("node.org")).unwrap();
+    assert!(source.contains(":OWNER: admin\n"), "{source}");
+    write(
+        conversations.join(foreign).join("node.org"),
+        &source
+            .replace(&conv, foreign)
+            .replace(":OWNER: admin\n", ":OWNER: [\"member\",\"anna\"]\n"),
+    );
+    post(&client, &base, &token, "/reindex/demo", json!({}), 200).await;
+    post(
+        &client,
+        &base,
+        &token,
+        "/links",
+        json!({"project":"demo","source":foreign,"target":theirs,"kind":"RELATES_TO","base_revision":0,"request_id":request_id()}),
+        200,
+    )
+    .await;
+
+    let (body, worktree2) = dispatch_body("implementer", fx.temp.path(), "impl-2", "opencode");
+    let second = post(
+        &client,
+        &base,
+        &token,
+        &format!("/projects/demo/tasks/{theirs}/dispatch"),
+        body,
+        200,
+    )
+    .await;
+    let fresh = second["conversation_id"].as_str().unwrap().to_owned();
+    assert_ne!(fresh, foreign, "{second}");
+    wait_for_log(
+        &worktree2.join(".orgasmic/tmp/fake-acp.log"),
+        "prompt_spec:",
+    )
+    .await;
+    let backlinks = get(
+        &client,
+        &base,
+        &token,
+        &format!("/links?project=demo&node={theirs}&incoming=true"),
+        200,
+    )
+    .await;
+    let mut sources = conversation_backlinks(&backlinks);
+    sources.sort();
+    let mut expected = vec![foreign.to_string(), fresh.clone()];
+    expected.sort();
+    assert_eq!(sources, expected, "{backlinks}");
+    let doc = get(
+        &client,
+        &base,
+        &token,
+        &format!("/org/node?project=demo&id={fresh}"),
+        200,
+    )
+    .await;
+    assert_eq!(property(&doc, "OWNER"), "admin");
+    release_run(&client, &base, &token, second["run_id"].as_str().unwrap()).await;
+    let _ = fx.running.shutdown.send(());
+}
+
+/// M2: a released attempt on an ACP harness that records its session resumes
+/// through `session/load` in the attempt's worktree. (The Claude native fork
+/// branch has no fake and stays untested.)
+#[tokio::test]
+async fn released_dispatch_attempts_resume_on_the_recorded_acp_session() {
+    let fx = fixture().await;
+    let (client, base, token) = (reqwest::Client::new(), fx.base.clone(), fx.token.clone());
+    let task = create_node(&client, &base, &token, "task", "Resume me").await;
+    let (body, worktree) = dispatch_body("implementer", fx.temp.path(), "impl-1", "opencode");
+    write(worktree.join(".orgasmic/tmp/load-session"), "");
+    let first = post(
+        &client,
+        &base,
+        &token,
+        &format!("/projects/demo/tasks/{task}/dispatch"),
+        body,
+        200,
+    )
+    .await;
+    let run1 = first["run_id"].as_str().unwrap().to_owned();
+    let conv = first["conversation_id"].as_str().unwrap().to_owned();
+    let log = worktree.join(".orgasmic/tmp/fake-acp.log");
+    wait_for_log(&log, "prompt_spec:").await;
+    release_run(&client, &base, &token, &run1).await;
+
+    let ping = format!("resume-{}", request_id());
+    let resumed = post(
+        &client,
+        &base,
+        &token,
+        &format!("/conversations/{conv}/input?project=demo"),
+        json!({"message":ping,"request_id":request_id()}),
+        200,
+    )
+    .await;
+    assert_eq!(resumed["mode"], "resumed", "{resumed}");
+    let run2 = resumed["run_id"].as_str().unwrap().to_owned();
+    assert_ne!(run2, run1);
+    wait_for_log(&log, &ping).await;
+    let handshake = std::fs::read_to_string(&log).unwrap();
+    assert!(handshake.contains("session/load"), "{handshake}");
+
+    let doc = get(
+        &client,
+        &base,
+        &token,
+        &format!("/org/node?project=demo&id={conv}"),
+        200,
+    )
+    .await;
+    assert_eq!(property(&doc, "RUNS"), format!("{run1} {run2}:resumed"));
+    assert_eq!(property(&doc, "WORKTREE"), worktree.display().to_string());
+    let live = get(&client, &base, &token, "/runs/live", 200).await;
+    let run = live["live"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["run_id"] == run2)
+        .unwrap_or_else(|| panic!("{live}"));
+    assert_eq!(run["task_id"], conv);
+    assert_eq!(run["conversation_id"], conv);
+    assert_eq!(run["worktree"], worktree.display().to_string());
+    release_run(&client, &base, &token, &run2).await;
     let _ = fx.running.shutdown.send(());
 }

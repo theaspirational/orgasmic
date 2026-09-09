@@ -163,7 +163,13 @@ async fn fixture() -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
         ),
     );
     let example = repo.join("examples/plugins/meetings");
-    for file in ["plugin.org", "ui/index.js", "ui/player.js", "bin/import"] {
+    for file in [
+        "plugin.org",
+        "prompts/meeting-chat.org",
+        "ui/index.js",
+        "ui/player.js",
+        "bin/import",
+    ] {
         let dest = home.user().join("plugins/meetings").join(file);
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
         std::fs::copy(example.join(file), &dest).unwrap();
@@ -625,7 +631,7 @@ async fn two_live_conversations_and_the_chat_launch_shim() {
         &base,
         &token,
         "/conversations",
-        json!({"project":"demo","purpose":"review","node":task,"provider":"hermes","request_id":request_id()}),
+        json!({"project":"demo","purpose":"discuss","node":task,"provider":"hermes","title":"Second","request_id":request_id()}),
         200,
     )
     .await;
@@ -805,6 +811,17 @@ async fn members_and_plugins_are_gated_by_chat_actions_and_ownership() {
     )
     .await;
 
+    // Dispatch purposes are daemon-created: pre-owning one would let a member
+    // steer the admin's worker.
+    post(
+        &client,
+        &base,
+        &anna,
+        "/conversations",
+        json!({"project":"demo","purpose":"implement","node":task,"provider":"hermes","request_id":request_id()}),
+        400,
+    )
+    .await;
     let annas = post(&client, &base, &anna, "/conversations", create(&task), 200).await;
     let conv = annas["id"].as_str().unwrap().to_owned();
     let run = annas["run_id"].as_str().unwrap().to_owned();

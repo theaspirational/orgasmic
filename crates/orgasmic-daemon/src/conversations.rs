@@ -399,6 +399,11 @@ pub(super) async fn create_authorized(
 
     let purpose = req.purpose.trim().to_string();
     validate_purpose(&purpose)?;
+    if is_dispatch_purpose(&purpose) {
+        return Err(ApiError::bad_request(
+            "implement and review conversations are created by dispatch",
+        ));
+    }
     validate_chips(&req.context)?;
     if !req.context.is_empty() && req.message.as_deref().unwrap_or("").trim().is_empty() {
         return Err(ApiError::bad_request("context requires a message"));
@@ -720,12 +725,21 @@ pub(super) async fn find_regenerate_conversation(
     entry: &BoardEntry,
     node_id: &str,
 ) -> Result<Option<String>, ApiError> {
-    find_conversation(state, &entry.id, &entry.path, node_id, "regenerate", true).await
+    find_conversation(
+        state,
+        &entry.id,
+        &entry.path,
+        node_id,
+        "regenerate",
+        true,
+        None,
+    )
+    .await
 }
 
 /// The conversation about `node_id` with `purpose` (OPEN only unless
-/// `include_archived`), found through the links index (backlinks whose source
-/// is a `CONV-` node).
+/// `include_archived`; any owner unless `owner` is given), found through the
+/// links index (backlinks whose source is a `CONV-` node).
 async fn find_conversation(
     state: &ApiState,
     project_id: &str,
@@ -733,6 +747,7 @@ async fn find_conversation(
     node_id: &str,
     purpose: &str,
     include_archived: bool,
+    owner: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
     let (_, snap) = ensure_loaded_snapshot(state, Some(project_id)).await?;
     let project = select_loaded_project(&snap, project_id)?;
@@ -746,7 +761,10 @@ async fn find_conversation(
         }
         let dir = orgasmic_core::node_kernel::node_dir(root, COLLECTION, &link.source);
         if let Ok(conv) = parse_conversation(&dir, &link.source) {
-            if conv.purpose == purpose && (include_archived || !conv.archived) {
+            if conv.purpose == purpose
+                && (include_archived || !conv.archived)
+                && owner.is_none_or(|owner| conv.owner == owner)
+            {
                 return Ok(Some(conv.id));
             }
         }
@@ -770,7 +788,20 @@ pub(super) async fn dispatch_conversation(
     worker: &StageWorker,
     worktree: &FsPath,
 ) -> Result<String, ApiError> {
-    if let Some(id) = find_conversation(state, project_id, root, task_id, purpose, false).await? {
+    // Only the dispatcher's own conversation is continued; one owned by
+    // another principal would let that principal steer this attempt.
+    let owner = actor_key(identity);
+    if let Some(id) = find_conversation(
+        state,
+        project_id,
+        root,
+        task_id,
+        purpose,
+        false,
+        Some(&owner),
+    )
+    .await?
+    {
         return Ok(id);
     }
     let label = match purpose {
@@ -1345,13 +1376,16 @@ async fn release_failed_resume(state: &ApiState, run_id: &str) {
 // ponytail: reads one line per session file per continue; index by run id if it grows.
 fn prior_session(root: &FsPath, conv: &Conversation) -> Option<PriorSession> {
     let run_id = run_base(conv.runs.last()?).to_string();
+    let prefix = format!("conversation-{}-", conv.id);
     for entry in std::fs::read_dir(project_sessions_dir(root))
         .ok()?
         .flatten()
     {
         let path = entry.path();
         let name = path.file_name()?.to_string_lossy().to_string();
-        if !name.ends_with(".jsonl") {
+        if !name.ends_with(".jsonl")
+            || !(name.starts_with(&prefix) || name.starts_with("dispatch-"))
+        {
             continue;
         }
         let first = {
@@ -1716,21 +1750,13 @@ fn range_anchors(scope: &str, chips: &[ContextChip], message: &str) -> Vec<Media
         if node != scope {
             continue;
         }
-        let anchor = MediaAnchor {
+        anchors.push(MediaAnchor {
             attachment: attachment.clone(),
             revision: revision.clone(),
             start_ms: *start_ms,
             end_ms: Some(*end_ms),
             label: label.clone(),
-        };
-        if !anchors.iter().any(|a| {
-            a.attachment == anchor.attachment
-                && a.revision == anchor.revision
-                && a.start_ms == anchor.start_ms
-                && a.end_ms == anchor.end_ms
-        }) {
-            anchors.push(anchor);
-        }
+        });
     }
     anchors
 }
@@ -1895,31 +1921,22 @@ async fn scope_context(
     ))
 }
 
-/// A plugin's `:CHAT_PROMPT:` is a file path inside its folder (it contains
-/// a `/` or ends in `.org`); core descriptors name a prompt-studio id, for
-/// which this is `None`. `Some(Err)` is a path that does not resolve.
+/// A plugin-owned collection's `:CHAT_PROMPT:` is a file path inside the
+/// plugin folder; core collections name a prompt-studio id, for which this is
+/// `None`. `Some(Err)` is a path that does not resolve.
 fn plugin_chat_prompt(
     state: &ApiState,
     root: &FsPath,
     collection: Option<&str>,
     spec: &str,
 ) -> Option<Result<PathBuf, String>> {
-    if !(spec.contains('/') || spec.ends_with(".org")) {
-        return None;
-    }
-    let resolved = (|| {
-        let collection = collection.ok_or("singleton nodes have no plugin folder")?;
-        let plugins = state
-            .plugins
-            .project(root)
-            .map_err(|error| error.to_string())?;
-        let id = plugins
-            .owner(collection)
-            .ok_or_else(|| format!("collection {collection} is not owned by a plugin"))?;
-        let folder = state.home.user().join("plugins").join(id);
-        orgasmic_core::plugin::plugin_file_path(&folder, spec).map_err(|error| error.to_string())
-    })();
-    Some(resolved)
+    let plugins = state.plugins.project(root).ok()?;
+    let folder = state
+        .home
+        .user()
+        .join("plugins")
+        .join(plugins.owner(collection?)?);
+    Some(orgasmic_core::plugin::plugin_file_path(&folder, spec).map_err(|error| error.to_string()))
 }
 
 /// Linked ids and titles in both directions from the project's links index.
@@ -2035,7 +2052,7 @@ mod tests {
     }
 
     #[test]
-    fn range_chips_on_the_scoped_node_become_labelled_deduped_anchors() {
+    fn range_chips_on_the_scoped_node_become_labelled_anchors() {
         let range = |node: &str, start: u64| ContextChip::Range {
             node: node.into(),
             attachment: "att".into(),
@@ -2044,7 +2061,6 @@ mod tests {
             end_ms: start + 5,
         };
         let chips = vec![
-            range("MTG-1", 10),
             range("MTG-1", 10),
             range("MTG-9", 10),
             range("MTG-1", 20),

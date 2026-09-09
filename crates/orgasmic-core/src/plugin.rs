@@ -222,6 +222,13 @@ impl PluginManifest {
         if manifest.ui.is_some() {
             manifest.ui_asset_path(dir, "index.js")?;
         }
+        if let Some(prompt) = manifest
+            .node_type
+            .as_ref()
+            .and_then(|d| d.chat_prompt.as_deref())
+        {
+            plugin_file_path(dir, prompt).context("CHAT_PROMPT")?;
+        }
         Ok(manifest)
     }
 
@@ -246,16 +253,6 @@ impl PluginManifest {
             "UI asset escapes plugin folder"
         );
         Ok(path)
-    }
-
-    /// A `:CHAT_PROMPT:` spec file, resolved inside the plugin folder.
-    pub fn chat_prompt_path(&self, dir: &Path) -> Result<std::path::PathBuf> {
-        let relative = self
-            .node_type
-            .as_ref()
-            .and_then(|d| d.chat_prompt.as_deref())
-            .context("plugin has no CHAT_PROMPT")?;
-        plugin_file_path(dir, relative)
     }
 
     pub fn command_path(&self, dir: &Path, command: &str) -> Result<std::path::PathBuf> {
@@ -394,10 +391,15 @@ mod tests {
         std::fs::create_dir_all(dir.join("prompts")).unwrap();
         std::fs::write(dir.join("prompts/chat.org"), "* PROMPT-SPEC x\n").unwrap();
         std::fs::write(temp.path().join("outside.org"), "* PROMPT-SPEC y\n").unwrap();
+        std::fs::write(dir.join("plugin.org"), &source).unwrap();
+        PluginManifest::read_dir(&dir).expect("install resolves the chat prompt");
         assert_eq!(
-            manifest.chat_prompt_path(&dir).unwrap(),
+            plugin_file_path(&dir, "prompts/chat.org").unwrap(),
             dir.join("prompts/chat.org").canonicalize().unwrap()
         );
+        std::fs::remove_file(dir.join("prompts/chat.org")).unwrap();
+        let err = PluginManifest::read_dir(&dir).unwrap_err().to_string();
+        assert!(err.contains("CHAT_PROMPT"), "{err}");
         for escaping in [
             "../outside.org",
             "/etc/passwd",
@@ -420,8 +422,9 @@ mod tests {
             manifest.node_type.as_ref().unwrap().chat_prompt.as_deref(),
             Some("prompts/meeting-chat.org")
         );
+        PluginManifest::read_dir(&dir).expect("the shipped example installs");
         assert_eq!(
-            manifest.chat_prompt_path(&dir).unwrap(),
+            plugin_file_path(&dir, "prompts/meeting-chat.org").unwrap(),
             dir.join("prompts/meeting-chat.org").canonicalize().unwrap()
         );
     }
