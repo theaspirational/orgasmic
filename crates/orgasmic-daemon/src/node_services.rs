@@ -66,10 +66,10 @@ struct ServiceQuery {
     offset: Option<u64>,
 }
 
-struct Node {
-    path: PathBuf,
+pub(super) struct Node {
+    pub(super) path: PathBuf,
 }
-async fn node(
+pub(super) async fn node(
     state: &ApiState,
     identity: &Identity,
     project: &str,
@@ -93,6 +93,8 @@ async fn node(
     let (_, path, _) = org_node_path(&state, Some(project), id, layer).await?;
     let (_, snap) = ensure_loaded_snapshot(&state, Some(project)).await?;
     let root = select_loaded_project(&snap, project)?.root.clone();
+    drop(snap);
+    guard_plugin_conversation(&state, identity, Some(project), &plugins, id).await?;
     let canonical = path
         .canonicalize()
         .map_err(|_| ApiError::not_found("node unavailable"))?;
@@ -138,7 +140,7 @@ fn single_line(s: &str, max: usize) -> Result<(), ApiError> {
     }
     Ok(())
 }
-fn digest(bytes: &[u8]) -> String {
+pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 fn valid_digest(value: &str) -> bool {
@@ -153,7 +155,7 @@ fn uuid(value: &str) -> Result<(), ApiError> {
     }
     Ok(())
 }
-fn actor_key(identity: &Identity) -> String {
+pub(super) fn actor_key(identity: &Identity) -> String {
     match identity {
         Identity::Admin => "admin".into(),
         Identity::Member { name, .. } => json!(["member", name]).to_string(),

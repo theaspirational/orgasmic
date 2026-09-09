@@ -1178,6 +1178,7 @@ impl Daemon {
             release_tasks: api::ReleaseTaskTracker::new(),
             recovery_generation_transitions: api::RecoveryGenerationTransitionTracker::default(),
             ledger_sync,
+            conversation_launches: Default::default(),
         };
 
         // Boot auto-reattach runs *after* the listener is bound (see below). It

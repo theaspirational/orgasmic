@@ -183,6 +183,8 @@ pub mod test_hooks {
     }
 }
 
+#[path = "conversations.rs"]
+mod conversations;
 #[path = "node_services.rs"]
 mod node_services;
 
@@ -237,6 +239,8 @@ pub struct ApiState {
     /// already-registered case and passes against the broken code too.
     pub release_admission_delay: Option<std::time::Duration>,
     pub(crate) ledger_sync: crate::ledger_sync::LedgerSyncStatuses,
+    /// Conversations with a run launch in flight (409 on a second continue).
+    pub conversation_launches: conversations::LaunchSet,
     /// Per-node locks serializing node.org/journal.org read-modify-write.
     pub node_write_locks:
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
@@ -694,6 +698,7 @@ pub fn router(state: ApiState) -> Router {
     let identity_state = state.clone();
     let protected = Router::new()
         .merge(node_services::routes())
+        .merge(conversations::routes())
         // v0.0.1 priority: real handlers
         .route("/board", get(get_board))
         .route("/me", get(get_me))
@@ -791,7 +796,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/runs/history", get(get_run_history))
         .route("/runs/history/compact", post(post_run_history_compact))
         .route("/runs/history/rollback", post(post_run_history_rollback))
-        .route("/runs/:id", get(get_run).post(stub("TASK-006")))
+        .route("/runs/:id", get(get_run_authorized).post(stub("TASK-006")))
         .route(
             "/runs/:id/native-transcript",
             get(get_run_native_transcript),
@@ -969,6 +974,8 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("GET", "/ws"),
     ("GET", "/ws/tmux/:run_id"),
     ("GET", "/ws/transcript/:run_id"),
+    ("GET", "/runs/:id"),
+    ("POST", "/manager/chat/launch"),
 ];
 
 fn member_route_allowed(method: &Method, pattern: &str) -> bool {
@@ -976,6 +983,7 @@ fn member_route_allowed(method: &Method, pattern: &str) -> bool {
     MEMBER_ALLOWED_ROUTES
         .iter()
         .chain(node_services::ROUTES.iter())
+        .chain(conversations::ROUTES.iter())
         .any(|(m, p)| *m == method && *p == pattern)
 }
 
@@ -3720,6 +3728,12 @@ pub struct ManagerLaunchResponse {
     pub run_id: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ManagerChatLaunchResponse {
+    pub run_id: String,
+    pub conversation_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ManagerChatLaunchRequest {
     pub project_id: String,
@@ -3799,17 +3813,6 @@ fn manager_launch_ids(
     now: chrono::DateTime<Utc>,
 ) -> ManagerLaunchIds {
     let stamp = now.format("%Y%m%dT%H%M%S");
-    if harness.trim().to_ascii_lowercase().starts_with("chat-") {
-        let id = uuid::Uuid::new_v4().simple().to_string();
-        return ManagerLaunchIds {
-            // Chat providers still contend on the project's one manager lease.
-            task_id: format!("manager.launch:{project_id}"),
-            // A released chat is immediately restartable. The UUID prevents a
-            // same-second restart from appending a new run at sequence zero to
-            // the previous conversation's JSONL.
-            session_file: format!("manager-{project_id}-{stamp}-chat-{id}.jsonl"),
-        };
-    }
     if !manager_terminal_harness(harness) {
         let session_file = if manager_external_harness(harness) {
             // External presence runs share the real manager lease, but never
@@ -3925,110 +3928,39 @@ async fn post_manager_launch(
     }))
 }
 
-/// Launch a reusable RunDock Chat conversation without changing the worker
-/// driver registry. All Chat providers use the shared ACP stdio client.
+/// Shim over `POST /conversations` (CHAT-SCOPE C1): a `discuss` conversation
+/// titled "Chat" about the project, launched on the requested Chat provider.
+/// Kept so the RunDock keeps working until the UI moves to conversations.
 async fn post_manager_chat_launch(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Json(req): Json<ManagerChatLaunchRequest>,
-) -> Result<Json<ManagerLaunchResponse>, ApiError> {
-    let provider = req.provider.trim().to_ascii_lowercase();
-    let driver = crate::driver_resolution::resolve_chat_driver(&provider).ok_or_else(|| {
-        ApiError::bad_request(format!(
-            "unsupported Chat provider '{}'; expected codex, claude, opencode, cursor-agent, or hermes",
-            req.provider
-        ))
-    })?;
-    let (_, snap) = ensure_loaded_snapshot(&state, Some(&req.project_id)).await?;
-    let project = snap
-        .projects
-        .get(&req.project_id)
-        .cloned()
-        .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
-    drop(snap);
-
-    let access = match req.access.as_deref().unwrap_or("full-access") {
-        "supervised" | "auto-accept-edits" | "auto" | "full-access" => {
-            req.access.unwrap_or_else(|| "full-access".into())
-        }
-        value => {
-            return Err(ApiError::bad_request(format!(
-                "unsupported Chat access mode '{value}'"
-            )));
-        }
-    };
-    if !chat_access_supported(&provider, &access) {
-        return Err(ApiError::bad_request(format!(
-            "Chat access mode '{access}' is not supported by the {provider} runtime"
-        )));
-    }
-    let service_tier = match req.service_tier.as_deref() {
-        None | Some("") | Some("standard") => None,
-        Some("fast") => Some("fast".to_string()),
-        Some(value) => {
-            return Err(ApiError::bad_request(format!(
-                "unsupported Chat service tier '{value}'"
-            )));
-        }
-    };
-    let sandbox_permissions = match access.as_str() {
-        "supervised" => {
-            "allow_exec=false,allow_patch=false,allow_network=false,allow_writes_outside_cwd=false"
-        }
-        "auto-accept-edits" => {
-            "allow_exec=false,allow_patch=true,allow_network=false,allow_writes_outside_cwd=false"
-        }
-        "auto" => {
-            "allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=false"
-        }
-        _ => "allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true",
-    };
-    let speed = service_tier.as_ref().map(|_| "fast");
-
-    let driver_config = DriverConfig::from_value(json!({
-        "cwd": project.root.clone(),
-        "auto_start_turn": false,
-        "model": verbatim_optional(req.model),
-        "reasoning_effort": verbatim_optional(req.effort),
-        "access": access,
-        "service_tier": service_tier,
-        "speed": speed,
-        "sandbox_permissions": sandbox_permissions,
-    }));
-    driver
-        .validate(&driver_config)
-        .map_err(|error| driver_validate_error("chat", &provider, error))?;
-
-    let ids = manager_launch_ids(&req.project_id, &format!("chat-{provider}"), Utc::now());
-    let session_path = project_sessions_dir(&project.root).join(ids.session_file);
-    let acquire = state
-        .supervisor
-        .acquire(
-            driver.as_ref(),
-            AcquireRequest {
-                task_id: ids.task_id,
-                kind: RunKind::Worker,
-                worker_id: "manager".into(),
-                role: "manager".into(),
-                project_id: Some(req.project_id),
-                worktree: Some(project.root),
-                last_path: None,
-                stdout_path: None,
-                dispatch_attempt_token: None,
-                session_path,
-                driver_config,
-                stall_timeout_secs: Some(0),
-                max_run_duration_secs: Some(0),
-                idle_timeout_secs: None,
-                applicable_states: Vec::new(),
-                max_iterations: None,
-                planned_identity: None,
-            },
-        )
-        .await
-        .map_err(|error| supervisor_acquire_error("Chat launch", error))?;
-
-    Ok(Json(ManagerLaunchResponse {
-        run_id: acquire.run_id,
+) -> Result<Json<ManagerChatLaunchResponse>, ApiError> {
+    let created = conversations::create_authorized(
+        &state,
+        &identity,
+        Some(&req.project_id),
+        conversations::ConversationCreateRequest {
+            project: None,
+            purpose: "discuss".into(),
+            node: None,
+            provider: req.provider,
+            model: req.model,
+            effort: req.effort,
+            access: req.access,
+            service_tier: req.service_tier,
+            mode: Some("chat".into()),
+            harness: None,
+            harness_args: Vec::new(),
+            title: Some("Chat".into()),
+            message: None,
+            request_id: uuid::Uuid::new_v4().to_string(),
+        },
+    )
+    .await?;
+    Ok(Json(ManagerChatLaunchResponse {
+        run_id: created.run_id,
+        conversation_id: created.id,
     }))
 }
 
@@ -4649,7 +4581,9 @@ async fn release_app_manager_run(
     if run.project_id.as_deref() != Some(project_id) {
         return None;
     }
-    if !run.task_id.starts_with("manager.launch:") {
+    if !run.task_id.starts_with("manager.launch:")
+        && !run.task_id.starts_with(conversations::CONVERSATION_PREFIX)
+    {
         return None;
     }
     state
@@ -9609,6 +9543,7 @@ fn event_routes_to_journal(ty: &str) -> bool {
             | "attachment.created"
     ) || ty.starts_with("artifact.")
         || ty.starts_with("graph.")
+        || ty.starts_with("conversation.")
 }
 
 fn node_journal_path(project_root: &FsPath, req: &TxAppendRequest) -> Option<PathBuf> {
@@ -10352,6 +10287,33 @@ async fn post_run_history_rollback(
         other => ApiError::bad_request(other.to_string()),
     })?;
     Ok(Json(json!({ "report": report })))
+}
+
+async fn get_run_authorized(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let detail = get_run(State(state), Path(id)).await?;
+    authorize_run_read(&identity, &detail.0["run"])?;
+    Ok(detail)
+}
+
+/// Members read a run with sessions.watch; a conversation run (task id
+/// `CONV-…`) also needs chat.read on its project. Dispatch and terminal runs
+/// are unchanged.
+pub(crate) fn authorize_run_read(identity: &Identity, run: &Value) -> Result<(), ApiError> {
+    let project = run["project_id"].as_str();
+    authz::require(identity, project, Action::SessionsWatch)
+        .map_err(|_| ApiError::forbidden("sessions.watch is required to stream this run"))?;
+    if run["task_id"]
+        .as_str()
+        .is_some_and(|task| task.starts_with(conversations::CONVERSATION_PREFIX))
+    {
+        authz::require(identity, project, Action::ChatRead)
+            .map_err(|_| ApiError::forbidden("chat.read is required to read a conversation run"))?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn get_run(
@@ -15797,6 +15759,57 @@ async fn post_plugin_remove(
     ))
 }
 
+/// A plugin sees a `CONV-` node only with chat.read on the project and only
+/// when the conversation is about a node in the plugin's own collection.
+async fn guard_plugin_conversation(
+    state: &ApiState,
+    identity: &Identity,
+    project: Option<&str>,
+    plugins: &crate::plugins::ProjectPlugins,
+    node_id: &str,
+) -> Result<(), ApiError> {
+    let Identity::Plugin { id: plugin_id, .. } = identity else {
+        return Ok(());
+    };
+    if !node_id.starts_with(conversations::CONVERSATION_PREFIX) {
+        return Ok(());
+    }
+    let (project_id, snap) = ensure_loaded_snapshot(state, project).await?;
+    authz::require(identity, Some(&project_id), Action::ChatRead)?;
+    let project = select_loaded_project(&snap, &project_id)?;
+    if !plugin_owns_conversation(
+        plugins,
+        &state.node_types,
+        &project.graph.links,
+        plugin_id,
+        node_id,
+    ) {
+        return Err(ApiError::forbidden(
+            "conversation is outside the plugin's collection",
+        ));
+    }
+    Ok(())
+}
+
+fn plugin_owns_conversation(
+    plugins: &crate::plugins::ProjectPlugins,
+    registry: &orgasmic_core::NodeTypeRegistry,
+    links: &[orgasmic_core::node_services::LinkRecord],
+    plugin_id: &str,
+    node_id: &str,
+) -> bool {
+    links.iter().any(|link| {
+        link.source == node_id
+            && link.kind == "RELATES_TO"
+            && !link.deleted
+            && resolve_node_layer(registry, None, &link.target)
+                .ok()
+                .and_then(|layer| layer.collection_name())
+                .and_then(|collection| plugins.owner(collection))
+                == Some(plugin_id)
+    })
+}
+
 fn plugin_collection_write(
     identity: &Identity,
     plugins: &crate::plugins::ProjectPlugins,
@@ -15893,6 +15906,22 @@ async fn get_graph_nodes(
     let (project_id, snap) =
         resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::GraphRead)
             .await?;
+    // Plugins list conversations only with chat.read, and only those about
+    // their own collection.
+    let plugin_scope = match &identity {
+        Identity::Plugin { id, .. } => {
+            let (scoped, plugins) = node_scope(
+                state.clone(),
+                &identity,
+                Some(&project_id),
+                Action::GraphRead,
+            )
+            .await?;
+            let chat_read = authz::require(&identity, Some(&project_id), Action::ChatRead).is_ok();
+            Some((scoped, plugins, id.clone(), chat_read))
+        }
+        _ => None,
+    };
     let project = select_loaded_project(&snap, &project_id)?;
     Ok(Json(
         project
@@ -15900,6 +15929,21 @@ async fn get_graph_nodes(
             .nodes
             .iter()
             .filter(|node| q.layer.as_ref().is_none_or(|layer| node.layer == *layer))
+            .filter(|node| {
+                !node.id.starts_with(conversations::CONVERSATION_PREFIX)
+                    || plugin_scope.as_ref().is_none_or(
+                        |(scoped, plugins, plugin_id, chat_read)| {
+                            *chat_read
+                                && plugin_owns_conversation(
+                                    plugins,
+                                    &scoped.node_types,
+                                    &project.graph.links,
+                                    plugin_id,
+                                    &node.id,
+                                )
+                        },
+                    )
+            })
             .cloned()
             .collect(),
     ))
@@ -16828,6 +16872,11 @@ async fn post_org_node_create(
         .collection_for_kind(&req.kind)
         .ok_or_else(|| ApiError::bad_request("unknown node collection"))?;
     let kind = NodeKind::collection(&descriptor.collection);
+    if descriptor.collection == "conversations" {
+        return Err(ApiError::bad_request(
+            "conversations are created with POST /conversations",
+        ));
+    }
     plugin_collection_write(&identity, &plugins, Some(&descriptor.collection))?;
     plugins
         .check_write(&descriptor.collection, None)
@@ -17609,6 +17658,7 @@ async fn get_org_node(
     .await?;
     let (_project_id, path, source_file) =
         org_node_path(&state, q.project.as_deref(), &q.id, layer).await?;
+    guard_plugin_conversation(&state, &identity, q.project.as_deref(), &plugins, &q.id).await?;
     let source = read_artifact(&path, layer.artifact_name())?;
     let file = OrgFile::parse(&source, path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
@@ -17638,15 +17688,40 @@ async fn post_org_node_edit(
     Json(req): Json<NodeEditRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _plugin_guard = state.plugins.operations.clone().read_owned().await;
-    let (state, plugins) =
-        node_scope(state, &identity, req.project.as_deref(), Action::NodesWrite).await?;
+    let (state, plugins) = node_scope(
+        state,
+        &identity,
+        req.project.as_deref(),
+        Action::ProjectRead,
+    )
+    .await?;
     let layer = resolve_node_layer(&state.node_types, req.kind.as_deref(), &id)?;
-    plugin_collection_write(&identity, &plugins, layer.collection_name())?;
+    let plugin_conversation = matches!(identity, Identity::Plugin { .. })
+        && layer.collection_name() == Some("conversations");
+    if plugin_conversation {
+        // chat.write for a plugin is title/state edits on conversations about
+        // its own collection, nothing else.
+        guard_plugin_conversation(&state, &identity, req.project.as_deref(), &plugins, &id).await?;
+        if req.ops.iter().any(|op| {
+            !matches!(
+                op,
+                NodeEditOp::SetTitle { .. } | NodeEditOp::SetState { .. }
+            )
+        }) {
+            return Err(ApiError::forbidden(
+                "plugins may only retitle or archive conversations",
+            ));
+        }
+    } else {
+        plugin_collection_write(&identity, &plugins, layer.collection_name())?;
+    }
     resolve_authorized_project(
         &state,
         &identity,
         req.project.as_deref(),
-        if layer.collection_name().is_some() {
+        if plugin_conversation {
+            Action::ChatWrite
+        } else if layer.collection_name().is_some() {
             Action::NodesWrite
         } else {
             Action::OrgWrite
@@ -20852,7 +20927,7 @@ async fn post_artifact_submit(
             ("VERSION".into(), "1".into()),
         ];
 
-        let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await?;
+        let submit_in_flight = prepare_artifactor_submit_terminal(&state, &entry, &art_id).await?;
         let tx_id = match state
             .writer
             .transaction(
@@ -20958,7 +21033,7 @@ async fn post_artifact_submit(
         });
     }
 
-    let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await?;
+    let submit_in_flight = prepare_artifactor_submit_terminal(&state, &entry, &art_id).await?;
     let tx_id = match state
         .writer
         .transaction(
@@ -21012,9 +21087,13 @@ async fn post_artifact_submit(
 // orgasmic:TASK-S52X9,TASK-ARZGD
 async fn prepare_artifactor_submit_terminal(
     state: &ApiState,
+    entry: &BoardEntry,
     art_id: &str,
 ) -> Result<Option<(String, u64)>, ApiError> {
-    let task_id = format!("node.regenerate:{art_id}");
+    let Some(task_id) = conversations::find_regenerate_conversation(state, entry, art_id).await?
+    else {
+        return Ok(None);
+    };
     match state
         .supervisor
         .begin_artifactor_submit_for_task(&task_id)
@@ -21422,6 +21501,7 @@ struct ArtifactRegenerateRequest {
 struct ArtifactGenerateResponse {
     artifact_id: String,
     run_id: String,
+    conversation_id: String,
 }
 
 /// Truncate a free-form prompt down to a single-line default title. Generate
@@ -21681,7 +21761,7 @@ impl<'a> ArtifactLaunchCleanupGuard<'a> {
     }
 }
 
-/// Acquire the per-node lease `node.regenerate:{art_id}` and launch the
+/// Acquire the node's regenerate-conversation lease (`task_id`) and launch the
 /// artifactor worker, modeled on `post_manager_launch`'s direct
 /// `supervisor.acquire` pattern (synthetic task_id, `RunKind::Worker`, no
 /// task heading) but reusing `spawn_worker_run`'s shared plumbing so the run
@@ -21712,6 +21792,7 @@ async fn launch_artifact_generation(
     bundle: String,
     address: &ArtifactLaunchAddress,
     governance: Option<&GovernancePatch>,
+    task_id: &str,
 ) -> Result<String, ApiError> {
     validate_custom_harness_args(&address.harness, &address.harness_args)?;
     let worker = resolve_addressed_stage_worker(
@@ -21728,14 +21809,13 @@ async fn launch_artifact_generation(
         worker.context_budget_chars,
         "artifact prompt",
     )?;
-    let task_id = format!("node.regenerate:{art_id}");
     let launch_model = verbatim_optional(address.model.clone());
     let launch_effort = verbatim_optional(address.effort.clone());
     let spawn = spawn_worker_run(
         state,
         SpawnWorkerRequest {
             project_id: &entry.id,
-            task_id: &task_id,
+            task_id,
             worker,
             run_kind: RunKind::Worker,
             bundle: &bundle,
@@ -21769,7 +21849,7 @@ async fn launch_artifact_generation(
         state.clone(),
         ArtifactReleaseWatch {
             entry: entry.clone(),
-            task_id: task_id.clone(),
+            task_id: task_id.to_string(),
             art_dir: art_dir.to_path_buf(),
             art_id: art_id.to_string(),
             run_id: run_id.clone(),
@@ -21861,10 +21941,10 @@ async fn launch_artifact_generation(
 async fn launch_node_regeneration(
     state: &ApiState,
     entry: &BoardEntry,
-    node_id: &str,
     bundle: String,
     address: &ArtifactLaunchAddress,
     governance: Option<&GovernancePatch>,
+    task_id: &str,
 ) -> Result<String, ApiError> {
     validate_custom_harness_args(&address.harness, &address.harness_args)?;
     let worker = resolve_addressed_stage_worker(
@@ -21881,12 +21961,11 @@ async fn launch_node_regeneration(
         worker.context_budget_chars,
         "node regenerate prompt",
     )?;
-    let task_id = format!("node.regenerate:{node_id}");
     let spawn = spawn_worker_run(
         state,
         SpawnWorkerRequest {
             project_id: &entry.id,
-            task_id: &task_id,
+            task_id,
             worker,
             run_kind: RunKind::Worker,
             bundle: &bundle,
@@ -22138,7 +22217,7 @@ async fn close_out_node_regenerate_round(
 
 struct ArtifactReleaseWatch {
     entry: BoardEntry,
-    /// The supervisor lease key (`node.regenerate:{art_id}`); used to
+    /// The supervisor lease key (the regenerate conversation id); used to
     /// detect whether a newer run already took over the artifact by the time
     /// this run ends.
     task_id: String,
@@ -22311,20 +22390,26 @@ async fn post_artifact_generate(
     // caller can reference this freshly minted id, so any launch failure
     // here (there is no 409 case: the lease key is brand new) must revert it
     // — unlike regenerate, which mutates only after a successful launch.
-    let run_id = match launch_artifact_generation(
-        &state,
-        &entry,
-        &art_id,
-        &art_dir,
-        "failed",
-        0,
-        bundle,
-        &address,
-        body.governance.as_ref(),
-    )
-    .await
-    {
-        Ok(run_id) => run_id,
+    let launched =
+        match conversations::regenerate_conversation(&state, &identity, &entry, &art_id).await {
+            Ok(conversation_id) => launch_artifact_generation(
+                &state,
+                &entry,
+                &art_id,
+                &art_dir,
+                "failed",
+                0,
+                bundle,
+                &address,
+                body.governance.as_ref(),
+                &conversation_id,
+            )
+            .await
+            .map(|run_id| (run_id, conversation_id)),
+            Err(error) => Err(error),
+        };
+    let (run_id, conversation_id) = match launched {
+        Ok(launched) => launched,
         Err(error) => {
             revert_artifact_generation_state(
                 &state,
@@ -22342,10 +22427,13 @@ async fn post_artifact_generate(
             return Err(error);
         }
     };
+    conversations::note_regenerate_run(&state, &identity, &entry, &conversation_id, &run_id)
+        .await?;
 
     Ok(Json(ArtifactGenerateResponse {
         artifact_id: art_id,
         run_id,
+        conversation_id,
     }))
 }
 
@@ -22368,10 +22456,12 @@ async fn post_artifact_regenerate(
         .node_types
         .descriptor("artifacts")
         .ok_or_else(|| ApiError::internal("missing shipped descriptor for artifacts"))?;
-    let run_id = regenerate_node(&state, &entry, descriptor, &art_id, body).await?;
+    let (run_id, conversation_id) =
+        regenerate_node(&state, &entry, descriptor, &art_id, body, &identity).await?;
     Ok(Json(ArtifactGenerateResponse {
         artifact_id: art_id,
         run_id,
+        conversation_id,
     }))
 }
 
@@ -22379,6 +22469,7 @@ async fn post_artifact_regenerate(
 struct NodeRegenerateResponse {
     node_id: String,
     run_id: String,
+    conversation_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -22523,7 +22614,7 @@ async fn post_node_submit(
         ("NODE_ID".into(), node_id.clone()),
         ("VERSION".into(), version.to_string()),
     ];
-    let (run_id, submit_token) = prepare_artifactor_submit_terminal(&state, &node_id)
+    let (run_id, submit_token) = prepare_artifactor_submit_terminal(&state, &entry, &node_id)
         .await?
         .ok_or_else(|| ApiError::conflict("no live node regenerate run"))?;
     let tx_id = match state
@@ -22585,18 +22676,14 @@ async fn post_node_submit(
 
 async fn post_node_regenerate(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(node_id): Path<String>,
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactRegenerateRequest>,
 ) -> Result<Json<NodeRegenerateResponse>, ApiError> {
     let _plugin_guard = state.plugins.operations.clone().read_owned().await;
-    let (state, plugins) = node_scope(
-        state,
-        &Identity::Admin,
-        q.project.as_deref(),
-        Action::NodesWrite,
-    )
-    .await?;
+    let (state, plugins) =
+        node_scope(state, &identity, q.project.as_deref(), Action::NodesWrite).await?;
     orgasmic_core::node_type::validate_component(&node_id)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let entry = resolve_artifact_project(&state, q.project.as_deref()).await?;
@@ -22614,17 +22701,26 @@ async fn post_node_regenerate(
     plugins
         .check_write(&descriptor.collection, Some(&source))
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
-    let run_id = regenerate_node(&state, &entry, descriptor, &node_id, body).await?;
-    Ok(Json(NodeRegenerateResponse { node_id, run_id }))
+    let (run_id, conversation_id) =
+        regenerate_node(&state, &entry, descriptor, &node_id, body, &identity).await?;
+    Ok(Json(NodeRegenerateResponse {
+        node_id,
+        run_id,
+        conversation_id,
+    }))
 }
 
+/// Regenerate through the node's `regenerate` conversation: the artifactor
+/// leases on the conversation id and every run lands in its RUNS. Returns
+/// `(run_id, conversation_id)`.
 async fn regenerate_node(
     state: &ApiState,
     entry: &BoardEntry,
     descriptor: &orgasmic_core::NodeTypeDescriptor,
     node_id: &str,
     body: ArtifactRegenerateRequest,
-) -> Result<String, ApiError> {
+    identity: &Identity,
+) -> Result<(String, String), ApiError> {
     let prompt_spec = descriptor.regenerate_prompt.as_deref().ok_or_else(|| {
         ApiError::bad_request(format!(
             "{} nodes have no :REGENERATE_PROMPT:; regenerate is unavailable",
@@ -22701,7 +22797,9 @@ async fn regenerate_node(
         &subject_context,
         &user_prompt,
     )?;
-    let task_id = format!("node.regenerate:{node_id}");
+    let conversation_id =
+        conversations::regenerate_conversation(state, identity, entry, node_id).await?;
+    let task_id = conversation_id.clone();
     let snapshot = state.supervisor.snapshot().await;
     if let Some(live_run) = snapshot.runs.iter().find(|run| run.task_id == task_id) {
         let checkpoint = state
@@ -22754,7 +22852,15 @@ async fn regenerate_node(
             artifact,
         })
         .await?;
-        return Ok(live_run.run_id.clone());
+        conversations::note_regenerate_run(
+            state,
+            identity,
+            entry,
+            &conversation_id,
+            &live_run.run_id,
+        )
+        .await?;
+        return Ok((live_run.run_id.clone(), conversation_id));
     }
 
     let run_id = if artifact {
@@ -22769,6 +22875,7 @@ async fn regenerate_node(
             bundle,
             address,
             body.governance.as_ref(),
+            &task_id,
         )
         .await?
     } else {
@@ -22778,13 +22885,14 @@ async fn regenerate_node(
         launch_node_regeneration(
             state,
             entry,
-            node_id,
             bundle,
             address,
             body.governance.as_ref(),
+            &task_id,
         )
         .await?
     };
+    conversations::note_regenerate_run(state, identity, entry, &conversation_id, &run_id).await?;
     close_out_node_regenerate_round(NodeRegenerateCloseOut {
         state,
         entry,
@@ -22796,7 +22904,7 @@ async fn regenerate_node(
         artifact,
     })
     .await?;
-    Ok(run_id)
+    Ok((run_id, conversation_id))
 }
 
 // ---- errors ----------------------------------------------------------------
@@ -24509,6 +24617,7 @@ pub(crate) mod tests {
             release_tasks: ReleaseTaskTracker::new(),
             recovery_generation_transitions: RecoveryGenerationTransitionTracker::default(),
             ledger_sync: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            conversation_launches: Default::default(),
         }
     }
 
@@ -25482,12 +25591,25 @@ pub(crate) mod tests {
         };
         let art_id = "ART-BARRIER-OK";
         let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+        let entry = state
+            .index
+            .snapshot()
+            .await
+            .board
+            .iter()
+            .find(|entry| entry.id == "proj")
+            .cloned()
+            .expect("project on board");
+        let conversation_id =
+            conversations::regenerate_conversation(&state, &Identity::Admin, &entry, art_id)
+                .await
+                .expect("regenerate conversation");
         let acquire = state
             .supervisor
             .acquire(
                 &driver,
                 AcquireRequest {
-                    task_id: format!("node.regenerate:{art_id}"),
+                    task_id: conversation_id.clone(),
                     kind: RunKind::Worker,
                     worker_id: "artifactor".into(),
                     role: "artifactor".into(),
@@ -25508,7 +25630,7 @@ pub(crate) mod tests {
             )
             .await
             .expect("artifactor acquire");
-        let prepared = prepare_artifactor_submit_terminal(&state, art_id)
+        let prepared = prepare_artifactor_submit_terminal(&state, &entry, art_id)
             .await
             .expect("begin submit coordinator")
             .expect("atomic begin must install submit token");
@@ -25543,12 +25665,25 @@ pub(crate) mod tests {
         };
         let art_id = "ART-BARRIER-FAIL";
         let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+        let entry = state
+            .index
+            .snapshot()
+            .await
+            .board
+            .iter()
+            .find(|entry| entry.id == "proj")
+            .cloned()
+            .expect("project on board");
+        let conversation_id =
+            conversations::regenerate_conversation(&state, &Identity::Admin, &entry, art_id)
+                .await
+                .expect("regenerate conversation");
         let _ = state
             .supervisor
             .acquire(
                 &driver,
                 AcquireRequest {
-                    task_id: format!("node.regenerate:{art_id}"),
+                    task_id: conversation_id.clone(),
                     kind: RunKind::Worker,
                     worker_id: "artifactor".into(),
                     role: "artifactor".into(),
@@ -25569,7 +25704,7 @@ pub(crate) mod tests {
             )
             .await
             .expect("artifactor acquire");
-        let prepared = prepare_artifactor_submit_terminal(&state, art_id)
+        let prepared = prepare_artifactor_submit_terminal(&state, &entry, art_id)
             .await
             .expect("begin submit coordinator")
             .expect("atomic begin");
@@ -25622,6 +25757,19 @@ pub(crate) mod tests {
 
             let protocol_end_gate = std::sync::Arc::new(tokio::sync::Notify::new());
             let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+            let entry = state
+                .index
+                .snapshot()
+                .await
+                .board
+                .iter()
+                .find(|entry| entry.id == "proj")
+                .cloned()
+                .expect("project on board");
+            let conversation_id =
+                conversations::regenerate_conversation(&state, &Identity::Admin, &entry, art_id)
+                    .await
+                    .expect("regenerate conversation");
             let acquire = state
                 .supervisor
                 .acquire(
@@ -25629,7 +25777,7 @@ pub(crate) mod tests {
                         gate: std::sync::Arc::clone(&protocol_end_gate),
                     },
                     AcquireRequest {
-                        task_id: format!("node.regenerate:{art_id}"),
+                        task_id: conversation_id.clone(),
                         kind: RunKind::Worker,
                         worker_id: "artifactor".into(),
                         role: "artifactor".into(),
@@ -29330,17 +29478,6 @@ pub(crate) mod tests {
         assert_eq!(recovered.run_id, "run-legacy-app");
         assert_eq!(recovered.runtime_id, "rt-legacy-app");
         assert_eq!(recovered.transport, "tmux");
-    }
-
-    #[test]
-    fn same_second_chat_restart_gets_a_fresh_session_file() {
-        let stamp = launch_stamp();
-        let first = manager_launch_ids("proj", "chat-claude", stamp);
-        let second = manager_launch_ids("proj", "chat-claude", stamp);
-
-        assert_eq!(first.task_id, "manager.launch:proj");
-        assert_eq!(second.task_id, first.task_id);
-        assert_ne!(second.session_file, first.session_file);
     }
 
     #[test]
@@ -41715,6 +41852,7 @@ pub(crate) mod tests {
 
             let launched = post_node_regenerate(
                 State(state.clone()),
+                Extension(Identity::Admin),
                 Path(id.to_string()),
                 Query(artifact_query("test-proj")),
                 Json(ArtifactRegenerateRequest {
@@ -41735,7 +41873,7 @@ pub(crate) mod tests {
                 .await
                 .runs
                 .into_iter()
-                .filter(|run| run.task_id == format!("node.regenerate:{id}"))
+                .filter(|run| run.task_id == launched.0.conversation_id)
                 .count();
             assert_eq!(matching, 1, "one live regenerate per node");
 
@@ -43850,7 +43988,7 @@ pub(crate) mod tests {
         assert!(snapshot
             .runs
             .iter()
-            .any(|r| r.task_id == format!("node.regenerate:{art_id}")));
+            .any(|r| r.task_id == resp.0.conversation_id));
 
         // artifact.created is journal-routed (AP971.5), not a project tx.
         let journal = std::fs::read_to_string(art_dir.join(JOURNAL_FILE)).unwrap();
@@ -44794,7 +44932,7 @@ pub(crate) mod tests {
             if !snapshot
                 .runs
                 .iter()
-                .any(|run| run.task_id == format!("node.regenerate:{art_id}"))
+                .any(|run| run.task_id == first.0.conversation_id)
             {
                 break;
             }
@@ -44813,7 +44951,7 @@ pub(crate) mod tests {
                 .await
                 .runs
                 .iter()
-                .all(|run| run.task_id != format!("node.regenerate:{art_id}")),
+                .all(|run| run.task_id != first.0.conversation_id),
             "fresh ApiState must not inherit live artifact runs from prior boot"
         );
 
@@ -44946,7 +45084,7 @@ pub(crate) mod tests {
             !snapshot
                 .runs
                 .iter()
-                .any(|run| run.task_id == format!("node.regenerate:{art_id}")),
+                .any(|run| run.task_id.starts_with(conversations::CONVERSATION_PREFIX)),
             "persistence failure must release the acquired run: {snapshot:?}"
         );
 
