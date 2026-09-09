@@ -488,8 +488,27 @@ async fn create_continue_live_resume_and_archive() {
     .await;
     assert_eq!(status, 200, "{body}");
 
-    // Archive, then input is refused.
+    // Released runs still answer with the whole session text, and the scope
+    // link reads outgoing from the conversation.
     release_run(&client, &base, &token, &run2).await;
+    let released = get(&client, &base, &token, &format!("/runs/{run1}"), 200).await;
+    assert!(
+        released["source"].as_str().unwrap().contains(&first),
+        "{released}"
+    );
+    let outgoing = get(
+        &client,
+        &base,
+        &token,
+        &format!("/links?project=demo&node={id}"),
+        200,
+    )
+    .await;
+    assert_eq!(outgoing.as_array().unwrap().len(), 1, "{outgoing}");
+    assert_eq!(outgoing[0]["source"], id);
+    assert_eq!(outgoing[0]["target"], task);
+
+    // Archive, then input is refused.
     let doc = get(
         &client,
         &base,
@@ -854,6 +873,53 @@ async fn members_and_plugins_are_gated_by_chat_actions_and_ownership() {
     // Run reads: sessions.watch plus chat.read on a conversation run.
     get(&client, &base, &viewer, &format!("/runs/{run}"), 200).await;
     get(&client, &base, &artifacts, &format!("/runs/{run}"), 403).await;
+
+    // Live list for members: sessions.watch shows every run, chat.read alone
+    // shows only conversation runs, and nothing is ever a 403.
+    let reader = orgasmic_core::add_member_with_actions(
+        &home,
+        "reader",
+        &[("demo".into(), "artifacts".into())],
+        &["chat.read".into()],
+    )
+    .unwrap();
+    let registered = post(
+        &client,
+        &base,
+        &token,
+        "/manager/register",
+        json!({"project_id":"demo","pid":std::process::id()}),
+        200,
+    )
+    .await;
+    let manager_run = registered["run_id"].as_str().unwrap().to_owned();
+    let ids = |live: &Value| -> Vec<String> {
+        live["live"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["run_id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let seen = ids(&get(&client, &base, &reader, "/runs/live", 200).await);
+    assert!(seen.contains(&run), "{seen:?}");
+    assert!(!seen.contains(&manager_run), "{seen:?}");
+    let seen = ids(&get(&client, &base, &viewer, "/runs/live", 200).await);
+    assert!(
+        seen.contains(&run) && seen.contains(&manager_run),
+        "{seen:?}"
+    );
+    let seen = ids(&get(&client, &base, &artifacts, "/runs/live", 200).await);
+    assert!(seen.is_empty(), "{seen:?}");
+    get(&client, &base, &reader, &format!("/runs/{run}"), 200).await;
+    get(
+        &client,
+        &base,
+        &reader,
+        &format!("/runs/{manager_run}"),
+        403,
+    )
+    .await;
     let shim = post(
         &client,
         &base,

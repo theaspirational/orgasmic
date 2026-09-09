@@ -975,6 +975,7 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("GET", "/ws/tmux/:run_id"),
     ("GET", "/ws/transcript/:run_id"),
     ("GET", "/runs/:id"),
+    ("GET", "/runs/live"),
     ("POST", "/manager/chat/launch"),
 ];
 
@@ -9986,8 +9987,19 @@ async fn get_recovery(State(state): State<ApiState>) -> Json<RecoveryResponse> {
 /// and no inventory metrics precisely so it cannot grow into a second run
 /// list: `live` here is [`SupervisorSnapshot::runs`] verbatim, the same value
 /// the inventory consumes for its own `live` bucket, so the two cannot drift.
-async fn get_live_runs(State(state): State<ApiState>) -> Json<Value> {
-    let live = state.supervisor.snapshot().await;
+///
+/// Members get the same list filtered by [`run_readable`]: every run in a
+/// project where they hold sessions.watch, plus conversation runs where they
+/// hold chat.read. Nothing here is a 403; unreadable runs are simply absent.
+async fn get_live_runs(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+) -> Json<Value> {
+    let mut live = state.supervisor.snapshot().await;
+    if !matches!(identity, Identity::Admin) {
+        live.runs
+            .retain(|run| run_readable(&identity, run.project_id.as_deref(), &run.task_id).is_ok());
+    }
     Json(json!({
         "boot_id": state.boot.boot_id,
         "acquisition_paused": live.acquisition_paused,
@@ -10299,21 +10311,30 @@ async fn get_run_authorized(
     Ok(detail)
 }
 
-/// Members read a run with sessions.watch; a conversation run (task id
-/// `CONV-…`) also needs chat.read on its project. Dispatch and terminal runs
-/// are unchanged.
-pub(crate) fn authorize_run_read(identity: &Identity, run: &Value) -> Result<(), ApiError> {
-    let project = run["project_id"].as_str();
-    authz::require(identity, project, Action::SessionsWatch)
-        .map_err(|_| ApiError::forbidden("sessions.watch is required to stream this run"))?;
-    if run["task_id"]
-        .as_str()
-        .is_some_and(|task| task.starts_with(conversations::CONVERSATION_PREFIX))
-    {
+/// One rule for every run read (`GET /runs/:id`, `/ws/transcript/:id`,
+/// the `GET /runs/live` filter): a conversation run (task id `CONV-…`) needs
+/// chat.read on its project and nothing more; every other run needs
+/// sessions.watch.
+pub(crate) fn run_readable(
+    identity: &Identity,
+    project: Option<&str>,
+    task_id: &str,
+) -> Result<(), ApiError> {
+    if task_id.starts_with(conversations::CONVERSATION_PREFIX) {
         authz::require(identity, project, Action::ChatRead)
-            .map_err(|_| ApiError::forbidden("chat.read is required to read a conversation run"))?;
+            .map_err(|_| ApiError::forbidden("chat.read is required to read a conversation run"))
+    } else {
+        authz::require(identity, project, Action::SessionsWatch)
+            .map_err(|_| ApiError::forbidden("sessions.watch is required to stream this run"))
     }
-    Ok(())
+}
+
+pub(crate) fn authorize_run_read(identity: &Identity, run: &Value) -> Result<(), ApiError> {
+    run_readable(
+        identity,
+        run["project_id"].as_str(),
+        run["task_id"].as_str().unwrap_or_default(),
+    )
 }
 
 pub(crate) async fn get_run(
@@ -30460,7 +30481,7 @@ pub(crate) mod tests {
     }
 
     async fn live_run_ids(state: &ApiState) -> Vec<String> {
-        get_live_runs(State(state.clone()))
+        get_live_runs(State(state.clone()), Extension(Identity::Admin))
             .await
             .0
             .get("live")
