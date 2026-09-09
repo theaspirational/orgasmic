@@ -1,7 +1,8 @@
 # Meetings
 
-Import UTF-8 notes, edit with version checks, upload recordings, and link their
-timestamps to tasks. The importer needs Python 3. Sidecars and chat are deferred.
+Import UTF-8 notes, edit with version checks, upload recordings, link their
+timestamps to tasks, and chat about a meeting. The importer needs Python 3.
+Sidecars are deferred.
 
 ```sh
 orgasmic plugin add /absolute/path/to/examples/plugins/meetings
@@ -23,6 +24,15 @@ confirmed offset, including after restarting the app. Native media controls
 support seeking without downloading the full file. Choose a task and click
 “Link current time”; the task's Backlinks section opens this recording at that
 timestamp. Each link retains the exact immutable recording revision.
+
+“Chat” opens the meeting's conversation in the dock (or starts one). The
+player adds “Chat about this moment”, a 30 s range chip at the playhead that
+core also records as a moment on the conversation's link, and “Chat about this
+recording”, the recording at its exact revision. Select notes text and “Chat
+about selection” sends it (cut at 4 KiB). The agent's scope prompt is
+`prompts/meeting-chat.org`. The controls hide without `chat.write`, sending
+also needs `chat.execute`, and `core.chat@1` is optional so the plugin still
+runs on a host without it.
 
 Updating an older installation requires re-approval of `links.read`,
 `links.write`, `attachments.read`, and `attachments.write`. UI code executes as

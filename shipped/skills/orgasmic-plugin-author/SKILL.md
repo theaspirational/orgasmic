@@ -13,8 +13,8 @@ and `orgasmic plugin run`.
 Use the existing node API and CLI; do not write ledger files directly. Check
 `orgasmic plugin --help` and the relevant leaf command's `--help` against the
 installed runtime before executing. The foundation supports declarative
-collections, commands, same-origin UI views with hot reload, links, and attachments.
-Sidecars and chat remain unavailable.
+collections, commands, same-origin UI views with hot reload, links, attachments,
+and chat (see "Chat" below). Sidecars remain unavailable.
 
 ## Build and verify
 
@@ -46,7 +46,9 @@ Sidecars and chat remain unavailable.
 One top-level `Plugin`, at most one nested node type. The folder name must match
 `ID`. Version is numeric major.minor.patch; schema numbers are positive.
 `COMMANDS`, `SCHEMA_ACCEPTS`, states, and transitions are optional. Currently
-services are `core.nodes@1`, `core.links@1`, and `core.attachments@1`. Capabilities
+services are `core.nodes@1`, `core.links@1`, `core.attachments@1`, and
+`core.chat@1`; list each in `REQUIRES`, or in `OPTIONAL` when the plugin also
+works on a host without it. Capabilities
 are `nodes.read/write`, `links.read/write`, `attachments.read/write` (spell out
 each string, not the slash shorthand), and implicit `ui.execute`.
 
@@ -192,6 +194,33 @@ for command principals); an artifacts-only member cannot read meeting recordings
   Plugin command principals use bearer-authenticated content requests.
   Content supports single byte ranges and HEAD, streams in bounded chunks,
   and always uses `nosniff` and `Content-Disposition: attachment`.
+
+## Chat
+
+Conversations are core nodes (`CONV-`) linked to the node they are about; a
+plugin never runs an agent. Declare `core.chat@1` (`OPTIONAL` keeps the plugin
+usable on an older host) and add `:CHAT_PROMPT: prompts/meeting-chat.org` to
+the root drawer: a prompt spec inside the plugin folder (relative path, checked
+at install) with the same sections and slots as the shipped `node-chat` spec
+(`node.id`, `node.type`, `node.content`, `node.comments`, `node.links`,
+`conversation.purpose`). A missing or invalid file falls back to the core
+prompt with a warning.
+
+In UI code, `ctx.openChat({ node, purpose, context })` opens the node's newest
+open conversation in the dock (or a scoped setup for the first message) and
+`ctx.chatContext(chips)` sets or clears the optional chips on whatever the
+Chat tab currently shows (`null` clears). Both are absent on a host without
+the service: feature-detect `typeof ctx.openChat === 'function'` and hide the
+control unless the user has `chat.write`. Chip shapes, all ids rather than
+content: `{kind:'node', id}`, `{kind:'attachment', node, id, revision}`
+(revision is the attachment's SHA-256 string), `{kind:'range', node,
+attachment, revision, start_ms, end_ms}` (end after start), and
+`{kind:'selection', text}` (at most 4096 bytes). A range chip on the
+conversation's own scoped node becomes a media anchor on the conversation's
+link, so the node's Backlinks show the discussed moment. Every send goes as
+the signed-in user and needs `chat.write` and `chat.execute`; plugin
+principals get `chat.read`/`chat.write` only for conversations about their own
+collection, never `chat.execute`.
 
 Limits: 8 GiB per file, 64 GiB per project's local asset store including
 reserved uploads, 4096 unfinished uploads (completed receipts do not count). Accepted
