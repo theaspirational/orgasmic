@@ -3,6 +3,7 @@ import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ChatButton } from '@/components/ChatButton';
 import { ErrorPanel, Loading, PageHeader } from '@/components/Primitives';
 import { PeekBackButton } from '@/components/PeekBackButton';
 import { NodeListView } from '@/components/node-views/NodeListView';
@@ -52,7 +53,7 @@ function GenericCollectionView({ projectId, collection }: { projectId: string; c
   if (!registry.data) return <Loading label="Loading node types…" />;
   const label = type?.label_plural ?? collection;
   return <div className="flex flex-col gap-4">
-    <PageHeader title={label} count={nodes.length} />
+    <PageHeader title={label} count={nodes.length} actions={<ChatButton projectId={projectId} />} />
     {!type ? <p className="text-sm text-muted-foreground">Plugin unavailable. Retained nodes are read only.</p> : null}
     {resource.error ? <ErrorPanel error={resource.error} /> : null}
     <NodeListView ariaLabel={label} items={filtered} getId={(node) => node.id}
@@ -86,7 +87,7 @@ export function GenericNodeDialog({ projectId, initialDocument, type, historyDep
   const doc = document ?? initialDocument;
   const descriptor = useMemo(() => collectionDescriptor(type ?? {
     collection: doc.kind, id_prefix: '', label: doc.kind, label_plural: doc.kind,
-    required_properties: [], states: [], transitions: {}, regenerate_prompt: null,
+    required_properties: [], states: [], transitions: {}, regenerate_prompt: null, chat_prompt: null,
   }), [type, doc.kind]);
   const state = doc.todo?.toLowerCase() ?? '';
   const schemaMatches = Boolean(doc.schema_matches !== false && type && (!type.states.length || type.states.includes(state)));
@@ -128,9 +129,12 @@ export function GenericNodeDialog({ projectId, initialDocument, type, historyDep
             {nextStates.filter((next) => next !== state).map((next) => <option key={next} value={next}>{next.toUpperCase()}</option>)}
           </select>
         </label> : <span className="text-sm text-muted-foreground">{type?.label ?? doc.kind}</span>}
-        {canEdit ? <Button variant="outline" size="sm" disabled={!document || savingState} onClick={() => setMode((current) => current === 'view' ? 'edit' : 'view')}>
-          {mode === 'view' ? 'Edit' : 'View'}
-        </Button> : <Badge variant="outline">Read only</Badge>}
+        <div className="flex items-center gap-2">
+          <ChatButton projectId={projectId} node={doc.id} />
+          {canEdit ? <Button variant="outline" size="sm" disabled={!document || savingState} onClick={() => setMode((current) => current === 'view' ? 'edit' : 'view')}>
+            {mode === 'view' ? 'Edit' : 'View'}
+          </Button> : <Badge variant="outline">Read only</Badge>}
+        </div>
       </div>
       <div className="min-h-0 overflow-y-auto">
         {!schemaMatches ? <p className="mb-3 text-sm text-muted-foreground">The descriptor is unavailable or does not recognize this node state. Editing is disabled.</p> : null}

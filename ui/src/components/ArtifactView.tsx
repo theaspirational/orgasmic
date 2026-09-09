@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Loader2, MessageSquarePlus, RefreshCw, Reply, RotateC
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
+import { ChatButton } from '@/components/ChatButton';
 import { NodeBacklinks } from '@/components/NodeBacklinks';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
@@ -207,6 +208,7 @@ export function ArtifactView({ projectId }: { projectId: string }) {
                 Regenerate
               </Button>
             ) : null}
+            <ChatButton projectId={projectId} node={artifactId} />
           </div>
         }
       />

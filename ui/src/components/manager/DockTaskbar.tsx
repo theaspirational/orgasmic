@@ -161,6 +161,7 @@ export function DockTaskbar({
   readOnly,
   terminalBusy,
   chatActive,
+  chatVisible = true,
   buttons,
   activeTabId,
   maximized,
@@ -180,6 +181,8 @@ export function DockTaskbar({
   readOnly: boolean;
   terminalBusy: boolean;
   chatActive: boolean;
+  /** False hides the Chat button (viewer lacks chat.read). */
+  chatVisible?: boolean;
   buttons: TaskbarRunButton[];
   activeTabId: string | null;
   maximized: boolean;
@@ -298,18 +301,20 @@ export function DockTaskbar({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5" data-taskbar-control>
-        <Button
-          type="button"
-          variant={chatActive ? 'secondary' : 'ghost'}
-          size="sm"
-          aria-label="Open Chat"
-          aria-pressed={chatActive}
-          onClick={onChatOpen}
-          className="h-9 gap-1.5 px-2.5"
-        >
-          <MessageCircle className="size-3.5" />
-          Chat
-        </Button>
+        {chatVisible ? (
+          <Button
+            type="button"
+            variant={chatActive ? 'secondary' : 'ghost'}
+            size="sm"
+            aria-label="Open Chat"
+            aria-pressed={chatActive}
+            onClick={onChatOpen}
+            className="h-9 gap-1.5 px-2.5"
+          >
+            <MessageCircle className="size-3.5" />
+            Chat
+          </Button>
+        ) : null}
         {runningAgents}
         {open ? (
           <>

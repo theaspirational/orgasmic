@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { postOrgNodeRegenerate } from '@/lib/api';
+import { useOptionalRunDock } from '@/lib/runDock';
 
 import {
   emptyTransportSelection,
@@ -34,13 +35,14 @@ export function NodeRegenerateControl({
   const [submitting, setSubmitting] = useState(false);
   const [extraPrompt, setExtraPrompt] = useState('');
   const [transport, setTransport] = useState<TransportSelection>(emptyTransportSelection);
+  const dock = useOptionalRunDock();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!transport.mode || !transport.harness || submitting) return;
     setSubmitting(true);
     try {
-      await postOrgNodeRegenerate(
+      const result = await postOrgNodeRegenerate(
         nodeId,
         {
           ...(extraPrompt.trim() ? { extraPrompt: extraPrompt.trim() } : {}),
@@ -56,6 +58,9 @@ export function NodeRegenerateControl({
       toast.success(`${label} regeneration started`);
       setExtraPrompt('');
       setOpen(false);
+      // The artifactor is a conversation (CHAT-SCOPE C1): raise it so the user
+      // can steer the round.
+      if (result.conversation_id) dock?.openChat({ conversationId: result.conversation_id });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {

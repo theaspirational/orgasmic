@@ -14,6 +14,12 @@ export function isManagerRun(run: { task_id: string }): boolean {
   return run.task_id.startsWith('manager.');
 }
 
+// A conversation run's supervisor lease key IS the conversation id (CHAT-SCOPE
+// C1), so the dock finds a conversation's live run by task id alone.
+export function isConversationRun(run: { task_id: string }): boolean {
+  return run.task_id.startsWith('CONV-');
+}
+
 // External manager registrations are presence-only supervisor runs. They have
 // no PTY/chat transport, so the dock must reject them at every entry point.
 export function isExternalManagerRun(run: { driver?: string | null }): boolean {

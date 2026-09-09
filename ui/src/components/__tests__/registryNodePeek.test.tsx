@@ -13,7 +13,7 @@ vi.mock('@/components/GenericNodeView', () => ({ GenericNodeDialog: ({ type }: {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 function peek(collection: string, prefix: string, id: string) {
-  return render(<NodeTypesContext.Provider value={{ data: [{ collection, id_prefix: prefix, label: collection, label_plural: collection, states: [], transitions: {}, required_properties: [], regenerate_prompt: null }], loading: false, error: null, refresh: vi.fn() }}>
+  return render(<NodeTypesContext.Provider value={{ data: [{ collection, id_prefix: prefix, label: collection, label_plural: collection, states: [], transitions: {}, required_properties: [], regenerate_prompt: null, chat_prompt: null }], loading: false, error: null, refresh: vi.fn() }}>
     <RegistryNodePeek projectId="demo" nodeId={id} historyDepth={0} onBack={vi.fn()} onClose={vi.fn()} onOpenNode={vi.fn()} />
   </NodeTypesContext.Provider>);
 }
