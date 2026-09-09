@@ -1775,6 +1775,7 @@ impl Supervisor {
                 .as_ref()
                 .and_then(|native| native.credential_mode.clone()),
             preflight.clone(),
+            req.conversation_id.clone(),
             persisted_driver_config.clone(),
         )
         .await?;
@@ -2177,6 +2178,9 @@ impl Supervisor {
                     .as_ref()
                     .and_then(|native| native.credential_mode.clone()),
                 preflight_from_driver_config(&driver_config),
+                // A recovery claim adopts a dispatch or stage session; a
+                // conversation-owned run is never claimed this way.
+                None,
                 driver_config,
             )
             .await?;
@@ -2246,6 +2250,7 @@ impl Supervisor {
         requires_worker_finalize: bool,
         credential_mode: Option<String>,
         preflight: Option<String>,
+        conversation_id: Option<String>,
         driver_config: DriverConfig,
     ) -> Result<(), SupervisorError> {
         let evt = Lifecycle::RunMeta {
@@ -2260,6 +2265,7 @@ impl Supervisor {
             requires_worker_finalize: Some(requires_worker_finalize),
             credential_mode,
             preflight,
+            conversation_id,
             driver_config: driver_config.0,
         };
         self.writer
@@ -2398,6 +2404,7 @@ impl Supervisor {
         requires_worker_finalize: bool,
         project_id: Option<String>,
         worktree: Option<PathBuf>,
+        conversation_id: Option<String>,
         session_path: PathBuf,
         driver_config: DriverConfig,
         append_reattach_marker: bool,
@@ -2561,7 +2568,7 @@ impl Supervisor {
             last_path: recovery_last_path,
             stdout_path: recovery_stdout_path,
             dispatch_attempt_token: None,
-            conversation_id: None,
+            conversation_id,
             preflight: preflight_from_driver_config(&driver_config),
             requires_worker_finalize,
             terminal_round: 0,
@@ -8219,6 +8226,7 @@ mod tests {
             false,
             Some("proj".into()),
             Some(dir.path().to_path_buf()),
+            None,
             session_path,
             tmux::inert_config(),
             false,
@@ -8241,6 +8249,41 @@ mod tests {
             )),
             Some(&manager_run_id)
         );
+    }
+
+    /// A reattached chat run still names its conversation. The lease key
+    /// cannot answer this for a dispatch conversation (it leases on the task
+    /// id), so the id rides `Lifecycle::RunMeta` and comes back through
+    /// `reattach` into the record every summary is built from.
+    #[tokio::test]
+    async fn reattach_restores_the_conversation_that_owns_the_run() {
+        let (sup, dir, _writer) = make_unmonitored_supervisor();
+        let identity = RuntimeIdentity::planned("run-conv-reattach", "rt-conv", "boot-before");
+        let session_path = dir.path().join("conv-reattach.jsonl");
+        SessionWriter::open(&session_path, identity.clone()).unwrap();
+
+        sup.reattach(
+            &AlwaysAttachableDriver,
+            identity,
+            RunKind::Worker,
+            "CONV-00001".into(),
+            "chat".into(),
+            "chat".into(),
+            false,
+            Some("proj".into()),
+            Some(dir.path().to_path_buf()),
+            Some("CONV-00001".into()),
+            session_path,
+            tmux::inert_config(),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mut snapshot = sup.snapshot().await;
+        let run = snapshot.runs.pop().unwrap();
+        assert_eq!(run.conversation_id.as_deref(), Some("CONV-00001"));
     }
 
     #[cfg(unix)]
@@ -8662,6 +8705,7 @@ mod tests {
             true,
             Some("orgasmic".to_string()),
             Some(worktree.to_path_buf()),
+            None,
             session_path.to_path_buf(),
             tmux::inert_config(),
             false,

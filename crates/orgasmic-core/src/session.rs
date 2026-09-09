@@ -1105,6 +1105,14 @@ pub enum Lifecycle {
         /// non-dispatch runs and for session JSONL written before this field.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preflight: Option<String>,
+        /// The conversation (`CONV-…`) this run belongs to, for runs a chat
+        /// owns. The supervisor lease key alone cannot say so: a dispatch
+        /// conversation is dual-keyed and leases on the task id. Persisting it
+        /// is what lets a reattached run still report its conversation after a
+        /// daemon restart. `None` for every run no conversation owns and for
+        /// session JSONL written before this field existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation_id: Option<String>,
         driver_config: Value,
     },
     /// The stage (`grill` / `plan` / `architect`) this run was launched as,

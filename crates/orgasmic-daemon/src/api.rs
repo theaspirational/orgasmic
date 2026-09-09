@@ -12446,6 +12446,7 @@ async fn execute_run_recover_action(
                     terminal_contract.requires_worker_finalize,
                     req.project.clone(),
                     Some(worktree.clone()),
+                    None,
                     prior.session_path.clone(),
                     DriverConfig::from_value(json!({
                         "force_inert": force_inert,
@@ -12745,6 +12746,7 @@ async fn execute_run_recover_action(
                             terminal_contract.requires_worker_finalize,
                             req.project.clone(),
                             Some(worktree.clone()),
+                            None,
                             session_path.clone(),
                             driver_config.clone(),
                             false,
@@ -13094,6 +13096,9 @@ struct BootReattachCandidate {
     dispatch_attempt_token: Option<String>,
     role: Option<String>,
     requires_worker_finalize: Option<bool>,
+    /// The conversation that owns this run, when a chat launched it — restored
+    /// so a reattached run still reports its conversation after a restart.
+    conversation_id: Option<String>,
     /// The stage this run was launched as, when it was a `grill`/`plan`
     /// launch — enables respawning its stage completion watcher (TASK-KPMFK).
     /// `None` for every non-stage run and for session JSONL written before the
@@ -13104,8 +13109,8 @@ struct BootReattachCandidate {
 }
 
 /// `(transport, harness, project_id, worktree, last_path, stdout_path,
-/// dispatch_attempt_token, role, requires_worker_finalize, driver_config)` from a
-/// `RunMeta` lifecycle event.
+/// dispatch_attempt_token, role, requires_worker_finalize, conversation_id,
+/// driver_config)` from a `RunMeta` lifecycle event.
 type RunMetaFields = (
     String,
     Option<String>,
@@ -13116,6 +13121,7 @@ type RunMetaFields = (
     Option<String>,
     Option<String>,
     Option<bool>,
+    Option<String>,
     serde_json::Value,
 );
 
@@ -13272,6 +13278,7 @@ fn boot_reattach_candidate(
                 credential_mode: _,
                 // Likewise: the supervisor re-lifts it from `driver_config`.
                 preflight: _,
+                conversation_id,
                 driver_config,
             }) => {
                 meta = Some((
@@ -13284,6 +13291,7 @@ fn boot_reattach_candidate(
                     dispatch_attempt_token,
                     role,
                     requires_worker_finalize,
+                    conversation_id,
                     driver_config,
                 ))
             }
@@ -13304,6 +13312,7 @@ fn boot_reattach_candidate(
         dispatch_attempt_token,
         meta_role,
         meta_requires,
+        conversation_id,
         driver_config,
     ) = meta?;
     let kind = match kind_str.as_str() {
@@ -13327,6 +13336,7 @@ fn boot_reattach_candidate(
         dispatch_attempt_token,
         role: meta_role,
         requires_worker_finalize: meta_requires,
+        conversation_id,
         stage,
         driver_config,
         session_path: session_path.to_path_buf(),
@@ -13660,6 +13670,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                 requires_worker_finalize,
                 c.project_id.clone(),
                 c.worktree.clone(),
+                c.conversation_id.clone(),
                 c.session_path.clone(),
                 DriverConfig::from_value(c.driver_config.clone()),
                 true,
@@ -24663,6 +24674,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     // orgasmic:task_K4G1D — the tmux arm completes an existing
                     // rule (derive the transport from the protocol) rather than
@@ -28043,6 +28055,7 @@ pub(crate) mod tests {
         push(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                conversation_id: None,
                 preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),
@@ -28997,6 +29010,9 @@ pub(crate) mod tests {
         let meta = env(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                // A chat-owned run: the id must survive the restart this scan
+                // stands for, or a reattached conversation reports none.
+                conversation_id: Some("CONV-00001".into()),
                 preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),
@@ -29035,6 +29051,7 @@ pub(crate) mod tests {
         assert_eq!(candidate.transport, "tmux");
         assert_eq!(candidate.harness.as_deref(), Some("claude"));
         assert_eq!(candidate.driver_config["persistent"], json!(true));
+        assert_eq!(candidate.conversation_id.as_deref(), Some("CONV-00001"));
         // Pre-upgrade / non-dispatch RunMeta carries no artifact paths — boot
         // reattach must still succeed, just without a completion watcher.
         assert!(candidate.last_path.is_none());
@@ -29043,6 +29060,7 @@ pub(crate) mod tests {
         let invalid_argv_meta = env(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                conversation_id: None,
                 preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),
@@ -29118,6 +29136,7 @@ pub(crate) mod tests {
         // reattach: the mode is recorded evidence, not an input to `reattach`.
         for credential_mode in [None, Some("native_login"), Some("bare_api_key")] {
             let meta = env(serde_json::to_value(Lifecycle::RunMeta {
+                conversation_id: None,
                 preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),
@@ -29199,6 +29218,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     // orgasmic:task_3NJ9K — the transport is the stub because a
                     // test build may not hold an `stdio` one. What this run
@@ -29267,6 +29287,7 @@ pub(crate) mod tests {
                 true,
                 candidate.project_id.clone(),
                 candidate.worktree.clone(),
+                candidate.conversation_id.clone(),
                 session_path.clone(),
                 DriverConfig::from_value(candidate.driver_config.clone()),
                 true,
@@ -29391,6 +29412,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     transport: STUB_MODE.into(),
                     harness: Some(STUB_HARNESS.into()),
@@ -29552,6 +29574,7 @@ pub(crate) mod tests {
                     .append(
                         SessionEventKind::Lifecycle,
                         serde_json::to_value(Lifecycle::RunMeta {
+                            conversation_id: None,
                             preflight: None,
                             transport: transport.into(),
                             harness: Some(transport.into()),
@@ -29718,6 +29741,7 @@ pub(crate) mod tests {
         push(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                conversation_id: None,
                 preflight: None,
                 transport: transport.into(),
                 harness: Some("claude".into()),
@@ -29869,6 +29893,7 @@ pub(crate) mod tests {
             env(
                 "rt-first",
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
@@ -31205,6 +31230,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     // orgasmic:task_3NJ9K — stub transport: what the manager
                     // recovery path is asked about is the session record, not
@@ -38083,6 +38109,7 @@ pub(crate) mod tests {
                 .append(
                     SessionEventKind::Lifecycle,
                     serde_json::to_value(Lifecycle::RunMeta {
+                        conversation_id: None,
                         preflight: None,
                         transport: historical.into(),
                         harness: Some("claude".into()),
@@ -38479,6 +38506,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
@@ -45521,6 +45549,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     transport: mode.id().into(),
                     harness: Some("claude".into()),
@@ -46087,6 +46116,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     transport: mode.id().into(),
                     harness: Some("claude".into()),
@@ -46269,6 +46299,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    conversation_id: None,
                     preflight: None,
                     transport: mode.id().into(),
                     harness: Some("claude".into()),
