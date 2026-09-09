@@ -365,7 +365,7 @@ pub(super) async fn create_authorized(
         .map(str::to_string)
         .unwrap_or_else(|| match &scope {
             Some((_, title)) => format!("Chat about {title}"),
-            None => "Project chat".to_string(),
+            None => "Chat".to_string(),
         });
     validate_node_title(&title)?;
 
