@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MessageCircle } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +21,7 @@ export function ChatSetup({
   onStart,
   scopeNode = null,
   disabledLabel = null,
+  chips = null,
 }: {
   projectId: string | null;
   readOnly: boolean;
@@ -29,6 +30,8 @@ export function ChatSetup({
   scopeNode?: string | null;
   /** Non-null keeps the composer disabled and shows this reason (e.g. missing chat.execute). */
   disabledLabel?: string | null;
+  /** Optional context chips that go with the first message (CHAT-SCOPE C2). */
+  chips?: ReactNode;
 }) {
   const catalog = useResource(
     `rundock-chat-catalog:${projectId ?? 'none'}`,
@@ -102,16 +105,19 @@ export function ChatSetup({
               unavailableLabel={unavailableCopy}
               onSend={(message) => onStart(selection, message)}
               controls={
-                <ChatControls
-                  value={selection}
-                  onChange={setSelection}
-                  models={setupModels(catalog.data, selection.provider)}
-                  availableProviders={providers}
-                  disabled={!ready}
-                  catalogLoading={catalog.loading}
-                  catalogMessage={setupCatalogMessage(catalog.data, selection.provider)}
-                  showAccess
-                />
+                <>
+                  {chips}
+                  <ChatControls
+                    value={selection}
+                    onChange={setSelection}
+                    models={setupModels(catalog.data, selection.provider)}
+                    availableProviders={providers}
+                    disabled={!ready}
+                    catalogLoading={catalog.loading}
+                    catalogMessage={setupCatalogMessage(catalog.data, selection.provider)}
+                    showAccess
+                  />
+                </>
               }
             />
           )}

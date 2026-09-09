@@ -12,6 +12,7 @@ import {
   fetchNodeLinks,
   fetchRun,
   findNodeConversation,
+  isNoResumeError,
   isRunGoneError,
   postConversationCreate,
   postConversationInput,
@@ -23,10 +24,11 @@ import {
   conversationRuns,
   orderConversations,
   segmentLabel,
+  worktreeLabel,
   type ConversationRun,
 } from '@/lib/conversations';
 import { useRunDock, type ChatTarget } from '@/lib/runDock';
-import { isConversationRun } from '@/lib/runLabels';
+import { runConversationId } from '@/lib/runLabels';
 import { parseSessionSource } from '@/lib/transcriptParts';
 import { TranscriptStream } from '@/lib/transcriptStream';
 import type { ConversationContextChip, DaemonEvent, RunSummary } from '@/lib/types';
@@ -34,6 +36,7 @@ import { cn } from '@/lib/utils';
 import { useResource } from '@/lib/useResource';
 
 import { ChatSetup } from './ChatSetup';
+import { ContextChips } from './ContextChips';
 import { TranscriptPartsView } from './ManagerChatTranscript';
 import { ManagerComposer } from './ManagerComposer';
 import { ReadOnlySessionBar } from './ReadOnlySessionBar';
@@ -41,6 +44,13 @@ import { RunSurface } from './RunSurface';
 import type { ChatSelection } from './chatProviders';
 
 export const CHAT_EXECUTE_LABEL = 'Chat runs an agent on the host. Ask an admin to grant chat.execute.';
+export const NO_RESUME_LABEL = 'No native session to resume. Dispatch a new attempt.';
+
+/** The target with its optional chips replaced; none → the field is dropped. */
+function withContext<T extends ChatTarget>(target: T, chips: ConversationContextChip[]): T {
+  const { context: _previous, ...rest } = target;
+  return (chips.length ? { ...rest, context: chips } : rest) as T;
+}
 
 // The Chat tab (CHAT-SCOPE C1): the project's conversations on the left, the
 // selected one on the right. A conversation renders as its runs; the current
@@ -77,8 +87,16 @@ export function ConversationPanel({
       [conversations, projectId],
     ),
   );
+  // Live = a run whose conversation_id is the conversation, or whose lease key
+  // is (chat runs); a dispatch attempt keeps its task lease (CHAT-SCOPE C2).
   const liveByConversation = useMemo(
-    () => new Map(liveRuns.filter(isConversationRun).map((run) => [run.task_id, run])),
+    () =>
+      new Map(
+        liveRuns.flatMap((run) => {
+          const id = runConversationId(run);
+          return id ? [[id, run] as const] : [];
+        }),
+      ),
     [liveRuns],
   );
   const entries = useMemo(
@@ -90,7 +108,7 @@ export function ConversationPanel({
   // backlinks into its newest OPEN conversation or a scoped setup.
   useEffect(() => {
     if (chatTarget.kind !== 'lookup' || !projectId) return;
-    const { node, purpose } = chatTarget;
+    const { node, purpose, context } = chatTarget;
     let cancelled = false;
     findNodeConversation(projectId, node)
       .catch(() => null)
@@ -98,8 +116,8 @@ export function ConversationPanel({
         if (cancelled) return;
         setChatTarget(
           conversationId
-            ? { kind: 'conversation', conversationId }
-            : { kind: 'setup', node, purpose },
+            ? { kind: 'conversation', conversationId, context }
+            : { kind: 'setup', node, purpose, context },
         );
       });
     return () => {
@@ -119,6 +137,8 @@ export function ConversationPanel({
       service_tier: selection.serviceTier || null,
       mode: 'chat',
       message,
+      // Optional chips ride the first message; the daemon pins the scoped node.
+      context: target.context?.length ? target.context : undefined,
     });
     setChatTarget({ kind: 'conversation', conversationId: result.id });
     onRefresh();
@@ -171,6 +191,17 @@ export function ConversationPanel({
             scopeNode={chatTarget.node ?? null}
             disabledLabel={disabledLabel}
             onStart={(selection, message) => handleStart(chatTarget, selection, message)}
+            chips={
+              chatTarget.context?.length ? (
+                <ContextChips
+                  className="mb-1.5"
+                  chips={chatTarget.context}
+                  onRemove={(index) =>
+                    setChatTarget(withContext(chatTarget, chatTarget.context!.filter((_, i) => i !== index)))
+                  }
+                />
+              ) : null
+            }
           />
         ) : projectId ? (
           <ConversationView
@@ -178,6 +209,8 @@ export function ConversationPanel({
             projectId={projectId}
             conversationId={chatTarget.conversationId}
             liveRun={liveByConversation.get(chatTarget.conversationId) ?? null}
+            chips={chatTarget.context ?? []}
+            onChipsChange={(chips) => setChatTarget(withContext(chatTarget, chips))}
             readOnly={chatReadOnly}
             disabledLabel={disabledLabel}
             onRefresh={onRefresh}
@@ -231,6 +264,8 @@ function ConversationView({
   projectId,
   conversationId,
   liveRun,
+  chips,
+  onChipsChange,
   readOnly,
   disabledLabel,
   onRefresh,
@@ -239,6 +274,9 @@ function ConversationView({
   projectId: string;
   conversationId: string;
   liveRun: RunSummary | null;
+  /** Optional chips pending for the next send (CHAT-SCOPE C2). */
+  chips: ConversationContextChip[];
+  onChipsChange: (chips: ConversationContextChip[]) => void;
   readOnly: boolean;
   disabledLabel: string | null;
   onRefresh: () => void;
@@ -262,12 +300,20 @@ function ConversationView({
   );
   // The run a send just started, until RUNS catches up.
   const [sentRun, setSentRun] = useState<string | null>(null);
+  // A released implement/review worker with no native session (409 no_resume,
+  // CHAT-SCOPE C2): the composer stays down until a live run appears.
+  const [noResume, setNoResume] = useState(false);
+  useEffect(() => {
+    if (liveRun) setNoResume(false);
+  }, [liveRun]);
 
   const runs = useMemo(() => conversationRuns(doc.data), [doc.data]);
   const currentRunId = liveRun?.run_id ?? sentRun ?? runs.at(-1)?.runId ?? null;
   const older = runs.filter((run) => run.runId !== currentRunId);
   const currentMode = runs.find((run) => run.runId === currentRunId)?.mode ?? 'start';
   const scopedNode = scope.data?.find((link) => !link.deleted)?.target ?? null;
+  const purpose = conversationProperty(doc.data, 'PURPOSE');
+  const worktree = conversationProperty(doc.data, 'WORKTREE');
 
   const owned = conversationOwnedBy(conversationProperty(doc.data, 'OWNER'), {
     identity,
@@ -279,11 +325,27 @@ function ConversationView({
       ? 'This conversation is archived.'
       : !owned
         ? 'Only the owner or an admin can continue this conversation.'
-        : null);
+        : noResume
+          ? NO_RESUME_LABEL
+          : null);
 
   async function send(text: string): Promise<boolean> {
-    const context: ConversationContextChip[] | undefined = scopedNode ? [{ kind: 'node', id: scopedNode }] : undefined;
-    const result = await postConversationInput(conversationId, projectId, { message: text, context });
+    // Scoped node first, then whatever optional chips are still on the composer.
+    const context: ConversationContextChip[] = [...(scopedNode ? [{ kind: 'node', id: scopedNode } as const] : []), ...chips];
+    let result;
+    try {
+      result = await postConversationInput(conversationId, projectId, {
+        message: text,
+        context: context.length ? context : undefined,
+      });
+    } catch (err) {
+      if (isNoResumeError(err)) {
+        setNoResume(true);
+        throw new Error(NO_RESUME_LABEL);
+      }
+      throw err;
+    }
+    if (chips.length) onChipsChange([]);
     if (result.run_id !== currentRunId) {
       setSentRun(result.run_id);
       void doc.refresh();
@@ -306,12 +368,26 @@ function ConversationView({
     onRefresh();
   }
 
-  const chips = scopedNode ? (
-    <Badge variant="secondary" className="font-mono" title={`Every message carries ${scopedNode}`}>
-      {scopedNode}
-    </Badge>
+  const chipsNode =
+    scopedNode || chips.length ? (
+      <ContextChips
+        pinned={scopedNode}
+        chips={chips}
+        onRemove={(index) => onChipsChange(chips.filter((_, i) => i !== index))}
+      />
+    ) : null;
+  const conversation = { onSend: send, chips: chipsNode, disabledLabel: composerDisabled };
+  const header = doc.data ? (
+    <header className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-1.5 text-xs text-muted-foreground">
+      <span className="min-w-0 truncate font-medium text-foreground">{doc.data.title || conversationId}</span>
+      {purpose ? <Badge variant="secondary">{purpose}</Badge> : null}
+      {worktree ? (
+        <Badge variant="outline" className="font-mono" title={worktree}>
+          {worktreeLabel(worktree)}
+        </Badge>
+      ) : null}
+    </header>
   ) : null;
-  const conversation = { onSend: send, chips, disabledLabel: composerDisabled };
 
   if (doc.error) {
     return (
@@ -329,6 +405,7 @@ function ConversationView({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-muted/20">
+      {header}
       {older.length > 0 ? (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-b">
           {older.map((run) => (
@@ -368,7 +445,7 @@ function ConversationView({
                     readyLabel="Enter to send · Shift+Enter for a new line · the agent resumes or restarts as needed"
                     unavailableLabel={composerDisabled ?? 'Loading conversation…'}
                     onSend={send}
-                    controls={chips}
+                    controls={chipsNode}
                   />
                 )}
               </div>

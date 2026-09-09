@@ -1,9 +1,68 @@
 // Pure helpers for conversation nodes (CHAT-SCOPE C1). No transport imports so
 // they unit-test in the node environment.
+import { mediaTime } from './nodeServices';
 import type { OrgNodeDoc } from './orgdoc/types';
-import type { GraphNodeSummary, MeIdentity } from './types';
+import type { ConversationContextChip, GraphNodeSummary, MeIdentity } from './types';
 
 export const CONVERSATION_PREFIX = 'CONV-';
+
+const CONTEXT_OPEN = '<<<orgasmic-context';
+const CONTEXT_CLOSE = '>>>';
+const SELECTION_LABEL_CHARS = 40;
+
+/** Composer/transcript chip text (CHAT-SCOPE C2): ids and ranges, never content. */
+export function chipLabel(chip: ConversationContextChip): string {
+  switch (chip.kind) {
+    case 'node':
+      return chip.id;
+    case 'attachment':
+      return `${chip.id}@${chip.revision.slice(0, 7)}`;
+    case 'range':
+      return `${mediaTime(chip.start_ms)}–${mediaTime(chip.end_ms)}`;
+    case 'selection':
+      return chip.text.length > SELECTION_LABEL_CHARS ? `${chip.text.slice(0, SELECTION_LABEL_CHARS)}…` : chip.text;
+  }
+}
+
+export type ParsedContextBlock = {
+  chips: ConversationContextChip[];
+  /** The operator's own text: everything after the block. */
+  message: string;
+  /** Scope prompt / transcript tail the daemon put before the block, if any. */
+  prefix: string;
+};
+
+/** The daemon wraps every conversation send as `<<<orgasmic-context`, one JSON
+ * chip per line, `>>>`, then the operator's text. Null when the text carries
+ * no complete block; malformed chip lines are skipped. */
+export function parseContextBlock(text: string): ParsedContextBlock | null {
+  const open = text.indexOf(CONTEXT_OPEN);
+  if (open < 0) return null;
+  const bodyStart = open + CONTEXT_OPEN.length;
+  const close = text.indexOf(`\n${CONTEXT_CLOSE}`, bodyStart);
+  if (close < 0) return null;
+  const chips: ConversationContextChip[] = [];
+  for (const line of text.slice(bodyStart, close).split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as ConversationContextChip;
+      if (parsed && typeof parsed === 'object' && typeof parsed.kind === 'string') chips.push(parsed);
+    } catch {
+      /* not a chip line */
+    }
+  }
+  const messageStart = close + 1 + CONTEXT_CLOSE.length;
+  return {
+    chips,
+    message: text.slice(messageStart).replace(/^\n/, ''),
+    prefix: text.slice(0, open).trim(),
+  };
+}
+
+/** `WORKTREE` shown short: the checkout's directory name. */
+export function worktreeLabel(path: string): string {
+  return path.split('/').filter(Boolean).at(-1) ?? path;
+}
 
 export type ConversationRunMode = 'start' | 'resumed' | 'cold';
 export type ConversationRun = { runId: string; mode: ConversationRunMode };

@@ -468,6 +468,10 @@ export type RunSummary = {
    * provider and the run-scoped claim capability never leave the daemon.
    */
   claimed_manager?: boolean;
+  /** The conversation this run belongs to (CHAT-SCOPE C2). Equals `task_id`
+   * for chat runs; a dispatch attempt keeps its task lease and records the
+   * implement/review conversation here. */
+  conversation_id?: string | null;
 };
 
 export type ManagerState = {
@@ -534,6 +538,9 @@ export type ConversationCreateRequest = {
   title?: string | null;
   /** Sent as the first input in the same call. */
   message?: string | null;
+  /** Optional chips for that first message (CHAT-SCOPE C2); the daemon pins
+   * the scoped node itself on create. */
+  context?: ConversationContextChip[];
 };
 
 export type ConversationCreateResponse = {

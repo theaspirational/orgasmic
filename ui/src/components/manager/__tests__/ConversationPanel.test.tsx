@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RunDockProvider, useRunDock } from '@/lib/runDock';
-import type { RunSummary } from '@/lib/types';
+import { HttpError } from '@/lib/transport';
+import type { ConversationContextChip, RunSummary } from '@/lib/types';
 
 const mocks = vi.hoisted(() => ({
   fetchConversations: vi.fn(),
@@ -44,7 +45,7 @@ vi.mock('@/hooks/useMe', () => ({
   }),
 }));
 
-import { CHAT_EXECUTE_LABEL, ConversationPanel } from '../ConversationPanel';
+import { CHAT_EXECUTE_LABEL, ConversationPanel, NO_RESUME_LABEL } from '../ConversationPanel';
 
 function conversationDoc(id: string, runs: string, extra: Record<string, string> = {}) {
   return {
@@ -54,32 +55,37 @@ function conversationDoc(id: string, runs: string, extra: Record<string, string>
   };
 }
 
-function liveRun(conversationId: string): RunSummary {
+function liveRun(conversationId: string, extra: Partial<RunSummary> = {}): RunSummary {
   return {
     run_id: 'run-live', task_id: conversationId, kind: 'chat', driver: 'stdio', harness: 'claude-sdk',
     project_id: 'demo', sub_state: null, identity: { run_id: 'run-live', runtime_id: 'rt', boot_id: 'boot' },
-    session_path: '/sessions/run-live.jsonl', event_count: 0,
+    session_path: '/sessions/run-live.jsonl', event_count: 0, ...extra,
   };
 }
 
-function Probe({ node }: { node?: string }) {
+function Probe({ node, context }: { node?: string; context?: ConversationContextChip[] }) {
   const { openChat } = useRunDock();
-  return <button onClick={() => openChat(node ? { node } : {})}>Probe open</button>;
+  return <button onClick={() => openChat(node ? { node, context } : {})}>Probe open</button>;
 }
 
-function panel(liveRuns: RunSummary[] = [], node?: string) {
+function panel(liveRuns: RunSummary[] = [], node?: string, context?: ConversationContextChip[]) {
   return (
     <RunDockProvider>
-      <Probe node={node} />
+      <Probe node={node} context={context} />
       <ConversationPanel projectId="demo" liveRuns={liveRuns} onRefresh={() => {}} />
     </RunDockProvider>
   );
 }
 
+const RANGE: ConversationContextChip = { kind: 'range', node: 'dec_1', attachment: 'rec', revision: 'sha', start_ms: 90000, end_ms: 120000 };
+const SELECTION: ConversationContextChip = { kind: 'selection', text: 'a'.repeat(50) };
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.grants = {};
   window.localStorage.clear();
+  // A live RunSurface mounts the auto-scrolling transcript, which observes resizes.
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   mocks.fetchConversations.mockResolvedValue([
     { id: 'CONV-ARCH', title: 'Old archived', todo: 'ARCHIVED', layer: 'conversations', outgoing: [], source_file: '' },
     { id: 'CONV-LIVE', title: 'Live one', todo: 'OPEN', layer: 'conversations', outgoing: [], source_file: '' },
@@ -157,6 +163,80 @@ describe('ConversationPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(mocks.postConversationCreate).toHaveBeenCalledWith('demo', expect.objectContaining({ purpose: 'discuss', node: 'dec_1', provider: 'codex', message: 'first message' })));
     expect(window.localStorage.getItem('orgasmic.rundock.conversation.v1')).toBe('CONV-NEW');
+  });
+
+  it('shows openChat context as removable chips, sends the rest after the scoped node, then clears them', async () => {
+    mocks.findNodeConversation.mockResolvedValueOnce('CONV-IDLE');
+    mocks.fetchNodeLinks.mockResolvedValue([{ id: 'l', source: 'CONV-IDLE', target: 'dec_1', kind: 'RELATES_TO', revision: 0, deleted: false, anchors: [] }]);
+    mocks.postConversationInput.mockResolvedValue({ run_id: 'run-c', mode: 'live' });
+    render(panel([], 'dec_1', [RANGE, SELECTION]));
+    fireEvent.click(screen.getByRole('button', { name: 'Probe open' }));
+    const selectionLabel = `${'a'.repeat(40)}…`;
+    expect(await screen.findByText('1:30–2:00')).toBeInTheDocument();
+    expect(screen.getByText(selectionLabel)).toBeInTheDocument();
+    expect(await screen.findByText('dec_1')).toBeInTheDocument();
+    // The pinned scoped chip cannot be removed; optional ones can.
+    expect(screen.queryByRole('button', { name: 'Remove dec_1' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove 1:30–2:00' }));
+    expect(screen.queryByText('1:30–2:00')).toBeNull();
+    const composer = await screen.findByPlaceholderText('Send to agent');
+    await waitFor(() => expect(composer).toBeEnabled());
+    fireEvent.change(composer, { target: { value: 'about this' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(mocks.postConversationInput).toHaveBeenCalledWith('CONV-IDLE', 'demo', {
+      message: 'about this', context: [{ kind: 'node', id: 'dec_1' }, SELECTION],
+    }));
+    await waitFor(() => expect(screen.queryByText(selectionLabel)).toBeNull());
+    expect(screen.getByText('dec_1')).toBeInTheDocument();
+  });
+
+  it('carries openChat context into a scoped setup and sends it with the first message', async () => {
+    mocks.findNodeConversation.mockResolvedValueOnce(null);
+    mocks.postConversationCreate.mockResolvedValue({ id: 'CONV-NEW', run_id: 'run-new', mode: 'cold' });
+    render(panel([], 'dec_1', [RANGE]));
+    fireEvent.click(screen.getByRole('button', { name: 'Probe open' }));
+    expect(await screen.findByText('1:30–2:00')).toBeInTheDocument();
+    const composer = await screen.findByPlaceholderText('Ask about dec_1');
+    await waitFor(() => expect(composer).toBeEnabled());
+    fireEvent.change(composer, { target: { value: 'first' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(mocks.postConversationCreate).toHaveBeenCalledWith('demo', expect.objectContaining({ node: 'dec_1', message: 'first', context: [RANGE] })));
+  });
+
+  it('marks a conversation live through a dispatch run that records its conversation_id', async () => {
+    render(panel([liveRun('TASK-1', { run_id: 'run-worker', harness: 'claude', conversation_id: 'CONV-LIVE' })]));
+    const nav = await screen.findByRole('navigation', { name: 'Conversations' });
+    await within(nav).findByText('Live one');
+    expect(within(within(nav).getByRole('button', { name: /Live one/ })).getByLabelText('Live')).toBeInTheDocument();
+    expect(within(within(nav).getByRole('button', { name: /Idle one/ })).queryByLabelText('Live')).toBeNull();
+  });
+
+  it('shows the purpose and the short worktree in the conversation header', async () => {
+    mocks.fetchConversation.mockImplementation(async (id: string) =>
+      conversationDoc(id, 'run-a', { PURPOSE: 'implement', WORKTREE: '/tmp/wt/sprint-TASK-1' }));
+    render(panel());
+    fireEvent.click(await screen.findByRole('button', { name: /Idle one/ }));
+    const header = await screen.findByRole('banner');
+    expect(within(header).getByText('implement')).toBeInTheDocument();
+    expect(within(header).getByText('sprint-TASK-1')).toHaveAttribute('title', '/tmp/wt/sprint-TASK-1');
+  });
+
+  it('keeps the composer down after a 409 no_resume until a live run appears', async () => {
+    mocks.postConversationInput.mockRejectedValue(
+      new HttpError(409, JSON.stringify({ error: 'no native session to resume; dispatch a new attempt', code: 'no_resume' })),
+    );
+    const view = render(panel());
+    fireEvent.click(await screen.findByRole('button', { name: /Idle one/ }));
+    const composer = await screen.findByPlaceholderText('Send to agent');
+    await waitFor(() => expect(composer).toBeEnabled());
+    fireEvent.change(composer, { target: { value: 'continue' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(screen.getByPlaceholderText('Send to agent')).toBeDisabled());
+    expect(screen.getAllByText(NO_RESUME_LABEL).length).toBeGreaterThan(0);
+
+    view.rerender(panel([liveRun('TASK-9', { run_id: 'run-attempt', harness: 'claude', conversation_id: 'CONV-IDLE' })]));
+    await waitFor(() => expect(screen.getByPlaceholderText('Send to agent')).toBeEnabled());
+    expect(screen.queryByText(NO_RESUME_LABEL)).toBeNull();
   });
 
   it('disables the composer with the host-agent notice when chat.execute is missing', async () => {

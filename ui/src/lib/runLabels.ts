@@ -20,6 +20,13 @@ export function isConversationRun(run: { task_id: string }): boolean {
   return run.task_id.startsWith('CONV-');
 }
 
+// The conversation a live run belongs to (CHAT-SCOPE C2): the recorded
+// conversation_id when the daemon sends one (dispatch attempts keep their task
+// lease), else the lease key itself for chat runs.
+export function runConversationId(run: { task_id: string; conversation_id?: string | null }): string | null {
+  return run.conversation_id || (isConversationRun(run) ? run.task_id : null);
+}
+
 // External manager registrations are presence-only supervisor runs. They have
 // no PTY/chat transport, so the dock must reject them at every entry point.
 export function isExternalManagerRun(run: { driver?: string | null }): boolean {
