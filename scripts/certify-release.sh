@@ -21,11 +21,7 @@ PATH="$RUSTUP_PROXY_DIR:$PATH"
 export PATH
 CERT_CARGO=(rustup run "$CERTIFICATION_RUST" cargo)
 CERT_RUSTC=(rustup run "$CERTIFICATION_RUST" rustc)
-MSRV_TARGET=$(mktemp -d "${TMPDIR:-/tmp}/orgasmic-msrv.XXXXXX") || {
-    echo "certify-release: could not create the isolated MSRV target directory" >&2
-    exit 2
-}
-trap 'rm -rf "$MSRV_TARGET"' EXIT
+MSRV_TARGET="${ORGASMIC_MSRV_TARGET_DIR:-$ROOT/target/certification-msrv-$MSRV_RUST}"
 
 step() {
     printf '\n==> %s\n' "$1"
@@ -56,9 +52,6 @@ fi
 step "Rust formatting"
 "${CERT_CARGO[@]}" fmt --all --check
 
-step "Strict Clippy"
-"${CERT_CARGO[@]}" clippy --workspace --all-targets --keep-going -- -D warnings
-
 step "Exact-head certification guard self-test"
 bash scripts/assert-ci-certified-selftest.sh
 
@@ -74,19 +67,11 @@ bash scripts/run-tests-selftest.sh
 step "Serial Rust batch planner/exact-tree receipt self-test"
 node --test scripts/certify-rust-batches.test.mjs
 
-step "Classified Rust suite (serial targets, serial test threads)"
-node scripts/certify-rust-batches.mjs
-
-step "Workspace MSRV ($MSRV_RUST)"
-rustup toolchain install "$MSRV_RUST" --profile minimal --no-self-update
-CARGO_TARGET_DIR="$MSRV_TARGET" rustup run "$MSRV_RUST" cargo check \
-    --workspace --all-targets --locked
-
 step "Install locked UI dependencies"
-npm ci --prefix ui
+npm ci --prefix ui --prefer-offline --no-audit
 
 step "Install locked Chat provider SDK dependencies"
-npm ci --prefix provider-host
+npm ci --prefix provider-host --prefer-offline --no-audit
 
 step "Chat provider SDK host typecheck"
 npm --prefix provider-host run typecheck
@@ -101,13 +86,18 @@ step "UI tests"
 npm --prefix ui test
 
 step "Embedded runtime UI build"
-npm --prefix ui run build
-
-step "Release runtime warnings"
-RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check --release --package orgasmic-cli --locked
+npm --prefix ui run build:vite
 
 step "Tauri bootstrap UI build"
-npm --prefix ui run build:bootstrap
+npm --prefix ui run build:bootstrap:vite
+
+step "Workspace MSRV ($MSRV_RUST)"
+rustup toolchain install "$MSRV_RUST" --profile minimal --no-self-update
+CARGO_TARGET_DIR="$MSRV_TARGET" rustup run "$MSRV_RUST" cargo check \
+    --workspace --all-targets --locked
+
+step "Strict Clippy"
+"${CERT_CARGO[@]}" clippy --workspace --all-targets --keep-going -- -D warnings
 
 step "Release Tauri warnings"
 RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check \
@@ -115,5 +105,11 @@ RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check \
 
 step "Tauri application check"
 "${CERT_CARGO[@]}" check --manifest-path src-tauri/Cargo.toml --all-targets --locked
+
+step "Classified Rust suite (serial targets, serial test threads)"
+node scripts/certify-rust-batches.mjs
+
+step "Release runtime warnings"
+RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check --release --package orgasmic-cli --locked
 
 printf '\nrelease certification: GREEN\n'

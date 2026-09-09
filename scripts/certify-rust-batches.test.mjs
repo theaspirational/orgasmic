@@ -35,6 +35,26 @@ test('plans every default target, doctests and build-only examples without depen
   }
 });
 
+test('full certification runs UI, MSRV and app checks before the long Rust suite', () => {
+  const source = fs.readFileSync(path.join(scripts, 'certify-release.sh'), 'utf8');
+  const rust = source.indexOf('Classified Rust suite');
+  for (const early of ['UI tests', 'Workspace MSRV', 'Tauri application check']) {
+    assert.ok(source.indexOf(early) < rust, `${early} must run before classified Rust`);
+  }
+});
+
+test('certification reuses UI and MSRV build work without dropping checks', () => {
+  const certification = fs.readFileSync(path.join(scripts, 'certify-release.sh'), 'utf8');
+  const appPublisher = fs.readFileSync(path.join(scripts, 'publish-apps.sh'), 'utf8');
+  const uiPackage = JSON.parse(fs.readFileSync(path.join(scripts, '../ui/package.json'), 'utf8'));
+  assert.match(certification, /target\/certification-msrv-/);
+  assert.doesNotMatch(certification, /orgasmic-msrv\.XXXXXX/);
+  assert.equal(uiPackage.scripts['build:vite'], 'vite build');
+  assert.match(uiPackage.scripts.build, /typecheck/);
+  assert.equal((appPublisher.match(/run build:bootstrap\n/g) || []).length, 1);
+  assert.equal((appPublisher.match(/--config "\$TAURI_PREBUILT_CONFIG"/g) || []).length, 2);
+});
+
 function run(command, args, options = {}) {
   return spawnSync(command, args, { encoding: 'utf8', ...options });
 }
@@ -44,7 +64,7 @@ function fixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo'), bin = path.join(root, 'bin'), log = path.join(root, 'calls');
   fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true }); fs.mkdirSync(bin);
-  for (const name of ['certify-rust-batches.mjs', 'certify-pr.sh', 'certify-runtime-fast.sh']) {
+  for (const name of ['certify-rust-batches.mjs', 'certify-pr.sh', 'certify-runtime-fast.sh', 'assert-ci-certified.sh']) {
     fs.copyFileSync(path.join(scripts, name), path.join(repo, 'scripts', name));
   }
   fs.writeFileSync(path.join(root, 'metadata.json'), JSON.stringify(metadata));
@@ -70,10 +90,62 @@ case "$SOURCE_MUTATION" in
   commit) git commit -qm moved --allow-empty ;;
 esac
 `);
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, BATCH_FIXTURE: root };
+  fs.writeFileSync(path.join(bin, 'gh'), `#!${process.execPath}
+const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2), head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+if (args[0] !== 'api') process.exit(97);
+if (args.includes('--method')) require('node:fs').appendFileSync(process.env.GH_LOG, JSON.stringify(args) + '\\n');
+if (args.some(arg => arg.endsWith('/status'))) console.log(JSON.stringify({ sha: head, statuses: [{ context: 'local/release-certified', state: 'success', description: 'profile=full', creator: { login: 'test' } }] }));
+`, { mode: 0o755 });
+  const ghLog = path.join(root, 'gh-calls');
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, BATCH_FIXTURE: root, GH_LOG: ghLog };
   const invoke = (command, args, extra = {}) => run(command, args, { cwd: repo, env: { ...env, ...extra } });
-  return { root, repo, log, invoke, calls: () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [] };
+  return { root, repo, log, invoke,
+    calls: () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [],
+    ghCalls: () => fs.existsSync(ghLog) ? fs.readFileSync(ghLog, 'utf8').trim().split('\n').map(JSON.parse) : [] };
 }
+
+test('runtime-fast reuses an exact-commit full certification without rerunning suites', t => {
+  const f = fixture(t);
+  const git = (...args) => { const result = f.invoke('git', args); ok(result); return result.stdout.trim(); };
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.name', 'Certification test'); git('config', 'user.email', 'test@example.invalid');
+  git('config', 'commit.gpgsign', 'false'); git('config', 'core.hooksPath', '/dev/null');
+  git('add', '.'); git('commit', '-qm', 'initial');
+  const base = git('rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(f.repo, 'feature.txt'), 'already fully certified\n');
+  git('add', '.'); git('commit', '-qm', 'feature');
+  const result = f.invoke('bash', ['scripts/certify-runtime-fast.sh', '--repo', 'test/repo', '--base', base]);
+  ok(result); assert.match(result.stdout, /reusing exact-commit full certification/);
+  ok(f.invoke('bash', ['scripts/certify-runtime-fast.sh', '--repo', 'test/repo', '--base', base]));
+  assert.deepEqual(f.calls(), []);
+  assert.deepEqual(f.ghCalls(), []);
+});
+
+test('change certification selects app, runtime and full profiles fail closed', t => {
+  for (const [files, expected] of [
+    [['src-tauri/capabilities/android.json'], 'apps-fast'],
+    [['crates/core/src/lib.rs'], 'runtime-fast'],
+    [['src-tauri/capabilities/android.json', 'crates/core/src/lib.rs'], 'full'],
+    [['unclassified/tool'], 'full'],
+  ]) {
+    const f = fixture(t);
+    const git = (...args) => { const result = f.invoke('git', args); ok(result); return result.stdout.trim(); };
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.name', 'Certification test'); git('config', 'user.email', 'test@example.invalid');
+    git('config', 'commit.gpgsign', 'false'); git('config', 'core.hooksPath', '/dev/null');
+    git('add', '.'); git('commit', '-qm', 'initial');
+    const base = git('rev-parse', 'HEAD');
+    for (const file of files) {
+      const destination = path.join(f.repo, file);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, 'change\n');
+    }
+    git('add', '.'); git('commit', '-qm', 'change');
+    const result = f.invoke('bash', ['scripts/certify-runtime-fast.sh', '--base', base, '--plan']);
+    ok(result); assert.equal(result.stdout.trim(), expected, files.join(', '));
+  }
+});
 
 test('runs bounded batches serially and --plan never runs tests or reports green', t => {
   const f = fixture(t);

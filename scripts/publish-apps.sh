@@ -131,7 +131,7 @@ if [[ -n "$CANDIDATE" ]]; then
         exit 0
     fi
     if [[ "$CHANNEL" == stable ]]; then
-        bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA"
+        bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA" --profile full,apps-fast
     fi
     # Upload only the selected target's frozen assets, never the local receipt.
     assets=()
@@ -263,6 +263,10 @@ OUT_DIR="dist/apps"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
+echo "→ building Tauri frontend once"
+npm --prefix ui run build:bootstrap
+TAURI_PREBUILT_CONFIG='{"build":{"beforeBuildCommand":""}}'
+
 ANDROID_APK_NAME=""
 
 # --- macOS app ---------------------------------------------------------------
@@ -283,7 +287,7 @@ if [[ "$BUILD_MAC" == "1" ]]; then
     # the Finder/AppleScript "prettify" pass in bundle_dmg.sh. That pass needs a
     # logged-in Aqua session and fails in a non-GUI/headless shell; GitHub's macOS
     # runner sets CI=true, so this just matches the CI build's DMG behavior.
-    CI=true npm --prefix ui run tauri:bundle:mac
+    CI=true npm --prefix ui run tauri:bundle:mac -- --config "$TAURI_PREBUILT_CONFIG"
 
     bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
     dmg_path="$(find "$bundle/dmg" -name 'orgasmic_*_aarch64.dmg' -print -quit 2>/dev/null || true)"
@@ -387,7 +391,7 @@ NODE
 )"
     echo "→ versionCode = $VERSION_CODE"
 
-    npm --prefix ui run tauri:android:build
+    npm --prefix ui run tauri:android:build -- --config "$TAURI_PREBUILT_CONFIG"
 
     apk_path="$(find src-tauri/gen/android/app/build/outputs/apk -path '*/release/*' -name '*.apk' -print -quit 2>/dev/null || true)"
     if [[ -z "$apk_path" ]]; then
@@ -426,6 +430,9 @@ node scripts/app-candidate.mjs create "$CANDIDATE_DEST" "$OUT_DIR" \
     "$REPO" "$TAG" "$CHANNEL" "$VERSION" "$HEAD_SHA" "$TARGET"
 
 if [[ "$DRY_RUN" == "1" ]]; then
+    if [[ "$BUILD_ANDROID" == "1" ]]; then
+        echo "→ install and smoke-test $CANDIDATE_DEST/orgasmic_android_aarch64.apk before promotion"
+    fi
     echo "✓ candidate ready; promote with: bash scripts/publish-apps.sh --candidate $CANDIDATE_DEST"
     exit 0
 fi

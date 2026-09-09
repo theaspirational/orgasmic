@@ -109,7 +109,7 @@ if (name === 'git') {
       const file = path.join(process.env.MUTATE_CANDIDATE, 'orgasmic.app.tar.gz');
       fs.chmodSync(file, 0o644); fs.writeFileSync(file, 'changed during certification');
     }
-    console.log(JSON.stringify({sha: '${commit}', statuses: [{context: 'local/release-certified', state: process.env.UNCERTIFIED ? 'failure' : 'success'}]}));
+    console.log(JSON.stringify({sha: '${commit}', statuses: [{context: 'local/release-certified', state: process.env.UNCERTIFIED ? 'failure' : 'success', description: 'profile=' + (process.env.CERT_PROFILE || 'full')}]}));
   } else if (args[0] === 'release' && args[1] === 'upload') {
     const assets = args.slice(5, -1).map(file => ({ name: path.basename(file), hash: createHash('sha256').update(fs.readFileSync(file)).digest('hex') }));
     fs.appendFileSync(process.env.TEST_LOG, JSON.stringify(assets) + '\\n');
@@ -138,13 +138,17 @@ for (const target of ['mac', 'android', 'all']) {
 }
 test('promotion fails before mutation on dirty/wrong/unpushed/uncertified source or overrides', (t) => {
   const f = fixture(t), p = publisher(f);
-  for (const env of [{DIRTY: ' M source'}, {WRONG_HEAD: '1'}, {FETCH_FAIL: '1'}, {UNCERTIFIED: '1'}, {STATUS_FAIL: '1'}]) {
+  for (const env of [{DIRTY: ' M source'}, {WRONG_HEAD: '1'}, {FETCH_FAIL: '1'}, {UNCERTIFIED: '1'}, {STATUS_FAIL: '1'}, {CERT_PROFILE: 'runtime-fast'}]) {
     assert.notEqual(p.run(['--candidate', f.candidate], env).status, 0);
     assert.equal(fs.existsSync(p.log), false);
   }
   assert.notEqual(p.run(['--candidate', f.candidate, '--channel', 'nightly']).status, 0);
   assert.match(p.run(['--channel', 'stable']).stderr, /requires --candidate/);
   assert.equal(fs.existsSync(p.log), false);
+});
+test('app promotion accepts the app-scoped certification profile', (t) => {
+  const f = fixture(t, 'android'), p = publisher(f);
+  ok(p.run(['--candidate', f.candidate], {CERT_PROFILE: 'apps-fast'}));
 });
 test('changes to the original candidate during certification cannot change uploaded bytes', (t) => {
   const f = fixture(t), p = publisher(f);

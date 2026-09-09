@@ -119,7 +119,8 @@ assert_stable_certification() {
         bash scripts/assert-ci-certified.sh \
             --repo "$REPO" \
             --sha "$HEAD_SHA" \
-            --context "$CERTIFICATION_CONTEXT"
+            --context "$CERTIFICATION_CONTEXT" \
+            --profile full,runtime-fast
     fi
 }
 

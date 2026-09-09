@@ -7,11 +7,13 @@ set -euo pipefail
 REPO=""
 HEAD_SHA=""
 CONTEXT="local/release-certified"
+PROFILES=""
 
 usage() {
     cat <<'EOF'
 Usage: bash scripts/assert-ci-certified.sh [--repo <owner/name>] [--sha <commit>]
                                              [--context <status-context>]
+                                             [--profile <name[,name...]>]
 
 Requires a successful status in the selected context on the exact current
 commit. Defaults to local/release-certified, the current repository and HEAD.
@@ -24,6 +26,7 @@ while [[ $# -gt 0 ]]; do
         --repo) REPO="$2"; shift 2 ;;
         --sha) HEAD_SHA="$2"; shift 2 ;;
         --context) CONTEXT="$2"; shift 2 ;;
+        --profile) PROFILES="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
@@ -84,6 +87,19 @@ if [[ "$STATE" != "success" ]]; then
     echo "       actor=$ACTOR description=$DESCRIPTION target=$TARGET_URL" >&2
     echo "       run: bash scripts/certify-pr.sh" >&2
     exit 1
+fi
+
+if [[ -n "$PROFILES" ]]; then
+    STATUS_DESCRIPTION="$DESCRIPTION" EXPECTED_PROFILES="$PROFILES" node <<'NODE' || {
+const description = process.env.STATUS_DESCRIPTION || '';
+const actual = description.match(/(?:^|\s)profile=([^\s]+)/)?.[1];
+const expected = (process.env.EXPECTED_PROFILES || '').split(',').filter(Boolean);
+if (!actual || !expected.includes(actual)) process.exit(1);
+NODE
+        echo "error: stable publish blocked: $CONTEXT has the wrong certification profile" >&2
+        echo "       expected=$PROFILES description=$DESCRIPTION" >&2
+        exit 1
+    }
 fi
 
 echo "✓ exact HEAD is locally certified by $ACTOR: $DESCRIPTION"

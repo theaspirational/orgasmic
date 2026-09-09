@@ -14,7 +14,7 @@ CERTIFICATION_RUST="1.97.1"
 usage() {
     cat <<'EOF'
 Usage: bash scripts/certify-runtime-fast.sh [--repo <owner/name>] [--base <sha>]
-                                             [--no-publish | --publish-only]
+                                             [--no-publish | --publish-only | --plan]
 EOF
 }
 
@@ -24,6 +24,7 @@ while [[ $# -gt 0 ]]; do
         --base) BASE_SHA="$2"; shift 2 ;;
         --no-publish) MODE="no-publish"; shift ;;
         --publish-only) MODE="publish-only"; shift ;;
+        --plan) MODE="plan"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "certify-runtime-fast: unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -44,10 +45,25 @@ git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA" || {
     echo "certify-runtime-fast: comparison base is not an ancestor of HEAD" >&2; exit 1;
 }
 
+CHANGED="$(git diff --name-only "$BASE_SHA..$HEAD_SHA")"
+PROFILE="full"
+if [[ -n "$CHANGED" ]] && ! printf '%s\n' "$CHANGED" | grep -Evq '^src-tauri/'; then
+    PROFILE="apps-fast"
+elif [[ -n "$CHANGED" ]] && ! printf '%s\n' "$CHANGED" | grep -Evq '^(crates/|ui/|shipped/|examples/|docs/|README\.md$|AGENTS\.md$|LICENSE|\.gitignore$)'; then
+    PROFILE="runtime-fast"
+fi
+if printf '%s\n' "$CHANGED" | grep -Eq '^(Cargo\.(toml|lock)|rust-toolchain\.toml|provider-host/|scripts/|\.github/workflows/)'; then
+    PROFILE="full"
+fi
+if [[ "$MODE" == "plan" ]]; then
+    printf '%s\n' "$PROFILE"
+    exit 0
+fi
+
 CERTIFIER_SHA="$(git hash-object scripts/certify-runtime-fast.sh)"
 FULL_CERTIFIER_SHA="$(git hash-object scripts/certify-release.sh)"
-RECEIPT_CONTENT="$(printf 'version=1\nprofile=runtime-fast\ntree=%s\nbase=%s\ncertifier=%s\nfull_certifier=%s\nrust=%s' \
-    "$TREE_SHA" "$BASE_SHA" "$CERTIFIER_SHA" "$FULL_CERTIFIER_SHA" "$CERTIFICATION_RUST")"
+RECEIPT_CONTENT="$(printf 'version=1\nprofile=%s\ntree=%s\nbase=%s\ncertifier=%s\nfull_certifier=%s\nrust=%s' \
+    "$PROFILE" "$TREE_SHA" "$BASE_SHA" "$CERTIFIER_SHA" "$FULL_CERTIFIER_SHA" "$CERTIFICATION_RUST")"
 RECEIPT_KEY="$(printf '%s\n' "$RECEIPT_CONTENT" | shasum -a 256 | awk '{print $1}')"
 COMMON_DIR="$(git rev-parse --git-common-dir)"; [[ "$COMMON_DIR" = /* ]] || COMMON_DIR="$ROOT/$COMMON_DIR"
 RECEIPT_DIR="$COMMON_DIR/orgasmic-certifications"
@@ -68,6 +84,12 @@ post_status() {
         -f target_url="https://github.com/$REPO/commit/$HEAD_SHA" >/dev/null
 }
 
+has_full_status() {
+    [[ "$MODE" != "no-publish" ]] && bash scripts/assert-ci-certified.sh \
+        --repo "$REPO" --sha "$HEAD_SHA" --context local/release-certified --profile full \
+        >/dev/null 2>&1
+}
+
 if [[ "$MODE" != "no-publish" ]]; then resolve_remote; fi
 receipt_matches() { [[ -f "$RECEIPT" && "$(cat "$RECEIPT")" == "$RECEIPT_CONTENT" ]]; }
 
@@ -82,20 +104,28 @@ assert_source_unchanged() {
 
 if ! receipt_matches; then
     if [[ "$MODE" == "publish-only" ]]; then
-        post_status error "runtime-fast receipt missing for tree ${TREE_SHA:0:12}"
+        post_status error "$PROFILE receipt missing for tree ${TREE_SHA:0:12}"
         echo "certify-runtime-fast: exact receipt is missing" >&2; exit 1
     fi
 
-    CHANGED="$(git diff --name-only "$BASE_SHA..$HEAD_SHA")"
-    if printf '%s\n' "$CHANGED" | grep -Eq '^(Cargo\.(toml|lock)|rust-toolchain\.toml|provider-host/|scripts/(assert-ci-certified|certify-|integrate-main|package-runtime|publish-runtime|runtime-candidate|publish-apps|app-candidate|release-runtime-fast|sync-release|refresh-release|release-channel)|\.github/workflows/runtime-bundles\.yml)'; then
+    if has_full_status; then
+        echo "✓ reusing exact-commit full certification for runtime-fast"
+    elif [[ "$PROFILE" == "full" ]]; then
         echo "→ release infrastructure changed; requiring the full certification gate"
-        if [[ "$MODE" != "no-publish" ]] && bash scripts/assert-ci-certified.sh \
-            --repo "$REPO" --sha "$HEAD_SHA" --context local/release-certified; then
-            echo "✓ reusing exact-commit full certification for runtime-fast"
-        else
-            env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME -u ORGASMIC_ALLOW_BILLED_TESTS \
-                bash scripts/certify-release.sh
-        fi
+        env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME -u ORGASMIC_ALLOW_BILLED_TESTS \
+            bash scripts/certify-release.sh
+    elif [[ "$PROFILE" == "apps-fast" ]]; then
+        echo "→ apps-fast: UI and Tauri gates"
+        npm ci --prefix ui --prefer-offline --no-audit
+        npm --prefix ui run typecheck
+        npm --prefix ui test
+        npm --prefix ui run build:bootstrap:vite
+        RUSTUP_PROXY_DIR="$(dirname "$(command -v rustup)")"; PATH="$RUSTUP_PROXY_DIR:$PATH"; export PATH
+        rustup toolchain install "$CERTIFICATION_RUST" --profile minimal --component clippy,rustfmt --no-self-update
+        CARGO=(rustup run "$CERTIFICATION_RUST" cargo)
+        RUSTFLAGS="-D warnings" "${CARGO[@]}" check --release --manifest-path src-tauri/Cargo.toml --locked
+        "${CARGO[@]}" check --manifest-path src-tauri/Cargo.toml --all-targets --locked
+        node --test scripts/app-candidate.test.mjs
     else
         RUSTUP_PROXY_DIR="$(dirname "$(command -v rustup)")"; PATH="$RUSTUP_PROXY_DIR:$PATH"; export PATH
         rustup toolchain install "$CERTIFICATION_RUST" --profile minimal \
@@ -121,10 +151,10 @@ if ! receipt_matches; then
 
         if printf '%s\n' "$CHANGED" | grep -Eq '^(ui/|crates/orgasmic-daemon/build\.rs)'; then
             echo "→ embedded UI changed; running UI gates"
-            npm ci --prefix ui
+            npm ci --prefix ui --prefer-offline --no-audit
             npm --prefix ui run typecheck
             npm --prefix ui test
-            npm --prefix ui run build
+            npm --prefix ui run build:vite
         fi
     fi
 
@@ -132,14 +162,18 @@ if ! receipt_matches; then
     mkdir -p "$RECEIPT_DIR"; umask 077
     tmp="$(mktemp "$RECEIPT_DIR/.runtime-fast.XXXXXX")"
     printf '%s\n' "$RECEIPT_CONTENT" >"$tmp"; mv "$tmp" "$RECEIPT"
-    echo "✓ wrote runtime-fast receipt $RECEIPT_KEY"
+    echo "✓ wrote $PROFILE receipt $RECEIPT_KEY"
 else
-    echo "✓ reusing runtime-fast receipt $RECEIPT_KEY"
+    echo "✓ reusing $PROFILE receipt $RECEIPT_KEY"
 fi
 
 assert_source_unchanged
 if [[ "$MODE" != "no-publish" ]]; then
-    post_status success "runtime-fast tree=${TREE_SHA:0:12} base=${BASE_SHA:0:12} rust=$CERTIFICATION_RUST"
-    bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA" --context "$CONTEXT"
+    if has_full_status; then
+        echo "✓ preserving exact-commit full certification status"
+    else
+        post_status success "profile=$PROFILE tree=${TREE_SHA:0:12} base=${BASE_SHA:0:12} rust=$CERTIFICATION_RUST"
+        bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA" --context "$CONTEXT" --profile "$PROFILE"
+    fi
 fi
-echo "runtime-fast certification: GREEN"
+echo "$PROFILE certification: GREEN"

@@ -31,7 +31,7 @@ case "$1 $2" in
             invalid) printf '{not json\n'; exit 0 ;;
             *) echo "unknown TEST_CASE" >&2; exit 2 ;;
         esac
-        printf '{"sha":"%s","statuses":[{"state":"%s","context":"%s","description":"tree=abc base=def","target_url":"https://example.invalid/commit","creator":{"login":"maintainer"}}]}\n' "$sha" "$state" "$context"
+        printf '{"sha":"%s","statuses":[{"state":"%s","context":"%s","description":"profile=%s tree=abc base=def","target_url":"https://example.invalid/commit","creator":{"login":"maintainer"}}]}\n' "$sha" "$state" "$context" "${TEST_PROFILE:-full}"
         ;;
     *) echo "unexpected gh: $*" >&2; exit 2 ;;
 esac
@@ -65,6 +65,20 @@ PATH="$TMP/bin:$PATH" TEST_CASE=success TEST_CONTEXT=local/runtime-fast-certifie
     bash "$ASSERT_SCRIPT" --repo example/repo --sha "$TEST_SHA" \
     --context local/runtime-fast-certified >"$TMP/custom-context.log" 2>&1
 echo "ok: custom context"
+
+PATH="$TMP/bin:$PATH" TEST_CASE=success TEST_PROFILE=apps-fast \
+    bash "$ASSERT_SCRIPT" --repo example/repo --sha "$TEST_SHA" \
+    --profile full,apps-fast >"$TMP/profile.log" 2>&1
+echo "ok: accepted certification profile"
+
+set +e
+PATH="$TMP/bin:$PATH" TEST_CASE=success TEST_PROFILE=apps-fast \
+    bash "$ASSERT_SCRIPT" --repo example/repo --sha "$TEST_SHA" \
+    --profile full,runtime-fast >"$TMP/wrong-profile.log" 2>&1
+status=$?
+set -e
+[[ "$status" -eq 1 ]] || { echo "FAIL wrong profile: got $status" >&2; exit 1; }
+echo "ok: rejected certification profile"
 
 set +e
 PATH="$TMP/bin:$PATH" bash "$ASSERT_SCRIPT" --repo example/repo --sha ffffffffffffffffffffffffffffffffffffffff >"$TMP/mismatch.log" 2>&1

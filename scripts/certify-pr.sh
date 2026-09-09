@@ -135,9 +135,9 @@ fi
 
 assert_source_unchanged
 if [[ "$MODE" != "no-publish" ]]; then
-    DESCRIPTION="tree=${TREE_SHA:0:12} base=${BASE_SHA:0:12} cert=${CERTIFIER_SHA:0:12} rust=$CERTIFICATION_RUST/$MSRV_RUST"
+    DESCRIPTION="profile=full tree=${TREE_SHA:0:12} base=${BASE_SHA:0:12} cert=${CERTIFIER_SHA:0:12} rust=$CERTIFICATION_RUST/$MSRV_RUST"
     post_status success "$DESCRIPTION"
-    bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA"
+    bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA" --profile full
 fi
 
 echo "local release certification: GREEN"
