@@ -164,6 +164,11 @@ struct Conversation {
     model: Option<String>,
     effort: Option<String>,
     access: Option<String>,
+    /// Launch inputs a relaunch has to repeat: the tier the first run was
+    /// addressed with, and the harness argv a tmux conversation was started
+    /// with. Neither is derivable from the record's other properties.
+    service_tier: Option<String>,
+    harness_args: Vec<String>,
     mode: String,
     machine: String,
     /// Where new runs start: the attempt worktree for implement/review, the
@@ -181,6 +186,8 @@ struct RecordSpec {
     model: Option<String>,
     effort: Option<String>,
     access: Option<String>,
+    service_tier: Option<String>,
+    harness_args: Vec<String>,
     mode: String,
     worktree: Option<PathBuf>,
     request_id: String,
@@ -330,8 +337,8 @@ async fn post_conversation_input(
         conv.model.clone(),
         conv.effort.clone(),
         conv.access.clone(),
-        None,
-        &[],
+        conv.service_tier.as_deref(),
+        &conv.harness_args,
         None,
     )?;
     let scope = scope_context(
@@ -555,6 +562,8 @@ pub(super) async fn create_authorized(
             model: req.model.clone(),
             effort: req.effort.clone(),
             access,
+            service_tier: req.service_tier.clone(),
+            harness_args: req.harness_args.clone().unwrap_or_default(),
             mode: mode.clone(),
             worktree: None,
             request_id: req.request_id.clone(),
@@ -682,13 +691,15 @@ async fn write_record(
     let mut source = orgasmic_core::node_kernel::node_org_header(&descriptor.label, &id);
     source.push_str("#+todo: OPEN | ARCHIVED\n\n");
     source.push_str(&format!(
-        "* OPEN {}\n:PROPERTIES:\n:ID: {id}\n:PURPOSE: {}\n:OWNER: {owner}\n:PROVIDER: {}\n:MODEL: {}\n:EFFORT: {}\n:ACCESS: {}\n:MODE: {}\n:MACHINE: {}\n:WORKTREE: {}\n:RUNS: \n:CREATED_AT: {created_at}\n:END:\n",
+        "* OPEN {}\n:PROPERTIES:\n:ID: {id}\n:PURPOSE: {}\n:OWNER: {owner}\n:PROVIDER: {}\n:MODEL: {}\n:EFFORT: {}\n:ACCESS: {}\n:SERVICE_TIER: {}\n:HARNESS_ARGS: {}\n:MODE: {}\n:MACHINE: {}\n:WORKTREE: {}\n:RUNS: \n:CREATED_AT: {created_at}\n:END:\n",
         spec.title.trim(),
         spec.purpose,
         spec.provider.trim(),
         spec.model.as_deref().unwrap_or("").trim(),
         spec.effort.as_deref().unwrap_or("").trim(),
         spec.access.as_deref().unwrap_or("").trim(),
+        spec.service_tier.as_deref().unwrap_or("").trim(),
+        encode_harness_args(&spec.harness_args),
         spec.mode.trim(),
         state.machine,
         spec.worktree
@@ -891,6 +902,10 @@ pub(super) async fn dispatch_conversation(
             model: None,
             effort: None,
             access: None,
+            // A dispatch attempt never relaunches from its record: the next
+            // attempt is a dispatch of its own.
+            service_tier: None,
+            harness_args: Vec::new(),
             mode: mode.to_string(),
             worktree: Some(worktree.to_path_buf()),
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -952,6 +967,8 @@ pub(super) async fn regenerate_conversation(
             model: None,
             effort: None,
             access: None,
+            service_tier: None,
+            harness_args: Vec::new(),
             mode: String::new(),
             worktree: None,
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -1038,6 +1055,15 @@ async fn load_conversation(
     parse_conversation(&dir, id)
 }
 
+/// Harness argv as one org property value: JSON, because an argument may
+/// contain a space and an org value is a single line. Empty stays empty.
+fn encode_harness_args(args: &[String]) -> String {
+    if args.is_empty() {
+        return String::new();
+    }
+    serde_json::to_string(args).unwrap_or_default()
+}
+
 fn parse_conversation(dir: &FsPath, id: &str) -> Result<Conversation, ApiError> {
     let source = std::fs::read_to_string(dir.join(NODE_FILE))
         .map_err(|_| ApiError::not_found(format!("conversation {id}")))?;
@@ -1069,6 +1095,10 @@ fn parse_conversation(dir: &FsPath, id: &str) -> Result<Conversation, ApiError> 
         model: prop("MODEL"),
         effort: prop("EFFORT"),
         access: prop("ACCESS"),
+        service_tier: prop("SERVICE_TIER"),
+        harness_args: prop("HARNESS_ARGS")
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default(),
         mode: prop("MODE").unwrap_or_default(),
         machine: prop("MACHINE").unwrap_or_default(),
         worktree: prop("WORKTREE").map(PathBuf::from),
@@ -1557,8 +1587,8 @@ async fn try_resume(
         conv.model.clone(),
         conv.effort.clone(),
         conv.access.clone(),
-        None,
-        &[],
+        conv.service_tier.as_deref(),
+        &conv.harness_args,
         Some(&resume.session_id),
     ) {
         Ok(plan) => plan,
@@ -2155,6 +2185,8 @@ mod tests {
             model: None,
             effort: None,
             access: None,
+            service_tier: None,
+            harness_args: Vec::new(),
             mode: "chat".into(),
             machine: "m".into(),
             worktree: None,
@@ -2219,6 +2251,8 @@ mod tests {
             model: None,
             effort: None,
             access: None,
+            service_tier: None,
+            harness_args: Vec::new(),
             mode: String::new(),
             machine: String::new(),
             runs: Vec::new(),

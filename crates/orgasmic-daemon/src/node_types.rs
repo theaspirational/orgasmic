@@ -53,7 +53,15 @@ pub fn load(home: &orgasmic_core::Home) -> anyhow::Result<NodeTypeRegistry> {
                 for key in ["PURPOSE", "OWNER"] {
                     anyhow::ensure!(heading.property(key) == before.property(key), "conversation {key} is immutable");
                 }
-                for key in ["RUNS", "MACHINE", "MODE", "PROVIDER", "CREATED_AT"] {
+                for key in [
+                    "RUNS",
+                    "MACHINE",
+                    "MODE",
+                    "PROVIDER",
+                    "SERVICE_TIER",
+                    "HARNESS_ARGS",
+                    "CREATED_AT",
+                ] {
                     anyhow::ensure!(heading.property(key) == before.property(key), "conversation {key} is owned by the daemon; use POST /conversations and POST /conversations/:id/input");
                 }
                 Ok(())

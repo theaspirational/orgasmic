@@ -23,6 +23,7 @@ fn fake_acp_script(load_session: bool) -> String {
 mkdir -p .orgasmic/tmp
 LOG="$PWD/.orgasmic/tmp/fake-acp.log"
 MODES='[{{"id":"dont_ask","name":"Don'"'"'t ask"}},{{"id":"default","name":"Default"}},{{"id":"build","name":"Build"}}]'
+OPTIONS='[{{"category":"speed","id":"speed","currentValue":"normal","options":[{{"value":"normal","name":"Normal"}},{{"value":"fast","name":"Fast"}}]}}]'
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   printf '%s\n' "$line" >> "$LOG"
@@ -35,10 +36,10 @@ while IFS= read -r line; do
       printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":1,"agentCapabilities":{{"loadSession":{load_session}}}}}}}\n' "$id"
       ;;
     session/new)
-      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"sess-%s","modes":{{"currentModeId":"default","availableModes":%s}}}}}}\n' "$id" "$$" "$MODES"
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"sess-%s","modes":{{"currentModeId":"default","availableModes":%s}},"configOptions":%s}}}}\n' "$id" "$$" "$MODES" "$OPTIONS"
       ;;
     session/load)
-      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"modes":{{"currentModeId":"default","availableModes":%s}}}}}}\n' "$id" "$MODES"
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"modes":{{"currentModeId":"default","availableModes":%s}},"configOptions":%s}}}}\n' "$id" "$MODES" "$OPTIONS"
       ;;
     session/prompt)
       printf '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"sess-%s","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"fake reply"}}}}}}}}\n' "$$"
@@ -603,7 +604,7 @@ async fn cold_continue_carries_scope_context_and_bounded_tail() {
         &base,
         &token,
         "/conversations",
-        json!({"project":"demo","purpose":"discuss","provider":"opencode","access":"auto","title":"Project talk","message":first,"request_id":request_id()}),
+        json!({"project":"demo","purpose":"discuss","provider":"opencode","access":"auto","service_tier":"fast","title":"Project talk","message":first,"request_id":request_id()}),
         200,
     )
     .await;
@@ -651,6 +652,18 @@ async fn cold_continue_carries_scope_context_and_bounded_tail() {
     assert_eq!(property(&doc, "RUNS"), format!("{run1} {run2}:cold"));
     assert_eq!(doc["title"], "Project talk");
     assert_eq!(property(&doc, "ACCESS"), "auto");
+    // The tier the conversation was created with is its own, and the cold
+    // relaunch addresses the new run with it rather than dropping it.
+    assert_eq!(property(&doc, "SERVICE_TIER"), "fast");
+    let agent_log = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        agent_log
+            .lines()
+            .filter(|line| line.contains(r#""configId":"speed","value":"fast""#))
+            .count(),
+        2,
+        "the first launch and the cold relaunch both address the tier: {agent_log}"
+    );
 
     let _ = running.shutdown.send(());
 }

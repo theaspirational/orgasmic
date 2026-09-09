@@ -16,4 +16,6 @@
 A conversation is an agent chat about one node (a RELATES_TO link in its
 links.org) or about the project. Its transcript is its runs, oldest first in
 :RUNS:; turns never enter the ledger. PURPOSE and OWNER are immutable; RUNS,
-MACHINE, MODE, PROVIDER and CREATED_AT are daemon-owned.
+MACHINE, MODE, PROVIDER, SERVICE_TIER, HARNESS_ARGS and CREATED_AT are
+daemon-owned. SERVICE_TIER and HARNESS_ARGS are the launch inputs a resumed or
+cold relaunch repeats; HARNESS_ARGS is a JSON array.
