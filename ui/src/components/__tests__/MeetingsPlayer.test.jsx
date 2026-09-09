@@ -46,6 +46,15 @@ it('opens the meeting chat with a 30 s range chip at the playhead, clamped to th
     context: [{ kind: 'range', node: 'MEET-1', attachment: 'recording', revision: 'sha', start_ms: 100000, end_ms: 120000 }] });
 });
 
+it('opens the meeting chat without a range chip when the playhead is at the end', async () => {
+  const ctx = recordingCtx({ openChat: vi.fn() });
+  render(<Player ctx={ctx} nodeId="MEET-1" onOpenNode={vi.fn()} writable />);
+  const media = await screen.findByLabelText('Planning.wav');
+  Object.defineProperty(media, 'duration', { value: 120 }); media.currentTime = 120;
+  fireEvent.click(screen.getByRole('button', { name: 'Chat about this moment' }));
+  expect(ctx.openChat).toHaveBeenCalledWith({ node: 'MEET-1', purpose: 'meeting' });
+});
+
 it('hides the chat control on a host without core.chat', async () => {
   render(<Player ctx={recordingCtx()} nodeId="MEET-1" onOpenNode={vi.fn()} writable />);
   await screen.findByLabelText('Planning.wav');
