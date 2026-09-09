@@ -11,6 +11,7 @@
 :STATES:
 :TRANSITIONS:
 :REGENERATE_PROMPT: glossary-regenerate
+:CHAT_PROMPT: node-chat
 :END:
 
 Glossary terms are state-free definition nodes.

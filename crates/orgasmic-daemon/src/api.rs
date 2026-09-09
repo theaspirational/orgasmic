@@ -1144,11 +1144,22 @@ async fn get_me(
                     .map(authz::action_name)
                     .collect(),
                 Identity::Plugin { .. } => Vec::new(),
-                Identity::Member { .. } => authz::role_capabilities(&role)
-                    .iter()
-                    .copied()
-                    .map(authz::action_name)
-                    .collect(),
+                Identity::Member { actions, .. } => {
+                    let mut capabilities: Vec<&'static str> = authz::role_capabilities(&role)
+                        .iter()
+                        .copied()
+                        .map(authz::action_name)
+                        .collect();
+                    if !role.is_empty() {
+                        for name in actions.iter().filter_map(|name| Action::from_name(name)) {
+                            let name = authz::action_name(name);
+                            if !capabilities.contains(&name) {
+                                capabilities.push(name);
+                            }
+                        }
+                    }
+                    capabilities
+                }
             };
             MeProjectCapabilities {
                 project_id: project_id.to_string(),
@@ -41965,6 +41976,7 @@ pub(crate) mod tests {
                 .iter()
                 .map(|(p, r)| (p.to_string(), r.to_string()))
                 .collect(),
+            actions: Vec::new(),
         }
     }
 

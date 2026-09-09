@@ -138,7 +138,9 @@ impl PluginManifest {
                     "links.read",
                     "links.write",
                     "attachments.read",
-                    "attachments.write"
+                    "attachments.write",
+                    "chat.read",
+                    "chat.write"
                 ]
                 .contains(&capability.as_str()),
                 "unknown or unavailable capability {capability}"

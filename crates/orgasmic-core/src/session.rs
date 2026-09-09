@@ -1212,6 +1212,10 @@ pub enum Lifecycle {
     /// A durable record of an operator composer send into a run.
     ComposerSend {
         text: String,
+        /// Raw context chips (ids, revisions, ranges) that rode with the
+        /// send. Snapshotted once and never rewritten.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<Value>,
     },
 }
 

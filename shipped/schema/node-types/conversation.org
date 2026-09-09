@@ -1,0 +1,19 @@
+#+title: orgasmic conversation node type
+#+version: 1
+
+* NODE-TYPE conversation
+:PROPERTIES:
+:COLLECTION: conversations
+:ID_PREFIX: CONV-
+:LABEL: Conversation
+:LABEL_PLURAL: Conversations
+:REQUIRED_PROPERTIES: ID PURPOSE OWNER
+:STATES: open archived
+:TRANSITIONS: open>archived archived>open
+:CHAT_PROMPT: node-chat
+:END:
+
+A conversation is an agent chat about one node (a RELATES_TO link in its
+links.org) or about the project. Its transcript is its runs, oldest first in
+:RUNS:; turns never enter the ledger. PURPOSE and OWNER are immutable; RUNS,
+MACHINE, MODE, PROVIDER and CREATED_AT are daemon-owned.

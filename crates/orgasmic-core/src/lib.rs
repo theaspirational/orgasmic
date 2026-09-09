@@ -51,8 +51,8 @@ pub use identity_lint::{
     REFERENCE_PROPERTY_KEYS,
 };
 pub use members::{
-    add_member, find_member_by_name, find_member_by_token, read_members, revoke_member, sha256_hex,
-    MemberEntry,
+    add_member, add_member_with_actions, find_member_by_name, find_member_by_token, read_members,
+    revoke_member, set_member_actions, sha256_hex, MemberEntry,
 };
 pub use node_kind::NodeKind;
 pub use node_registry::NodeTypeRegistry;

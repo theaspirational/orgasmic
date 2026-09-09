@@ -44,11 +44,94 @@ pub fn load(home: &orgasmic_core::Home) -> anyhow::Result<NodeTypeRegistry> {
             }),
         },
     )?;
+    registry.register_hooks(
+        "conversations",
+        WriteHooks {
+            validate_write: None,
+            validate_transition: Some(|_, heading, before| {
+                let Some(before) = before else { return Ok(()) };
+                for key in ["PURPOSE", "OWNER"] {
+                    anyhow::ensure!(heading.property(key) == before.property(key), "conversation {key} is immutable");
+                }
+                for key in ["RUNS", "MACHINE", "MODE", "PROVIDER", "CREATED_AT"] {
+                    anyhow::ensure!(heading.property(key) == before.property(key), "conversation {key} is owned by the daemon; use POST /conversations and POST /conversations/:id/input");
+                }
+                Ok(())
+            }),
+        },
+    )?;
     Ok(registry)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conversation_hooks_pin_owner_purpose_and_daemon_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = orgasmic_core::Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let registry = super::load(&home).unwrap();
+        let render = |title: &str, purpose: &str, owner: &str, runs: &str| {
+            format!(
+                "#+todo: OPEN | ARCHIVED\n\n* OPEN {title}\n:PROPERTIES:\n:ID: CONV-AB12C\n:PURPOSE: {purpose}\n:OWNER: {owner}\n:PROVIDER: codex\n:MODE: chat\n:MACHINE: m1\n:RUNS: {runs}\n:CREATED_AT: 2026-09-09T00:00:00Z\n:END:\n"
+            )
+        };
+        let parse = |text: String| orgasmic_core::OrgFile::parse(text, "node.org").unwrap();
+        let before = parse(render("Chat", "discuss", "admin", "run-a"));
+        let check = |after: orgasmic_core::OrgFile| {
+            registry.validate_write("conversations", &after, &after.headings[0])?;
+            registry.validate_transition(
+                "conversations",
+                Some(&before.headings[0]),
+                &after,
+                &after.headings[0],
+            )
+        };
+        // Title and state edits are ordinary edits.
+        check(parse(render("Renamed", "discuss", "admin", "run-a"))).unwrap();
+        check(parse(
+            render("Chat", "discuss", "admin", "run-a").replace("* OPEN", "* ARCHIVED"),
+        ))
+        .unwrap();
+        let err = check(parse(render("Chat", "review", "admin", "run-a"))).unwrap_err();
+        assert!(err.to_string().contains("PURPOSE is immutable"), "{err}");
+        let err = check(parse(render(
+            "Chat",
+            "discuss",
+            "[\"member\",\"anna\"]",
+            "run-a",
+        )))
+        .unwrap_err();
+        assert!(err.to_string().contains("OWNER is immutable"), "{err}");
+        let err = check(parse(render("Chat", "discuss", "admin", "run-a run-b"))).unwrap_err();
+        assert!(
+            err.to_string().contains("RUNS is owned by the daemon"),
+            "{err}"
+        );
+        assert!(
+            err.to_string().contains("POST /conversations/:id/input"),
+            "{err}"
+        );
+        // The daemon's own RUNS append validates the write shape only.
+        let appended = parse(render("Chat", "discuss", "admin", "run-a run-b:cold"));
+        registry
+            .validate_write("conversations", &appended, &appended.headings[0])
+            .unwrap();
+        // Creation (no `before`) is not pinned by the hook; the daemon route
+        // is the only creator.
+        registry
+            .validate_transition("conversations", None, &appended, &appended.headings[0])
+            .unwrap();
+        let err = registry
+            .validate_write(
+                "conversations",
+                &parse(render("Chat", "", "admin", "")),
+                &parse(render("Chat", "", "admin", "")).headings[0],
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("PURPOSE"), "{err}");
+    }
+
     #[test]
     fn descriptor_states_match_compiled_task_behavior() {
         use orgasmic_core::LifecycleStage::*;

@@ -272,6 +272,7 @@ impl AuthState {
         Some(Identity::Member {
             name: entry.name,
             grants: entry.grants,
+            actions: entry.actions,
         })
     }
 }
@@ -387,7 +388,7 @@ mod tests {
         let (session, _expires) = auth.create_member_session("alice");
         let headers = member_cookie_headers(&session);
         match auth.resolve_identity(&headers, &home) {
-            Some(Identity::Member { name, grants }) => {
+            Some(Identity::Member { name, grants, .. }) => {
                 assert_eq!(name, "alice");
                 assert_eq!(grants, vec![("proj-a".to_string(), "editor".to_string())]);
             }

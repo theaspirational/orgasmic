@@ -1202,6 +1202,10 @@ mod tests {
                 "artifact.org",
                 include_str!("../../../shipped/schema/node-types/artifact.org"),
             ),
+            (
+                "conversation.org",
+                include_str!("../../../shipped/schema/node-types/conversation.org"),
+            ),
         ] {
             write(&root.join("shipped/schema/node-types").join(name), source);
         }

@@ -686,6 +686,7 @@ mod tests {
                 .iter()
                 .map(|(p, r)| (p.to_string(), r.to_string()))
                 .collect(),
+            actions: Vec::new(),
         }
     }
 

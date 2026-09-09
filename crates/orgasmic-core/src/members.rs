@@ -19,6 +19,11 @@
 //! `GRANTS` is a space-separated list of `<project-or-*>=<role>` pairs;
 //! resolution (exact project beats `*`) lives in the daemon's authz seam, not
 //! here — this module only reads/writes the record shape.
+//!
+//! `:ACTIONS:` is an optional space-separated list of explicit action names
+//! (`chat.execute`) granted on top of the member's roles, on every project the
+//! member holds any role for. The daemon's authz seam consults it after the
+//! role table; the vocabulary is validated by the CLI, not here.
 
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -35,6 +40,8 @@ pub struct MemberEntry {
     pub token_hash: String,
     /// `(project-or-*, role)` pairs, in file order.
     pub grants: Vec<(String, String)>,
+    /// Explicit per-member action names granted beyond the roles.
+    pub actions: Vec<String>,
 }
 
 pub fn members_path(home: &Home) -> PathBuf {
@@ -73,6 +80,12 @@ fn parse_members(source: &str, path: &Path) -> Result<Vec<MemberEntry>> {
             name: name.to_string(),
             token_hash: h.property("TOKEN_HASH").unwrap_or("").to_string(),
             grants,
+            actions: h
+                .property("ACTIONS")
+                .unwrap_or("")
+                .split_whitespace()
+                .map(str::to_string)
+                .collect(),
         });
     }
     Ok(out)
@@ -92,6 +105,9 @@ fn render_members(entries: &[MemberEntry]) -> String {
         out.push_str(&format!(":NAME:        {}\n", e.name));
         out.push_str(&format!(":TOKEN_HASH:  {}\n", e.token_hash));
         out.push_str(&format!(":GRANTS:      {grants}\n"));
+        if !e.actions.is_empty() {
+            out.push_str(&format!(":ACTIONS:     {}\n", e.actions.join(" ")));
+        }
         out.push_str(":END:\n\n");
     }
     out
@@ -158,13 +174,37 @@ fn validate_grants(grants: &[(String, String)]) -> Result<()> {
     Ok(())
 }
 
+fn validate_actions(actions: &[String]) -> Result<()> {
+    for action in actions {
+        validate_single_line(action, "action", 64)?;
+        if !action
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_'))
+        {
+            bail!("action names match [a-z0-9_.]; got `{action}`");
+        }
+    }
+    Ok(())
+}
+
 /// Mint a new member record and return the plaintext token (shown to the
 /// caller exactly once — only the hash is persisted). Errors if `name` is
 /// already on file; revoke first to re-mint under the same name (comment
 /// attribution survives, since it is by name, not by record).
 pub fn add_member(home: &Home, name: &str, grants: &[(String, String)]) -> Result<String> {
+    add_member_with_actions(home, name, grants, &[])
+}
+
+/// [`add_member`] plus explicit per-member action names (`:ACTIONS:`).
+pub fn add_member_with_actions(
+    home: &Home,
+    name: &str,
+    grants: &[(String, String)],
+    actions: &[String],
+) -> Result<String> {
     validate_member_name(name)?;
     validate_grants(grants)?;
+    validate_actions(actions)?;
 
     let path = members_path(home);
     if let Some(parent) = path.parent() {
@@ -178,9 +218,63 @@ pub fn add_member(home: &Home, name: &str, grants: &[(String, String)]) -> Resul
         .open(&path)
         .with_context(|| format!("open {}", path.display()))?;
     fs2::FileExt::lock_exclusive(&file).with_context(|| format!("lock {}", path.display()))?;
-    let result = add_member_locked(&mut file, &path, name, grants);
+    let result = add_member_locked(&mut file, &path, name, grants, actions);
     let unlock = fs2::FileExt::unlock(&file).with_context(|| format!("unlock {}", path.display()));
     result.and_then(|token| unlock.map(|_| token))
+}
+
+/// Replace `name`'s explicit action list (an empty list clears it). Returns
+/// `false` when no such member exists. Effective on the next request, like
+/// every other members.org write.
+pub fn set_member_actions(home: &Home, name: &str, actions: &[String]) -> Result<bool> {
+    validate_actions(actions)?;
+    let path = members_path(home);
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    fs2::FileExt::lock_exclusive(&file).with_context(|| format!("lock {}", path.display()))?;
+    let result = rewrite_members_locked(&mut file, &path, |entries| {
+        let Some(entry) = entries.iter_mut().find(|e| e.name == name) else {
+            return false;
+        };
+        entry.actions = actions.to_vec();
+        true
+    });
+    let unlock = fs2::FileExt::unlock(&file).with_context(|| format!("unlock {}", path.display()));
+    result.and_then(|changed| unlock.map(|_| changed))
+}
+
+/// Read, transform, and rewrite the locked members file. `transform` returns
+/// whether anything changed; an unchanged file is left untouched.
+fn rewrite_members_locked(
+    file: &mut std::fs::File,
+    path: &Path,
+    transform: impl FnOnce(&mut Vec<MemberEntry>) -> bool,
+) -> Result<bool> {
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("seek {}", path.display()))?;
+    let mut source = String::new();
+    file.read_to_string(&mut source)
+        .with_context(|| format!("read {}", path.display()))?;
+    let mut existing = parse_members(&source, path)?;
+    if !transform(&mut existing) {
+        return Ok(false);
+    }
+    let rendered = render_members(&existing);
+    file.set_len(0)
+        .with_context(|| format!("truncate {}", path.display()))?;
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("seek {}", path.display()))?;
+    file.write_all(rendered.as_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
+    OrgFile::parse(rendered, path.to_string_lossy())
+        .context("members.org failed to parse after write")?;
+    Ok(true)
 }
 
 fn add_member_locked(
@@ -188,6 +282,7 @@ fn add_member_locked(
     path: &Path,
     name: &str,
     grants: &[(String, String)],
+    actions: &[String],
 ) -> Result<String> {
     file.seek(SeekFrom::Start(0))
         .with_context(|| format!("seek {}", path.display()))?;
@@ -205,6 +300,7 @@ fn add_member_locked(
         name: name.to_string(),
         token_hash,
         grants: grants.to_vec(),
+        actions: actions.to_vec(),
     });
 
     let rendered = render_members(&existing);
@@ -403,6 +499,40 @@ mod tests {
         home.ensure().unwrap();
         let err = add_member(&home, "alice", &[]).unwrap_err();
         assert!(format!("{err}").contains("grant is required"));
+    }
+
+    #[test]
+    fn explicit_actions_round_trip_and_can_be_cleared() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        add_member_with_actions(
+            &home,
+            "anna",
+            &[("demo".into(), "editor".into())],
+            &["chat.execute".into()],
+        )
+        .unwrap();
+        add_member(&home, "bob", &[("demo".into(), "viewer".into())]).unwrap();
+        let raw = std::fs::read_to_string(members_path(&home)).unwrap();
+        assert!(raw.contains(":ACTIONS:     chat.execute"), "{raw}");
+        let entries = read_members(&home).unwrap();
+        assert_eq!(entries[0].actions, vec!["chat.execute".to_string()]);
+        assert!(entries[1].actions.is_empty());
+
+        assert!(set_member_actions(&home, "bob", &["chat.execute".into()]).unwrap());
+        assert!(set_member_actions(&home, "anna", &[]).unwrap());
+        assert!(!set_member_actions(&home, "nobody", &[]).unwrap());
+        let entries = read_members(&home).unwrap();
+        assert!(entries[0].actions.is_empty());
+        assert_eq!(entries[1].actions, vec!["chat.execute".to_string()]);
+        assert_eq!(
+            entries[1].grants,
+            vec![("demo".to_string(), "viewer".to_string())]
+        );
+
+        let err = set_member_actions(&home, "bob", &["Chat Execute".into()]).unwrap_err();
+        assert!(format!("{err}").contains("action"), "{err}");
     }
 
     #[test]

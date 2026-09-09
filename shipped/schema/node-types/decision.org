@@ -11,6 +11,7 @@
 :STATES:
 :TRANSITIONS:
 :REGENERATE_PROMPT: decision-regenerate
+:CHAT_PROMPT: node-chat
 :END:
 
 Decisions are state-free ADR nodes.

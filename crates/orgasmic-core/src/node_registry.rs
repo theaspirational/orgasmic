@@ -215,6 +215,7 @@ impl NodeTypeRegistry {
             "decision" => "decisions",
             "term" => "glossary",
             "artifact" => "artifacts",
+            "conversation" => "conversations",
             other => other,
         };
         self.resolve(collection).descriptor
@@ -289,6 +290,10 @@ impl NodeTypeRegistry {
             (
                 "artifact.org",
                 include_str!("../../../shipped/schema/node-types/artifact.org"),
+            ),
+            (
+                "conversation.org",
+                include_str!("../../../shipped/schema/node-types/conversation.org"),
             ),
         ] {
             let descriptor = NodeTypeDescriptor::parse(source, name)?;
@@ -373,12 +378,13 @@ mod tests {
     fn shipped_descriptors_load_and_unknown_collection_is_generic() {
         let registry = NodeTypeRegistry::load(&repo_root().join("shipped/schema/node-types"))
             .expect("load shipped node types");
-        assert_eq!(registry.len(), 4);
+        assert_eq!(registry.len(), 5);
         for (collection, prefix) in [
             ("tasks", "TASK-"),
             ("decisions", "dec_"),
             ("glossary", "term_"),
             ("artifacts", "ART-"),
+            ("conversations", "CONV-"),
         ] {
             assert_eq!(registry.descriptor(collection).unwrap().id_prefix, prefix);
         }
@@ -386,9 +392,37 @@ mod tests {
         assert!(tasks.states.contains(&"in_review".to_string()));
         assert!(tasks.allows_transition("in_review", "done"));
         assert!(!tasks.allows_transition("done", "in_progress"));
-        for id in ["TASK-ABCDE", "dec_ABCDE", "term_ABCDE", "ART-ABCDE"] {
+        for id in [
+            "TASK-ABCDE",
+            "dec_ABCDE",
+            "term_ABCDE",
+            "ART-ABCDE",
+            "CONV-ABCDE",
+        ] {
             assert!(registry.descriptor_for_id(id).is_some(), "{id}");
         }
+        let conversations = registry.descriptor("conversations").unwrap();
+        assert_eq!(conversations.chat_prompt.as_deref(), Some("node-chat"));
+        assert_eq!(conversations.regenerate_prompt, None);
+        assert!(conversations.allows_transition("open", "archived"));
+        assert!(conversations.allows_transition("archived", "open"));
+        assert_eq!(
+            registry
+                .collection_for_kind("conversation")
+                .unwrap()
+                .collection,
+            "conversations"
+        );
+        for descriptor in registry.descriptors() {
+            assert_eq!(
+                descriptor.chat_prompt.as_deref(),
+                Some("node-chat"),
+                "{} ships a chat prompt",
+                descriptor.collection
+            );
+        }
+        let embedded = NodeTypeRegistry::embedded().unwrap();
+        assert_eq!(embedded.len(), registry.len());
 
         let generic = registry.resolve("problems");
         assert!(generic.descriptor.is_none());

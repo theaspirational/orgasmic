@@ -515,6 +515,15 @@ fn compile_values(view: &PromptSpecView, req: &PromptCompileRequest) -> SlotValu
         .entry("node.extra_prompt".to_string())
         .or_insert_with(|| "not set".to_string());
     values
+        .entry("node.links".to_string())
+        .or_insert_with(|| "none".to_string());
+    values
+        .entry("conversation.purpose".to_string())
+        .or_default();
+    values
+        .entry("conversation.instructions".to_string())
+        .or_insert_with(|| "not set".to_string());
+    values
 }
 
 fn load_prompt_spec_full(home: &Home, id: &str) -> PromptResult<LoadedPromptSpec> {

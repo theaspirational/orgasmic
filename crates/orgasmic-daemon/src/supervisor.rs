@@ -2276,6 +2276,18 @@ impl Supervisor {
         run_id: &str,
         text: &str,
     ) -> Result<(), SupervisorError> {
+        self.record_composer_send_with_context(run_id, text, None)
+            .await
+    }
+
+    /// [`record_composer_send`] carrying the raw context chips that rode
+    /// with a conversation send (dec: CHAT-SCOPE C1).
+    pub async fn record_composer_send_with_context(
+        &self,
+        run_id: &str,
+        text: &str,
+        context: Option<serde_json::Value>,
+    ) -> Result<(), SupervisorError> {
         let (session_path, identity) = {
             let g = self.inner.lock().await;
             let rec = g
@@ -2286,6 +2298,7 @@ impl Supervisor {
         };
         let evt = Lifecycle::ComposerSend {
             text: text.to_string(),
+            context,
         };
         self.writer
             .append_session(SessionAppend {
@@ -2681,6 +2694,19 @@ impl Supervisor {
         input: String,
         caller_identity: &RuntimeIdentity,
     ) -> Result<orgasmic_drivers::UserInputAck, SupervisorError> {
+        self.send_input_with_context(run_id, input, caller_identity, None)
+            .await
+    }
+
+    /// [`send_input`] that records `context` (raw conversation chips) on
+    /// the composer_send lifecycle event.
+    pub async fn send_input_with_context(
+        &self,
+        run_id: &str,
+        input: String,
+        caller_identity: &RuntimeIdentity,
+        context: Option<serde_json::Value>,
+    ) -> Result<orgasmic_drivers::UserInputAck, SupervisorError> {
         let ack = {
             let mut g = self.inner.lock().await;
             let rec = g
@@ -2707,7 +2733,10 @@ impl Supervisor {
         // lifecycle event for every accepted operator send. Best-effort — a
         // recording failure must not mask a delivered input.
         if ack.accepted {
-            if let Err(e) = self.record_composer_send(run_id, &input).await {
+            if let Err(e) = self
+                .record_composer_send_with_context(run_id, &input, context)
+                .await
+            {
                 warn!(error = %e, run_id, "composer_send recording failed");
             }
         }
