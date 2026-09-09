@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -48,8 +50,11 @@ import {
   workerButtonLabel,
   workerRunTabLabel,
 } from './runDockLabels';
-import { RunSurface } from './RunSurface';
 import { resolveTerminalDriver } from './terminalLaunch';
+
+const RunSurface = lazy(() =>
+  import('./RunSurface').then((module) => ({ default: module.RunSurface })),
+);
 
 export function RunDock() {
   const { activeProjectId } = useActiveProject();
@@ -496,12 +501,14 @@ export function RunDock() {
         <div className="min-h-0 flex-1 overflow-hidden">
           {activeTabId === CHAT_TAB_ID ? (
             chatRun ? (
-              <RunSurface
-                run={chatRun}
-                onPromptSent={() => {}}
-                onNewChat={handleNewChat}
-                readOnly={readOnly}
-              />
+              <Suspense fallback={null}>
+                <RunSurface
+                  run={chatRun}
+                  onPromptSent={() => {}}
+                  onNewChat={handleNewChat}
+                  readOnly={readOnly}
+                />
+              </Suspense>
             ) : occupiedManager ? (
               <OccupiedManagerPanel
                 run={occupiedManager}
@@ -517,12 +524,14 @@ export function RunDock() {
               />
             )
           ) : activeRun ? (
-            <RunSurface
-              run={activeRun}
-              initialDraft={activeTab?.draftPrompt}
-              onPromptSent={() => activeTab && consumeDraft(activeTab.tabId)}
-              readOnly={readOnly}
-            />
+            <Suspense fallback={null}>
+              <RunSurface
+                run={activeRun}
+                initialDraft={activeTab?.draftPrompt}
+                onPromptSent={() => activeTab && consumeDraft(activeTab.tabId)}
+                readOnly={readOnly}
+              />
+            </Suspense>
           ) : (
             <MissingRunPanel
               runId={activeTab?.runId ?? null}

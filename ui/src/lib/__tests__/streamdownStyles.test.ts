@@ -26,9 +26,11 @@ describe('Streamdown production CSS', () => {
           .filter((name) => name.endsWith('.css'))
           .map((name) => readFileSync(join(assetsDir, name), 'utf8'))
           .join('\n');
+        const productionHtml = readFileSync(join(outDir, 'index.html'), 'utf8');
 
         expect(productionCss).toContain('.wrap-anywhere');
         expect(productionCss).toContain('.katex');
+        expect(productionHtml).not.toMatch(/<script[^>]+src="\/assets\/mermaid-/);
       } finally {
         rmSync(outDir, { force: true, recursive: true });
       }
