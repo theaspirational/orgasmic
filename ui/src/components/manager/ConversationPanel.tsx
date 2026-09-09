@@ -48,21 +48,20 @@ export const CHAT_EXECUTE_LABEL = 'Chat runs an agent on the host. Ask an admin 
 // with a composer that continues through POST /conversations/:id/input.
 export function ConversationPanel({
   projectId,
-  readOnly,
   liveRuns,
   onRefresh,
 }: {
   projectId: string | null;
-  /** The dock's sessions.interact gate; chat grants narrow it further. */
-  readOnly: boolean;
   liveRuns: RunSummary[];
   onRefresh: () => void;
 }) {
   const { can } = useMe();
   const { chatTarget, setChatTarget } = useRunDock();
+  // Chat has its own grants (CHAT-SCOPE §6); the dock's sessions.interact gate
+  // does not apply, so a chat-only member can still continue.
   const canWrite = can(projectId, 'chat.write');
   const canExecute = can(projectId, 'chat.execute');
-  const chatReadOnly = readOnly || !canWrite;
+  const chatReadOnly = !canWrite;
   const disabledLabel = !chatReadOnly && !canExecute ? CHAT_EXECUTE_LABEL : null;
 
   const conversations = useResource(

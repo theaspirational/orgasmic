@@ -67,7 +67,7 @@ vi.mock('@/components/notifications/NotificationBell', () => ({
 }));
 
 vi.mock('@/components/manager/RunDock', () => ({
-  RunDock: () => null,
+  RunDock: () => <div data-testid="run-dock" />,
 }));
 
 import { AppShell } from '../AppShell';
@@ -263,6 +263,23 @@ describe('AppShell protected-route auth gate', () => {
     await waitFor(() => expect(fetch.mock.calls.some(([input]) => pathOf(input).includes('/node-types'))).toBe(true));
     await screen.findByText('Protected artifact loaded');
     expect(screen.queryByRole('link', { name: 'Meeting records' })).not.toBeInTheDocument();
+  });
+
+  it('mounts the run dock for a member with chat.read and not for one without it', async () => {
+    window.localStorage.setItem('orgasmic.member.session', '1');
+    window.localStorage.setItem('orgasmic.member.me', JSON.stringify(memberMe()));
+    installFetch();
+    const view = renderShell();
+    await screen.findByText('Protected artifact loaded');
+    expect(screen.queryByTestId('run-dock')).toBeNull();
+    view.unmount();
+
+    const chatMember: Me = { ...memberMe(), projects: [{ projectId: 'orsl', role: 'reader', capabilities: ['project.read', 'artifacts.read', 'chat.read'] }] };
+    window.localStorage.setItem('orgasmic.member.me', JSON.stringify(chatMember));
+    installFetch((path) => (path === '/api/me' ? jsonResponse(chatMember) : undefined));
+    renderShell();
+    await screen.findByText('Protected artifact loaded');
+    expect(await screen.findByTestId('run-dock')).toBeInTheDocument();
   });
 
   it('keeps routed content beneath an opaque project-tabs header', async () => {

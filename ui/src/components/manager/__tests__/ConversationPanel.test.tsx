@@ -71,7 +71,7 @@ function panel(liveRuns: RunSummary[] = [], node?: string) {
   return (
     <RunDockProvider>
       <Probe node={node} />
-      <ConversationPanel projectId="demo" readOnly={false} liveRuns={liveRuns} onRefresh={() => {}} />
+      <ConversationPanel projectId="demo" liveRuns={liveRuns} onRefresh={() => {}} />
     </RunDockProvider>
   );
 }

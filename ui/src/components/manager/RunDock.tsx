@@ -448,7 +448,6 @@ export function RunDock() {
               <ConversationPanel
                 key={activeProjectId ?? 'no-project'}
                 projectId={activeProjectId}
-                readOnly={readOnly}
                 liveRuns={knownRuns}
                 onRefresh={refresh}
               />

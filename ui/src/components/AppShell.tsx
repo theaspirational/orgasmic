@@ -448,8 +448,10 @@ export function AppShell() {
         ) : null}
         {/* The run dock is an admin/manager surface — it polls admin-only
             manager + runs state, so members never mount it (a member's
-            read-only session viewing is a separate, not-yet-exposed surface). */}
-        {canWatchSessions && !isMember ? <RunDock /> : null}
+            read-only session viewing is a separate, not-yet-exposed surface).
+            The exception is chat (CHAT-SCOPE C1): a member with chat.read
+            gets the dock for its Chat tab; launch controls stay hidden. */}
+        {(canWatchSessions && !isMember) || can(projectId, 'chat.read') ? <RunDock /> : null}
         <Toaster position="bottom-right" />
       </SidebarProvider>
       </RunDockProvider>
