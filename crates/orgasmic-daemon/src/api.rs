@@ -241,6 +241,9 @@ pub struct ApiState {
     pub(crate) ledger_sync: crate::ledger_sync::LedgerSyncStatuses,
     /// Conversations with a run launch in flight (409 on a second continue).
     pub conversation_launches: conversations::LaunchSet,
+    /// Answers already given to a conversation input `request_id`, so a retry
+    /// replays instead of sending the message twice.
+    pub conversation_inputs: conversations::InputReplays,
     /// Per-node locks serializing node.org/journal.org read-modify-write.
     pub node_write_locks:
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
@@ -24787,6 +24790,7 @@ pub(crate) mod tests {
             recovery_generation_transitions: RecoveryGenerationTransitionTracker::default(),
             ledger_sync: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
             conversation_launches: Default::default(),
+            conversation_inputs: Default::default(),
         }
     }
 

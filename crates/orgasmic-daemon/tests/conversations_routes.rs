@@ -410,6 +410,51 @@ async fn create_continue_live_resume_and_archive() {
         400,
     )
     .await;
+
+    // A retried send (same request_id) replays its answer and delivers nothing
+    // a second time; a fresh id with the same text would deliver again.
+    let retry_id = request_id();
+    let retried = format!("retried-question-{}", request_id());
+    let answered = post(
+        &client,
+        &base,
+        &token,
+        &format!("/conversations/{id}/input?project=demo"),
+        json!({"message":retried,"request_id":retry_id}),
+        200,
+    )
+    .await;
+    wait_for_log(&log, &retried).await;
+    let again = post(
+        &client,
+        &base,
+        &token,
+        &format!("/conversations/{id}/input?project=demo"),
+        json!({"message":retried,"request_id":retry_id}),
+        200,
+    )
+    .await;
+    assert_eq!(
+        answered, again,
+        "a replayed request_id returns its first answer"
+    );
+    let body = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        body.lines().filter(|line| line.contains(&retried)).count(),
+        1,
+        "the agent heard the retried message once: {body}"
+    );
+
+    // 64 KiB is the cap, after trim.
+    post(
+        &client,
+        &base,
+        &token,
+        &format!("/conversations/{id}/input?project=demo"),
+        json!({"message":"y".repeat(64 * 1024 + 1),"request_id":request_id()}),
+        400,
+    )
+    .await;
     post(
         &client,
         &base,

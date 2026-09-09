@@ -8,7 +8,7 @@ use super::node_services::{actor_key, digest, node};
 use super::*;
 use crate::supervisor::{RunSummary, DEFAULT_IDLE_TIMEOUT_SECS};
 use orgasmic_core::node_services::{self as records, LinkRecord, MediaAnchor};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 pub(super) const ROUTES: &[(&str, &str)] = &[
     ("POST", "/conversations"),
@@ -32,6 +32,53 @@ const ANCHOR_LABEL_CHARS: usize = 80;
 
 /// Shared in-flight set: one launch per conversation at a time (409 otherwise).
 pub type LaunchSet = Arc<std::sync::Mutex<HashSet<String>>>;
+
+/// A message is bounded so one send cannot hand a harness more than it will
+/// take, and so the composer snapshot on the session stays readable.
+const MAX_MESSAGE_BYTES: usize = 64 * 1024;
+
+/// Answers already given to `(conversation, request_id)`, oldest first. A
+/// client that retries a send it never saw the answer to gets that answer back
+/// and the agent hears nothing twice.
+pub type InputReplays = Arc<std::sync::Mutex<VecDeque<(String, String, Value)>>>;
+
+/// Bound on [`InputReplays`]; the oldest entry is evicted past it. A dropped
+/// entry only costs a retry its idempotency, which is the pre-existing
+/// behaviour.
+const MAX_INPUT_REPLAYS: usize = 1024;
+
+/// The trimmed message, or 400 when it is empty or over [`MAX_MESSAGE_BYTES`].
+fn checked_message(message: &str) -> Result<&str, ApiError> {
+    let message = message.trim();
+    if message.is_empty() {
+        return Err(ApiError::bad_request("message must not be empty"));
+    }
+    if message.len() > MAX_MESSAGE_BYTES {
+        return Err(ApiError::bad_request("message exceeds 64 KiB"));
+    }
+    Ok(message)
+}
+
+/// The answer this `(conversation, request_id)` already got, if it is still
+/// remembered.
+fn replayed_input(state: &ApiState, conv: &str, request_id: &str) -> Option<Value> {
+    let guard = state.conversation_inputs.lock().ok()?;
+    guard
+        .iter()
+        .find(|(id, req, _)| id == conv && req == request_id)
+        .map(|(_, _, answer)| answer.clone())
+}
+
+/// Remember one answer and return it.
+fn remember_input(state: &ApiState, conv: &str, request_id: &str, answer: Value) -> Json<Value> {
+    if let Ok(mut guard) = state.conversation_inputs.lock() {
+        while guard.len() >= MAX_INPUT_REPLAYS {
+            guard.pop_front();
+        }
+        guard.push_back((conv.to_string(), request_id.to_string(), answer.clone()));
+    }
+    Json(answer)
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ConversationCreateRequest {
@@ -73,8 +120,7 @@ struct ConversationInputRequest {
     message: String,
     #[serde(default)]
     context: Vec<ContextChip>,
-    #[serde(default)]
-    request_id: Option<String>,
+    request_id: String,
 }
 
 /// Context chips ride with a send exactly as the contract names them; the raw
@@ -192,10 +238,13 @@ async fn post_conversation_input(
     if conv.archived {
         return Err(ApiError::bad_request("conversation is archived"));
     }
-    let message = req.message.trim();
-    if message.is_empty() {
-        return Err(ApiError::bad_request("message must not be empty"));
+    // A retry of a send whose answer never arrived must not reach the agent a
+    // second time. Checked after authorization, so a replay proves nothing to
+    // a caller who may no longer read the conversation.
+    if let Some(answer) = replayed_input(&state, &conv.id, &req.request_id) {
+        return Ok(Json(answer));
     }
+    let message = checked_message(&req.message)?;
     validate_chips(&req.context)?;
     let context = (!req.context.is_empty()).then(|| json!(req.context));
 
@@ -206,7 +255,12 @@ async fn post_conversation_input(
         let run_id = run.run_id.clone();
         drop(live);
         record_range_anchors(&state, &identity, &project_id, &conv, &req.context, message).await;
-        return Ok(Json(json!({"run_id": run_id, "mode": "live"})));
+        return Ok(remember_input(
+            &state,
+            &conv.id,
+            &req.request_id,
+            json!({"run_id": run_id, "mode": "live"}),
+        ));
     }
     drop(live);
     if conv.purpose == "regenerate" {
@@ -215,10 +269,7 @@ async fn post_conversation_input(
         ));
     }
     let _launch = claim_launch(&state, &conv.id)?;
-    let request_id = req
-        .request_id
-        .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let request_id = req.request_id.clone();
     let prior = prior_session(&root, &conv);
     let cwd = conv.worktree.clone().unwrap_or_else(|| root.clone());
 
@@ -253,7 +304,12 @@ async fn post_conversation_input(
                 .await?;
                 record_range_anchors(&state, &identity, &project_id, &conv, &req.context, message)
                     .await;
-                return Ok(Json(json!({"run_id": run_id, "mode": "resumed"})));
+                return Ok(remember_input(
+                    &state,
+                    &conv.id,
+                    &req.request_id,
+                    json!({"run_id": run_id, "mode": "resumed"}),
+                ));
             }
         }
     }
@@ -316,7 +372,12 @@ async fn post_conversation_input(
     let text = compose(Some(&scope), tail.as_deref(), &req.context, message);
     send(&state, &acquire.run_id, &acquire.identity, text, context).await?;
     record_range_anchors(&state, &identity, &project_id, &conv, &req.context, message).await;
-    Ok(Json(json!({"run_id": acquire.run_id, "mode": "cold"})))
+    Ok(remember_input(
+        &state,
+        &conv.id,
+        &req.request_id,
+        json!({"run_id": acquire.run_id, "mode": "cold"}),
+    ))
 }
 
 /// Purposes whose runs are dispatched worker attempts (C2): never cold.
@@ -407,6 +468,9 @@ pub(super) async fn create_authorized(
     validate_chips(&req.context)?;
     if !req.context.is_empty() && req.message.as_deref().unwrap_or("").trim().is_empty() {
         return Err(ApiError::bad_request("context requires a message"));
+    }
+    if let Some(message) = req.message.as_deref().filter(|m| !m.trim().is_empty()) {
+        checked_message(message)?;
     }
     let mode = req
         .mode

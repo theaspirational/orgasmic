@@ -68,8 +68,14 @@ function q(project?: string | null, extra?: Record<string, string | number | und
   return s ? `?${s}` : '';
 }
 
+let requestSeq = 0;
+
 function requestId(prefix: string): string {
-  return `ui-${prefix}-${Date.now().toString(36)}`;
+  // The counter, not the clock, is what makes two sends in the same
+  // millisecond two requests: the daemon replays a repeated conversation
+  // `request_id` instead of delivering the message again.
+  requestSeq += 1;
+  return `ui-${prefix}-${Date.now().toString(36)}-${requestSeq}`;
 }
 
 export function fetchBoard(): Promise<BoardEntry[]> {
