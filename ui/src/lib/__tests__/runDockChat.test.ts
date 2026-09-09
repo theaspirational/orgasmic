@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createElement } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { RunDockProvider, useRunDock } from '../runDock';
 
@@ -62,27 +62,29 @@ describe('Run Dock chat target', () => {
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
-  it('carries optional chips on the target and lets chatContext set or clear them on an open conversation', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('carries optional chips on any current target and lets chatContext set or clear them', () => {
+    const target = () => JSON.parse(screen.getByLabelText('chat target').textContent!);
     render(createElement(RunDockProvider, null, createElement(ChatProbe)));
-    // Not on a conversation: a warning no-op.
+    // A setup takes chips for its first message.
     fireEvent.click(screen.getByRole('button', { name: 'Set chips' }));
-    expect(warn).toHaveBeenCalledOnce();
-    expect(screen.getByLabelText('chat target').textContent).toBe('{"kind":"setup"}');
+    expect(target()).toEqual({ kind: 'setup', context: [CHIP] });
 
     fireEvent.click(screen.getByRole('button', { name: 'Chat about node with chip' }));
-    expect(JSON.parse(screen.getByLabelText('chat target').textContent!)).toEqual({ kind: 'lookup', node: 'dec_1', purpose: 'discuss', context: [CHIP] });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Open CONV-1' }));
-    expect(JSON.parse(screen.getByLabelText('chat target').textContent!)).toEqual({ kind: 'conversation', conversationId: 'CONV-1' });
+    expect(target()).toEqual({ kind: 'lookup', node: 'dec_1', purpose: 'discuss', context: [CHIP] });
+    // Right after openChat({node}), before the lookup resolves, chatContext lands on the lookup.
+    fireEvent.click(screen.getByRole('button', { name: 'Chat about node' }));
+    expect(target()).toEqual({ kind: 'lookup', node: 'dec_1', purpose: 'discuss' });
     fireEvent.click(screen.getByRole('button', { name: 'Set chips' }));
-    expect(JSON.parse(screen.getByLabelText('chat target').textContent!)).toEqual({ kind: 'conversation', conversationId: 'CONV-1', context: [CHIP] });
-    // A bare re-open keeps them; clearing drops the field.
+    expect(target()).toEqual({ kind: 'lookup', node: 'dec_1', purpose: 'discuss', context: [CHIP] });
+
+    // A target change drops them; setting, a bare re-open, and clearing behave on a conversation.
+    fireEvent.click(screen.getByRole('button', { name: 'Open CONV-1' }));
+    expect(target()).toEqual({ kind: 'conversation', conversationId: 'CONV-1' });
+    fireEvent.click(screen.getByRole('button', { name: 'Set chips' }));
+    expect(target()).toEqual({ kind: 'conversation', conversationId: 'CONV-1', context: [CHIP] });
     fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
-    expect(JSON.parse(screen.getByLabelText('chat target').textContent!).context).toEqual([CHIP]);
+    expect(target().context).toEqual([CHIP]);
     fireEvent.click(screen.getByRole('button', { name: 'Clear chips' }));
-    expect(JSON.parse(screen.getByLabelText('chat target').textContent!)).toEqual({ kind: 'conversation', conversationId: 'CONV-1' });
-    expect(warn).toHaveBeenCalledOnce();
-    warn.mockRestore();
+    expect(target()).toEqual({ kind: 'conversation', conversationId: 'CONV-1' });
   });
 });

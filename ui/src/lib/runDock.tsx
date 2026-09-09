@@ -82,8 +82,9 @@ type RunDockContextValue = {
   openChat: (options?: OpenChatOptions) => void;
   chatTarget: ChatTarget;
   setChatTarget: (target: ChatTarget) => void;
-  /** Set or clear the optional chips on the open conversation's composer
-   * (plugin `core.chat@1`); a warning no-op when no conversation is open. */
+  /** Set or clear the optional chips on whatever the Chat tab currently shows
+   * (plugin `core.chat@1`): a conversation, a lookup still resolving (the chips
+   * carry over to what it resolves into), or a setup. */
   chatContext: (chips: ConversationContextChip[] | null) => void;
   /** Replace the current live-run metadata used to guard dock eligibility. */
   replaceLiveRuns: (runs: RunSummary[]) => void;
@@ -329,12 +330,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
 
   const chatContext = useCallback(
     (chips: ConversationContextChip[] | null) => {
-      const current = chatTargetRef.current;
-      if (current.kind !== 'conversation') {
-        console.warn('chatContext ignored: no conversation is open in the dock');
-        return;
-      }
-      setChatTarget({ ...current, context: chips?.length ? chips : undefined });
+      setChatTarget({ ...chatTargetRef.current, context: chips?.length ? chips : undefined });
     },
     [setChatTarget],
   );
