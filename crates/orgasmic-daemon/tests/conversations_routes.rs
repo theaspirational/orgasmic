@@ -136,6 +136,15 @@ async fn get(
 }
 
 async fn fixture() -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
+    fixture_with_idle(None).await
+}
+
+/// `idle` compresses the chat idle-release window for the one test that
+/// watches a real idle release. It is a per-daemon option, not an env var, so
+/// the other tests in this binary keep the production window.
+async fn fixture_with_idle(
+    idle: Option<u32>,
+) -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("error")
         .with_test_writer()
@@ -190,6 +199,7 @@ async fn fixture() -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
             bind_override: Some("127.0.0.1".parse().unwrap()),
             port_override: Some(0),
             fs_watcher_enabled: false,
+            conversation_idle_timeout_secs: idle,
             ..Default::default()
         },
     )
@@ -1210,6 +1220,90 @@ async fn members_and_plugins_are_gated_by_chat_actions_and_ownership() {
     )
     .await;
     release_run(&client, &base, &anna, &run).await;
+
+    let _ = running.shutdown.send(());
+}
+
+/// A conversation whose run idles out is continued, not restarted from
+/// nothing: the supervisor releases the run on its own, the journal records
+/// why, and the next message resumes the agent's own session.
+#[tokio::test]
+async fn an_idle_release_is_journalled_and_the_next_message_resumes() {
+    let (temp, _home, running, base, token) = fixture_with_idle(Some(1)).await;
+    let client = reqwest::Client::new();
+    let log = fake_log(&temp);
+
+    let first = format!("opening-{}", request_id());
+    let created = post(
+        &client,
+        &base,
+        &token,
+        "/conversations",
+        json!({"project":"demo","purpose":"discuss","provider":"hermes","message":first,"request_id":request_id()}),
+        200,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let run1 = created["run_id"].as_str().unwrap().to_owned();
+    wait_for_log(&log, &first).await;
+
+    // The supervisor's own idle sweep ends the run; nothing releases it here.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let live = get(&client, &base, &token, "/runs/live", 200).await;
+        if !live["live"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|run| run["run_id"] == run1.as_str())
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the idle run was never released: {live}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let journal_path = temp
+        .path()
+        .join("project/.orgasmic/conversations")
+        .join(&id)
+        .join("journal.org");
+    let journal = wait_for_journal(&journal_path, "conversation.run_released").await;
+    assert!(
+        journal.contains(":REASON: idle_timeout_exceeded"),
+        "the idle sweep names itself: {journal}"
+    );
+
+    let second = format!("continuing-{}", request_id());
+    let resumed = post(
+        &client,
+        &base,
+        &token,
+        &format!("/conversations/{id}/input?project=demo"),
+        json!({"message":second,"request_id":request_id()}),
+        200,
+    )
+    .await;
+    assert_eq!(resumed["mode"], "resumed", "{resumed}");
+    let run2 = resumed["run_id"].as_str().unwrap().to_owned();
+    wait_for_log(&log, &second).await;
+    let agent_log = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        agent_log.contains("session/load"),
+        "the continue loaded the agent's own session: {agent_log}"
+    );
+    let doc = get(
+        &client,
+        &base,
+        &token,
+        &format!("/org/node?project=demo&id={id}"),
+        200,
+    )
+    .await;
+    assert_eq!(property(&doc, "RUNS"), format!("{run1} {run2}:resumed"));
 
     let _ = running.shutdown.send(());
 }

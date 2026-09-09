@@ -247,6 +247,10 @@ pub struct ApiState {
     /// Who asked to release each run, read by the task that journals the
     /// release the supervisor reports.
     pub release_actors: conversations::ReleaseActors,
+    /// Idle release window for chat runs. Production leaves this `None` (15
+    /// minutes); a test compresses it to seconds so it can watch a real idle
+    /// release and then continue onto a resumed run.
+    pub conversation_idle_timeout_secs: Option<u32>,
     /// Per-node locks serializing node.org/journal.org read-modify-write.
     pub node_write_locks:
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
@@ -24386,7 +24390,7 @@ pub(crate) mod tests {
         std::os::unix::fs::symlink(repo_root(), home.source()).unwrap();
     }
 
-    fn seed_trusted_claude_executable(home: &Home) -> PathBuf {
+    pub(super) fn seed_trusted_claude_executable(home: &Home) -> PathBuf {
         let path = home.bin().join("claude");
         crate::test_fixtures::link_shared_test_executable(&path);
         path
@@ -24799,10 +24803,11 @@ pub(crate) mod tests {
             conversation_launches: Default::default(),
             conversation_inputs: Default::default(),
             release_actors: Default::default(),
+            conversation_idle_timeout_secs: None,
         }
     }
 
-    async fn direct_stage_test_state(home: Home) -> ApiState {
+    pub(super) async fn direct_stage_test_state(home: Home) -> ApiState {
         direct_test_state(home, true).await
     }
 

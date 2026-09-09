@@ -1512,6 +1512,7 @@ async fn acquire_run(
         purpose,
         session_path.clone(),
         plan.config,
+        state.conversation_idle_timeout_secs,
     );
     let acquire = state
         .supervisor
@@ -1522,6 +1523,7 @@ async fn acquire_run(
 
 /// Operator-paced runs never stall out or time out; only discuss/regenerate
 /// get an idle release, implement/review run until the operator ends them.
+#[allow(clippy::too_many_arguments)]
 fn acquire_request(
     project_id: &str,
     cwd: &FsPath,
@@ -1529,6 +1531,7 @@ fn acquire_request(
     purpose: &str,
     session_path: PathBuf,
     driver_config: DriverConfig,
+    idle_timeout_secs: Option<u32>,
 ) -> AcquireRequest {
     AcquireRequest {
         task_id: id.to_string(),
@@ -1546,7 +1549,7 @@ fn acquire_request(
         stall_timeout_secs: Some(0),
         max_run_duration_secs: Some(0),
         idle_timeout_secs: matches!(purpose, "discuss" | "regenerate")
-            .then_some(DEFAULT_IDLE_TIMEOUT_SECS),
+            .then(|| idle_timeout_secs.unwrap_or(DEFAULT_IDLE_TIMEOUT_SECS)),
         applicable_states: Vec::new(),
         max_iterations: None,
         planned_identity: None,
@@ -2215,6 +2218,47 @@ fn links_summary(project: &ProjectIndex, node_id: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The first resume a Claude conversation tries is Claude's own fork of
+    /// the native session: the pinned binary, `--resume <id> --fork-session`,
+    /// in the conversation's own cwd, and flagged so the driver adopts the
+    /// forked session instead of starting a turn.
+    #[tokio::test]
+    async fn claude_resume_forks_the_native_session_in_the_conversation_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = orgasmic_core::Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        crate::api::tests::seed_trusted_claude_executable(&home);
+        let state = crate::api::tests::direct_stage_test_state(home).await;
+        let worktree = tmp.path().join("attempt");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let plan = claude_native_plan(&state, &worktree, "sess-abc")
+            .expect("a pinned claude resolves a plan")
+            .expect("the pinned binary is trusted in this fixture");
+        let args: Vec<String> = plan.config.0["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            args.windows(3).any(|window| window
+                == [
+                    "--resume".to_string(),
+                    "sess-abc".to_string(),
+                    "--fork-session".to_string()
+                ]),
+            "{args:?}"
+        );
+        assert_eq!(plan.config.0["harness"], "claude");
+        assert_eq!(plan.config.0["native_resume_mode"], true);
+        assert_eq!(plan.config.0["cwd"], worktree.display().to_string());
+        assert!(
+            plan.config.0["pinned_executable"].is_object()
+                || plan.config.0["pinned_executable"].is_string()
+        );
+    }
+
     fn envelope(kind: SessionEventKind, event: Value) -> SessionEnvelope {
         SessionEnvelope {
             seq: 0,
@@ -2409,6 +2453,7 @@ mod tests {
                 purpose,
                 PathBuf::from("/session.jsonl"),
                 DriverConfig::empty(),
+                None,
             )
         };
         let discuss = request("discuss");
