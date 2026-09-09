@@ -22,7 +22,7 @@ vi.mock('@tanstack/react-router', async () => ({
 const type: NodeTypeDescriptor = {
   collection: 'meetings', id_prefix: 'MEET-', label: 'Meeting', label_plural: 'Meetings',
   required_properties: ['ID', 'LOCATION'], states: ['active', 'archived'],
-  transitions: { active: ['archived'], archived: ['active'] }, regenerate_prompt: null,
+  transitions: { active: ['archived'], archived: ['active'] }, regenerate_prompt: null, chat_prompt: null,
 };
 const doc: OrgNodeDoc = {
   id: 'MEET-1', kind: 'meetings', title: 'Planning session', todo: 'ACTIVE', tags: [],

@@ -11,13 +11,14 @@ import {
 
 import { fetchRecoveryStatus, fetchRecoveryInventory } from '@/lib/api';
 import { isRunDockEligible } from '@/lib/runLabels';
-import type { RunSummary } from '@/lib/types';
+import type { ConversationContextChip, RunSummary } from '@/lib/types';
 import { applyWorkerTabUpdate, clampDockHeight, DEFAULT_DOCK_HEIGHT } from '@/lib/runDockUtils';
 
 const OPEN_TABS_KEY = 'orgasmic.rundock.open-tabs.v1';
 const OPEN_KEY = 'orgasmic.rundock.open.v1';
 const ACTIVE_TAB_KEY = 'orgasmic.rundock.active-tab.v1';
 const HEIGHT_KEY = 'orgasmic.rundock.height.v1';
+const CONVERSATION_KEY = 'orgasmic.rundock.conversation.v1';
 const MOBILE_DOCK_MEDIA = '(max-width: 639px)';
 
 function isMobileDockViewport(): boolean {
@@ -48,6 +49,23 @@ type OpenRunOptions = {
   driver?: string | null;
 };
 
+/** What the Chat tab shows (CHAT-SCOPE C1). `lookup` is resolved by the dock
+ * (it knows the project) into the node's newest OPEN conversation or a scoped
+ * setup; only a chosen conversation id is persisted. `context` is the pending
+ * optional chips for the next send (C2): transient, removable, cleared on send. */
+export type ChatTarget =
+  | { kind: 'conversation'; conversationId: string; context?: ConversationContextChip[] }
+  | { kind: 'lookup'; node: string; purpose: string; context?: ConversationContextChip[] }
+  | { kind: 'setup'; node?: string; purpose?: string; context?: ConversationContextChip[] };
+
+export type OpenChatOptions = {
+  conversationId?: string;
+  node?: string;
+  purpose?: string;
+  /** Optional chips for the composer of the opened conversation. */
+  context?: ConversationContextChip[];
+};
+
 type RunDockContextValue = {
   /** Open = the session panel is showing above the taskbar. */
   open: boolean;
@@ -59,8 +77,15 @@ type RunDockContextValue = {
   setActiveTab: (tabId: string) => void;
   /** Raise a run: full-screen on mobile, remembered height on desktop. */
   openRun: (options: OpenRunOptions) => void;
-  /** Raise the project's pinned native-provider chat surface. */
-  openChat: () => void;
+  /** Raise the Chat tab: on a conversation, on a node's conversation (found or
+   * set up on first message), or on whatever it last showed. */
+  openChat: (options?: OpenChatOptions) => void;
+  chatTarget: ChatTarget;
+  setChatTarget: (target: ChatTarget) => void;
+  /** Set or clear the optional chips on whatever the Chat tab currently shows
+   * (plugin `core.chat@1`): a conversation, a lookup still resolving (the chips
+   * carry over to what it resolves into), or a setup. */
+  chatContext: (chips: ConversationContextChip[] | null) => void;
   /** Replace the current live-run metadata used to guard dock eligibility. */
   replaceLiveRuns: (runs: RunSummary[]) => void;
   /** Collapse to the bare taskbar, keeping the active selection. */
@@ -120,6 +145,12 @@ function readStoredActiveTab(): string | null {
   return window.localStorage.getItem(ACTIVE_TAB_KEY);
 }
 
+function readStoredChatTarget(): ChatTarget {
+  const conversationId =
+    typeof window === 'undefined' ? null : window.localStorage.getItem(CONVERSATION_KEY);
+  return conversationId ? { kind: 'conversation', conversationId } : { kind: 'setup' };
+}
+
 function readStoredHeight(): number {
   if (typeof window === 'undefined') return DEFAULT_DOCK_HEIGHT;
   if (isMobileDockViewport()) return DEFAULT_DOCK_HEIGHT;
@@ -137,6 +168,9 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
   const [activeTabId, setActiveTabIdState] = useState<string | null>(() =>
     readStoredActiveTab(),
   );
+  const [chatTarget, setChatTargetState] = useState<ChatTarget>(() => readStoredChatTarget());
+  const chatTargetRef = useRef(chatTarget);
+  chatTargetRef.current = chatTarget;
   const validatedRef = useRef(false);
   const liveRunsRef = useRef<Map<string, RunSummary>>(new Map());
 
@@ -268,10 +302,38 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
     [raise, setActiveTabId],
   );
 
-  const openChat = useCallback(() => {
-    setActiveTabId(CHAT_TAB_ID);
-    raise();
-  }, [raise, setActiveTabId]);
+  const setChatTarget = useCallback((target: ChatTarget) => {
+    setChatTargetState(target);
+    if (typeof window === 'undefined') return;
+    // A scoped setup or lookup is transient; the last chosen conversation is
+    // what a reload should come back to.
+    if (target.kind === 'conversation') window.localStorage.setItem(CONVERSATION_KEY, target.conversationId);
+    else if (target.kind === 'setup' && !target.node) window.localStorage.removeItem(CONVERSATION_KEY);
+  }, []);
+
+  const openChat = useCallback(
+    (options?: OpenChatOptions) => {
+      const context = options?.context?.length ? options.context : undefined;
+      if (options?.conversationId) {
+        setChatTarget({ kind: 'conversation', conversationId: options.conversationId, context });
+      } else if (options?.node) {
+        setChatTarget({ kind: 'lookup', node: options.node, purpose: options.purpose ?? 'discuss', context });
+      } else if (options?.context) {
+        // Chips for whatever the tab already shows; a bare open keeps them.
+        setChatTarget({ ...chatTargetRef.current, context });
+      }
+      setActiveTabId(CHAT_TAB_ID);
+      raise();
+    },
+    [raise, setActiveTabId, setChatTarget],
+  );
+
+  const chatContext = useCallback(
+    (chips: ConversationContextChip[] | null) => {
+      setChatTarget({ ...chatTargetRef.current, context: chips?.length ? chips : undefined });
+    },
+    [setChatTarget],
+  );
 
   const closeTab = useCallback(
     (tabId: string) => {
@@ -305,6 +367,9 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       setActiveTab,
       openRun,
       openChat,
+      chatTarget,
+      setChatTarget,
+      chatContext,
       replaceLiveRuns,
       minimize,
       closeTab,
@@ -319,6 +384,9 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       setActiveTab,
       openRun,
       openChat,
+      chatTarget,
+      setChatTarget,
+      chatContext,
       replaceLiveRuns,
       minimize,
       closeTab,

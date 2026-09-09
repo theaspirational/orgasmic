@@ -1,7 +1,7 @@
 //! Authorized incremental delivery of persisted session envelopes.
 use crate::{
-    api::{get_run, ApiState},
-    authz::{self, Action, Identity},
+    api::{authorize_run_read, get_run, ApiState},
+    authz::Identity,
     events::EventPayload,
 };
 use axum::{
@@ -28,18 +28,8 @@ pub async fn handler(
         Ok(detail) => detail.0,
         Err(error) => return error.into_response(),
     };
-    if authz::require(
-        &identity,
-        detail["run"]["project_id"].as_str(),
-        Action::SessionsWatch,
-    )
-    .is_err()
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            "sessions.watch is required to stream this run",
-        )
-            .into_response();
+    if let Err(error) = authorize_run_read(&identity, &detail["run"]) {
+        return error.into_response();
     }
     let Some(path) = detail["run"]["session_path"].as_str().map(PathBuf::from) else {
         return (StatusCode::NOT_FOUND, "run session path is unavailable").into_response();

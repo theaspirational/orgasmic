@@ -223,7 +223,28 @@ pub fn compile_prompt_spec(
     id: &str,
     req: PromptCompileRequest,
 ) -> PromptResult<CompiledPrompt> {
-    let mut resolved = resolve_prompt_spec(home, id, &mut Vec::new())?;
+    let resolved = resolve_prompt_spec(home, id, &mut Vec::new())?;
+    compile_resolved(home, resolved, req)
+}
+
+/// Compile a spec file by path (a plugin's `:CHAT_PROMPT:`), with parents,
+/// parts, and context packs still resolved through the prompt-studio dirs.
+pub fn compile_prompt_spec_path(
+    home: &Home,
+    path: &Path,
+    req: PromptCompileRequest,
+) -> PromptResult<CompiledPrompt> {
+    let loaded = load_prompt_spec_path(path)?;
+    let mut stack = vec![loaded.view.id.clone()];
+    let resolved = resolve_loaded(home, loaded, &mut stack)?;
+    compile_resolved(home, resolved, req)
+}
+
+fn compile_resolved(
+    home: &Home,
+    mut resolved: ResolvedPromptSpec,
+    req: PromptCompileRequest,
+) -> PromptResult<CompiledPrompt> {
     apply_prompt_parts(home, &mut resolved)?;
 
     for required in REQUIRED_SECTIONS {
@@ -515,6 +536,12 @@ fn compile_values(view: &PromptSpecView, req: &PromptCompileRequest) -> SlotValu
         .entry("node.extra_prompt".to_string())
         .or_insert_with(|| "not set".to_string());
     values
+        .entry("node.links".to_string())
+        .or_insert_with(|| "none".to_string());
+    values
+        .entry("conversation.purpose".to_string())
+        .or_default();
+    values
 }
 
 fn load_prompt_spec_full(home: &Home, id: &str) -> PromptResult<LoadedPromptSpec> {
@@ -556,6 +583,15 @@ fn resolve_prompt_spec(
     }
     stack.push(id.to_string());
     let loaded = load_prompt_spec_full(home, id)?;
+    resolve_loaded(home, loaded, stack)
+}
+
+/// Merge `loaded` over its `EXTENDS` chain; `stack` already holds its id.
+fn resolve_loaded(
+    home: &Home,
+    loaded: LoadedPromptSpec,
+    stack: &mut Vec<String>,
+) -> PromptResult<ResolvedPromptSpec> {
     let mut resolved = if let Some(parent_id) = loaded.view.extends.as_deref() {
         resolve_prompt_spec(home, parent_id, stack)?
     } else {

@@ -51,7 +51,7 @@ function OpenChatProbe() {
   return createElement(
     'div',
     null,
-    createElement('button', { onClick: openChat }, 'Open chat'),
+    createElement('button', { onClick: () => openChat() }, 'Open chat'),
     createElement('button', { onClick: () => setHeight(0.5) }, 'Set half height'),
     createElement('output', { 'aria-label': 'active dock surface' }, activeTabId ?? 'none'),
     createElement('output', { 'aria-label': 'dock open' }, String(open)),

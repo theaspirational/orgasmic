@@ -2,6 +2,7 @@ import { Component, createContext, useContext, useEffect, useMemo, useRef, useSy
 import { toast } from 'sonner';
 import type { NodeTypeDescriptor } from './api';
 import { ensurePluginUiSession, requestWithProfile, type TransportProfile } from './transport';
+import type { ConversationContextChip } from './types';
 import { useEventStream } from '@/hooks/useEventStream';
 import { subscribeResync } from './resync';
 
@@ -22,6 +23,21 @@ export type PluginContext = {
   getDraft: <T>(nodeId: string) => T | undefined;
   setDraft: (nodeId: string, draft: unknown) => void;
   clearDraft: (nodeId: string) => void;
+  /** `core.chat@1`: open the node's newest OPEN conversation (or its scoped
+   * setup) in the dock; `context` chips become removable chips on the composer. */
+  openChat: (options?: PluginOpenChatOptions) => void;
+  /** `core.chat@1`: set or clear the optional chips on whatever the Chat tab
+   * currently shows, including right after `openChat({ node })` while the dock
+   * is still resolving the node's conversation (the chips carry over). A
+   * warning no-op only when the dock is not mounted at all. */
+  chatContext: (chips: ConversationContextChip[] | null) => void;
+};
+export type PluginOpenChatOptions = { node?: string; purpose?: string; context?: ConversationContextChip[] };
+/** What the runtime needs from the run dock; the app shell binds it once the
+ * dock provider is mounted, so a plugin call before that is a warning no-op. */
+export type PluginChatDock = {
+  openChat: (options: PluginOpenChatOptions) => void;
+  chatContext: (chips: ConversationContextChip[] | null) => void;
 };
 type PluginModule = { register: (ctx: PluginContext) => void | (() => void) | Promise<void | (() => void)> };
 type Registration = { pluginId: string; revision: string; View: ComponentType<PluginViewProps> };
@@ -33,6 +49,7 @@ const reportedSessionErrors = new Set<string>();
 export function createPluginRuntime(projectId: string, profile: TransportProfile,
   load: (url: string) => Promise<PluginModule> = (url) => import(/* @vite-ignore */ url),
   report: (message: string) => void = (message) => toast.error(message),
+  dock: () => PluginChatDock | null = () => null,
 ) {
   let views = emptyViews;
   let closed = false;
@@ -131,6 +148,18 @@ export function createPluginRuntime(projectId: string, profile: TransportProfile
       getDraft: <T,>(nodeId: string) => drafts.get(`${id}:${nodeId}`) as T | undefined,
       setDraft(nodeId, draft) { alive(); drafts.set(`${id}:${nodeId}`, draft); },
       clearDraft(nodeId) { drafts.delete(`${id}:${nodeId}`); },
+      openChat(options) {
+        alive();
+        const handle = dock();
+        if (!handle) { console.warn(`Plugin ${id}: openChat ignored, the run dock is not mounted`); return; }
+        handle.openChat({ node: options?.node, purpose: options?.purpose, context: options?.context });
+      },
+      chatContext(chips) {
+        alive();
+        const handle = dock();
+        if (!handle) { console.warn(`Plugin ${id}: chatContext ignored, the run dock is not mounted`); return; }
+        handle.chatContext(chips);
+      },
     };
     try {
       const url = `/plugins/${encodeURIComponent(id)}/ui/${encodeURIComponent(projectId)}/@${revision}/index.js`;
@@ -180,8 +209,9 @@ export function createPluginRuntime(projectId: string, profile: TransportProfile
 type Runtime = ReturnType<typeof createPluginRuntime>;
 export const PluginRuntimeContext = createContext<Runtime | null>(null);
 
-export function usePluginRuntime(projectId: string | null, profile: TransportProfile, enabled: boolean, identity: string) {
-  const runtime = useMemo(() => createPluginRuntime(projectId ?? '', profile), [projectId, profile.baseUrl, profile.token, identity]);
+export function usePluginRuntime(projectId: string | null, profile: TransportProfile, enabled: boolean, identity: string,
+  dock: () => PluginChatDock | null = () => null) {
+  const runtime = useMemo(() => createPluginRuntime(projectId ?? '', profile, undefined, undefined, dock), [projectId, profile.baseUrl, profile.token, identity, dock]);
   const refreshRef = useRef(() => {});
   useEventStream((event) => {
     if (event.topic === 'board' && event.payload.kind === 'board_refreshed') refreshRef.current();

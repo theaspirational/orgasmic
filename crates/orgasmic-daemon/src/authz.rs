@@ -30,12 +30,18 @@ pub enum Action {
     LinksWrite,
     AttachmentsRead,
     AttachmentsWrite,
+    ChatRead,
+    ChatWrite,
+    /// Launch or continue an agent run on the host as the daemon's OS user.
+    /// No built-in role carries it; members get it only through an explicit
+    /// `:ACTIONS:` grant.
+    ChatExecute,
     #[allow(dead_code)]
     MembersManage,
 }
 
 impl Action {
-    pub const ALL: [Action; 16] = [
+    pub const ALL: [Action; 19] = [
         Action::ProjectRead,
         Action::GraphRead,
         Action::TasksRead,
@@ -51,8 +57,18 @@ impl Action {
         Action::LinksWrite,
         Action::AttachmentsRead,
         Action::AttachmentsWrite,
+        Action::ChatRead,
+        Action::ChatWrite,
+        Action::ChatExecute,
         Action::MembersManage,
     ];
+
+    /// Inverse of [`action_name`]; `None` for an unknown name.
+    pub fn from_name(name: &str) -> Option<Action> {
+        Action::ALL
+            .into_iter()
+            .find(|action| action_name(*action) == name)
+    }
 }
 
 /// Dotted action name matching the vocabulary named in arch_Z8CW2/dec_KF2MR
@@ -75,6 +91,9 @@ pub fn action_name(action: Action) -> &'static str {
         Action::LinksWrite => "links.write",
         Action::AttachmentsRead => "attachments.read",
         Action::AttachmentsWrite => "attachments.write",
+        Action::ChatRead => "chat.read",
+        Action::ChatWrite => "chat.write",
+        Action::ChatExecute => "chat.execute",
         Action::MembersManage => "members.manage",
     }
 }
@@ -101,6 +120,7 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             SessionsWatch,
             ArtifactsRead,
             ArtifactsComment,
+            ChatRead,
         ],
         "editor" => &[
             LinksRead,
@@ -116,6 +136,8 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             ArtifactsRead,
             ArtifactsComment,
             ArtifactsGenerate,
+            ChatRead,
+            ChatWrite,
         ],
         "artifacts" => &[
             ProjectRead,
@@ -145,6 +167,9 @@ pub enum Identity {
         name: String,
         /// `(project-or-*, role)` pairs, in `members.org` file order.
         grants: Vec<(String, String)>,
+        /// Explicit `:ACTIONS:` names granted on top of every role the
+        /// member holds (`chat.execute`); never a substitute for a grant.
+        actions: Vec<String>,
     },
 }
 
@@ -171,6 +196,15 @@ impl Identity {
             .find(|(p, _)| p == project)
             .or_else(|| grants.iter().find(|(p, _)| p == "*"))
             .map(|(_, role)| role.as_str())
+    }
+
+    fn explicit_action(&self, action: Action) -> bool {
+        match self {
+            Identity::Member { actions, .. } => {
+                actions.iter().any(|name| name == action_name(action))
+            }
+            _ => false,
+        }
     }
 }
 
@@ -217,6 +251,8 @@ pub fn require(
             Action::LinksWrite => "links.write",
             Action::AttachmentsRead => "attachments.read",
             Action::AttachmentsWrite => "attachments.write",
+            Action::ChatRead => "chat.read",
+            Action::ChatWrite => "chat.write",
             _ => {
                 return Err(Forbidden(
                     "action is unavailable to plugin principals".into(),
@@ -234,7 +270,7 @@ pub fn require(
     let Some(role) = identity.role_for(project) else {
         return Err(Forbidden(format!("no grant for project {project}")));
     };
-    if role_capabilities(role).contains(&action) {
+    if role_capabilities(role).contains(&action) || identity.explicit_action(action) {
         Ok(())
     } else {
         Err(Forbidden(format!("role {role} lacks {action:?}")))
@@ -319,7 +355,34 @@ mod tests {
                 .iter()
                 .map(|(p, r)| (p.to_string(), r.to_string()))
                 .collect(),
+            actions: Vec::new(),
         }
+    }
+
+    #[test]
+    fn chat_execute_comes_only_from_explicit_actions() {
+        let editor = member(&[("p", "editor")]);
+        assert!(require(&editor, Some("p"), Action::ChatRead).is_ok());
+        assert!(require(&editor, Some("p"), Action::ChatWrite).is_ok());
+        assert!(require(&editor, Some("p"), Action::ChatExecute).is_err());
+        let viewer = member(&[("p", "viewer")]);
+        assert!(require(&viewer, Some("p"), Action::ChatRead).is_ok());
+        assert!(require(&viewer, Some("p"), Action::ChatWrite).is_err());
+
+        let Identity::Member { name, grants, .. } = member(&[("p", "viewer")]) else {
+            unreachable!()
+        };
+        let granted = Identity::Member {
+            name,
+            grants,
+            actions: vec!["chat.execute".into()],
+        };
+        assert!(require(&granted, Some("p"), Action::ChatExecute).is_ok());
+        // Explicit actions never reach a project the member has no role on.
+        assert!(require(&granted, Some("other"), Action::ChatExecute).is_err());
+        assert!(require(&granted, None, Action::ChatExecute).is_err());
+        assert_eq!(Action::from_name("chat.execute"), Some(Action::ChatExecute));
+        assert_eq!(Action::from_name("chat.fly"), None);
     }
 
     #[test]

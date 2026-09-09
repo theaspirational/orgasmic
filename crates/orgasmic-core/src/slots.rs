@@ -67,6 +67,8 @@ pub fn default_registry() -> BTreeSet<&'static str> {
         "node.content",
         "node.comments",
         "node.extra_prompt",
+        "node.links",
+        "conversation.purpose",
     ]
     .into_iter()
     .collect()

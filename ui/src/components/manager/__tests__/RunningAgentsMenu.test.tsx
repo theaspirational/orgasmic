@@ -100,9 +100,11 @@ function managerRun(runId: string): RunSummary {
   };
 }
 
-function nativeChatRun(runId: string): RunSummary {
+function conversationRun(runId: string): RunSummary {
   return {
-    ...managerRun(runId),
+    ...workerRun(runId),
+    task_id: 'CONV-7K2Q1',
+    kind: 'chat',
     driver: 'stdio',
     harness: 'codex-chat',
   };
@@ -193,14 +195,14 @@ describe('RunningAgentsMenu external manager row', () => {
     expect(await screen.findByText(/No running agents/i)).toBeInTheDocument();
   });
 
-  it('raises the pinned Chat surface for a native manager conversation', async () => {
-    fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([nativeChatRun('run-chat-1')]));
+  it('opens a conversation run in the Chat tab rather than as a run tab', async () => {
+    fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([conversationRun('run-chat-1')]));
     render(<RunningAgentsMenu projectId="proj" />);
     await openMenu();
 
-    fireEvent.click(await screen.findByText(/Manager · Codex/i));
+    fireEvent.click(await screen.findByText(/CONV-7K2Q1/i));
 
-    expect(openChatMock).toHaveBeenCalledOnce();
+    expect(openChatMock).toHaveBeenCalledWith({ conversationId: 'CONV-7K2Q1' });
     expect(openRunMock).not.toHaveBeenCalled();
   });
 

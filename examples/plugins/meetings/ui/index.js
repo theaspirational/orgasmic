@@ -9,6 +9,14 @@ async function readNotes(file) {
   return file.text();
 }
 
+// A selection chip is capped at 4096 bytes by the daemon: cut on a character
+// boundary and mark the cut.
+function selectionChip(text) {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= 4096) return text;
+  return `${new TextDecoder().decode(bytes.slice(0, 4093)).replace(/�$/, '')}…`;
+}
+
 export function register(ctx) {
   ctx.registerStyles(`
     .meetings { display: grid; gap: 1rem; }
@@ -29,6 +37,7 @@ export function register(ctx) {
     .meetings .meeting-empty h2, .meetings .new-meeting h2 { font-size: 1rem; font-weight: 600; }
     .meetings .new-meeting { display: grid; gap: 1rem; max-width: 48rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
     .meetings .form-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .meetings .chat-row { display: flex; flex-wrap: wrap; gap: .5rem; }
   `);
   return ctx.registerNodeView('meetings', function Meetings({ nodeId, projectId, onOpenNode }) {
     return nodeId ? h(Detail, { nodeId, projectId, onOpenNode }) : h(List, { onOpenNode });
@@ -111,15 +120,20 @@ export function register(ctx) {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
+    // The notes text currently selected in the textarea, for a selection chip.
+    const [selection, setSelection] = useState('');
     useEffect(() => {
       if (result.data && !draft) setDraft({ title: result.data.title, body: result.data.body, base_version: result.data.source.base_version });
     }, [result.data, draft]);
     const writable = can(projectId, 'nodes.write') && Boolean(result.data) && result.data.schema_matches !== false;
+    // core.chat@1 is optional: an older host has no ctx.openChat.
+    const chat = typeof ctx.openChat === 'function' && can(projectId, 'chat.write');
     const change = (key, value) => {
       const next = { ...draft, [key]: value };
       ctx.setDraft(nodeId, next);
       setDraft(next);
       setMessage('Unsaved changes');
+      if (key === 'body') setSelection('');
     };
     async function appendNotes(event) {
       const file = event.target.files?.[0];
@@ -149,9 +163,15 @@ export function register(ctx) {
     }
     if (result.error) return h('p', { role: 'alert' }, String(result.error));
     if (!draft) return h('p', { role: 'status' }, 'Loading meeting…');
-    return h('div', { className: 'meetings' }, h(Player, { ctx, nodeId, onOpenNode, writable }), h('form', { className: 'meetings', onSubmit: save },
+    return h('div', { className: 'meetings' },
+      chat ? h('div', { className: 'chat-row' },
+        h(Button, { type: 'button', variant: 'outline', onClick: () => ctx.openChat({ node: nodeId, purpose: 'meeting' }) }, 'Chat'),
+        h(Button, { type: 'button', variant: 'outline', disabled: !selection,
+          onClick: () => ctx.openChat({ node: nodeId, purpose: 'meeting', context: [{ kind: 'selection', text: selectionChip(selection) }] }) }, 'Chat about selection')) : null,
+      h(Player, { ctx, nodeId, onOpenNode, writable }), h('form', { className: 'meetings', onSubmit: save },
       h('label', { htmlFor: titleId }, 'Title', h(Input, { id: titleId, value: draft.title, required: true, disabled: !writable || saving, onChange: (e) => change('title', e.target.value) })),
-      h('label', { htmlFor: notesId }, 'Notes', h(Textarea, { id: notesId, value: draft.body, disabled: !writable || saving, onChange: (e) => change('body', e.target.value) })),
+      h('label', { htmlFor: notesId }, 'Notes', h(Textarea, { id: notesId, value: draft.body, disabled: !writable || saving, onChange: (e) => change('body', e.target.value),
+        onSelect: (e) => setSelection(e.target.value.slice(e.target.selectionStart, e.target.selectionEnd)) })),
       writable ? h('label', { htmlFor: notesFileId }, 'Append notes from a text file', h(Input, { id: notesFileId, type: 'file', accept: '.txt,.md,text/plain,text/markdown', disabled: saving, onChange: appendNotes })) : null,
       error ? h('p', { role: 'alert', className: 'error' }, error) : null,
       h('p', { role: 'status', className: 'muted' }, writable ? message : 'Read only'),

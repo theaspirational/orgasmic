@@ -246,6 +246,10 @@ pub struct DaemonOptions {
     /// Tests widen the gap so a caller can be made to vanish inside it
     /// (TASK-WGXKD).
     pub release_terminal_tx_delay: Option<std::time::Duration>,
+    /// Idle release window for chat runs, in seconds. Production leaves this
+    /// `None` and gets the 15-minute default; a test compresses it so it can
+    /// watch a real idle release without waiting one out.
+    pub conversation_idle_timeout_secs: Option<u32>,
     /// Artificial delay between release admission and the detached spawn
     /// (tests only). See [`api::ApiState::release_admission_delay`].
     pub release_admission_delay: Option<std::time::Duration>,
@@ -278,6 +282,7 @@ impl Default for DaemonOptions {
             dispatch_watcher_grace: std::time::Duration::from_secs(30),
             fs_watcher_enabled: true,
             tmux_input_ready_timeout_secs: None,
+            conversation_idle_timeout_secs: None,
             dispatch_response_delay: None,
             release_terminal_tx_delay: None,
             release_admission_delay: None,
@@ -1178,6 +1183,10 @@ impl Daemon {
             release_tasks: api::ReleaseTaskTracker::new(),
             recovery_generation_transitions: api::RecoveryGenerationTransitionTracker::default(),
             ledger_sync,
+            conversation_launches: Default::default(),
+            conversation_inputs: Default::default(),
+            release_actors: Default::default(),
+            conversation_idle_timeout_secs: opts.conversation_idle_timeout_secs,
         };
 
         // Boot auto-reattach runs *after* the listener is bound (see below). It
@@ -1189,6 +1198,15 @@ impl Daemon {
         // `read_session_file` -> `read_to_string` on the main thread inside
         // `block_on`, which also starved the boot-progress heartbeat, so even
         // the phase readout froze. TASK-KKGKM.
+        // Conversation-owned runs journal their own release, with the reason
+        // the supervisor released them for and the actor who asked.
+        let (release_notices, release_notice_rx) = tokio::sync::mpsc::unbounded_channel();
+        api_state.supervisor.report_releases_to(release_notices);
+        tokio::spawn(api::conversations::journal_run_releases(
+            api_state.clone(),
+            release_notice_rx,
+        ));
+
         let reattach_state = api_state.clone();
         // orgasmic:TASK-WGXKD.1 — shutdown's handle on the detached release
         // finalizations. Taken before the state moves into the router.

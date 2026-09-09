@@ -407,6 +407,8 @@ impl PluginRegistry {
                     "attachments.write" => Action::AttachmentsWrite,
                     "links.read" => Action::LinksRead,
                     "attachments.read" => Action::AttachmentsRead,
+                    "chat.read" => Action::ChatRead,
+                    "chat.write" => Action::ChatWrite,
                     _ => Action::GraphRead,
                 },
             )?;
@@ -493,6 +495,7 @@ impl PluginRegistry {
                 Identity::Member {
                     name: entry.name,
                     grants: entry.grants,
+                    actions: entry.actions,
                 }
             }
             Identity::Admin => Identity::Admin,

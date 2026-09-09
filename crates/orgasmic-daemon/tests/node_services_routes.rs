@@ -67,7 +67,13 @@ async fn fixture() -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
         ),
     );
     let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/meetings");
-    for file in ["plugin.org", "ui/index.js", "ui/player.js", "bin/import"] {
+    for file in [
+        "plugin.org",
+        "prompts/meeting-chat.org",
+        "ui/index.js",
+        "ui/player.js",
+        "bin/import",
+    ] {
         let dest = home.user().join("plugins/meetings").join(file);
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
         std::fs::copy(example.join(file), dest).unwrap();

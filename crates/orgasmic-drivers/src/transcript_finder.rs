@@ -218,6 +218,37 @@ fn capability_session_id(capabilities: &Value) -> Option<String> {
     None
 }
 
+/// ACP session identity recorded by a run's last `Ready` event, read by the
+/// daemon to decide whether the next run can `session/load` it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpSessionResume {
+    pub provider: String,
+    pub session_id: String,
+    pub load_session: bool,
+}
+
+/// The last `DriverEvent::Ready` whose capabilities carry `acp: true`.
+pub fn acp_session_resume(envelopes: &[SessionEnvelope]) -> Option<AcpSessionResume> {
+    envelopes.iter().rev().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::DriverEvent {
+            return None;
+        }
+        let DriverEvent::Ready { capabilities, .. } =
+            serde_json::from_value(envelope.event.clone()).ok()?
+        else {
+            return None;
+        };
+        if capabilities["acp"] != true {
+            return None;
+        }
+        Some(AcpSessionResume {
+            provider: capabilities["provider"].as_str()?.to_string(),
+            session_id: capability_session_id(&capabilities)?,
+            load_session: capabilities["load_session"].as_bool().unwrap_or(false),
+        })
+    })
+}
+
 /// Max time after orgasmic run start for a codex rollout `session_meta.timestamp`.
 const CODEX_CWD_LAUNCH_MAX_AFTER: Duration = Duration::minutes(5);
 
@@ -1680,6 +1711,42 @@ mod tests {
         assert_eq!(lookup.harness, "cursor-agent");
         assert_eq!(lookup.cwd.as_deref(), Some(Path::new("/tmp/wt")));
         assert_eq!(lookup.session_id.as_deref(), Some("sess-xyz"));
+    }
+
+    #[test]
+    fn acp_session_resume_reads_the_last_acp_ready() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("run.jsonl");
+        let identity = RuntimeIdentity {
+            run_id: "run-acp".into(),
+            runtime_id: "rt".into(),
+            boot_id: "boot".into(),
+        };
+        let mut writer = SessionWriter::open(&path, identity).unwrap();
+        for capabilities in [
+            json!({"session_id": "not-acp"}),
+            json!({"acp": true, "provider": "codex", "session_id": "sess-first", "load_session": false}),
+            json!({"acp": true, "provider": "codex", "session_id": "sess-last", "load_session": true}),
+        ] {
+            writer
+                .append(
+                    SessionEventKind::DriverEvent,
+                    json!({"type": "ready", "protocol_version": "acp/1", "capabilities": capabilities}),
+                )
+                .unwrap();
+        }
+        drop(writer);
+
+        let envelopes = orgasmic_core::read_session_file(&path).unwrap();
+        assert_eq!(
+            acp_session_resume(&envelopes),
+            Some(AcpSessionResume {
+                provider: "codex".into(),
+                session_id: "sess-last".into(),
+                load_session: true,
+            })
+        );
+        assert_eq!(acp_session_resume(&envelopes[..1]), None);
     }
 
     // orgasmic:TASK-XCJYC

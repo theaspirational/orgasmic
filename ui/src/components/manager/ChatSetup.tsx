@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MessageCircle } from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { fetchManagerChatCatalog } from '@/lib/api';
 import { useResource } from '@/lib/useResource';
 
@@ -18,10 +19,19 @@ export function ChatSetup({
   projectId,
   readOnly,
   onStart,
+  scopeNode = null,
+  disabledLabel = null,
+  chips = null,
 }: {
   projectId: string | null;
   readOnly: boolean;
   onStart: (selection: ChatSelection, message: string) => Promise<boolean>;
+  /** The node the new conversation will be about (CHAT-SCOPE C1); null = project scope. */
+  scopeNode?: string | null;
+  /** Non-null keeps the composer disabled and shows this reason (e.g. missing chat.execute). */
+  disabledLabel?: string | null;
+  /** Optional context chips that go with the first message (CHAT-SCOPE C2). */
+  chips?: ReactNode;
 }) {
   const catalog = useResource(
     `rundock-chat-catalog:${projectId ?? 'none'}`,
@@ -48,8 +58,10 @@ export function ChatSetup({
     }
   }, [providers, selection.provider]);
 
-  const ready = Boolean(projectId && providers.includes(selection.provider));
-  const unavailableCopy = !projectId
+  const ready = Boolean(projectId && providers.includes(selection.provider) && !disabledLabel);
+  const unavailableCopy = disabledLabel
+    ? disabledLabel
+    : !projectId
     ? 'Select a project to start chatting.'
     : catalog.loading
       ? 'Checking Chat providers…'
@@ -66,11 +78,18 @@ export function ChatSetup({
           <span className="mx-auto mb-4 flex size-11 items-center justify-center rounded-xl bg-muted text-foreground">
             <MessageCircle className="size-5" />
           </span>
-          <h2 className="text-xl font-semibold tracking-tight">Start a project chat</h2>
+          <h2 className="text-xl font-semibold tracking-tight">
+            {scopeNode ? 'Start a chat about this node' : 'Start a project chat'}
+          </h2>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             Talk directly to Codex, Claude, or OpenCode in the current checkout. The conversation
-            stays in RunDock while the provider works.
+            is saved as a node you can come back to.
           </p>
+          {scopeNode ? (
+            <Badge variant="outline" className="mt-3 font-mono" title={`Scoped to ${scopeNode}`}>
+              About {scopeNode}
+            </Badge>
+          ) : null}
         </div>
       </div>
       <div className="shrink-0 px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
@@ -81,21 +100,24 @@ export function ChatSetup({
             <ManagerComposer
               runId={ready ? `chat:${projectId}` : null}
               connectionState="open"
-              placeholder="Ask about this project"
+              placeholder={scopeNode ? `Ask about ${scopeNode}` : 'Ask about this project'}
               readyLabel="Enter to start chat · Shift+Enter for a new line"
               unavailableLabel={unavailableCopy}
               onSend={(message) => onStart(selection, message)}
               controls={
-                <ChatControls
-                  value={selection}
-                  onChange={setSelection}
-                  models={setupModels(catalog.data, selection.provider)}
-                  availableProviders={providers}
-                  disabled={!ready}
-                  catalogLoading={catalog.loading}
-                  catalogMessage={setupCatalogMessage(catalog.data, selection.provider)}
-                  showAccess
-                />
+                <>
+                  {chips}
+                  <ChatControls
+                    value={selection}
+                    onChange={setSelection}
+                    models={setupModels(catalog.data, selection.provider)}
+                    availableProviders={providers}
+                    disabled={!ready}
+                    catalogLoading={catalog.loading}
+                    catalogMessage={setupCatalogMessage(catalog.data, selection.provider)}
+                    showAccess
+                  />
+                </>
               }
             />
           )}

@@ -96,6 +96,7 @@ fn seed_home_and_project(root: &Path) -> (Home, PathBuf) {
         .append(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                conversation_id: None,
                 preflight: None,
                 transport: "tmux".into(),
                 harness: Some("claude".into()),

@@ -31,6 +31,9 @@ pub struct NodeTypeDescriptor {
     pub states: Vec<String>,
     pub transitions: BTreeMap<String, Vec<String>>,
     pub regenerate_prompt: Option<String>,
+    /// Prompt spec compiled as the scope context of a conversation about a
+    /// node of this type. `None` falls back to the shipped `node-chat` spec.
+    pub chat_prompt: Option<String>,
 }
 
 impl NodeTypeDescriptor {
@@ -129,6 +132,11 @@ impl NodeTypeDescriptor {
             transitions,
             regenerate_prompt: heading
                 .property("REGENERATE_PROMPT")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            chat_prompt: heading
+                .property("CHAT_PROMPT")
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),

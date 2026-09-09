@@ -12,14 +12,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useEventStream } from '@/hooks/useEventStream';
+import { useMe } from '@/hooks/useMe';
 import { fetchRecoveryInventory, isRunGoneError, postRunRelease } from '@/lib/api';
 import { useRunDock } from '@/lib/runDock';
-import { isManagerRun, runTabTitle } from '@/lib/runLabels';
+import { isConversationRun, runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RecoveredRun, RunSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 
 import { agentRuns, isExternalManagerRun } from './runDockLabels';
-import { isNativeChatRun } from './chatProviders';
 
 function recoveredTitle(run: RecoveredRun): string {
   // Recovered runs do not carry a task id in the recovery payload, so fall back
@@ -30,7 +30,9 @@ function recoveredTitle(run: RecoveredRun): string {
 
 export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
   const { openChat, openRun } = useRunDock();
-  const runs = useResource('rundock-running-agents', fetchRecoveryInventory);
+  const { isMember } = useMe();
+  // The recovery inventory is admin-only; a chat-only member's dock skips it.
+  const runs = useResource('rundock-running-agents', fetchRecoveryInventory, { enabled: !isMember });
 
   const refresh = useCallback(() => {
     void runs.refresh();
@@ -74,8 +76,8 @@ export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
       });
       return;
     }
-    if (isManagerRun(run) && isNativeChatRun(run)) {
-      openChat();
+    if (isConversationRun(run)) {
+      openChat({ conversationId: run.task_id });
       return;
     }
     openRun({ runId: run.run_id });

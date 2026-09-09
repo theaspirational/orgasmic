@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { ChatButton } from '@/components/ChatButton';
 import { ManagerChatTranscript } from '@/components/manager/ManagerChatTranscript';
 import { NestedTreeRow } from '@/components/NestedTreeRow';
 import { PeekBackButton } from '@/components/PeekBackButton';
@@ -246,6 +247,7 @@ function TaskDialogBody({
     <>
       <DialogDescription className="sr-only">{dialogDescription}</DialogDescription>
       <DialogHeader
+        projectId={projectId}
         task={task.data}
         taskId={taskId}
         historyDepth={historyDepth}
@@ -385,6 +387,7 @@ function PaneToolbar({
 }
 
 function DialogHeader({
+  projectId,
   task,
   taskId,
   historyDepth,
@@ -394,6 +397,7 @@ function DialogHeader({
   onToggleMode,
   onClose,
 }: {
+  projectId: string;
   task: TaskSummary | null;
   taskId: string;
   historyDepth: number;
@@ -510,11 +514,12 @@ function DialogHeader({
           {task.title}
         </DialogTitle>
       </div>
+      <ChatButton projectId={projectId} node={task.id} className="order-2 ml-auto shrink-0 sm:order-none sm:ml-0" />
       <Button
         type="button"
         variant={mode === 'edit' ? 'default' : 'outline'}
         size="sm"
-        className="order-2 ml-auto shrink-0 sm:order-none sm:ml-0"
+        className="order-2 shrink-0 sm:order-none"
         onClick={onToggleMode}
         aria-pressed={mode === 'edit'}
       >

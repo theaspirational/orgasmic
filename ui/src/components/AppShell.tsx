@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { Link, Outlet, useNavigate, useRouterState, type LinkProps } from '@tanstack/react-router';
 import {
   BookOpen,
@@ -69,14 +69,14 @@ import { setUnauthorizedHandler } from '@/lib/transport';
 import type { DaemonEvent, ViewName, WsConnectionState } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { NodeTypesContext, useNodeTypesResource } from '@/lib/nodeTypes';
-import { PluginRuntimeContext, usePluginRuntime } from '@/lib/pluginRuntime';
+import { PluginRuntimeContext, usePluginRuntime, type PluginChatDock } from '@/lib/pluginRuntime';
 
 import { ConnectGate } from './ConnectGate';
 import { ConnectionBanner } from './ConnectionBanner';
 import { RichTextProvider } from '@/lib/richText';
 
 import { RunDock } from './manager/RunDock';
-import { RunDockProvider } from '@/lib/runDock';
+import { RunDockProvider, useRunDock } from '@/lib/runDock';
 import { NotificationBell } from './notifications/NotificationBell';
 import { ProjectTabs } from './ProjectTabs';
 import { RegistryNodePeek } from './RegistryNodePeek';
@@ -141,6 +141,17 @@ function pathForView(view: ViewName, projectId: string | null) {
   };
 }
 
+function PluginDockBinder({ target }: { target: RefObject<PluginChatDock | null> }) {
+  const { openChat, chatContext } = useRunDock();
+  useEffect(() => {
+    target.current = { openChat, chatContext };
+    return () => {
+      target.current = null;
+    };
+  }, [chatContext, openChat, target]);
+  return null;
+}
+
 export function AppShell() {
   const wsState = useWsStatus();
   const isMobile = useIsMobile();
@@ -167,7 +178,11 @@ export function AppShell() {
     !checkingSession && !isMember && !hasAdminSession && (!activeProfile.token || Boolean(authError));
   const blockProtectedRoutes = checkingSession || needsToken;
   const registry = useNodeTypesResource(projectId, !blockProtectedRoutes);
-  const pluginRuntime = usePluginRuntime(projectId, activeProfile, !blockProtectedRoutes && can(projectId, 'graph.read'), `${me?.identity}:${me?.name}`);
+  // The plugin runtime is created above the dock provider; plugins reach the
+  // dock (core.chat@1) through a handle bound once the provider is mounted.
+  const pluginDockRef = useRef<PluginChatDock | null>(null);
+  const pluginDock = useCallback(() => pluginDockRef.current, []);
+  const pluginRuntime = usePluginRuntime(projectId, activeProfile, !blockProtectedRoutes && can(projectId, 'graph.read'), `${me?.identity}:${me?.name}`, pluginDock);
   const collectionNav: NavItem[] = registry.data
     ? registry.data.map((type): NavItem => {
         const builtin = PRIMARY.find((item) => item.page === type.collection);
@@ -325,6 +340,7 @@ export function AppShell() {
     <TooltipProvider>
       <RichTextProvider projectId={projectId} canReadGraph={can(projectId, 'graph.read')}>
       <RunDockProvider>
+      <PluginDockBinder target={pluginDockRef} />
       <SidebarProvider>
         <Sidebar collapsible="icon">
           <SidebarHeader>
@@ -448,8 +464,10 @@ export function AppShell() {
         ) : null}
         {/* The run dock is an admin/manager surface — it polls admin-only
             manager + runs state, so members never mount it (a member's
-            read-only session viewing is a separate, not-yet-exposed surface). */}
-        {canWatchSessions && !isMember ? <RunDock /> : null}
+            read-only session viewing is a separate, not-yet-exposed surface).
+            The exception is chat (CHAT-SCOPE C1): a member with chat.read
+            gets the dock for its Chat tab; launch controls stay hidden. */}
+        {(canWatchSessions && !isMember) || can(projectId, 'chat.read') ? <RunDock /> : null}
         <Toaster position="bottom-right" />
       </SidebarProvider>
       </RunDockProvider>

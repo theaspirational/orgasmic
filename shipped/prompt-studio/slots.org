@@ -61,3 +61,7 @@
 - node.content              (current node.org, or artifact.mdx for artifacts)
 - node.comments             (open journal comments, including their metadata)
 - node.extra_prompt         (optional regenerate-dialog guidance)
+- node.links                (linked ids and titles in both directions from the node's links index; "none" when unlinked)
+
+*** conversation.*
+- conversation.purpose      (the conversation's PURPOSE: discuss, regenerate, implement, review, or a plugin purpose)

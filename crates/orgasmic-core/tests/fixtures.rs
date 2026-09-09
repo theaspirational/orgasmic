@@ -321,6 +321,9 @@ fn parses_shipped_schema_files() {
     parse_or_panic("shipped/schema/node-types/decision.org");
     parse_or_panic("shipped/schema/node-types/glossary.org");
     parse_or_panic("shipped/schema/node-types/artifact.org");
+    parse_or_panic("shipped/schema/node-types/conversation.org");
+    parse_or_panic("shipped/prompt-studio/prompt-specs/node-chat.org");
+    parse_or_panic("shipped/prompt-studio/prompt-specs/project-chat.org");
     parse_or_panic("shipped/entry/router.org");
     parse_or_panic("shipped/workflows/default.org");
 }

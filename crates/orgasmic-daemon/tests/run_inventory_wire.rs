@@ -143,6 +143,7 @@ impl SessionFixture {
         push(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
+                conversation_id: None,
                 preflight: None,
                 transport: self.transport.clone(),
                 harness: self.harness.clone(),

@@ -4,6 +4,7 @@
 
 - [Artifact, verification, and member commands](operations/artifacts.md) — Replay verification proofs, submit or inspect artifacts, and manage local members.
 - [Prompt and shipped-content commands](operations/content.md) — Inspect prompts and skills and manage optional or hub content.
+- [Conversation and chat operations](operations/chat.md) — Grant chat access, read a conversation's runs and journal, and know how a conversation is continued, resumed, and archived.
 - [Core and project commands](operations/core-project.md) — Install, enter, diagnose, update, and inspect projects and the UI.
 - [Daemon commands](operations/daemon.md) — Inspect daemon responsiveness, preserve live owners, and restart explicitly.
 - [Manager and dispatch commands](operations/dispatch.md) — Select drivers, dispatch workers, wait, close, finalize, record tx entries, run manual retrospectives, and run manager stages.

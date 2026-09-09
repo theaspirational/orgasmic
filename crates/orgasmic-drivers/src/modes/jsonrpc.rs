@@ -263,7 +263,7 @@ pub async fn run_jsonrpc_handshake(
         .get("initialize")
         .cloned()
         .unwrap_or_else(|| Value::Object(Default::default()));
-    request_response(
+    let initialize_response = request_response(
         transport,
         ids,
         "initialize",
@@ -273,6 +273,7 @@ pub async fn run_jsonrpc_handshake(
         allowlist,
     )
     .await?;
+    adapter.on_jsonrpc_initialized(&initialize_response)?;
 
     // Capability probes need only the initialized app-server. In particular,
     // Codex `model/list` is available before `thread/start`; skipping the
@@ -837,6 +838,132 @@ mod tests {
                 "configId": "model",
                 "value": "grok-4.5[effort=high,fast=true]"
             })
+        );
+    }
+
+    fn acp_ctx() -> crate::r#trait::DriverContext {
+        crate::r#trait::DriverContext {
+            identity: orgasmic_core::RuntimeIdentity::new("run-fixture", "boot-fixture"),
+            run_kind: crate::r#trait::RunKind::Worker,
+            task_id: "CONV-FIXTURE".into(),
+            worker_id: "fixture".into(),
+            project_id: Some("orgasmic".into()),
+            worktree: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn acp_session_load_replaces_session_new_and_swallows_replay() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut transport = ChannelTransport {
+            incoming: std::collections::VecDeque::from(vec![
+                json!({"jsonrpc": "2.0", "id": 1, "result": {"agentCapabilities": {"loadSession": true}}}),
+                json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "sess-old", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "replayed"}}}}),
+                json!({"jsonrpc": "2.0", "id": 2, "result": {"modes": {"currentModeId": "default", "availableModes": []}}}),
+            ]),
+            outgoing: Vec::new(),
+        };
+        let mut adapter = crate::adapters::acp::AcpAdapter::new("codex", true).unwrap();
+        let init = adapter
+            .stdio_session_init(
+                &acp_ctx(),
+                &crate::r#trait::DriverConfig::from_value(json!({
+                    "acp_load_session": "sess-old",
+                    "auto_start_turn": false
+                })),
+            )
+            .unwrap();
+
+        run_jsonrpc_handshake(
+            &mut transport,
+            &mut RpcIds::new(),
+            "fixture",
+            init,
+            &tx,
+            &mut adapter,
+            &SandboxAllowlist::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            transport
+                .outgoing
+                .iter()
+                .map(|request| request["method"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["initialize", "session/load"]
+        );
+        assert_eq!(
+            transport.outgoing[1]["params"],
+            json!({"sessionId": "sess-old", "cwd": "/", "mcpServers": []})
+        );
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        assert!(
+            !events.iter().any(|e| matches!(e, DriverEvent::Acp { message, .. } if message["method"] == "session/update")),
+            "replayed session/update must not be emitted: {events:?}"
+        );
+        let ready = events
+            .iter()
+            .find_map(|e| match e {
+                DriverEvent::Ready { capabilities, .. } => Some(capabilities.clone()),
+                _ => None,
+            })
+            .expect("ready event");
+        assert_eq!(ready["session_id"], "sess-old");
+        assert_eq!(ready["load_session"], true);
+        assert_eq!(ready["loaded"], true);
+        assert!(events.iter().any(
+            |e| matches!(e, DriverEvent::Acp { message, .. } if message["method"] == "session/load")
+        ));
+    }
+
+    #[tokio::test]
+    async fn acp_session_load_is_refused_when_agent_lacks_load_session() {
+        let (tx, _rx) = mpsc::channel(8);
+        let mut transport = ChannelTransport {
+            incoming: std::collections::VecDeque::from(vec![json!({
+                "jsonrpc": "2.0", "id": 1, "result": {"agentCapabilities": {}}
+            })]),
+            outgoing: Vec::new(),
+        };
+        let mut adapter = crate::adapters::acp::AcpAdapter::new("codex", true).unwrap();
+        let init = adapter
+            .stdio_session_init(
+                &acp_ctx(),
+                &crate::r#trait::DriverConfig::from_value(json!({
+                    "acp_load_session": "sess-old",
+                    "auto_start_turn": false
+                })),
+            )
+            .unwrap();
+
+        let error = run_jsonrpc_handshake(
+            &mut transport,
+            &mut RpcIds::new(),
+            "fixture",
+            init,
+            &tx,
+            &mut adapter,
+            &SandboxAllowlist::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("does not advertise loadSession"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            transport
+                .outgoing
+                .iter()
+                .map(|request| request["method"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["initialize"]
         );
     }
 }

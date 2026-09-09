@@ -29,6 +29,8 @@ export function Player({ ctx, nodeId, onOpenNode, writable }) {
   const recording = recordings.find((a) => a.id === selected) || (!selected ? recordings[0] : undefined);
   const url = recording ? ctx.mediaUrl(nodeId, recording.id, recording.revision) : '';
   const editable = writable && can(ctx.projectId, 'attachments.write');
+  // core.chat@1 is optional: an older host has no ctx.openChat.
+  const chat = typeof ctx.openChat === 'function' && can(ctx.projectId, 'chat.write');
   useEffect(() => { alive.current = true; return () => { alive.current = false; pause.current = true; }; }, []);
   useEventStream((event) => {
     if (event.topic === 'graph' && event.payload.project_id === ctx.projectId && event.payload.layer === 'node-services') {
@@ -82,6 +84,18 @@ export function Player({ ctx, nodeId, onOpenNode, writable }) {
     } catch (cause) { if (!ctx.signal.aborted) setError(String(cause)); }
     finally { setLinking(false); }
   }
+  // Open the meeting's chat with a range chip at the playhead: 30 s from the
+  // current time, clamped to the recording's end when the duration is known.
+  // The daemon anchors the moment on the conversation's link.
+  function chatAboutMoment() {
+    if (!recording || !media.current) return;
+    const start = Math.round(media.current.currentTime * 1000);
+    if (!Number.isSafeInteger(start) || start < 0) return;
+    const end = Math.min(start + 30000, Number.isFinite(media.current.duration) ? Math.round(media.current.duration * 1000) : Infinity);
+    // An empty range (playhead at the very end) would be refused on send: open the chat without it.
+    ctx.openChat({ node: nodeId, purpose: 'meeting', ...(end > start ? { context: [{ kind: 'range', node: nodeId,
+      attachment: recording.id, revision: recording.revision, start_ms: start, end_ms: end }] } : {}) });
+  }
   return h('section', { className: 'meetings recording', 'aria-label': 'Recording' },
     h('h2', null, 'Recording'),
     assets.error ? h('p', { role: 'alert', className: 'error' }, String(assets.error), h(Button, { variant: 'link', onClick: () => void assets.refresh() }, 'Retry')) : null,
@@ -95,6 +109,10 @@ export function Player({ ctx, nodeId, onOpenNode, writable }) {
       onError: () => setMediaError('Playback failed. Check your connection and sign-in, or convert unsupported formats to a browser-playable format.'),
     }) : null,
     mediaError ? h('p', { role: 'alert', className: 'error' }, mediaError) : null,
+    url && recording && chat ? h('div', { className: 'chat-row' },
+      h(Button, { type: 'button', variant: 'outline', onClick: chatAboutMoment }, 'Chat about this moment'),
+      h(Button, { type: 'button', variant: 'outline', onClick: () => ctx.openChat({ node: nodeId, purpose: 'meeting',
+        context: [{ kind: 'attachment', node: nodeId, id: recording.id, revision: recording.revision }] }) }, 'Chat about this recording')) : null,
     editable ? h('div', { className: 'meetings' },
       h('label', { htmlFor: fieldId }, 'Upload recording (up to 8 GiB)', h(Input, { id: fieldId, type: 'file', accept: 'audio/wav,audio/mpeg,audio/ogg,audio/mp4,audio/webm,video/mp4,video/webm,video/ogg', disabled: busy,
         onChange: (e) => { setFile(e.target.files?.[0] || null); setOffset(0); setError(''); } })),

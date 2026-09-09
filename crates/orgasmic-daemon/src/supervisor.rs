@@ -161,6 +161,19 @@ pub fn record_spawn_pipeline_poll() {
     SPAWN_PIPELINE_POLLS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// What a released conversation-owned run tells the daemon, so the
+/// conversation's journal can record the release with its reason and actor.
+/// Every release path (route, manager, idle sweep, driver exit) funnels
+/// through [`Supervisor::release_one`], which is where this is sent.
+#[derive(Debug, Clone)]
+pub struct ReleaseNotice {
+    pub run_id: String,
+    pub project_id: Option<String>,
+    pub task_id: String,
+    pub conversation_id: Option<String>,
+    pub reason: String,
+}
+
 /// What a caller hands the supervisor to start a run.
 #[derive(Debug, Clone)]
 pub struct AcquireRequest {
@@ -181,6 +194,10 @@ pub struct AcquireRequest {
     /// Full UUID attempt token minted by the CLI for this dispatch. Fences
     /// delayed cleanup against a newer live attempt (TASK-ZGT1X).
     pub dispatch_attempt_token: Option<String>,
+    /// The `CONV-` node this run belongs to, when a conversation owns it
+    /// (CHAT-SCOPE C2). Equals `task_id` for chat runs; set beside a task
+    /// lease for dispatched implementer/reviewer attempts.
+    pub conversation_id: Option<String>,
     /// Where the per-run JSONL lives. The supervisor opens this through
     /// the daemon writer so concurrent runs don't race on the file
     /// descriptor.
@@ -391,6 +408,12 @@ pub struct Supervisor {
     /// production implementation is proven separately against a real process
     /// subtree.
     work_probe: Arc<std::sync::RwLock<Arc<dyn WorkEvidenceProbe>>>,
+    /// Where [`ReleaseNotice`]s go, once the daemon has an `ApiState` to
+    /// journal them with. Outside `Inner` so reporting a release never waits
+    /// on the run lock, and optional because every supervisor in a unit test
+    /// runs without one.
+    release_notices:
+        Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ReleaseNotice>>>>,
 }
 
 // orgasmic:TASK-AK6EM
@@ -1143,6 +1166,9 @@ struct RunRecord {
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
     dispatch_attempt_token: Option<String>,
+    /// Mirrors [`AcquireRequest::conversation_id`]. Not persisted in
+    /// `RunMeta`, so a boot reattach restores `None`.
+    conversation_id: Option<String>,
     /// The dispatch preflight's one-word verdict (see `Lifecycle::RunMeta`).
     /// `None` for runs that were not dispatched through a probe.
     preflight: Option<String>,
@@ -1434,6 +1460,32 @@ impl Supervisor {
             work_probe: Arc::new(std::sync::RwLock::new(Arc::new(
                 ProcessSubtreeCpuProbe::default(),
             ))),
+            release_notices: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Send every conversation-owned run's release to `notices`. Called once
+    /// at boot, when the daemon has the state to journal a release with.
+    pub fn report_releases_to(&self, notices: tokio::sync::mpsc::UnboundedSender<ReleaseNotice>) {
+        if let Ok(mut guard) = self.release_notices.lock() {
+            *guard = Some(notices);
+        }
+    }
+
+    /// Report one release, if it belongs to a conversation and anyone is
+    /// listening. Never fails a release.
+    fn report_release(&self, notice: ReleaseNotice) {
+        if notice.conversation_id.is_none()
+            && !notice
+                .task_id
+                .starts_with(crate::api::conversations::CONVERSATION_PREFIX)
+        {
+            return;
+        }
+        if let Ok(guard) = self.release_notices.lock() {
+            if let Some(notices) = guard.as_ref() {
+                let _ = notices.send(notice);
+            }
         }
     }
 
@@ -1768,6 +1820,7 @@ impl Supervisor {
                 .as_ref()
                 .and_then(|native| native.credential_mode.clone()),
             preflight.clone(),
+            req.conversation_id.clone(),
             persisted_driver_config.clone(),
         )
         .await?;
@@ -1843,6 +1896,7 @@ impl Supervisor {
                 last_path: req.last_path.clone(),
                 stdout_path: req.stdout_path.clone(),
                 dispatch_attempt_token: req.dispatch_attempt_token.clone(),
+                conversation_id: req.conversation_id.clone(),
                 preflight,
                 requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
                 terminal_round: 0,
@@ -2169,6 +2223,9 @@ impl Supervisor {
                     .as_ref()
                     .and_then(|native| native.credential_mode.clone()),
                 preflight_from_driver_config(&driver_config),
+                // A recovery claim adopts a dispatch or stage session; a
+                // conversation-owned run is never claimed this way.
+                None,
                 driver_config,
             )
             .await?;
@@ -2238,6 +2295,7 @@ impl Supervisor {
         requires_worker_finalize: bool,
         credential_mode: Option<String>,
         preflight: Option<String>,
+        conversation_id: Option<String>,
         driver_config: DriverConfig,
     ) -> Result<(), SupervisorError> {
         let evt = Lifecycle::RunMeta {
@@ -2252,6 +2310,7 @@ impl Supervisor {
             requires_worker_finalize: Some(requires_worker_finalize),
             credential_mode,
             preflight,
+            conversation_id,
             driver_config: driver_config.0,
         };
         self.writer
@@ -2276,6 +2335,18 @@ impl Supervisor {
         run_id: &str,
         text: &str,
     ) -> Result<(), SupervisorError> {
+        self.record_composer_send_with_context(run_id, text, None)
+            .await
+    }
+
+    /// [`record_composer_send`] carrying the raw context chips that rode
+    /// with a conversation send (dec: CHAT-SCOPE C1).
+    pub async fn record_composer_send_with_context(
+        &self,
+        run_id: &str,
+        text: &str,
+        context: Option<serde_json::Value>,
+    ) -> Result<(), SupervisorError> {
         let (session_path, identity) = {
             let g = self.inner.lock().await;
             let rec = g
@@ -2286,6 +2357,7 @@ impl Supervisor {
         };
         let evt = Lifecycle::ComposerSend {
             text: text.to_string(),
+            context,
         };
         self.writer
             .append_session(SessionAppend {
@@ -2377,6 +2449,7 @@ impl Supervisor {
         requires_worker_finalize: bool,
         project_id: Option<String>,
         worktree: Option<PathBuf>,
+        conversation_id: Option<String>,
         session_path: PathBuf,
         driver_config: DriverConfig,
         append_reattach_marker: bool,
@@ -2540,6 +2613,7 @@ impl Supervisor {
             last_path: recovery_last_path,
             stdout_path: recovery_stdout_path,
             dispatch_attempt_token: None,
+            conversation_id,
             preflight: preflight_from_driver_config(&driver_config),
             requires_worker_finalize,
             terminal_round: 0,
@@ -2681,6 +2755,19 @@ impl Supervisor {
         input: String,
         caller_identity: &RuntimeIdentity,
     ) -> Result<orgasmic_drivers::UserInputAck, SupervisorError> {
+        self.send_input_with_context(run_id, input, caller_identity, None)
+            .await
+    }
+
+    /// [`send_input`] that records `context` (raw conversation chips) on
+    /// the composer_send lifecycle event.
+    pub async fn send_input_with_context(
+        &self,
+        run_id: &str,
+        input: String,
+        caller_identity: &RuntimeIdentity,
+        context: Option<serde_json::Value>,
+    ) -> Result<orgasmic_drivers::UserInputAck, SupervisorError> {
         let ack = {
             let mut g = self.inner.lock().await;
             let rec = g
@@ -2707,7 +2794,10 @@ impl Supervisor {
         // lifecycle event for every accepted operator send. Best-effort — a
         // recording failure must not mask a delivered input.
         if ack.accepted {
-            if let Err(e) = self.record_composer_send(run_id, &input).await {
+            if let Err(e) = self
+                .record_composer_send_with_context(run_id, &input, context)
+                .await
+            {
                 warn!(error = %e, run_id, "composer_send recording failed");
             }
         }
@@ -3164,7 +3254,7 @@ impl Supervisor {
         // Producer completion proves every sender is gone. Drain the receiver
         // to closure; never abort the receiver while an event can still land.
         let _ = (&mut drain).await;
-        let final_outcome = {
+        let (final_outcome, notice) = {
             let mut g = self.inner.lock().await;
             let rec = g
                 .runs
@@ -3175,7 +3265,19 @@ impl Supervisor {
                 &rec.task_id,
                 rec.kind,
             ));
-            (rec.terminal_outcome.unwrap_or(outcome), rec.first_error)
+            // The record is the only place the conversation is named; it is
+            // gone by the time the release event is written.
+            let notice = ReleaseNotice {
+                run_id: run_id.to_string(),
+                project_id: rec.project_id.clone(),
+                task_id: rec.task_id.clone(),
+                conversation_id: rec.conversation_id.clone(),
+                reason: reason.to_string(),
+            };
+            (
+                (rec.terminal_outcome.unwrap_or(outcome), rec.first_error),
+                notice,
+            )
         };
         let (final_outcome, first_error) = final_outcome;
         let evt = Lifecycle::Release {
@@ -3200,6 +3302,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
+        self.report_release(notice);
         Ok(())
     }
 
@@ -3228,6 +3331,7 @@ impl Supervisor {
                 last_path: rec.last_path.clone(),
                 stdout_path: rec.stdout_path.clone(),
                 dispatch_attempt_token: rec.dispatch_attempt_token.clone(),
+                conversation_id: rec.conversation_id.clone(),
                 preflight: rec.preflight.clone(),
                 claimed_manager: rec.manager_terminal_claim.is_some(),
             })
@@ -4679,6 +4783,9 @@ pub struct RunSummary {
     pub stdout_path: Option<PathBuf>,
     #[serde(default)]
     pub dispatch_attempt_token: Option<String>,
+    /// The conversation (`CONV-` node) that owns this run, `null` otherwise.
+    #[serde(default)]
+    pub conversation_id: Option<String>,
     /// The dispatch preflight's one-word verdict (`ok`, `unchecked:<why>`),
     /// `None` when the run was not admitted through a probe (TASK-AP298).
     #[serde(default)]
@@ -8177,6 +8284,7 @@ mod tests {
             false,
             Some("proj".into()),
             Some(dir.path().to_path_buf()),
+            None,
             session_path,
             tmux::inert_config(),
             false,
@@ -8199,6 +8307,41 @@ mod tests {
             )),
             Some(&manager_run_id)
         );
+    }
+
+    /// A reattached chat run still names its conversation. The lease key
+    /// cannot answer this for a dispatch conversation (it leases on the task
+    /// id), so the id rides `Lifecycle::RunMeta` and comes back through
+    /// `reattach` into the record every summary is built from.
+    #[tokio::test]
+    async fn reattach_restores_the_conversation_that_owns_the_run() {
+        let (sup, dir, _writer) = make_unmonitored_supervisor();
+        let identity = RuntimeIdentity::planned("run-conv-reattach", "rt-conv", "boot-before");
+        let session_path = dir.path().join("conv-reattach.jsonl");
+        SessionWriter::open(&session_path, identity.clone()).unwrap();
+
+        sup.reattach(
+            &AlwaysAttachableDriver,
+            identity,
+            RunKind::Worker,
+            "CONV-00001".into(),
+            "chat".into(),
+            "chat".into(),
+            false,
+            Some("proj".into()),
+            Some(dir.path().to_path_buf()),
+            Some("CONV-00001".into()),
+            session_path,
+            tmux::inert_config(),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mut snapshot = sup.snapshot().await;
+        let run = snapshot.runs.pop().unwrap();
+        assert_eq!(run.conversation_id.as_deref(), Some("CONV-00001"));
     }
 
     #[cfg(unix)]
@@ -8620,6 +8763,7 @@ mod tests {
             true,
             Some("orgasmic".to_string()),
             Some(worktree.to_path_buf()),
+            None,
             session_path.to_path_buf(),
             tmux::inert_config(),
             false,
@@ -9159,6 +9303,7 @@ mod tests {
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
+            conversation_id: None,
             session_path: dir.join(format!("{task}.jsonl")),
             driver_config: tmux::inert_config(),
             stall_timeout_secs: None,
@@ -13811,6 +13956,7 @@ mod tests {
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
+            conversation_id: None,
             preflight: None,
             requires_worker_finalize: true,
             terminal_round: 0,

@@ -1,4 +1,4 @@
-//! Host-local member management (`orgasmic member add|revoke|list`).
+//! Host-local member management (`orgasmic member add|revoke|list|set-actions`).
 //!
 //! Thin CLI plumbing over `orgasmic_core::{add_member, revoke_member,
 //! read_members}`. Member records live at `$ORGASMIC_HOME/user/auth/members.org`
@@ -46,7 +46,11 @@ Examples:
 
 --role R seeds a wildcard grant (*=R) applying to every project. Each --grant
 PROJECT=ROLE adds a project-scoped grant. At least one of --role/--grant is
-required. ROLE is one of: editor, viewer, artifacts.")]
+required. ROLE is one of: editor, viewer, artifacts.
+
+--action NAME grants one explicit action on top of the roles, on every project
+the member has a role for. chat.execute lets this member run agents on the
+host as the daemon's OS user.")]
     Add {
         /// Member name ([A-Za-z0-9_.-], 1-64 chars).
         name: String,
@@ -56,6 +60,27 @@ required. ROLE is one of: editor, viewer, artifacts.")]
         /// Project-scoped grant `PROJECT=ROLE`; repeatable.
         #[arg(long = "grant", value_name = "PROJECT=ROLE")]
         grant: Vec<String>,
+        /// Explicit action grant (e.g. chat.execute); repeatable.
+        #[arg(long = "action", value_name = "ACTION")]
+        action: Vec<String>,
+    },
+    /// Replace a member's explicit action grants (no actions clears them).
+    #[command(
+        name = "set-actions",
+        after_help = "\
+Examples:
+  orgasmic member set-actions anna chat.execute
+  orgasmic member set-actions anna
+
+chat.execute lets this member run agents on the host as the daemon's OS user.
+Explicit actions apply on every project the member has a role for and are
+effective on the next request."
+    )]
+    SetActions {
+        /// Member name.
+        name: String,
+        /// Action names; empty clears every explicit grant.
+        actions: Vec<String>,
     },
     /// Revoke a member; all sessions from that token become invalid.
     Revoke {
@@ -68,19 +93,35 @@ required. ROLE is one of: editor, viewer, artifacts.")]
 
 pub fn cmd_member(home: &Home, cmd: MemberCmd) -> Result<()> {
     match cmd {
-        MemberCmd::Add { name, role, grant } => cmd_add(home, &name, role, &grant),
+        MemberCmd::Add {
+            name,
+            role,
+            grant,
+            action,
+        } => cmd_add(home, &name, role, &grant, &action),
+        MemberCmd::SetActions { name, actions } => cmd_set_actions(home, &name, &actions),
         MemberCmd::Revoke { name } => cmd_revoke(home, &name),
         MemberCmd::List => cmd_list(home),
     }
 }
 
-fn cmd_add(home: &Home, name: &str, role: Option<RoleArg>, grant: &[String]) -> Result<()> {
+fn cmd_add(
+    home: &Home,
+    name: &str,
+    role: Option<RoleArg>,
+    grant: &[String],
+    actions: &[String],
+) -> Result<()> {
     let grants = build_grants(role, grant)?;
+    validate_actions(actions)?;
     refuse_daemon_actor_collision(home, name)?;
-    let token = orgasmic_core::add_member(home, name, &grants)?;
+    let token = orgasmic_core::add_member_with_actions(home, name, &grants, actions)?;
 
     println!("✓ minted member {name}");
     println!("  grants: {}", format_grants(&grants));
+    if !actions.is_empty() {
+        println!("  actions: {}", actions.join(" "));
+    }
     println!();
     println!("  token (shown only once — store it now, it is not recoverable):");
     println!();
@@ -132,6 +173,40 @@ fn refuse_daemon_actor_collision(home: &Home, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn cmd_set_actions(home: &Home, name: &str, actions: &[String]) -> Result<()> {
+    validate_actions(actions)?;
+    if orgasmic_core::set_member_actions(home, name, actions)? {
+        if actions.is_empty() {
+            println!("✓ cleared explicit actions for {name}");
+        } else {
+            println!("✓ set actions for {name}: {}", actions.join(" "));
+        }
+    } else {
+        bail!("no member named {name} on file");
+    }
+    Ok(())
+}
+
+/// Explicit actions are the daemon's own vocabulary; a typo must not mint a
+/// silent no-op grant.
+fn validate_actions(actions: &[String]) -> Result<()> {
+    use orgasmic_daemon::authz::{action_name, Action};
+    for action in actions {
+        if Action::from_name(action).is_none() {
+            bail!(
+                "unknown action `{action}`: expected one of {}",
+                Action::ALL
+                    .iter()
+                    .copied()
+                    .map(action_name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
 fn cmd_revoke(home: &Home, name: &str) -> Result<()> {
     if orgasmic_core::revoke_member(home, name)? {
         println!("✓ revoked member {name}");
@@ -150,8 +225,13 @@ fn cmd_list(home: &Home) -> Result<()> {
     }
     for m in &members {
         let hash_prefix: String = m.token_hash.chars().take(12).collect();
+        let actions = if m.actions.is_empty() {
+            String::new()
+        } else {
+            format!("  actions: {}", m.actions.join(" "))
+        };
         println!(
-            "{}  [{}…]  {}",
+            "{}  [{}…]  {}{actions}",
             m.name,
             hash_prefix,
             format_grants(&m.grants)
@@ -219,7 +299,7 @@ mod tests {
         let (_tmp, home) = temp_home();
         std::fs::write(home.config(), "manager:\n  actor: alice\n").unwrap();
 
-        let err = cmd_add(&home, "alice", Some(RoleArg::Viewer), &[]).unwrap_err();
+        let err = cmd_add(&home, "alice", Some(RoleArg::Viewer), &[], &[]).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("alice"), "names the collision: {msg}");
         assert!(msg.contains("collides"), "{msg}");
@@ -238,7 +318,7 @@ mod tests {
         let default_actor = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
         assert_ne!(default_actor, "unclaimed-name", "test precondition");
 
-        let err = cmd_add(&home, &default_actor, Some(RoleArg::Viewer), &[]).unwrap_err();
+        let err = cmd_add(&home, &default_actor, Some(RoleArg::Viewer), &[], &[]).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains(&default_actor), "names the collision: {msg}");
         assert!(msg.contains("daemon default actor"), "{msg}");
@@ -255,10 +335,48 @@ mod tests {
             .find(|candidate| *candidate != default_actor.as_str() && *candidate != "alice")
             .unwrap();
 
-        cmd_add(&home, name, Some(RoleArg::Viewer), &[]).unwrap();
+        cmd_add(&home, name, Some(RoleArg::Viewer), &[], &[]).unwrap();
         let members = orgasmic_core::read_members(&home).unwrap();
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].name, name);
+    }
+
+    #[test]
+    fn explicit_actions_are_validated_and_settable() {
+        let (_tmp, home) = temp_home();
+        let err = cmd_add(
+            &home,
+            "carol-x",
+            Some(RoleArg::Editor),
+            &[],
+            &["chat.fly".to_string()],
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err}").contains("unknown action `chat.fly`"),
+            "{err}"
+        );
+        assert!(orgasmic_core::read_members(&home).unwrap().is_empty());
+
+        cmd_add(
+            &home,
+            "carol-x",
+            Some(RoleArg::Editor),
+            &[],
+            &["chat.execute".to_string()],
+        )
+        .unwrap();
+        let members = orgasmic_core::read_members(&home).unwrap();
+        assert_eq!(members[0].actions, vec!["chat.execute".to_string()]);
+
+        cmd_set_actions(&home, "carol-x", &[]).unwrap();
+        assert!(orgasmic_core::read_members(&home).unwrap()[0]
+            .actions
+            .is_empty());
+        let err = cmd_set_actions(&home, "carol-x", &["nope".to_string()]).unwrap_err();
+        assert!(format!("{err}").contains("unknown action"), "{err}");
+        let err = cmd_set_actions(&home, "ghost", &[]).unwrap_err();
+        assert!(format!("{err}").contains("no member named ghost"), "{err}");
     }
 
     #[test]
