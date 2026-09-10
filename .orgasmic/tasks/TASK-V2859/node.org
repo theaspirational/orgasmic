@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-V2859
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-V2859 Attachments: publish blobs into the ledger under Git LFS :attachments:ledger:
+* IN_REVIEW TASK-V2859 Attachments: publish blobs into the ledger under Git LFS :attachments:ledger:
 :PROPERTIES:
 :ID: TASK-V2859
 :IMPLEMENTS: dec_X2046
