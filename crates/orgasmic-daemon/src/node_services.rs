@@ -1025,18 +1025,14 @@ async fn get_content(
 ) -> Result<Response, ApiError> {
     let (path, record, repo) =
         attachment(&state, &identity, &q.project, &node_id, &id, &revision).await?;
-    let relative = path
-        .strip_prefix(&repo)
-        .map_err(|_| {
-            internal(
-                "attachment payload location is outside the ledger; repair the project registration and retry",
-            )
-        })?
-        .to_string_lossy()
-        .into_owned();
     let mut file = tokio::fs::File::open(&path)
         .await
         .map_err(|_| {
+            // Only the error text needs the ledger-relative path; never an absolute one.
+            let relative = path
+                .strip_prefix(&repo)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| format!("<node>/attachments/{revision}"));
             let storage = crate::ledger_sync::attachment_storage(&repo).unwrap_or_default();
             ApiError::not_found(match storage {
                 AttachmentStorage::Local => match record.machine.as_deref() {

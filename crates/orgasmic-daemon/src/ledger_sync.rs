@@ -301,17 +301,38 @@ pub(crate) fn attachment_storage(ledger: &Path) -> Result<AttachmentStorage> {
     Ok(ProjectFile::from_org(&file, ".orgasmic/project.org")?.attachment_storage)
 }
 
+/// Ledgers whose storage setting is being ignored right now, so the degrade
+/// warning is logged once per fault rather than on every two-second tick.
+static DEGRADED_STORAGE: std::sync::OnceLock<Mutex<std::collections::BTreeSet<PathBuf>>> =
+    std::sync::OnceLock::new();
+
+fn staging_storage(ledger: &Path) -> AttachmentStorage {
+    let degraded = DEGRADED_STORAGE.get_or_init(Default::default);
+    let mut degraded = degraded.lock().unwrap_or_else(|e| e.into_inner());
+    match attachment_storage(ledger) {
+        Ok(storage) => {
+            degraded.remove(ledger);
+            storage
+        }
+        Err(error) => {
+            if degraded.insert(ledger.to_path_buf()) {
+                tracing::warn!(
+                    ledger = %ledger.display(),
+                    error = format!("{error:#}"),
+                    "attachment storage setting is missing, unreadable, or invalid; syncing as lfs until .orgasmic/project.org is fixed"
+                );
+            }
+            AttachmentStorage::Lfs
+        }
+    }
+}
+
 fn stage_ledger(ledger: &Path, machine_id: &str, index: Option<&Path>) -> Result<()> {
-    let storage = ledger
-        .join(".orgasmic")
-        .exists()
-        .then(|| attachment_storage(ledger))
-        .transpose()
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "attachment storage setting is missing, unreadable, or invalid; defaulting to lfs for ledger sync");
-            None
-        })
-        .unwrap_or_default();
+    let storage = if ledger.join(".orgasmic").exists() {
+        staging_storage(ledger)
+    } else {
+        AttachmentStorage::Lfs
+    };
     if index.is_none() && storage == AttachmentStorage::Lfs {
         ensure_attachment_lfs_attribute(ledger)?;
     }

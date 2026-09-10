@@ -979,13 +979,10 @@ fn migrate_legacy_attachment_blobs(home: &Home, projects: &[(String, PathBuf)]) 
         if !legacy.is_dir() {
             continue;
         }
-        let storage = match ledger_sync::attachment_storage(root) {
-            Ok(storage) => storage,
-            Err(error) => {
-                warn!(project, %error, "attachment storage setting is missing, unreadable, or invalid; skipping migration");
-                continue;
-            }
-        };
+        let storage = ledger_sync::attachment_storage(root).unwrap_or_else(|error| {
+            warn!(project, %error, "attachment storage setting is missing, unreadable, or invalid; migrating as lfs");
+            Default::default()
+        });
         if storage == orgasmic_core::schema::AttachmentStorage::Lfs {
             match ledger_sync::attachment_lfs_ready(root) {
                 Ok(true) => {}

@@ -105,7 +105,7 @@ pub enum NodeCmd {
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-        /// Node layer to address (task, decision, glossary, artifact); omitted
+        /// Node layer to address (task, decision, glossary, artifact, project); omitted
         /// → inferred from the id prefix.
         #[arg(long)]
         kind: Option<String>,
@@ -170,7 +170,7 @@ pub enum NodeBodyCmd {
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-        /// Node layer to address (task, decision, glossary, artifact); omitted
+        /// Node layer to address (task, decision, glossary, artifact, project); omitted
         /// → inferred from the id prefix.
         #[arg(long)]
         kind: Option<String>,
@@ -248,7 +248,7 @@ pub enum NodePropCmd {
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-        /// Node layer to address (task, decision, glossary, artifact); omitted
+        /// Node layer to address (task, decision, glossary, artifact, project); omitted
         /// → inferred from the id prefix.
         #[arg(long)]
         kind: Option<String>,
@@ -281,7 +281,7 @@ pub enum NodePropCmd {
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-        /// Node layer to address (task, decision, glossary, artifact); omitted
+        /// Node layer to address (task, decision, glossary, artifact, project); omitted
         /// → inferred from the id prefix.
         #[arg(long)]
         kind: Option<String>,
