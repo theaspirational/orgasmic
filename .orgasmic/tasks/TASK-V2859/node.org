@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-V2859
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-V2859 Attachments: publish blobs into the ledger under Git LFS :attachments:ledger:
+* DONE TASK-V2859 Attachments: publish blobs into the ledger under Git LFS :attachments:ledger:
 :PROPERTIES:
 :ID: TASK-V2859
 :IMPLEMENTS: dec_X2046
@@ -22,3 +22,8 @@ Implements dec_X2046. Today `finish_upload` in `crates/orgasmic-daemon/src/node_
 - [ ] Route tests in `node_services_routes.rs` prove: the blob lands under the node folder, content is served from there, the same revision uploaded twice does not fail, the gitattributes rule exists after a ledger sync, and a migrated legacy blob is served.
 - [ ] `cargo fmt --check`, `cargo clippy -p orgasmic-daemon --all-targets -- -D warnings`, and TEST_CMD are green.
 - [ ] `shipped/skills/orgasmic/operations/artifacts.md` (or the nearest operator doc) gains a short note: attachment bytes live in the ledger under LFS; the remote must have LFS enabled.
+** Evidence
+- Implementer: codex-chat gpt-5.6-sol high, run-01M250BXTA1D0P79E5A4KQJHDR, worker commit 25ccfd31, merged on main as bd3bee73.
+- Reviewer: claude-sdk opus[1m] high, run-01M251JNHQX580NXP3FWAQFDRC, verdict approve-with-follow-ups (P1 high: no lfs install; P2-P8 medium/low).
+- Follow-ups P1, P2, P3, P4, P6, P7 landed in 7af2d428 on main. Left open: P5 (orphaned .tmp sweep), P8 (worker commit message).
+- Gates on 7af2d428: cargo fmt clean; clippy -p orgasmic-daemon --all-targets -D warnings clean; node_services_routes 1 passed 1 ignored (2 GiB gate); ledger_sync lib 21 passed.
