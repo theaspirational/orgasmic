@@ -31,3 +31,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 216bb49d-2bf0-4d74-b32f-58de112780ae
 :END:
+
+* tx-20260910-orgasmic-8975ffdb-df19-4e0f-8450-ba9b6a18f7df task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-8975ffdb-df19-4e0f-8450-ba9b6a18f7df
+:TIME:    [2026-09-10 Thu 07:47:33]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FY0TS
+:TARGET: .orgasmic/tasks/TASK-FY0TS/node.org
+:REASON: transition TASK-FY0TS to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 88f3b2f3-47fa-4ad4-850c-fd4c8a7a35ad
+:END:
