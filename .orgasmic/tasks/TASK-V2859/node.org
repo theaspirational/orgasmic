@@ -1,0 +1,24 @@
+#+title: orgasmic task TASK-V2859
+#+orgasmic_version: 2
+
+* BACKLOG TASK-V2859 Attachments: publish blobs into the ledger under Git LFS    :attachments:ledger:
+:PROPERTIES:
+:ID: TASK-V2859
+:IMPLEMENTS: dec_X2046
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-daemon --test node_services_routes
+:WRITE_SCOPE: crates/orgasmic-daemon/src/node_services.rs crates/orgasmic-daemon/src/ledger_sync.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/tests/node_services_routes.rs shipped/skills/orgasmic/operations/artifacts.md
+:END:
+
+** Description
+Implements dec_X2046. Today `finish_upload` in `crates/orgasmic-daemon/src/node_services.rs` hard-links a finished upload into `store_root(project)/blobs/<sha256>` under the daemon home, and `attachment()` reads it back from there. Move publication into the node folder in the ledger and let the existing ledger sync commit it through Git LFS.
+
+** Acceptance criteria
+- [ ] `finish_upload` publishes the blob at `<node dir>/attachments/<sha256>` (the directory holding that node's `node.org` and `attachments.org`), atomically, never overwriting an existing revision. Upload staging stays under the home assets store.
+- [ ] `attachment()` / `get_content` read from the node folder. The 404 message no longer points at a backup that does not exist.
+- [ ] The daemon writes `.orgasmic/.gitattributes` in the ledger, idempotently, with one rule tracking `*/*/attachments/**` as LFS (`filter=lfs diff=lfs merge=lfs -text`). Written where the ledger is prepared, before the first `git add --all -- .orgasmic`.
+- [ ] Boot migration: every blob still in `store_root/blobs` that some `attachments.org` references is hard-linked (copy on cross-device) into its node folder. Old files are left in place. Unreferenced blobs are left alone.
+- [ ] The storage quota scan in `start_upload` counts what is actually stored (node folders), not the old blobs dir.
+- [ ] Route tests in `node_services_routes.rs` prove: the blob lands under the node folder, content is served from there, the same revision uploaded twice does not fail, the gitattributes rule exists after a ledger sync, and a migrated legacy blob is served.
+- [ ] `cargo fmt --check`, `cargo clippy -p orgasmic-daemon --all-targets -- -D warnings`, and TEST_CMD are green.
+- [ ] `shipped/skills/orgasmic/operations/artifacts.md` (or the nearest operator doc) gains a short note: attachment bytes live in the ledger under LFS; the remote must have LFS enabled.

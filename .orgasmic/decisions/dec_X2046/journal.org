@@ -1,0 +1,17 @@
+#+title: orgasmic journal dec_X2046
+#+orgasmic_version: 2
+
+* tx-20260910-orgasmic-b0fcce35-ae23-4e14-884a-c9236a40f917 graph.decision.created
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-b0fcce35-ae23-4e14-884a-c9236a40f917
+:TIME:    [2026-09-10 Thu 06:33:19]
+:TYPE:    graph.decision.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/decisions/dec_X2046/node.org
+:REASON: created graph node dec_X2046
+:NODE_ID: dec_X2046
+:EVENT_ID: c3711b99-1b8b-4102-a767-c2a0e272b861
+:REQUEST_REPLAY_V1: {"request_id":"8b3b2f52-0d1e-4c53-9a5e-2f6a1c1d0a01/tx","mutation":{"operation":"graph.decision.created","project_id":"orgasmic","payload_sha256":"82f48c832a30f947dfb94fb186b360c4f797718312c2521bd69d49c552914eca"},"mutation_id":"dec_X2046","written_paths":[{"project":"orgasmic","relative":".orgasmic/decisions/dec_X2046/node.org"},{"project":"orgasmic","relative":".orgasmic/decisions/dec_X2046/journal.org"}]}
+:END:

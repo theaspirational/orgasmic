@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_X2046
+#+orgasmic_version: 2
+
+* dec_X2046 Attachment blobs live in the ledger under Git LFS
+:PROPERTIES:
+:DECIDED_AT: 2026-09-10
+:ID: dec_X2046
+:SOURCE: Chat scope landing session 2026-09-10; attachment durability audit
+:END:
+
+** Context
+Attachment records (`attachments.org`) already live next to `node.org` in the ledger branch, which has a GitHub remote and a repair tool. The bytes do not: `finish_upload` hard-links each blob into `~/.orgasmic/assets/<project-hash>/blobs/<sha256>`, a directory outside every git repository. Nothing syncs or backs it up. A machine loss keeps the record and loses the payload; `get_content` then answers 404 "restore it from the asset backup" for a backup that does not exist.
+
+** Decision
+Blobs move into the ledger next to their record: `.orgasmic/<collection>/<id>/attachments/<sha256>`, tracked by Git LFS through a daemon-written `.orgasmic/.gitattributes`. The daemon's own ledger sync (`git add --all -- .orgasmic`) then stores them through the LFS clean filter, so "push the ledger" is the one durability story for records and bytes alike. Upload staging stays in the home assets store; only publication moves. The content-addressed name is kept, so a revision is still immutable and de-duplicated within a node.
+
+** Consequences
+One backup path for all ledger data. Existing blobs are migrated once at daemon boot (hard-link or copy into the node folder, keep the old file until the ledger commit lands). The ledger remote needs LFS enabled; a push without LFS support fails loudly instead of silently dropping payloads. Cross-node de-duplication is given up: the same file attached to two nodes is stored twice, which LFS collapses server-side anyway. Rejected: a separate asset sync target (S3, second machine) because it adds a second remote, a second secret, and a second failure mode for the same data.

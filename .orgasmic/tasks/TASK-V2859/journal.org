@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-V2859
+#+orgasmic_version: 2
+
+* tx-20260910-orgasmic-25ea9afa-b81c-472e-ada5-3c913137bd5b task.created
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-25ea9afa-b81c-472e-ada5-3c913137bd5b
+:TIME:    [2026-09-10 Thu 06:33:34]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-V2859
+:TARGET: .orgasmic/tasks/TASK-V2859/node.org
+:REASON: dec_X2046: attachment payloads are not backed up anywhere today
+:EVENT_ID: b50d0cea-5722-4e87-bf3b-9126a2333aa3
+:REQUEST_REPLAY_V1: {"request_id":"8b3b2f52-0d1e-4c53-9a5e-2f6a1c1d0a02/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"0c44516de86cd63cfb90fba23b9495557336e4439839b6258314794989fef41a"},"mutation_id":"TASK-V2859","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-V2859/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-V2859/journal.org"}]}
+:END:
