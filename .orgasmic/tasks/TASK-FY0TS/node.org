@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-FY0TS
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-FY0TS Attachments: per-project ATTACHMENT_STORAGE lfs|local, with actionable errors :attachments:ledger:
+* IN_REVIEW TASK-FY0TS Attachments: per-project ATTACHMENT_STORAGE lfs|local, with actionable errors :attachments:ledger:
 :PROPERTIES:
 :ID: TASK-FY0TS
 :IMPLEMENTS: dec_8DW4V
