@@ -9668,3 +9668,25 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-FY0TS/dispatches/tx-20260910-orgasmic-d57f1cdd-5a2c-43e9-a5cd-47ad938f5af6/report.md
 :EVENT_ID:     05eef412-c097-4b7b-8ac6-d071729c1489
 :END:
+
+* TX 2026-09-10 Thu 08:29:29 reviewer.done TASK-FY0TS
+:PROPERTIES:
+:TX_ID:        tx-20260910-orgasmic-e42916ca-d73e-4876-81e1-24d6a467bd6a
+:TIME:         [2026-09-10 Thu 08:29:29]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-FY0TS
+:REASON:       M1 M2 L1 L2 fixed on main after merge; G1 G2 tests and L3 left open
+:MODEL:        opus[1m]
+:EFFORT:       high
+:REVIEWED_DIFF: 7af2d428..fb27c25c
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260910-orgasmic-d57f1cdd-5a2c-43e9-a5cd-47ad938f5af6
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-FY0TS/dispatches/tx-20260910-orgasmic-d57f1cdd-5a2c-43e9-a5cd-47ad938f5af6/report.md
+:EVENT_ID:     5184db80-6b44-44c4-b2ce-5313b8e89465
+:END:
