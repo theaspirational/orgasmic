@@ -1,0 +1,26 @@
+#+title: orgasmic task TASK-FY0TS
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-FY0TS Attachments: per-project ATTACHMENT_STORAGE lfs|local, with actionable errors :attachments:ledger:
+:PROPERTIES:
+:ID: TASK-FY0TS
+:IMPLEMENTS: dec_8DW4V
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-daemon --test node_services_routes
+:WRITE_SCOPE: crates/orgasmic-core/src/schema.rs crates/orgasmic-core/src/node_services.rs crates/orgasmic-daemon/src/node_services.rs crates/orgasmic-daemon/src/ledger_sync.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/node_services_routes.rs crates/orgasmic-cli/src shipped/skills/orgasmic/operations/artifacts.md
+:END:
+
+** Description
+Implements dec_8DW4V on top of 7af2d428. Add a per-project attachment storage mode read from the PROJECT heading drawer in `.orgasmic/project.org`: `ATTACHMENT_STORAGE` = `lfs` (default, absent means lfs) or `local`. Make every error a user meets on the attachment paths say what happened and what to do next.
+
+** Acceptance criteria
+- [ ] `ProjectFile` (orgasmic-core schema.rs) exposes `attachment_storage` parsed from the drawer; an unknown value is a named `SchemaError` (mentions the key, the bad value, and the two accepted values).
+- [ ] `local` mode: `stage_ledger` excludes `*/*/attachments/**` (same exclude list the `.tmp` patterns use); `finish_upload` skips `attachment_lfs_ready`; the migration at boot still links legacy blobs in (they are simply not staged).
+- [ ] `lfs` mode keeps today's behaviour exactly.
+- [ ] `AttachmentRecord` gains an optional `MACHINE` property (machine id of the daemon that published the payload); rendered and parsed; older records without it still parse.
+- [ ] `get_content` 404 when the payload file is absent reads like: `attachment payload is not on this machine (uploaded on machine <id>); this project stores attachments locally, not in git` in local mode, and `attachment payload missing; run git lfs pull in the ledger` in lfs mode.
+- [ ] `finish_upload` 503 (lfs mode, no git-lfs) tells the user both fixes: install git-lfs, or set `:ATTACHMENT_STORAGE: local` on the project (name the CLI verb that sets it).
+- [ ] Setting the property goes through the CLI (`orgasmic node prop` on the project node, or a small dedicated verb if the project node is not reachable that way); the write refuses an unknown value by name.
+- [ ] Route tests: local mode never stages a blob (assert the blob is absent from `git ls-files` / the tree after a sync on a remote-backed fixture, or the exclude pattern via `git add --dry-run`), lfs mode unchanged, invalid value refused, 404 text in both modes, 503 text names both fixes.
+- [ ] Operator doc: a short `local` paragraph under the `## Attachments` heading in `shipped/skills/orgasmic/operations/artifacts.md`.
+- [ ] `cargo fmt --check`, `cargo clippy -p orgasmic-daemon --all-targets -- -D warnings`, `cargo clippy -p orgasmic-core -- -D warnings`, TEST_CMD, `cargo test -p orgasmic-daemon --lib ledger_sync`, `cargo test -p orgasmic-core` green.

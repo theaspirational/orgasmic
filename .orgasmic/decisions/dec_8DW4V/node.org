@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_8DW4V
+#+orgasmic_version: 2
+
+* dec_8DW4V Attachment storage is a per-project choice: LFS by default, local on request
+:PROPERTIES:
+:DECIDED_AT: 2026-09-10
+:ID: dec_8DW4V
+:PARENT: dec_X2046
+:SOURCE: TASK-V2859 review follow-up; operator question about remotes without LFS
+:END:
+
+** Context
+dec_X2046 makes Git LFS the durability story for attachment bytes. That leaves two groups stuck: a ledger pushed to a remote without LFS (a bare repo over SSH, a host with LFS off), and people who do not want large binaries in git at all. Today they get a 503 on upload finish or a push that fails on the first blob. Local-only ledgers (no origin) already work without LFS because nothing is ever committed.
+
+** Decision
+Storage is chosen per project through one drawer property on the PROJECT heading in `.orgasmic/project.org`: `:ATTACHMENT_STORAGE: lfs` (the default when absent) or `local`. In `local` mode the record still syncs but the bytes never enter git: the ledger sync excludes `*/*/attachments/**` from staging, the upload finish skips the LFS probe, and the record carries the machine id that holds the payload so another machine answers a precise 404. Any other value is refused by name at write time and at upload time. The default stays opinionated; the escape hatch is explicit and visible in the ledger.
+
+** Consequences
+Self-hosted and LFS-averse users keep the whole feature with the durability trade made in the open. A local-mode payload is lost with its machine, and the 404 says so and names the machine. Switching a project from local to lfs later is a one-property change plus the existing boot behaviour; existing bytes already sit in the node folder and are staged on the next sync. Every error on these paths must tell the user what to do, not only what failed.

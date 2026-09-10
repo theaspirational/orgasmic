@@ -1,0 +1,33 @@
+#+title: orgasmic journal TASK-FY0TS
+#+orgasmic_version: 2
+
+* tx-20260910-orgasmic-e0aec462-2991-4f7c-a6ff-7ffbae8e598b task.created
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-e0aec462-2991-4f7c-a6ff-7ffbae8e598b
+:TIME:    [2026-09-10 Thu 07:15:42]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FY0TS
+:TARGET: .orgasmic/tasks/TASK-FY0TS/node.org
+:REASON: dec_8DW4V: remotes without LFS and LFS-averse users need an explicit local mode
+:EVENT_ID: 6c8aa4f1-9189-425f-b932-bdb7108ae1e0
+:REQUEST_REPLAY_V1: {"request_id":"8b3b2f52-0d1e-4c53-9a5e-2f6a1c1d0a04/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"51daf4b4404d2c92e9c42b33c282026a3f41d8de922fbe11b5664b9e10d5c3e7"},"mutation_id":"TASK-FY0TS","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-FY0TS/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-FY0TS/journal.org"}]}
+:END:
+
+* tx-20260910-orgasmic-7d5ad239-70f5-4599-be7c-b4cd1f17124a task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-7d5ad239-70f5-4599-be7c-b4cd1f17124a
+:TIME:    [2026-09-10 Thu 07:15:43]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FY0TS
+:TARGET: .orgasmic/tasks/TASK-FY0TS/node.org
+:REASON: transition TASK-FY0TS to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 216bb49d-2bf0-4d74-b32f-58de112780ae
+:END:
