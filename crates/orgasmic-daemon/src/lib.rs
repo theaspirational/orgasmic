@@ -976,6 +976,23 @@ fn migrate_legacy_attachment_blobs(home: &Home, projects: &[(String, PathBuf)]) 
             .join("assets")
             .join(format!("{:x}", Sha256::digest(project.as_bytes())))
             .join("blobs");
+        if !legacy.is_dir() {
+            continue;
+        }
+        match ledger_sync::attachment_lfs_ready(root) {
+            Ok(true) => {}
+            Ok(false) => {
+                warn!(
+                    project,
+                    "git-lfs missing; legacy attachment blobs stay in the home store"
+                );
+                continue;
+            }
+            Err(error) => {
+                warn!(project, %error, "attachment LFS probe failed; skipping migration");
+                continue;
+            }
+        }
         let Ok(collections) = std::fs::read_dir(root.join(".orgasmic")) else {
             continue;
         };

@@ -587,30 +587,17 @@ async fn start_upload(
     }
     let mut reserved = 0u64;
     // ponytail: quota is a metadata scan on upload creation only; index it if upload volume warrants it.
-    if let Ok(collections) = std::fs::read_dir(&owner.ledger) {
-        for collection in collections {
-            let collection = collection.map_err(internal)?;
-            if !collection.file_type().map_err(internal)?.is_dir() {
-                continue;
-            }
-            let Ok(nodes) = std::fs::read_dir(collection.path()) else {
-                continue;
-            };
-            for node in nodes {
-                let node = node.map_err(internal)?;
-                if !node.file_type().map_err(internal)?.is_dir() {
-                    continue;
-                }
-                let Ok(attachments) = std::fs::read_dir(node.path().join("attachments")) else {
-                    continue;
-                };
-                for attachment in attachments {
-                    let attachment = attachment.map_err(internal)?;
-                    if attachment.file_type().map_err(internal)?.is_file()
-                        && attachment.file_name().to_str().is_some_and(valid_digest)
-                    {
-                        reserved =
-                            reserved.saturating_add(attachment.metadata().map_err(internal)?.len());
+    // The ledger is a live worktree the sync loop rewrites; an entry that
+    // vanishes mid-walk is skipped, not a failed upload.
+    let dirs = |path: PathBuf| std::fs::read_dir(path).into_iter().flatten().flatten();
+    for collection in dirs(owner.ledger.clone()) {
+        for node in dirs(collection.path()) {
+            for attachment in dirs(node.path().join("attachments")) {
+                if attachment.file_name().to_str().is_some_and(valid_digest) {
+                    if let Ok(meta) = attachment.metadata() {
+                        if meta.is_file() {
+                            reserved = reserved.saturating_add(meta.len());
+                        }
                     }
                 }
             }
@@ -862,10 +849,26 @@ async fn finish_upload(
         .join("attachments")
         .join(&revision);
     let source = payload.clone();
-    tokio::task::spawn_blocking(move || crate::publish_blob(&source, &blob))
-        .await
-        .map_err(internal)?
-        .map_err(internal)?;
+    let repo = owner.ledger.parent().map(FsPath::to_path_buf);
+    let published = tokio::task::spawn_blocking(move || {
+        match repo
+            .as_deref()
+            .map(crate::ledger_sync::attachment_lfs_ready)
+        {
+            Some(Ok(false)) => return Ok(None),
+            Some(Err(e)) => return Err(std::io::Error::other(e.to_string())),
+            _ => {}
+        }
+        crate::publish_blob(&source, &blob).map(Some)
+    })
+    .await
+    .map_err(internal)?
+    .map_err(internal)?;
+    if published.is_none() {
+        return Err(ApiError::unavailable(
+            "git-lfs is not installed; attachment bytes cannot be published to a ledger with a remote",
+        ));
+    }
     let record = AttachmentRecord {
         id: id.clone(),
         node: upload.node.clone(),

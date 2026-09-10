@@ -69,7 +69,11 @@ or a reported worker result as evidence to inspect, not as lifecycle closure.
 orgasmic member list --help
 ```
 
+## Attachments
+
 Attachment bytes live beside their node at `<node>/attachments/<sha256>` and are
-tracked through Git LFS; the ledger remote must have LFS enabled. Legacy blobs in
-the home assets store are linked or copied into the ledger at daemon boot and left
-in place.
+tracked through Git LFS. On a ledger with a remote, `git-lfs` must be installed on
+the machine (the daemon runs `git lfs install --local` itself) and the remote must
+have LFS enabled; without the binary, an upload's finish step answers 503 rather
+than committing raw bytes. Legacy blobs in the home assets store are linked or
+copied into the ledger at daemon boot and left in place.

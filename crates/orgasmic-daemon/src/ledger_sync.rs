@@ -104,7 +104,6 @@ fn sync_once_with_park(
 ) -> Result<SyncOutcome> {
     uuid::Uuid::parse_str(machine_id).context("machine-id is not a UUID")?;
     if git_optional(ledger, &["remote", "get-url", "origin"])?.is_none() {
-        ensure_attachment_lfs_attribute(ledger)?;
         return Ok(SyncOutcome::Idle);
     }
     let mut pending_salvage: Option<String> = None;
@@ -272,6 +271,21 @@ fn ensure_attachment_lfs_attribute(ledger: &Path) -> Result<()> {
     writeln!(file, "{ATTACHMENT_LFS_ATTRIBUTE}")?;
     file.sync_all()?;
     Ok(())
+}
+
+/// Whether attachment bytes published under `ledger` would reach the remote as
+/// LFS pointers. A ledger without an `origin` never commits, so it needs
+/// nothing. With a remote, the `filter.lfs.*` config must exist; a missing one
+/// is configured locally by `git lfs install --local`, which fails when the
+/// `git-lfs` binary is absent — the caller then refuses to publish, because a
+/// raw blob committed once jams every later push (GitHub caps files at 100 MB).
+pub(crate) fn attachment_lfs_ready(ledger: &Path) -> Result<bool> {
+    if git_optional(ledger, &["remote", "get-url", "origin"])?.is_none()
+        || git_optional(ledger, &["config", "--get", "filter.lfs.clean"])?.is_some()
+    {
+        return Ok(true);
+    }
+    git_success(ledger, &["lfs", "install", "--local"])
 }
 
 fn stage_ledger(ledger: &Path, machine_id: &str, index: Option<&Path>) -> Result<()> {
@@ -2618,6 +2632,20 @@ mod tests {
             let claim = &orgasmic_core::read_claims(ledger).unwrap()["TASK-RACE"];
             assert_eq!(claim.holder, expected);
             assert_eq!(claim.contenders.len(), 2);
+            // The LFS rule is staged before the first attachment blob could be.
+            let pushed = git_optional(
+                ledger,
+                &["show", "origin/orgasmic:.orgasmic/.gitattributes"],
+            )
+            .unwrap()
+            .expect("pushed ledger carries .orgasmic/.gitattributes");
+            assert_eq!(
+                pushed
+                    .lines()
+                    .filter(|l| *l == ATTACHMENT_LFS_ATTRIBUTE)
+                    .count(),
+                1
+            );
         }
 
         let _ = a_daemon.shutdown.send(());

@@ -369,14 +369,6 @@ async fn exercise(size: u64, adversarial: bool) {
         std::fs::read_to_string(ledger.join(format!("meetings/{meeting}/attachments.org")))
             .unwrap();
     assert!(metadata.contains(revision) && !metadata.contains("/assets/"));
-    assert_eq!(
-        std::fs::read_to_string(ledger.join(".gitattributes"))
-            .unwrap()
-            .lines()
-            .filter(|line| *line == "*/*/attachments/** filter=lfs diff=lfs merge=lfs -text")
-            .count(),
-        1
-    );
     if adversarial {
         let duplicate_id = uuid::Uuid::new_v4().to_string();
         post(&client, &base, &editor, "/attachments/uploads", json!({"project":"demo","node":meeting,"name":"Planning copy.wav","media_type":"audio/wav","size":size,"request_id":duplicate_id}), 200).await;
