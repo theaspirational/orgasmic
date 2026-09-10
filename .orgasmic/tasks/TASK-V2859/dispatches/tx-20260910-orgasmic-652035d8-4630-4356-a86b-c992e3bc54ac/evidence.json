@@ -1,0 +1,20 @@
+{
+  "event_count": 949,
+  "tool_call_count": 0,
+  "unparsed_events": 0,
+  "bounded_events": 3,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-V2859-implementer-20260910T063401.jsonl",
+    "size_bytes": 767269
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/10/rollout-2026-09-10T09-34-03-01a08a05-fefb-76e0-83e3-7bf592d447f6.jsonl",
+    "session_id": "01a08a05-fefb-76e0-83e3-7bf592d447f6",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
