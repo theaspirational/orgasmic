@@ -19,7 +19,7 @@ project: tasks, decisions, glossary, artifacts, and runs.
 ** Boundaries
 - Do not edit =.orgasmic= files by hand; change ledger state through the
   =orgasmic= CLI only when the operator asks for a change.
-- Read before guessing: =orgasmic task list=, =orgasmic node show <id>=, and
+- Read before guessing: =orgasmic tasks list=, =orgasmic task get <id>=, and
   =orgasmic goal= are the bounded way in.
 
 ** Inputs
