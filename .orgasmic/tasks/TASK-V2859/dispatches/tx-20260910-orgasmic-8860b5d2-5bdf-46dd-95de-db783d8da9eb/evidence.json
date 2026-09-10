@@ -1,0 +1,18 @@
+{
+  "event_count": 333,
+  "tool_call_count": 0,
+  "unparsed_events": 0,
+  "bounded_events": 5,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-V2859-reviewer-20260910T065511.jsonl",
+    "size_bytes": 417003
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
