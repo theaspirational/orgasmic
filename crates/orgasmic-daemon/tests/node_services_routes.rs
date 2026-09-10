@@ -363,11 +363,53 @@ async fn exercise(size: u64, adversarial: bool) {
     let ledger = temp.path().join("project/.orgasmic");
     assert!(!ledger.join("attachments").exists());
     assert!(home.root.join("assets").is_dir());
+    let node_blob = ledger.join(format!("meetings/{meeting}/attachments/{revision}"));
+    assert_eq!(std::fs::metadata(&node_blob).unwrap().len(), size);
     let metadata =
         std::fs::read_to_string(ledger.join(format!("meetings/{meeting}/attachments.org")))
             .unwrap();
     assert!(metadata.contains(revision) && !metadata.contains("/assets/"));
+    assert_eq!(
+        std::fs::read_to_string(ledger.join(".gitattributes"))
+            .unwrap()
+            .lines()
+            .filter(|line| *line == "*/*/attachments/** filter=lfs diff=lfs merge=lfs -text")
+            .count(),
+        1
+    );
     if adversarial {
+        let duplicate_id = uuid::Uuid::new_v4().to_string();
+        post(&client, &base, &editor, "/attachments/uploads", json!({"project":"demo","node":meeting,"name":"Planning copy.wav","media_type":"audio/wav","size":size,"request_id":duplicate_id}), 200).await;
+        for offset in (0..size).step_by(chunk_size) {
+            let bytes = if offset == 0 {
+                first.clone()
+            } else {
+                vec![0; (size - offset).min(chunk_size as u64) as usize]
+            };
+            assert_eq!(
+                client
+                    .put(format!("{base}/api/attachments/uploads/{duplicate_id}?project=demo&offset={offset}"))
+                    .bearer_auth(&editor)
+                    .body(bytes)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                200
+            );
+        }
+        assert_eq!(
+            post(
+                &client,
+                &base,
+                &editor,
+                &format!("/attachments/uploads/{duplicate_id}/finish?project=demo"),
+                json!({}),
+                200,
+            )
+            .await["revision"],
+            revision
+        );
         let artifact_reader = orgasmic_core::add_member(
             &home,
             "artifact-reader",
@@ -478,6 +520,16 @@ async fn exercise(size: u64, adversarial: bool) {
         );
         let _ = running.shutdown.send(());
         running.join.await.unwrap();
+        let assets = home.root.join("assets");
+        let store = std::fs::read_dir(&assets)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let legacy_blob = store.join(format!("blobs/{revision}"));
+        std::fs::create_dir_all(legacy_blob.parent().unwrap()).unwrap();
+        std::fs::rename(&node_blob, &legacy_blob).unwrap();
         let moved = temp.path().join("renamed-project");
         std::fs::rename(temp.path().join("project"), &moved).unwrap();
         write(
@@ -499,6 +551,11 @@ async fn exercise(size: u64, adversarial: bool) {
         .await
         .unwrap();
         base = format!("http://{}", running.addr);
+        let migrated_blob = moved.join(format!(
+            ".orgasmic/meetings/{meeting}/attachments/{revision}"
+        ));
+        assert!(legacy_blob.exists());
+        assert_eq!(std::fs::metadata(migrated_blob).unwrap().len(), size);
         let resumed = get(
             &client,
             &base,
@@ -531,13 +588,6 @@ async fn exercise(size: u64, adversarial: bool) {
         .await;
         assert_eq!(complete["size"], 8);
         // Finished receipts must not consume the pending-upload slot limit.
-        let assets = home.root.join("assets");
-        let store = std::fs::read_dir(&assets)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
         let receipt =
             std::fs::read_to_string(store.join(format!("uploads/{resume_id}/state.json"))).unwrap();
         for n in 0..4096 {

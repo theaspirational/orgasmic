@@ -68,3 +68,8 @@ or a reported worker result as evidence to inspect, not as lifecycle closure.
 ```bash
 orgasmic member list --help
 ```
+
+Attachment bytes live beside their node at `<node>/attachments/<sha256>` and are
+tracked through Git LFS; the ledger remote must have LFS enabled. Legacy blobs in
+the home assets store are linked or copied into the ledger at daemon boot and left
+in place.

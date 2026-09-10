@@ -1,6 +1,7 @@
 //! Git transport for the hidden ledger worktree.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Mutex};
@@ -16,6 +17,7 @@ use crate::writer::{TxAppend, TxIdPolicy, WriterHandle};
 const SYNC_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_BACKOFF: Duration = Duration::from_secs(5 * 60);
 const PUSH_ATTEMPTS: usize = 5;
+const ATTACHMENT_LFS_ATTRIBUTE: &str = "*/*/attachments/** filter=lfs diff=lfs merge=lfs -text";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct LedgerSyncStatus {
@@ -102,6 +104,7 @@ fn sync_once_with_park(
 ) -> Result<SyncOutcome> {
     uuid::Uuid::parse_str(machine_id).context("machine-id is not a UUID")?;
     if git_optional(ledger, &["remote", "get-url", "origin"])?.is_none() {
+        ensure_attachment_lfs_attribute(ledger)?;
         return Ok(SyncOutcome::Idle);
     }
     let mut pending_salvage: Option<String> = None;
@@ -245,7 +248,36 @@ fn sync_once_with_park(
     unreachable!()
 }
 
+fn ensure_attachment_lfs_attribute(ledger: &Path) -> Result<()> {
+    if !ledger.join(".orgasmic").exists() {
+        return Ok(());
+    }
+    let path = ledger.join(".orgasmic/.gitattributes");
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error).context("read ledger .gitattributes"),
+    };
+    if source.lines().any(|line| line == ATTACHMENT_LFS_ATTRIBUTE) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(path.parent().expect("gitattributes parent"))?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    if !source.is_empty() && !source.ends_with('\n') {
+        file.write_all(b"\n")?;
+    }
+    writeln!(file, "{ATTACHMENT_LFS_ATTRIBUTE}")?;
+    file.sync_all()?;
+    Ok(())
+}
+
 fn stage_ledger(ledger: &Path, machine_id: &str, index: Option<&Path>) -> Result<()> {
+    if index.is_none() {
+        ensure_attachment_lfs_attribute(ledger)?;
+    }
     if ledger.join(".orgasmic").exists() {
         git_with_index(
             ledger,
