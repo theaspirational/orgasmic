@@ -80,6 +80,9 @@ copied into the ledger at daemon boot and left in place.
 
 For machine-local payloads, run `orgasmic node prop set <project-id>
 ATTACHMENT_STORAGE local --kind project --project <project-id>`. Attachment
-records still sync, but files under node `attachments/` directories do not; a
-different machine must obtain the payload out of band from the machine named in
-the record.
+records still sync, but new or changed files under node `attachments/`
+directories do not. Payloads pushed while the project used `lfs` remain in the
+remote tree until you run `git rm --cached` on those payload paths in the ledger
+and commit the removal; switching to `local` does not rewrite existing history.
+A different machine must obtain local payloads out of band from the machine
+named in the record.

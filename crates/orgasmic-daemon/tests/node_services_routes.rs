@@ -783,7 +783,8 @@ async fn node_services_authorize_stream_and_index() {
 
 #[tokio::test]
 async fn attachment_storage_modes_stage_migrate_validate_and_explain_missing_payloads() {
-    let (temp, _home, running, base, token) = fixture().await;
+    let (temp, _home, running, base, token) = fixture_with(None, true).await;
+    let root = temp.path().join("project");
     let client = reqwest::Client::new();
     let project = get(
         &client,
@@ -812,15 +813,42 @@ async fn attachment_storage_modes_stage_migrate_validate_and_explain_missing_pay
     assert!(error.contains("orgasmic node prop set"), "{error}");
 
     let (node, id, asset) = upload_text(&client, &base, &token).await;
-    let revision = asset["revision"].as_str().unwrap();
-    std::fs::remove_file(temp.path().join(format!(
-        "project/.orgasmic/meetings/{node}/attachments/{revision}"
-    )))
-    .unwrap();
+    let revision = asset["revision"].as_str().unwrap().to_owned();
+    let payload = format!(".orgasmic/meetings/{node}/attachments/{revision}");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if git(&root, &["show", &format!("origin/orgasmic:{payload}")])
+            .status
+            .success()
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "lfs attachment payload did not reach the remote"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let tree = git_ok(&root, &["ls-tree", "-r", "--name-only", "origin/orgasmic"]);
+    assert!(tree.lines().any(|path| path == payload));
+
+    write(
+        root.join(".orgasmic/project.org"),
+        "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:ATTACHMENT_STORAGE: LFS\n:END:\n",
+    );
+    let content = format!("{base}/api/attachments/{node}/{id}/{revision}/content?project=demo");
     let response = client
-        .get(format!(
-            "{base}/api/attachments/{node}/{id}/{revision}/content?project=demo"
-        ))
+        .get(&content)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, 200, "{body}");
+    std::fs::remove_file(root.join(&payload)).unwrap();
+    let response = client
+        .get(content)
         .bearer_auth(&token)
         .send()
         .await
@@ -872,7 +900,7 @@ async fn attachment_storage_modes_stage_migrate_validate_and_explain_missing_pay
     std::fs::create_dir_all(legacy_blob.parent().unwrap()).unwrap();
     std::fs::rename(&node_blob, &legacy_blob).unwrap();
     running = Daemon::run(
-        home,
+        home.clone(),
         DaemonOptions {
             bind_override: Some("127.0.0.1".parse().unwrap()),
             port_override: Some(0),
@@ -900,7 +928,45 @@ async fn attachment_storage_modes_stage_migrate_validate_and_explain_missing_pay
     assert_eq!(response.status(), 404);
     let error = response.text().await.unwrap();
     assert!(error.contains(&format!(
-        "attachment payload is not on this machine (uploaded on machine {machine}); this project stores attachments locally, not in git"
+        "attachment payload is missing from this machine's ledger at .orgasmic/meetings/{node}/attachments/{revision}; this project stores attachments locally, not in git; restore that file from backup or upload it again"
+    )));
+    let _ = running.shutdown.send(());
+    running.join.await.unwrap();
+
+    std::fs::remove_file(&legacy_blob).unwrap();
+    let records = root.join(&metadata);
+    let source = std::fs::read_to_string(&records).unwrap();
+    write(
+        &records,
+        &source.replace(
+            &format!(":MACHINE: {machine}\n"),
+            ":MACHINE: foreign-machine\n",
+        ),
+    );
+    running = Daemon::run(
+        home,
+        DaemonOptions {
+            bind_override: Some("127.0.0.1".parse().unwrap()),
+            port_override: Some(0),
+            fs_watcher_enabled: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    base = format!("http://{}", running.addr);
+    let response = client
+        .get(format!(
+            "{base}/api/attachments/{node}/{id}/{revision}/content?project=demo"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let error = response.text().await.unwrap();
+    assert!(error.contains(&format!(
+        "attachment payload is not on this machine (uploaded on machine foreign-machine); this project stores attachments locally, not in git; copy the payload from that machine to .orgasmic/meetings/{node}/attachments/{revision}"
     )));
     let _ = running.shutdown.send(());
     running.join.await.unwrap();
@@ -938,6 +1004,16 @@ async fn lfs_mode_without_git_lfs_names_both_fixes() {
         return;
     }
 
+    let lfs = Command::new("git")
+        .args(["lfs", "version"])
+        .output()
+        .unwrap();
+    assert!(
+        !lfs.status.success(),
+        "git lfs unexpectedly available in no-lfs child: {}{}",
+        String::from_utf8_lossy(&lfs.stdout),
+        String::from_utf8_lossy(&lfs.stderr)
+    );
     let (_temp, _home, running, base, token) = fixture_with(None, true).await;
     let client = reqwest::Client::new();
     let node = post(

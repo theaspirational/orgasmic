@@ -295,10 +295,10 @@ pub(crate) fn attachment_storage(ledger: &Path) -> Result<AttachmentStorage> {
     let source = std::fs::read_to_string(&path).context(
         "attachment storage mode could not be read because .orgasmic/project.org is unavailable; restore that file and retry",
     )?;
-    let file = OrgFile::parse(source, path.to_string_lossy()).context(
+    let file = OrgFile::parse(source, ".orgasmic/project.org").context(
         "attachment storage mode could not be read because .orgasmic/project.org is invalid; fix that file and retry",
     )?;
-    Ok(ProjectFile::from_org(&file, path.to_string_lossy().as_ref())?.attachment_storage)
+    Ok(ProjectFile::from_org(&file, ".orgasmic/project.org")?.attachment_storage)
 }
 
 fn stage_ledger(ledger: &Path, machine_id: &str, index: Option<&Path>) -> Result<()> {
@@ -306,7 +306,11 @@ fn stage_ledger(ledger: &Path, machine_id: &str, index: Option<&Path>) -> Result
         .join(".orgasmic")
         .exists()
         .then(|| attachment_storage(ledger))
-        .transpose()?
+        .transpose()
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "attachment storage setting is missing, unreadable, or invalid; defaulting to lfs for ledger sync");
+            None
+        })
         .unwrap_or_default();
     if index.is_none() && storage == AttachmentStorage::Lfs {
         ensure_attachment_lfs_attribute(ledger)?;
@@ -1361,6 +1365,40 @@ mod tests {
         assert!(!tracked.lines().any(|path| {
             path.ends_with(".tmp") || path.contains(".tmp.") || path.contains(".bak.")
         }));
+    }
+
+    #[test]
+    fn invalid_or_missing_project_file_does_not_stop_sync() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_remote, a, _b) = seed_remote(&tmp);
+        let machine_id = uuid::Uuid::new_v4().to_string();
+        std::fs::write(
+            a.join(".orgasmic/project.org"),
+            "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:ATTACHMENT_STORAGE: LFS\n:END:\n",
+        )
+        .unwrap();
+        let first = ".orgasmic/tasks/T1/node.org";
+        std::fs::create_dir_all(a.join(first).parent().unwrap()).unwrap();
+        std::fs::write(a.join(first), "task one\n").unwrap();
+
+        sync_once(&a, &machine_id).unwrap();
+        assert!(
+            git_optional(&a, &["show", &format!("origin/orgasmic:{first}")])
+                .unwrap()
+                .is_some()
+        );
+
+        std::fs::remove_file(a.join(".orgasmic/project.org")).unwrap();
+        let second = ".orgasmic/tasks/T2/node.org";
+        std::fs::create_dir_all(a.join(second).parent().unwrap()).unwrap();
+        std::fs::write(a.join(second), "task two\n").unwrap();
+
+        sync_once(&a, &machine_id).unwrap();
+        assert!(
+            git_optional(&a, &["show", &format!("origin/orgasmic:{second}")])
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

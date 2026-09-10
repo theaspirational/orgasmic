@@ -6,7 +6,7 @@ use axum::{
     extract::DefaultBodyLimit,
 };
 use orgasmic_core::node_services::{self as records, AttachmentRecord, LinkRecord, MediaAnchor};
-use orgasmic_core::schema::AttachmentStorage;
+use orgasmic_core::schema::{AttachmentStorage, SchemaError};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
@@ -850,8 +850,26 @@ async fn finish_upload(
         .join("attachments")
         .join(&revision);
     let source = payload.clone();
-    let repo = owner.ledger.parent().unwrap().to_path_buf();
-    let storage = crate::ledger_sync::attachment_storage(&repo).map_err(bad)?;
+    let repo = owner
+        .ledger
+        .parent()
+        .ok_or_else(|| internal("ledger has no parent; repair the project registration and retry"))?
+        .to_path_buf();
+    let storage = match crate::ledger_sync::attachment_storage(&repo) {
+        Ok(storage) => storage,
+        Err(error)
+            if matches!(
+                error.downcast_ref::<SchemaError>(),
+                Some(SchemaError::UnknownAttachmentStorage { .. })
+            ) =>
+        {
+            return Err(bad(error));
+        }
+        Err(error) => {
+            tracing::warn!(project = %q.project, %error, "attachment storage setting could not be read; defaulting to lfs for upload");
+            AttachmentStorage::Lfs
+        }
+    };
     let published = tokio::task::spawn_blocking(move || {
         if storage == AttachmentStorage::Lfs {
             match crate::ledger_sync::attachment_lfs_ready(&repo) {
@@ -957,7 +975,7 @@ async fn attachment(
     node_id: &str,
     id: &str,
     revision: &str,
-) -> Result<(PathBuf, AttachmentRecord, AttachmentStorage), ApiError> {
+) -> Result<(PathBuf, AttachmentRecord, PathBuf), ApiError> {
     uuid(id)?;
     if !valid_digest(revision) {
         return Err(bad("invalid attachment revision"));
@@ -982,17 +1000,19 @@ async fn attachment(
     if !MEDIA_TYPES.contains(&record.media_type.as_str()) {
         return Err(bad("unsupported attachment media type"));
     }
-    let repo = owner.ledger.parent().unwrap();
-    let storage = crate::ledger_sync::attachment_storage(repo).map_err(bad)?;
+    let repo = owner.ledger.parent().ok_or_else(|| {
+        internal("ledger has no parent; repair the project registration and retry")
+    })?;
+    let node_dir = owner
+        .path
+        .parent()
+        .ok_or_else(|| internal("node has no directory; repair the node record and retry"))?
+        .canonicalize()
+        .map_err(|_| internal("node directory is unavailable; restore it and retry"))?;
     Ok((
-        owner
-            .path
-            .parent()
-            .unwrap()
-            .join("attachments")
-            .join(revision),
+        node_dir.join("attachments").join(revision),
         record,
-        storage,
+        repo.to_path_buf(),
     ))
 }
 async fn get_content(
@@ -1003,16 +1023,33 @@ async fn get_content(
     method: Method,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let (path, record, storage) =
+    let (path, record, repo) =
         attachment(&state, &identity, &q.project, &node_id, &id, &revision).await?;
-    let mut file = tokio::fs::File::open(path)
+    let relative = path
+        .strip_prefix(&repo)
+        .map_err(|_| {
+            internal(
+                "attachment payload location is outside the ledger; repair the project registration and retry",
+            )
+        })?
+        .to_string_lossy()
+        .into_owned();
+    let mut file = tokio::fs::File::open(&path)
         .await
         .map_err(|_| {
+            let storage = crate::ledger_sync::attachment_storage(&repo).unwrap_or_default();
             ApiError::not_found(match storage {
-                AttachmentStorage::Local => format!(
-                    "attachment payload is not on this machine (uploaded on machine {}); this project stores attachments locally, not in git",
-                    record.machine.as_deref().unwrap_or("unknown")
-                ),
+                AttachmentStorage::Local => match record.machine.as_deref() {
+                    Some(machine) if machine == state.machine.as_str() => format!(
+                        "attachment payload is missing from this machine's ledger at {relative}; this project stores attachments locally, not in git; restore that file from backup or upload it again"
+                    ),
+                    Some(machine) => format!(
+                        "attachment payload is not on this machine (uploaded on machine {machine}); this project stores attachments locally, not in git; copy the payload from that machine to {relative}"
+                    ),
+                    None => format!(
+                        "attachment payload is not on this machine; its record predates machine tracking, and this project stores attachments locally, not in git; locate the original upload machine and copy the payload to {relative}"
+                    ),
+                },
                 AttachmentStorage::Lfs => {
                     "attachment payload missing; run git lfs pull in the ledger".to_string()
                 }

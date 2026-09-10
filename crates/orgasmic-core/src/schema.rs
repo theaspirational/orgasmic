@@ -54,7 +54,7 @@ pub enum SchemaError {
         detail: String,
     },
     #[error(
-        "{file}: heading {heading}: unknown :ATTACHMENT_STORAGE: value {value}; accepted values are lfs and local; run `orgasmic node prop set {heading} ATTACHMENT_STORAGE lfs --kind project --project {heading}` or use `local` instead of `lfs`"
+        "{file}: PROJECT {heading}: unknown :ATTACHMENT_STORAGE: value {value}; accepted values are lfs and local; run `orgasmic node prop set {heading} ATTACHMENT_STORAGE <lfs|local> --kind project --project {heading}`"
     )]
     UnknownAttachmentStorage {
         file: String,
@@ -545,6 +545,10 @@ mod tests {
         ));
         assert!(error.to_string().contains(
             "unknown :ATTACHMENT_STORAGE: value cloud; accepted values are lfs and local"
+        ));
+        assert!(error.to_string().contains("PROJECT demo"));
+        assert!(error.to_string().contains(
+            "orgasmic node prop set demo ATTACHMENT_STORAGE <lfs|local> --kind project --project demo"
         ));
     }
 }

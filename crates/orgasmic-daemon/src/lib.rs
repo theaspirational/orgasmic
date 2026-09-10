@@ -982,7 +982,7 @@ fn migrate_legacy_attachment_blobs(home: &Home, projects: &[(String, PathBuf)]) 
         let storage = match ledger_sync::attachment_storage(root) {
             Ok(storage) => storage,
             Err(error) => {
-                warn!(project, %error, "attachment storage setting is invalid; skipping migration");
+                warn!(project, %error, "attachment storage setting is missing, unreadable, or invalid; skipping migration");
                 continue;
             }
         };
