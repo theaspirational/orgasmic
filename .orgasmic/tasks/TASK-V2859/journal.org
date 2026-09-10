@@ -31,3 +31,35 @@
 :TO_STATE: in_progress
 :EVENT_ID: 67d5983c-4c6a-45cd-aa6a-1816c958ec70
 :END:
+
+* tx-20260910-orgasmic-bb1ff445-04a5-4177-897a-81399133e89f task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-bb1ff445-04a5-4177-897a-81399133e89f
+:TIME:    [2026-09-10 Thu 06:54:28]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-V2859
+:TARGET: .orgasmic/tasks/TASK-V2859/node.org
+:REASON: transition TASK-V2859 to in_review
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: b724e6c6-1ebe-4300-b15d-6eb43f852f94
+:END:
+
+* tx-20260910-orgasmic-c3906cef-f8e2-461a-849d-615c121cb1a9 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-c3906cef-f8e2-461a-849d-615c121cb1a9
+:TIME:    [2026-09-10 Thu 06:54:33]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-V2859
+:TARGET: .orgasmic/tasks/TASK-V2859/node.org
+:REASON: transition TASK-V2859 to in_progress
+:FROM_STATE: in_review
+:TO_STATE: in_progress
+:EVENT_ID: ed70b00c-dc39-468c-b6b8-4c8c72d20c36
+:END:
