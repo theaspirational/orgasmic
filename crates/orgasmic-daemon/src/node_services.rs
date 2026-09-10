@@ -68,6 +68,7 @@ struct ServiceQuery {
 
 pub(super) struct Node {
     pub(super) path: PathBuf,
+    ledger: PathBuf,
 }
 pub(super) async fn node(
     state: &ApiState,
@@ -116,7 +117,7 @@ pub(super) async fn node(
             .check_write(collection, Some(&source))
             .map_err(bad)?;
     }
-    Ok(Node { path })
+    Ok(Node { path, ledger })
 }
 fn bad(e: impl std::fmt::Display) -> ApiError {
     ApiError::bad_request(e.to_string())
@@ -551,7 +552,7 @@ async fn start_upload(
     Json(req): Json<UploadStart>,
 ) -> Result<Json<Value>, ApiError> {
     let _guard = state.plugins.operations.clone().read_owned().await;
-    node(
+    let owner = node(
         &state,
         &identity,
         &req.project,
@@ -586,10 +587,33 @@ async fn start_upload(
     }
     let mut reserved = 0u64;
     // ponytail: quota is a metadata scan on upload creation only; index it if upload volume warrants it.
-    if let Ok(entries) = std::fs::read_dir(base.join("blobs")) {
-        for entry in entries {
-            reserved = reserved
-                .saturating_add(entry.map_err(internal)?.metadata().map_err(internal)?.len());
+    if let Ok(collections) = std::fs::read_dir(&owner.ledger) {
+        for collection in collections {
+            let collection = collection.map_err(internal)?;
+            if !collection.file_type().map_err(internal)?.is_dir() {
+                continue;
+            }
+            let Ok(nodes) = std::fs::read_dir(collection.path()) else {
+                continue;
+            };
+            for node in nodes {
+                let node = node.map_err(internal)?;
+                if !node.file_type().map_err(internal)?.is_dir() {
+                    continue;
+                }
+                let Ok(attachments) = std::fs::read_dir(node.path().join("attachments")) else {
+                    continue;
+                };
+                for attachment in attachments {
+                    let attachment = attachment.map_err(internal)?;
+                    if attachment.file_type().map_err(internal)?.is_file()
+                        && attachment.file_name().to_str().is_some_and(valid_digest)
+                    {
+                        reserved =
+                            reserved.saturating_add(attachment.metadata().map_err(internal)?.len());
+                    }
+                }
+            }
         }
     }
     let mut sessions = 0;
@@ -831,14 +855,17 @@ async fn finish_upload(
     {
         return Err(bad("attachment checksum mismatch"));
     }
-    let blobs = base.join("blobs");
-    tokio::fs::create_dir_all(&blobs).await.map_err(internal)?;
-    // Hard-link publication is atomic and never overwrites an immutable blob.
-    match tokio::fs::hard_link(&payload, blobs.join(&revision)).await {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(e) => return Err(internal(e)),
-    }
+    let blob = owner
+        .path
+        .parent()
+        .unwrap()
+        .join("attachments")
+        .join(&revision);
+    let source = payload.clone();
+    tokio::task::spawn_blocking(move || crate::publish_blob(&source, &blob))
+        .await
+        .map_err(internal)?
+        .map_err(internal)?;
     let record = AttachmentRecord {
         id: id.clone(),
         node: upload.node.clone(),
@@ -948,7 +975,12 @@ async fn attachment(
         return Err(bad("unsupported attachment media type"));
     }
     Ok((
-        store_root(state, project).join("blobs").join(revision),
+        owner
+            .path
+            .parent()
+            .unwrap()
+            .join("attachments")
+            .join(revision),
         record,
     ))
 }
@@ -962,9 +994,9 @@ async fn get_content(
 ) -> Result<Response, ApiError> {
     let (path, record) =
         attachment(&state, &identity, &q.project, &node_id, &id, &revision).await?;
-    let mut file = tokio::fs::File::open(path).await.map_err(|_| {
-        ApiError::not_found("attachment payload missing; restore it from the asset backup")
-    })?;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|_| ApiError::not_found("attachment payload missing"))?;
     if file.metadata().await.map_err(internal)?.len() != record.size {
         return Err(internal("attachment payload size mismatch"));
     }

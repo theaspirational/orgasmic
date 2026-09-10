@@ -52,9 +52,10 @@ use std::{error, fmt};
 
 use anyhow::{Context, Result};
 use axum::Router;
-use orgasmic_core::Home;
+use orgasmic_core::{node_services::read_attachments, Home};
 use orgasmic_drivers::modes::tmux;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
@@ -939,6 +940,106 @@ fn refuse_task_id_maintenance(home: &Home) -> Result<()> {
     }
 }
 
+fn publish_blob(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<bool> {
+    std::fs::create_dir_all(target.parent().expect("blob target parent"))?;
+    match std::fs::hard_link(source, target) {
+        Ok(()) => return Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+        Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {}
+        Err(error) => return Err(error),
+    }
+
+    let temporary = target.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut source = File::open(source)?;
+        let mut copy = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        std::io::copy(&mut source, &mut copy)?;
+        copy.sync_all()?;
+        match std::fs::hard_link(&temporary, target) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(error) => Err(error),
+        }
+    })();
+    let _ = std::fs::remove_file(temporary);
+    result
+}
+
+fn migrate_legacy_attachment_blobs(home: &Home, projects: &[(String, PathBuf)]) {
+    let mut migrated = 0usize;
+    for (project, root) in projects {
+        let legacy = home
+            .root
+            .join("assets")
+            .join(format!("{:x}", Sha256::digest(project.as_bytes())))
+            .join("blobs");
+        let Ok(collections) = std::fs::read_dir(root.join(".orgasmic")) else {
+            continue;
+        };
+        for collection in collections.flatten() {
+            if !collection.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let Ok(nodes) = std::fs::read_dir(collection.path()) else {
+                continue;
+            };
+            for node in nodes.flatten() {
+                if !node.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    continue;
+                }
+                let records_path = node.path().join("attachments.org");
+                let source = match std::fs::read_to_string(&records_path) {
+                    Ok(source) => source,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        warn!(path = %records_path.display(), %error, "read legacy attachment records failed");
+                        continue;
+                    }
+                };
+                let records = match read_attachments(&source) {
+                    Ok(records) => records,
+                    Err(error) => {
+                        warn!(path = %records_path.display(), %error, "parse legacy attachment records failed");
+                        continue;
+                    }
+                };
+                for record in records {
+                    if record.revision.len() != 64
+                        || !record
+                            .revision
+                            .bytes()
+                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                    {
+                        warn!(path = %records_path.display(), revision = %record.revision, "skip invalid legacy attachment revision");
+                        continue;
+                    }
+                    let source = legacy.join(&record.revision);
+                    if !source
+                        .symlink_metadata()
+                        .is_ok_and(|metadata| metadata.file_type().is_file())
+                    {
+                        continue;
+                    }
+                    let target = node.path().join("attachments").join(&record.revision);
+                    match publish_blob(&source, &target) {
+                        Ok(true) => migrated += 1,
+                        Ok(false) => {}
+                        Err(error) => warn!(
+                            path = %target.display(),
+                            %error,
+                            "migrate legacy attachment blob failed"
+                        ),
+                    }
+                }
+            }
+        }
+    }
+    info!(migrated, "legacy attachment blob migration complete");
+}
+
 #[cfg(test)]
 mod task_id_maintenance_tests {
     #[tokio::test]
@@ -1078,6 +1179,7 @@ impl Daemon {
             .map(|entry| (entry.id.clone(), entry.path.clone()))
             .collect();
         api::migrate_legacy_home_sessions(&home, &migrate_projects);
+        migrate_legacy_attachment_blobs(&home, &migrate_projects);
 
         boot_progress.set_phase("starting runtime")?;
         // orgasmic:TASK-FZB6T — one catalog instance, shared by the writer
