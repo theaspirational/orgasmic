@@ -10,8 +10,8 @@ built with OKFy. Archetype: api-reference v1.
 
 | Type | Concepts |
 |---|---|
-| Operation | 8 |
-| Recipe | 11 |
+| Operation | 9 |
+| Recipe | 12 |
 | Topic | 11 |
 
 Humans: start at [index.md](index.md). Agents: read [AGENTS.md](AGENTS.md).

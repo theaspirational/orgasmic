@@ -3,8 +3,8 @@
 ## Operation
 
 - [Artifact, verification, and member commands](operations/artifacts.md) — Replay verification proofs, submit or inspect artifacts, and manage local members.
-- [Prompt and shipped-content commands](operations/content.md) — Inspect prompts and skills and manage optional or hub content.
 - [Conversation and chat operations](operations/chat.md) — Grant chat access, read a conversation's runs and journal, and know how a conversation is continued, resumed, and archived.
+- [Prompt and shipped-content commands](operations/content.md) — Inspect prompts and skills and manage optional or hub content.
 - [Core and project commands](operations/core-project.md) — Install, enter, diagnose, update, and inspect projects and the UI.
 - [Daemon commands](operations/daemon.md) — Inspect daemon responsiveness, preserve live owners, and restart explicitly.
 - [Manager and dispatch commands](operations/dispatch.md) — Select drivers, dispatch workers, wait, close, finalize, record tx entries, run manual retrospectives, and run manager stages.
@@ -18,6 +18,7 @@
 - [Run a cheap wide forum round](recipes/cheap-wide-forum.md) — Use --fast with one or more participants to skip cross-review, including a cheap 10-model first pass.
 - [Dispatch and close a worker task](recipes/dispatch-task-lifecycle.md) — Run the dispatch, wait, inspect, merge or record the report, and close the exact generation with evidence.
 - [Dispatch a fire-and-forget forum curator](recipes/dispatched-curator.md) — Run the single-round forum path with an explicit fresh curator and automatic artifact submission.
+- [Housekeep branches, worktrees, and a dirty main](recipes/housekeeping.md) — Reclaim managed worktrees through the CLI verbs, delete only merged hand-made branches, and commit or stash uncommitted main before the next dispatch.
 - [Inspect tasks, runs, and artifacts](recipes/inspect-work.md) — Use read surfaces to locate task state, run history, artifact content, and feedback before mutating anything.
 - [Install or update the runtime](recipes/install-update-runtime.md) — Install a prebuilt runtime by default, or update according to install.json without touching project state.
 - [Judge a document with a forum](recipes/judge-document.md) — Critique a UTF-8 document with an optional focus and either self or dispatched curation.
