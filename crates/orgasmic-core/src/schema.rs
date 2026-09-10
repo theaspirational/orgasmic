@@ -53,6 +53,14 @@ pub enum SchemaError {
         key: String,
         detail: String,
     },
+    #[error(
+        "{file}: heading {heading}: unknown :ATTACHMENT_STORAGE: value {value}; accepted values are lfs and local; run `orgasmic node prop set {heading} ATTACHMENT_STORAGE lfs --kind project --project {heading}` or use `local` instead of `lfs`"
+    )]
+    UnknownAttachmentStorage {
+        file: String,
+        heading: String,
+        value: String,
+    },
 }
 
 // --- enums ------------------------------------------------------------------
@@ -127,6 +135,14 @@ pub enum WorkerKind {
     Artifactor,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentStorage {
+    #[default]
+    Lfs,
+    Local,
+}
+
 impl WorkerKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -172,6 +188,7 @@ impl fmt::Display for WorkerKind {
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectFile<'a> {
     pub id: &'a str,
+    pub attachment_storage: AttachmentStorage,
     pub mission: Option<String>,
     pub operating_constraints: Option<String>,
 }
@@ -185,8 +202,20 @@ impl<'a> ProjectFile<'a> {
                     heading: "PROJECT".into(),
                 })?;
         let id = required(heading, "ID", display)?;
+        let attachment_storage = match heading.property("ATTACHMENT_STORAGE") {
+            None | Some("lfs") => AttachmentStorage::Lfs,
+            Some("local") => AttachmentStorage::Local,
+            Some(value) => {
+                return Err(SchemaError::UnknownAttachmentStorage {
+                    file: display.into(),
+                    heading: id.into(),
+                    value: value.into(),
+                })
+            }
+        };
         Ok(Self {
             id,
+            attachment_storage,
             mission: section_body(file, heading, "Mission"),
             operating_constraints: section_body(file, heading, "Operating Constraints"),
         })
@@ -471,4 +500,51 @@ pub(crate) fn tokenize(value: Option<&str>) -> Vec<&str> {
     value
         .map(|v| v.split_whitespace().collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_attachment_storage_defaults_and_rejects_unknown_values() {
+        let parse = |property: &str| {
+            OrgFile::parse(
+                format!("* PROJECT demo\n:PROPERTIES:\n:ID: demo\n{property}:END:\n"),
+                "project.org",
+            )
+            .unwrap()
+        };
+
+        let absent = parse("");
+        assert_eq!(
+            ProjectFile::from_org(&absent, "project.org")
+                .unwrap()
+                .attachment_storage,
+            AttachmentStorage::Lfs
+        );
+        let lfs = parse(":ATTACHMENT_STORAGE: lfs\n");
+        assert_eq!(
+            ProjectFile::from_org(&lfs, "project.org")
+                .unwrap()
+                .attachment_storage,
+            AttachmentStorage::Lfs
+        );
+        let local = parse(":ATTACHMENT_STORAGE: local\n");
+        assert_eq!(
+            ProjectFile::from_org(&local, "project.org")
+                .unwrap()
+                .attachment_storage,
+            AttachmentStorage::Local
+        );
+        let invalid = parse(":ATTACHMENT_STORAGE: cloud\n");
+        let error = ProjectFile::from_org(&invalid, "project.org").unwrap_err();
+        assert!(matches!(
+            error,
+            SchemaError::UnknownAttachmentStorage { ref value, .. } if value == "cloud"
+        ));
+        assert!(error.to_string().contains(
+            "unknown :ATTACHMENT_STORAGE: value cloud; accepted values are lfs and local"
+        ));
+    }
 }

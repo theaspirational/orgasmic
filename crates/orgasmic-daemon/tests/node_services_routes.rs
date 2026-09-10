@@ -2,11 +2,31 @@ use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 use serde_json::{json, Value};
 use std::path::Path;
+use std::process::{Command, Output};
 
 fn write(path: impl AsRef<Path>, source: &str) {
     let path = path.as_ref();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, source).unwrap();
+}
+
+fn git(cwd: &Path, args: &[&str]) -> Output {
+    Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .unwrap()
+}
+
+fn git_ok(cwd: &Path, args: &[&str]) -> String {
+    let output = git(cwd, args);
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
 }
 async fn post(
     client: &reqwest::Client,
@@ -46,7 +66,10 @@ async fn get(client: &reqwest::Client, base: &str, token: &str, path: &str) -> V
     assert!(status.is_success(), "GET {path}: {status}: {text}");
     serde_json::from_str(&text).unwrap()
 }
-async fn fixture() -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
+async fn fixture_with(
+    attachment_storage: Option<&str>,
+    remote_backed: bool,
+) -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("error")
         .with_test_writer()
@@ -55,15 +78,43 @@ async fn fixture() -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
     let home = Home::at(temp.path().join("home"));
     home.ensure().unwrap();
     let root = temp.path().join("project");
+    let storage = attachment_storage
+        .map(|value| format!(":ATTACHMENT_STORAGE: {value}\n"))
+        .unwrap_or_default();
     write(
         root.join(".orgasmic/project.org"),
-        "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:END:\n",
+        &format!("* PROJECT demo\n:PROPERTIES:\n:ID: demo\n{storage}:END:\n"),
     );
+    if remote_backed {
+        let remote = temp.path().join("remote.git");
+        std::fs::create_dir(&remote).unwrap();
+        git_ok(&remote, &["init", "--bare"]);
+        git_ok(&root, &["init", "-b", "orgasmic"]);
+        git_ok(&root, &["add", ".orgasmic/project.org"]);
+        git_ok(
+            &root,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "seed",
+            ],
+        );
+        git_ok(
+            &root,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        git_ok(&root, &["push", "-u", "origin", "orgasmic"]);
+    }
     write(
         home.board(),
         &format!(
-            "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:PATH: {}\n:BRANCH: main\n:END:\n",
-            root.display()
+            "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:PATH: {}\n:BRANCH: {}\n:END:\n",
+            root.display(),
+            if remote_backed { "orgasmic" } else { "main" }
         ),
     );
     let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/meetings");
@@ -98,6 +149,10 @@ async fn fixture() -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
     post(&client, &base, &token, "/plugins/meetings/activation", json!({"project":"demo", "enabled":true, "approved_capabilities":["nodes.read","nodes.write","links.read","links.write","attachments.read","attachments.write","ui.execute"]}), 200).await;
     (temp, home, running, base, token)
 }
+
+async fn fixture() -> (tempfile::TempDir, Home, RunningDaemon, String, String) {
+    fixture_with(None, false).await
+}
 async fn member_cookie(client: &reqwest::Client, base: &str, token: &str) -> String {
     let response = client
         .post(format!("{base}/api/login"))
@@ -130,6 +185,51 @@ fn wav_chunk(size: u64, chunk_size: usize) -> Vec<u8> {
     bytes[36..40].copy_from_slice(b"data");
     bytes[40..44].copy_from_slice(&((size - 44) as u32).to_le_bytes());
     bytes
+}
+
+async fn upload_text(client: &reqwest::Client, base: &str, token: &str) -> (String, String, Value) {
+    let node = post(
+        client,
+        base,
+        token,
+        "/org/node",
+        json!({"project":"demo","kind":"meetings","title":"Attachment storage"}),
+        200,
+    )
+    .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = uuid::Uuid::new_v4().to_string();
+    post(
+        client,
+        base,
+        token,
+        "/attachments/uploads",
+        json!({"project":"demo","node":node,"name":"payload.txt","media_type":"text/plain","size":8,"request_id":id}),
+        200,
+    )
+    .await;
+    let response = client
+        .put(format!(
+            "{base}/api/attachments/uploads/{id}?project=demo&offset=0"
+        ))
+        .bearer_auth(token)
+        .body("payload\n")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    let asset = post(
+        client,
+        base,
+        token,
+        &format!("/attachments/uploads/{id}/finish?project=demo"),
+        json!({}),
+        200,
+    )
+    .await;
+    (node, id, asset)
 }
 
 async fn exercise(size: u64, adversarial: bool) {
@@ -248,6 +348,7 @@ async fn exercise(size: u64, adversarial: bool) {
     )
     .await;
     let asset = post(&client, &base, &editor, &finish, json!({}), 200).await;
+    assert!(asset["machine"].as_str().is_some());
     assert_eq!(
         post(&client, &base, &editor, &finish, json!({}), 200).await,
         asset
@@ -678,6 +779,223 @@ async fn exercise(size: u64, adversarial: bool) {
 #[tokio::test]
 async fn node_services_authorize_stream_and_index() {
     exercise(8 * 1024 * 1024, true).await;
+}
+
+#[tokio::test]
+async fn attachment_storage_modes_stage_migrate_validate_and_explain_missing_payloads() {
+    let (temp, _home, running, base, token) = fixture().await;
+    let client = reqwest::Client::new();
+    let project = get(
+        &client,
+        &base,
+        &token,
+        "/org/node?project=demo&id=demo&kind=project",
+    )
+    .await;
+    let response = client
+        .post(format!("{base}/api/org/node/demo/edit"))
+        .bearer_auth(&token)
+        .json(&json!({
+            "project":"demo",
+            "kind":"project",
+            "base_version":project["source"]["base_version"],
+            "ops":[{"op":"set_property","key":"ATTACHMENT_STORAGE","value":"cloud"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let error = response.text().await.unwrap();
+    assert!(error.contains("ATTACHMENT_STORAGE"), "{error}");
+    assert!(error.contains("cloud"), "{error}");
+    assert!(error.contains("lfs and local"), "{error}");
+    assert!(error.contains("orgasmic node prop set"), "{error}");
+
+    let (node, id, asset) = upload_text(&client, &base, &token).await;
+    let revision = asset["revision"].as_str().unwrap();
+    std::fs::remove_file(temp.path().join(format!(
+        "project/.orgasmic/meetings/{node}/attachments/{revision}"
+    )))
+    .unwrap();
+    let response = client
+        .get(format!(
+            "{base}/api/attachments/{node}/{id}/{revision}/content?project=demo"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    assert!(response
+        .text()
+        .await
+        .unwrap()
+        .contains("attachment payload missing; run git lfs pull in the ledger"));
+    let _ = running.shutdown.send(());
+    running.join.await.unwrap();
+
+    let (temp, home, mut running, mut base, token) = fixture_with(Some("local"), true).await;
+    let root = temp.path().join("project");
+    let (node, id, asset) = upload_text(&client, &base, &token).await;
+    let revision = asset["revision"].as_str().unwrap().to_owned();
+    let machine = asset["machine"].as_str().unwrap().to_owned();
+    let metadata = format!(".orgasmic/meetings/{node}/attachments.org");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let object = format!("origin/orgasmic:{metadata}");
+        if git(&root, &["show", &object]).status.success() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "local attachment record did not reach the remote"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let tree = git_ok(&root, &["ls-tree", "-r", "--name-only", "origin/orgasmic"]);
+    assert!(tree.lines().any(|path| path == metadata));
+    assert!(
+        !tree.lines().any(|path| path.ends_with(&revision)),
+        "local payload reached the remote tree: {tree}"
+    );
+
+    let _ = running.shutdown.send(());
+    running.join.await.unwrap();
+    let node_blob = root.join(format!(".orgasmic/meetings/{node}/attachments/{revision}"));
+    let store = std::fs::read_dir(home.root.join("assets"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let legacy_blob = store.join(format!("blobs/{revision}"));
+    std::fs::create_dir_all(legacy_blob.parent().unwrap()).unwrap();
+    std::fs::rename(&node_blob, &legacy_blob).unwrap();
+    running = Daemon::run(
+        home,
+        DaemonOptions {
+            bind_override: Some("127.0.0.1".parse().unwrap()),
+            port_override: Some(0),
+            fs_watcher_enabled: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    base = format!("http://{}", running.addr);
+    assert!(legacy_blob.exists());
+    assert!(
+        node_blob.exists(),
+        "local boot migration did not link the blob"
+    );
+    std::fs::remove_file(&node_blob).unwrap();
+    let response = client
+        .get(format!(
+            "{base}/api/attachments/{node}/{id}/{revision}/content?project=demo"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let error = response.text().await.unwrap();
+    assert!(error.contains(&format!(
+        "attachment payload is not on this machine (uploaded on machine {machine}); this project stores attachments locally, not in git"
+    )));
+    let _ = running.shutdown.send(());
+    running.join.await.unwrap();
+}
+
+#[tokio::test]
+async fn lfs_mode_without_git_lfs_names_both_fixes() {
+    const CHILD: &str = "ORGASMIC_TEST_NO_GIT_LFS";
+    if std::env::var_os(CHILD).is_none() {
+        let bin = tempfile::tempdir().unwrap();
+        let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join("git"))
+            .find(|path| path.is_file())
+            .expect("git on PATH");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(git, bin.path().join("git")).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "lfs_mode_without_git_lfs_names_both_fixes",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("PATH", bin.path())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let (_temp, _home, running, base, token) = fixture_with(None, true).await;
+    let client = reqwest::Client::new();
+    let node = post(
+        &client,
+        &base,
+        &token,
+        "/org/node",
+        json!({"project":"demo","kind":"meetings","title":"No LFS"}),
+        200,
+    )
+    .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = uuid::Uuid::new_v4().to_string();
+    post(
+        &client,
+        &base,
+        &token,
+        "/attachments/uploads",
+        json!({"project":"demo","node":node,"name":"payload.txt","media_type":"text/plain","size":8,"request_id":id}),
+        200,
+    )
+    .await;
+    assert_eq!(
+        client
+            .put(format!(
+                "{base}/api/attachments/uploads/{id}?project=demo&offset=0"
+            ))
+            .bearer_auth(&token)
+            .body("payload\n")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let response = client
+        .post(format!(
+            "{base}/api/attachments/uploads/{id}/finish?project=demo"
+        ))
+        .bearer_auth(&token)
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 503);
+    let error = response.text().await.unwrap();
+    assert!(error.contains("install git-lfs"), "{error}");
+    assert!(
+        error.contains(
+            "orgasmic node prop set demo ATTACHMENT_STORAGE local --kind project --project demo"
+        ),
+        "{error}"
+    );
+    assert!(error.contains(":ATTACHMENT_STORAGE: local"), "{error}");
+    let _ = running.shutdown.send(());
+    running.join.await.unwrap();
 }
 
 #[tokio::test]

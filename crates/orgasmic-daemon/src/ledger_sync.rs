@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
+use orgasmic_core::schema::AttachmentStorage;
+use orgasmic_core::{OrgFile, ProjectFile};
 use serde::Serialize;
 
 use crate::index::Index;
@@ -288,25 +290,42 @@ pub(crate) fn attachment_lfs_ready(ledger: &Path) -> Result<bool> {
     git_success(ledger, &["lfs", "install", "--local"])
 }
 
+pub(crate) fn attachment_storage(ledger: &Path) -> Result<AttachmentStorage> {
+    let path = ledger.join(".orgasmic/project.org");
+    let source = std::fs::read_to_string(&path).context(
+        "attachment storage mode could not be read because .orgasmic/project.org is unavailable; restore that file and retry",
+    )?;
+    let file = OrgFile::parse(source, path.to_string_lossy()).context(
+        "attachment storage mode could not be read because .orgasmic/project.org is invalid; fix that file and retry",
+    )?;
+    Ok(ProjectFile::from_org(&file, path.to_string_lossy().as_ref())?.attachment_storage)
+}
+
 fn stage_ledger(ledger: &Path, machine_id: &str, index: Option<&Path>) -> Result<()> {
-    if index.is_none() {
+    let storage = ledger
+        .join(".orgasmic")
+        .exists()
+        .then(|| attachment_storage(ledger))
+        .transpose()?
+        .unwrap_or_default();
+    if index.is_none() && storage == AttachmentStorage::Lfs {
         ensure_attachment_lfs_attribute(ledger)?;
     }
     if ledger.join(".orgasmic").exists() {
-        git_with_index(
-            ledger,
-            index,
-            &[
-                "add",
-                "--all",
-                "--",
-                ".orgasmic",
-                ":(exclude).orgasmic/machines",
-                ":(exclude,glob).orgasmic/**/*.tmp",
-                ":(exclude,glob).orgasmic/**/*.tmp.*",
-                ":(exclude,glob).orgasmic/**/*.bak.*",
-            ],
-        )?;
+        let mut paths = vec![
+            "add",
+            "--all",
+            "--",
+            ".orgasmic",
+            ":(exclude).orgasmic/machines",
+            ":(exclude,glob).orgasmic/**/*.tmp",
+            ":(exclude,glob).orgasmic/**/*.tmp.*",
+            ":(exclude,glob).orgasmic/**/*.bak.*",
+        ];
+        if storage == AttachmentStorage::Local {
+            paths.push(":(exclude,glob).orgasmic/*/*/attachments/**");
+        }
+        git_with_index(ledger, index, &paths)?;
     }
     let machine_rel = PathBuf::from(".orgasmic/machines").join(machine_id);
     if ledger.join(&machine_rel).exists() {
@@ -1142,7 +1161,12 @@ mod tests {
         );
         std::fs::create_dir_all(seed.join(".orgasmic")).unwrap();
         std::fs::write(seed.join(".orgasmic/.keep"), "ledger\n").unwrap();
-        run(&seed, &["add", ".orgasmic/.keep"]);
+        std::fs::write(
+            seed.join(".orgasmic/project.org"),
+            "* PROJECT demo\n:PROPERTIES:\n:ID: demo\n:END:\n",
+        )
+        .unwrap();
+        run(&seed, &["add", ".orgasmic/.keep", ".orgasmic/project.org"]);
         run(
             &seed,
             &[

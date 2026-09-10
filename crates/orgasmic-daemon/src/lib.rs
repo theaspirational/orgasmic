@@ -979,18 +979,27 @@ fn migrate_legacy_attachment_blobs(home: &Home, projects: &[(String, PathBuf)]) 
         if !legacy.is_dir() {
             continue;
         }
-        match ledger_sync::attachment_lfs_ready(root) {
-            Ok(true) => {}
-            Ok(false) => {
-                warn!(
-                    project,
-                    "git-lfs missing; legacy attachment blobs stay in the home store"
-                );
+        let storage = match ledger_sync::attachment_storage(root) {
+            Ok(storage) => storage,
+            Err(error) => {
+                warn!(project, %error, "attachment storage setting is invalid; skipping migration");
                 continue;
             }
-            Err(error) => {
-                warn!(project, %error, "attachment LFS probe failed; skipping migration");
-                continue;
+        };
+        if storage == orgasmic_core::schema::AttachmentStorage::Lfs {
+            match ledger_sync::attachment_lfs_ready(root) {
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(
+                        project,
+                        "git-lfs missing; legacy attachment blobs stay in the home store"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    warn!(project, %error, "attachment LFS probe failed; skipping migration");
+                    continue;
+                }
             }
         }
         let Ok(collections) = std::fs::read_dir(root.join(".orgasmic")) else {

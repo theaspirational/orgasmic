@@ -18217,6 +18217,10 @@ async fn post_org_node_edit(
     proposed
         .find_by_id(&id)
         .ok_or_else(|| ApiError::bad_request("ID is immutable"))?;
+    if layer == NodeKind::Project {
+        ProjectFile::from_org(&proposed, "project.org")
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
     let tx_id = write_org_node_edit_and_record(NodeEditWriteRequest {
         state: &state,
         plugin_scope: Some(plugins),
@@ -19090,7 +19094,14 @@ fn node_layer_schema_property_keys(layer: NodeKind) -> &'static [&'static str] {
         NodeKind::Task => TASK_SCHEMA_PROPERTY_KEYS,
         NodeKind::Decision => DECISION_SCHEMA_PROPERTY_KEYS,
         NodeKind::Glossary => GLOSSARY_SCHEMA_PROPERTY_KEYS,
-        NodeKind::Project => &["BRANCH", "DEFAULT_BRANCH", "LOCAL_PATH", "PATH", "STATUS"],
+        NodeKind::Project => &[
+            "ATTACHMENT_STORAGE",
+            "BRANCH",
+            "DEFAULT_BRANCH",
+            "LOCAL_PATH",
+            "PATH",
+            "STATUS",
+        ],
         NodeKind::Goal | NodeKind::Handoff => &["GOAL_ID", "LIVENESS"],
         _ => &[],
     }

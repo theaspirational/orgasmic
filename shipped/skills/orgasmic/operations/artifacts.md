@@ -77,3 +77,9 @@ the machine (the daemon runs `git lfs install --local` itself) and the remote mu
 have LFS enabled; without the binary, an upload's finish step answers 503 rather
 than committing raw bytes. Legacy blobs in the home assets store are linked or
 copied into the ledger at daemon boot and left in place.
+
+For machine-local payloads, run `orgasmic node prop set <project-id>
+ATTACHMENT_STORAGE local --kind project --project <project-id>`. Attachment
+records still sync, but files under node `attachments/` directories do not; a
+different machine must obtain the payload out of band from the machine named in
+the record.

@@ -6,6 +6,7 @@ use axum::{
     extract::DefaultBodyLimit,
 };
 use orgasmic_core::node_services::{self as records, AttachmentRecord, LinkRecord, MediaAnchor};
+use orgasmic_core::schema::AttachmentStorage;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
@@ -849,15 +850,15 @@ async fn finish_upload(
         .join("attachments")
         .join(&revision);
     let source = payload.clone();
-    let repo = owner.ledger.parent().map(FsPath::to_path_buf);
+    let repo = owner.ledger.parent().unwrap().to_path_buf();
+    let storage = crate::ledger_sync::attachment_storage(&repo).map_err(bad)?;
     let published = tokio::task::spawn_blocking(move || {
-        match repo
-            .as_deref()
-            .map(crate::ledger_sync::attachment_lfs_ready)
-        {
-            Some(Ok(false)) => return Ok(None),
-            Some(Err(e)) => return Err(std::io::Error::other(e.to_string())),
-            _ => {}
+        if storage == AttachmentStorage::Lfs {
+            match crate::ledger_sync::attachment_lfs_ready(&repo) {
+                Ok(false) => return Ok(None),
+                Err(e) => return Err(std::io::Error::other(e.to_string())),
+                Ok(true) => {}
+            }
         }
         crate::publish_blob(&source, &blob).map(Some)
     })
@@ -866,7 +867,10 @@ async fn finish_upload(
     .map_err(internal)?;
     if published.is_none() {
         return Err(ApiError::unavailable(
-            "git-lfs is not installed; attachment bytes cannot be published to a ledger with a remote",
+            format!(
+                "attachment bytes cannot be published to this project's Git remote because git-lfs is not installed; install git-lfs, or run `orgasmic node prop set {} ATTACHMENT_STORAGE local --kind project --project {}` to set `:ATTACHMENT_STORAGE: local` on the project",
+                q.project, q.project
+            ),
         ));
     }
     let record = AttachmentRecord {
@@ -880,6 +884,7 @@ async fn finish_upload(
             .member_name()
             .unwrap_or_else(|| state.actor.clone()),
         created_at: Utc::now().to_rfc3339(),
+        machine: Some(state.machine.clone()),
     };
     let next = record.clone();
     // Stable request identity makes finish recoverable after blob publication or lost replies.
@@ -952,7 +957,7 @@ async fn attachment(
     node_id: &str,
     id: &str,
     revision: &str,
-) -> Result<(PathBuf, AttachmentRecord), ApiError> {
+) -> Result<(PathBuf, AttachmentRecord, AttachmentStorage), ApiError> {
     uuid(id)?;
     if !valid_digest(revision) {
         return Err(bad("invalid attachment revision"));
@@ -977,6 +982,8 @@ async fn attachment(
     if !MEDIA_TYPES.contains(&record.media_type.as_str()) {
         return Err(bad("unsupported attachment media type"));
     }
+    let repo = owner.ledger.parent().unwrap();
+    let storage = crate::ledger_sync::attachment_storage(repo).map_err(bad)?;
     Ok((
         owner
             .path
@@ -985,6 +992,7 @@ async fn attachment(
             .join("attachments")
             .join(revision),
         record,
+        storage,
     ))
 }
 async fn get_content(
@@ -995,11 +1003,21 @@ async fn get_content(
     method: Method,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let (path, record) =
+    let (path, record, storage) =
         attachment(&state, &identity, &q.project, &node_id, &id, &revision).await?;
     let mut file = tokio::fs::File::open(path)
         .await
-        .map_err(|_| ApiError::not_found("attachment payload missing"))?;
+        .map_err(|_| {
+            ApiError::not_found(match storage {
+                AttachmentStorage::Local => format!(
+                    "attachment payload is not on this machine (uploaded on machine {}); this project stores attachments locally, not in git",
+                    record.machine.as_deref().unwrap_or("unknown")
+                ),
+                AttachmentStorage::Lfs => {
+                    "attachment payload missing; run git lfs pull in the ledger".to_string()
+                }
+            })
+        })?;
     if file.metadata().await.map_err(internal)?.len() != record.size {
         return Err(internal("attachment payload size mismatch"));
     }
