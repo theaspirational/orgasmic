@@ -37,6 +37,8 @@ pub struct AttachmentRecord {
     pub media_type: String,
     pub actor: String,
     pub created_at: String,
+    #[serde(default)]
+    pub machine: Option<String>,
 }
 
 fn property<'a>(h: &'a crate::org::Heading, key: &str) -> Result<&'a str> {
@@ -116,6 +118,7 @@ pub fn read_attachments(source: &str) -> Result<Vec<AttachmentRecord>> {
                 media_type: property(h, "MEDIA_TYPE")?.into(),
                 actor: property(h, "ACTOR")?.into(),
                 created_at: property(h, "CREATED_AT")?.into(),
+                machine: h.property("MACHINE").map(Into::into),
             })
         })
         .collect()
@@ -124,7 +127,11 @@ pub fn read_attachments(source: &str) -> Result<Vec<AttachmentRecord>> {
 pub fn render_attachments(records: &[AttachmentRecord]) -> String {
     let mut out = "#+title: Node attachments\n".to_owned();
     for r in records {
-        out.push_str(&format!("* Attachment\n:PROPERTIES:\n:SCHEMA: 1\n:ID: {}\n:NODE: {}\n:NAME: {}\n:REVISION: {}\n:SIZE: {}\n:MEDIA_TYPE: {}\n:ACTOR: {}\n:CREATED_AT: {}\n:END:\n", r.id, r.node, r.name, r.revision, r.size, r.media_type, r.actor, r.created_at));
+        out.push_str(&format!("* Attachment\n:PROPERTIES:\n:SCHEMA: 1\n:ID: {}\n:NODE: {}\n:NAME: {}\n:REVISION: {}\n:SIZE: {}\n:MEDIA_TYPE: {}\n:ACTOR: {}\n:CREATED_AT: {}\n", r.id, r.node, r.name, r.revision, r.size, r.media_type, r.actor, r.created_at));
+        if let Some(machine) = &r.machine {
+            out.push_str(&format!(":MACHINE: {machine}\n"));
+        }
+        out.push_str(":END:\n");
     }
     out
 }
@@ -190,10 +197,17 @@ mod tests {
             media_type: "audio/wav".into(),
             actor: "admin".into(),
             created_at: "now".into(),
+            machine: Some("machine-a".into()),
         };
         assert_eq!(
             read_attachments(&render_attachments(std::slice::from_ref(&asset))).unwrap(),
             vec![asset]
+        );
+        assert_eq!(
+            read_attachments("* Attachment\n:PROPERTIES:\n:SCHEMA: 1\n:ID: asset-old\n:NODE: MEET-1\n:NAME: old.wav\n:REVISION: hash\n:SIZE: 42\n:MEDIA_TYPE: audio/wav\n:ACTOR: admin\n:CREATED_AT: then\n:END:\n")
+                .unwrap()[0]
+                .machine,
+            None
         );
         assert_eq!(byte_range(Some("bytes=-5"), 20).unwrap(), (15, 20));
         assert_eq!(byte_range(Some("bytes=5-"), 20).unwrap(), (5, 20));
