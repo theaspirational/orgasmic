@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-FY0TS
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-FY0TS Attachments: per-project ATTACHMENT_STORAGE lfs|local, with actionable errors :attachments:ledger:
+* DONE TASK-FY0TS Attachments: per-project ATTACHMENT_STORAGE lfs|local, with actionable errors :attachments:ledger:
 :PROPERTIES:
 :ID: TASK-FY0TS
 :IMPLEMENTS: dec_8DW4V
@@ -24,3 +24,8 @@ Implements dec_8DW4V on top of 7af2d428. Add a per-project attachment storage mo
 - [ ] Route tests: local mode never stages a blob (assert the blob is absent from `git ls-files` / the tree after a sync on a remote-backed fixture, or the exclude pattern via `git add --dry-run`), lfs mode unchanged, invalid value refused, 404 text in both modes, 503 text names both fixes.
 - [ ] Operator doc: a short `local` paragraph under the `## Attachments` heading in `shipped/skills/orgasmic/operations/artifacts.md`.
 - [ ] `cargo fmt --check`, `cargo clippy -p orgasmic-daemon --all-targets -- -D warnings`, `cargo clippy -p orgasmic-core -- -D warnings`, TEST_CMD, `cargo test -p orgasmic-daemon --lib ledger_sync`, `cargo test -p orgasmic-core` green.
+** Evidence
+- Round 1: codex-chat gpt-5.6-sol high, run-01M252R94PXB8D6Q22R13Z8GY9, commit 868f7aac. Claude opus[1m] high review run-01M254JHSPZV800ET32012194W: reject (P1 sync halt on bad project.org, P4 wrong same-machine 404, P2 P3 P5-P8).
+- Round 2: codex-chat gpt-5.6-sol high, run-01M2552STXWVBCTNY7A7KZMSZR, commit fb27c25c, all P1-P8 and gaps 1/2/4 fixed. Claude opus[1m] high review run-01M2564QDY8JDTFD3XG7RS9GRT: approve-with-follow-ups (M1 per-tick warn, M2 migration skip, L1-L4).
+- Merged on main as c208441a; M1 M2 L1 L2 fixed in af3be876. Open: G1/G2 route tests (upload-time refusal of an unknown value; record without MACHINE), L3 (project edits refused while an invalid value is present), L4 commit subjects.
+- Gates on af3be876: fmt clean; clippy daemon+cli -D warnings clean; node_services_routes 3 passed 1 ignored; ledger_sync 22 passed; core 213 passed. cli_parity has a pre-existing failure from chat prompt specs (orgasmic node show, orgasmic task list), unrelated.

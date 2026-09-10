@@ -79,3 +79,34 @@
 :TO_STATE: in_review
 :EVENT_ID: a4d20535-c965-427e-8c04-02a13dfbf74c
 :END:
+
+* tx-20260910-orgasmic-410d460a-abbc-4975-bb3f-69671fb2af4e task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-410d460a-abbc-4975-bb3f-69671fb2af4e
+:TIME:    [2026-09-10 Thu 08:29:51]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FY0TS
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-FY0TS/node.org
+:REASON: edited task node TASK-FY0TS
+:NODE_ID: TASK-FY0TS
+:EVENT_ID: 60118616-9812-48fc-82a9-180a16b36056
+:END:
+
+* tx-20260910-orgasmic-66df6c95-7d06-463e-9702-520e5b9d156f task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-66df6c95-7d06-463e-9702-520e5b9d156f
+:TIME:    [2026-09-10 Thu 08:29:51]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-FY0TS
+:TARGET: .orgasmic/tasks/TASK-FY0TS/node.org
+:REASON: merged c208441a, reviewed, follow-ups in af3be876
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 451a72ec-a32e-46e1-a043-ecc7cf2271c2
+:END:
