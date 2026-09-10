@@ -15,3 +15,19 @@
 :EVENT_ID: b50d0cea-5722-4e87-bf3b-9126a2333aa3
 :REQUEST_REPLAY_V1: {"request_id":"8b3b2f52-0d1e-4c53-9a5e-2f6a1c1d0a02/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"0c44516de86cd63cfb90fba23b9495557336e4439839b6258314794989fef41a"},"mutation_id":"TASK-V2859","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-V2859/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-V2859/journal.org"}]}
 :END:
+
+* tx-20260910-orgasmic-1e75e487-4def-4bf4-b8b6-891432df9056 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260910-orgasmic-1e75e487-4def-4bf4-b8b6-891432df9056
+:TIME:    [2026-09-10 Thu 06:34:01]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-V2859
+:TARGET: .orgasmic/tasks/TASK-V2859/node.org
+:REASON: transition TASK-V2859 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 67d5983c-4c6a-45cd-aa6a-1816c958ec70
+:END:
