@@ -30,7 +30,7 @@ import {
 import { useRunDock, type ChatTarget } from '@/lib/runDock';
 import { runConversationId } from '@/lib/runLabels';
 import { HttpError } from '@/lib/transport';
-import { parseSessionSource } from '@/lib/transcriptParts';
+import { extractConversationId, parseSessionSource } from '@/lib/transcriptParts';
 import { TranscriptStream } from '@/lib/transcriptStream';
 import type { ConversationContextChip, DaemonEvent, RunSummary } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -468,20 +468,7 @@ function ConversationView({
 // load on expand.
 function Segment({ run, collapsible = false }: { run: ConversationRun; collapsible?: boolean }) {
   const [open, setOpen] = useState(!collapsible);
-  const detail = useResource(`conversation-run:${run.runId}`, () => fetchRun(run.runId), { enabled: open });
-  const parts = useMemo(() => {
-    if (!detail.data) return [];
-    const stream = new TranscriptStream();
-    stream.reset(parseSessionSource(detail.data.source));
-    return stream.parts();
-  }, [detail.data]);
-  const body = detail.error ? (
-    <p className="text-sm text-muted-foreground">Transcript unavailable on this machine.</p>
-  ) : detail.data ? (
-    parts.length ? <TranscriptPartsView parts={parts} /> : <p className="text-sm text-muted-foreground">Empty run.</p>
-  ) : (
-    <p className="text-sm text-muted-foreground">Loading transcript…</p>
-  );
+  const body = <RunTranscript runId={run.runId} enabled={open} />;
   const heading = (
     <span className="flex items-center gap-2 text-[11px] uppercase text-muted-foreground">
       <span>{segmentLabel(run.mode)}</span>
@@ -505,5 +492,74 @@ function Segment({ run, collapsible = false }: { run: ConversationRun; collapsib
       <summary className="cursor-pointer select-none">{heading}</summary>
       {open ? <div className="mt-3 flex flex-col gap-4">{body}</div> : null}
     </details>
+  );
+}
+
+function useRunTranscript(runId: string, enabled = true) {
+  const detail = useResource(`conversation-run:${runId}`, () => fetchRun(runId), { enabled });
+  const envelopes = useMemo(
+    () => (detail.data ? parseSessionSource(detail.data.source) : []),
+    [detail.data],
+  );
+  const parts = useMemo(() => {
+    if (!detail.data) return [];
+    const stream = new TranscriptStream();
+    stream.reset(envelopes);
+    return stream.parts();
+  }, [detail.data, envelopes]);
+  return { detail, envelopes, parts };
+}
+
+function RunTranscript({ runId, enabled = true }: { runId: string; enabled?: boolean }) {
+  return <TranscriptBody {...useRunTranscript(runId, enabled)} />;
+}
+
+function TranscriptBody({ detail, parts }: ReturnType<typeof useRunTranscript>) {
+  if (detail.error)
+    return <p className="text-sm text-muted-foreground">Transcript unavailable on this machine.</p>;
+  if (!detail.data) return <p className="text-sm text-muted-foreground">Loading transcript…</p>;
+  if (!parts.length) return <p className="text-sm text-muted-foreground">Empty run.</p>;
+  return <TranscriptPartsView parts={parts} />;
+}
+
+// A dock tab whose run the supervisor no longer holds. The conversation the
+// run's session names (CHAT-SCOPE C2) takes the tab over: the transcript stays
+// and the composer continues under the C2 rules. A run no conversation owns (a
+// terminal, a pre-C2 dispatch) keeps its transcript readable, nothing more.
+export function FinishedRunPanel({
+  runId,
+  onRefresh,
+  onClose,
+  onConversation,
+}: {
+  runId: string;
+  onRefresh: () => void;
+  onClose: () => void;
+  /** Absent when the viewer cannot read chat; the transcript stays here. */
+  onConversation?: (conversationId: string) => void;
+}) {
+  const transcript = useRunTranscript(runId);
+  const conversationId = onConversation ? extractConversationId(transcript.envelopes) : null;
+  useEffect(() => {
+    if (conversationId) onConversation?.(conversationId);
+  }, [conversationId, onConversation]);
+  if (conversationId) return null;
+  return (
+    <div className="flex h-full flex-col items-center gap-3 overflow-y-auto p-6 text-center" data-testid="finished-run-panel">
+      <p className="text-sm text-muted-foreground">
+        Run <code className="font-mono">{runId}</code> is no longer live.
+      </p>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
+          Refresh
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          Close tab
+        </Button>
+      </div>
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-4 text-left sm:px-6">
+        <TranscriptBody {...transcript} />
+      </div>
+    </div>
   );
 }

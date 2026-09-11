@@ -16,6 +16,8 @@ export type TranscriptTextPart = {
   text: string;
   fullText?: string;
   time?: string;
+  /** `key: value` header the daemon stamps on a compiled prompt. */
+  meta?: Array<[string, string]>;
 };
 
 export type TranscriptReasoningPart = {
@@ -100,6 +102,35 @@ export function extractPromptBundle(
   return null;
 }
 
+/** The daemon prefixes every compiled prompt with `orgasmic compiled prompt`
+ * and `key: value` lines up to the first blank line; the prompt proper follows. */
+export function splitPromptHeader(bundle: string): {
+  meta: Array<[string, string]>;
+  body: string;
+} {
+  const lines = bundle.split('\n');
+  if (lines[0]?.trim() !== 'orgasmic compiled prompt') return { meta: [], body: bundle };
+  const meta: Array<[string, string]> = [];
+  let index = 1;
+  for (; index < lines.length && lines[index].trim(); index += 1) {
+    const at = lines[index].indexOf(':');
+    if (at < 0) return { meta: [], body: bundle };
+    meta.push([lines[index].slice(0, at).trim(), lines[index].slice(at + 1).trim()]);
+  }
+  return { meta, body: lines.slice(index).join('\n').replace(/^\n+/, '') };
+}
+
+/** The conversation the run belongs to, from its `run_meta` lifecycle event
+ * (CHAT-SCOPE C2); null for runs no conversation owns and pre-C2 sessions. */
+export function extractConversationId(envelopes: SessionEnvelope[]): string | null {
+  for (const envelope of envelopes) {
+    if (envelope.kind !== 'lifecycle' || envelope.event?.phase !== 'run_meta') continue;
+    const id = envelope.event.conversation_id;
+    if (typeof id === 'string' && id) return id;
+  }
+  return null;
+}
+
 export function normalizeTranscriptParts(
   source: string,
   options: { promptOverride?: string | null } = {},
@@ -130,13 +161,15 @@ export function createTranscriptReducer(
     : new Map<string, number>();
 
   if (promptBundle) {
+    const { meta, body } = splitPromptHeader(promptBundle);
     parts.push({
       id: 'prompt-bundle',
       type: 'text',
       role: 'user',
       label: 'prompt',
-      text: promptBundle.split('\n').slice(0, 6).join('\n'),
+      text: body.split('\n').slice(0, 6).join('\n'),
       fullText: promptBundle,
+      meta,
     });
   }
 

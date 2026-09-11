@@ -45,7 +45,7 @@ vi.mock('@/hooks/useMe', () => ({
   }),
 }));
 
-import { CHAT_EXECUTE_LABEL, ConversationPanel, IN_FLIGHT_LABEL, NO_RESUME_LABEL } from '../ConversationPanel';
+import { CHAT_EXECUTE_LABEL, ConversationPanel, FinishedRunPanel, IN_FLIGHT_LABEL, NO_RESUME_LABEL } from '../ConversationPanel';
 
 function conversationDoc(id: string, runs: string, extra: Record<string, string> = {}) {
   return {
@@ -277,5 +277,28 @@ describe('ConversationPanel', () => {
     fireEvent.click(within(nav).getByRole('button', { name: /Idle one/ }));
     await screen.findAllByTestId('conversation-segment');
     expect(screen.getByRole('status')).toHaveTextContent(/read-only/i);
+  });
+});
+
+describe('FinishedRunPanel', () => {
+  const runMeta = (conversationId?: string) =>
+    JSON.stringify({ seq: 1, kind: 'lifecycle', event: { phase: 'run_meta', transport: 'stdio', driver_config: {}, ...(conversationId ? { conversation_id: conversationId } : null) } });
+  const send = JSON.stringify({ seq: 2, kind: 'lifecycle', event: { phase: 'composer_send', text: 'Continue please' } });
+
+  it('hands a finished run over to the conversation its session names', async () => {
+    mocks.fetchRun.mockResolvedValue({ source: `${runMeta('CONV-DONE')}\n${send}`, run: {} });
+    const onConversation = vi.fn();
+    render(<FinishedRunPanel runId="run-done" onRefresh={() => {}} onClose={() => {}} onConversation={onConversation} />);
+    await waitFor(() => expect(onConversation).toHaveBeenCalledWith('CONV-DONE'));
+    expect(screen.queryByTestId('finished-run-panel')).toBeNull();
+  });
+
+  it('keeps the transcript readable when no conversation owns the run', async () => {
+    mocks.fetchRun.mockResolvedValue({ source: `${runMeta()}\n${send}`, run: {} });
+    const onConversation = vi.fn();
+    render(<FinishedRunPanel runId="run-lone" onRefresh={() => {}} onClose={() => {}} onConversation={onConversation} />);
+    expect(await screen.findByText('Continue please')).toBeInTheDocument();
+    expect(screen.getByText(/no longer live/)).toBeInTheDocument();
+    expect(onConversation).not.toHaveBeenCalled();
   });
 });

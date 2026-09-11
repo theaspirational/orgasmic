@@ -182,32 +182,40 @@ function TranscriptMessage({ part }: { part: TranscriptTextPart }) {
   const text = block ? block.message : part.text;
   const fullText = part.fullText ?? (block?.prefix ? part.text : undefined);
   const showFullText = Boolean(fullText && fullText !== text);
-  return (
-    <Message className="max-w-[min(720px,95%)]" from={part.role}>
-      <MessageContent
-        className={part.role === 'assistant' ? 'w-full' : undefined}
-      >
-        <TranscriptMeta label={part.label} time={part.time} />
-        {block?.chips.length ? <ContextChips chips={block.chips} className="mb-1" /> : null}
-        {part.role === 'assistant' ? (
+  const fullContent = showFullText ? (
+    <details className="text-xs">
+      <summary className="cursor-pointer select-none rounded-sm text-muted-foreground outline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+        Full content ({Math.ceil(fullText!.length / 1024)} KB)
+      </summary>
+      <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background/60 p-3 font-sans text-xs leading-relaxed text-foreground/80">
+        {fullText}
+      </pre>
+    </details>
+  ) : null;
+  if (part.role === 'assistant')
+    return (
+      <Message className="max-w-[min(720px,95%)]" from="assistant">
+        <MessageContent className="w-full">
+          <TranscriptMeta label={part.label} time={part.time} />
           <MessageResponse>{text}</MessageResponse>
-        ) : (
-          <p className="whitespace-pre-wrap break-words leading-relaxed">
-            {text}
-          </p>
-        )}
-        {showFullText ? (
-          <details className="text-xs">
-            <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
-              Full content ({Math.ceil(fullText!.length / 1024)} KB)
-            </summary>
-            <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background/60 p-3 font-sans text-xs leading-relaxed text-foreground/80">
-              {fullText}
-            </pre>
-          </details>
-        ) : null}
-      </MessageContent>
-    </Message>
+          {fullContent}
+        </MessageContent>
+      </Message>
+    );
+  // Operator turns (and the daemon's compiled prompt) sit in the column like
+  // every other card: the tool/system card frame with the user tint, instead
+  // of the chat-bubble hugging the right edge on its own.
+  return (
+    <article
+      className="flex w-full max-w-[min(760px,95%)] flex-col gap-2 self-start rounded-md border border-border bg-secondary p-3 text-sm text-foreground"
+      data-testid="transcript-user-turn"
+    >
+      <TranscriptMeta label={part.label} time={part.time} />
+      {part.meta?.length ? <ToolMeta meta={part.meta} /> : null}
+      {block?.chips.length ? <ContextChips chips={block.chips} /> : null}
+      <p className="whitespace-pre-wrap break-words leading-relaxed">{text}</p>
+      {fullContent}
+    </article>
   );
 }
 

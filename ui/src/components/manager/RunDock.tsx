@@ -45,6 +45,9 @@ import {
 } from './runDockLabels';
 import { resolveTerminalDriver } from './terminalLaunch';
 
+const FinishedRunPanel = lazy(() =>
+  import('./ConversationPanel').then((module) => ({ default: module.FinishedRunPanel })),
+);
 const RunSurface = lazy(() =>
   import('./RunSurface').then((module) => ({ default: module.RunSurface })),
 );
@@ -182,6 +185,16 @@ export function RunDock() {
   const activeTab = tabs.find((tab) => tab.tabId === activeTabId) ?? null;
   const activeRun = activeTab ? runById.get(activeTab.runId) ?? null : null;
   const chatActive = activeTabId === CHAT_TAB_ID && open && chatEnabled;
+  // A run tab whose run has ended hands over to its conversation (CHAT-SCOPE
+  // C2): the transcript stays, and the composer continues under the C2 rules
+  // (resume, or refuse with "dispatch a new attempt").
+  const handOverToConversation = useCallback(
+    (conversationId: string) => {
+      openChat({ conversationId });
+      if (activeTabId) closeTab(activeTabId);
+    },
+    [activeTabId, closeTab, openChat],
+  );
   const maximized = height >= MAX_DOCK_HEIGHT;
 
   const raiseLastTab = useCallback(() => {
@@ -475,6 +488,16 @@ export function RunDock() {
                 initialDraft={activeTab?.draftPrompt}
                 onPromptSent={() => activeTab && consumeDraft(activeTab.tabId)}
                 readOnly={readOnly}
+              />
+            </Suspense>
+          ) : activeTab && runs.data ? (
+            <Suspense fallback={null}>
+              <FinishedRunPanel
+                key={activeTab.runId}
+                runId={activeTab.runId}
+                onRefresh={refresh}
+                onClose={() => closeTab(activeTab.tabId)}
+                onConversation={chatEnabled ? handOverToConversation : undefined}
               />
             </Suspense>
           ) : (

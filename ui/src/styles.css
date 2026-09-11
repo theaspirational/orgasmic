@@ -585,7 +585,7 @@ html[data-theme='black-paper'] {
   --card-foreground: #e8dcd4;
   --popover: #21140c;
   --popover-foreground: #e8dcd4;
-  --primary: #966d4f;
+  --primary: #c9915f;
   --primary-foreground: #160d08;
   --secondary: #2a1a10;
   --secondary-foreground: #e8dcd4;
@@ -604,7 +604,7 @@ html[data-theme='black-paper'] {
   --chart-5: oklch(0.69 0.13 350);
   --sidebar: rgb(22 13 8 / 0.96);
   --sidebar-foreground: #e8dcd4;
-  --sidebar-primary: #966d4f;
+  --sidebar-primary: #c9915f;
   --sidebar-primary-foreground: #160d08;
   --sidebar-accent: rgb(186 151 125 / 0.16);
   --sidebar-accent-foreground: #e8dcd4;

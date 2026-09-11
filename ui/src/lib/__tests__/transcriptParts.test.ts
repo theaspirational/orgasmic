@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  extractConversationId,
   hasResponseAfterPending,
   normalizeTranscriptParts,
   type SessionEnvelope,
@@ -934,6 +935,30 @@ describe('normalizeTranscriptParts', () => {
     expect(parts[3]).toMatchObject({ type: 'system', label: 'run ended', tone: 'info' });
   });
 
+  it('lifts the compiled-prompt header into meta and previews the prompt proper', () => {
+    const header = 'orgasmic compiled prompt\ndispatch_kind: implementer\ntask: TASK-ONE\nworker: codex\nprompt_spec: implementer';
+    const bundle = `${header}\n\n# Role\nYou implement.\n`;
+    const parts = normalizeTranscriptParts(
+      source({
+        seq: 1,
+        kind: 'lifecycle',
+        event: { phase: 'run_meta', driver_config: { prompt_bundle_text: bundle } },
+      }),
+    );
+    expect(parts[0]).toMatchObject({
+      type: 'text',
+      role: 'user',
+      text: '# Role\nYou implement.\n',
+      fullText: bundle,
+      meta: [
+        ['dispatch_kind', 'implementer'],
+        ['task', 'TASK-ONE'],
+        ['worker', 'codex'],
+        ['prompt_spec', 'implementer'],
+      ],
+    });
+  });
+
   it('does not duplicate a canonical dispatch prompt delivered through send_input', () => {
     const prompt = 'orgasmic compiled prompt\nwork on TASK-ONE';
     const parts = normalizeTranscriptParts(
@@ -1014,5 +1039,17 @@ describe('hasResponseAfterPending', () => {
         '2026-07-16T10:00:00Z',
       ),
     ).toBe(true);
+  });
+});
+
+describe('extractConversationId', () => {
+  it('reads the conversation off run_meta and ignores sessions without one', () => {
+    const owned = [
+      { seq: 1, kind: 'lifecycle', event: { phase: 'acquire', task_id: 'TASK-ONE' } },
+      { seq: 2, kind: 'lifecycle', event: { phase: 'run_meta', conversation_id: 'CONV-1' } },
+    ];
+    expect(extractConversationId(owned)).toBe('CONV-1');
+    expect(extractConversationId([{ seq: 1, kind: 'lifecycle', event: { phase: 'run_meta' } }])).toBeNull();
+    expect(extractConversationId([{ seq: 1, kind: 'runtime', event: { conversation_id: 'CONV-1' } }])).toBeNull();
   });
 });
