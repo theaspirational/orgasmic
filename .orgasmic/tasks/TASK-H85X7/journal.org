@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-H85X7
+#+orgasmic_version: 2
+
+* tx-20260911-orgasmic-3c47420e-8383-4189-853b-3942c3f0b466 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260911-orgasmic-3c47420e-8383-4189-853b-3942c3f0b466
+:TIME:    [2026-09-11 Fri 20:21:06]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-H85X7
+:TARGET: .orgasmic/tasks/TASK-H85X7/node.org
+:REASON: Split from TASK-D187W so D187W can close; this is its only open item.
+:EVENT_ID: 46179c26-8cac-4a11-b4bc-8308ffa4de7f
+:REQUEST_REPLAY_V1: {"request_id":"split-d187w-done-separator-20260911/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"1b27b78d2f011a1ec4a85eda5ef03842b93adf68a81a7a722b9a734b15b1056b"},"mutation_id":"TASK-H85X7","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-H85X7/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-H85X7/journal.org"}]}
+:END:

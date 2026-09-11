@@ -1,0 +1,16 @@
+#+title: orgasmic task TASK-H85X7
+#+orgasmic_version: 2
+
+* BACKLOG TASK-H85X7 Emit an Org TODO separator for done states once descriptor terminal-state semantics exist
+:PROPERTIES:
+:ID: TASK-H85X7
+:IMPLEMENTS: dec_882B4
+:PRIORITY: P3
+:END:
+
+** Description
+Split from TASK-D187W (Plugins P2 follow-ups), whose other items are done on main (83866bee, 8fee5fd9).
+Cosmetic: plugin/registry nodes in a done state should render with an Org TODO separator. First define which descriptor states are terminal.
+** Acceptance Criteria
+- [ ] Descriptor terminal-state semantics are defined.
+- [ ] Done states emit an Org TODO separator based on that definition. Do not invent a terminal state from a reversible transition.

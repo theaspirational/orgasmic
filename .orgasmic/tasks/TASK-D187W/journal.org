@@ -150,3 +150,19 @@
 :NODE_ID: TASK-D187W
 :EVENT_ID: 1a073c84-2e57-4a4b-9def-919997c7f82a
 :END:
+
+* tx-20260911-orgasmic-724a9b83-e126-45d9-9ca5-f5da02ba8834 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260911-orgasmic-724a9b83-e126-45d9-9ca5-f5da02ba8834
+:TIME:    [2026-09-11 Fri 20:21:21]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-D187W
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-D187W/node.org
+:REASON: edited task node TASK-D187W
+:NODE_ID: TASK-D187W
+:EVENT_ID: c4063f76-b5af-440a-9b85-c07f379288e3
+:REQUEST_REPLAY_V1: {"request_id":"d187w-ac-split-20260911/tx","mutation":{"operation":"node.edited","project_id":"orgasmic","payload_sha256":"1d83765a01ba6cee9a6c575dd15a899feeb4e5750e47de8c323b464d68efd423"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-D187W/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-D187W/journal.org"}]}
+:END:

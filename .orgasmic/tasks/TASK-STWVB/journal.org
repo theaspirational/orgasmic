@@ -91,3 +91,19 @@
 :NODE_ID: TASK-STWVB
 :EVENT_ID: 14319ca2-f59c-46f3-9b95-3fc18a9ff95a
 :END:
+
+* tx-20260911-orgasmic-0478a478-4b8c-47d0-8892-f82b3df2a672 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260911-orgasmic-0478a478-4b8c-47d0-8892-f82b3df2a672
+:TIME:    [2026-09-11 Fri 20:21:25]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-STWVB
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-STWVB/node.org
+:REASON: edited task node TASK-STWVB
+:NODE_ID: TASK-STWVB
+:EVENT_ID: d0cd3b89-492e-44d0-af3f-7e355f53441f
+:REQUEST_REPLAY_V1: {"request_id":"stwvb-close-note-20260911/tx","mutation":{"operation":"node.edited","project_id":"orgasmic","payload_sha256":"ed69db4a9e6b06ed388b22fcd28e85d9d2f479694f328912152be69a1219bb15"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-STWVB/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-STWVB/journal.org"}]}
+:END:

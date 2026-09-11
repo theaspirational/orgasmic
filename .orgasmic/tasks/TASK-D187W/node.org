@@ -14,7 +14,7 @@ Follow up on the P0 registry review after the UI registry slice. P0 commit: 453b
 - [X] Registry reload and CLI/daemon descriptor agreement landed in P2 (83866bee); focused plugin/node route tests cover reconciliation and ownership.
 - [X] Compiled descriptors are pinned in full; node_registry::tests::compiled_descriptor_is_pinned_in_full covers rejected overrides.
 - [X] Audited node_id_class_by_prefix at main 341a03c5: only its definition and public re-export remain; no production caller treats None as not a node. Remaining UI inferNodeKind labels are separate deferred polish.
-- [ ] Deferred cosmetic follow-up: emit an Org TODO separator for done states after defining descriptor terminal-state semantics; do not invent a terminal state from a reversible transition.
+- [X] Split out 2026-09-11 to TASK-H85X7: emit an Org TODO separator for done states after defining descriptor terminal-state semantics; do not invent a terminal state from a reversible transition.
 - [X] Retain the P0 member policy explicitly: project members can read project/handoff context, editors can delete decisions/glossary, viewers cannot delete, and foreign-project access is denied. HTTP coverage in node_registry_routes passed on 2026-09-08; committed as 8fee5fd9.
 ** Notes
 P0 remains branch-only and is not deployed. This is one consolidated P2 task, not authorization to pull loader, sidecar, attachment, or chat work into P0/P1.
