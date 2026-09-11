@@ -107,3 +107,37 @@
 :EVENT_ID: d0cd3b89-492e-44d0-af3f-7e355f53441f
 :REQUEST_REPLAY_V1: {"request_id":"stwvb-close-note-20260911/tx","mutation":{"operation":"node.edited","project_id":"orgasmic","payload_sha256":"ed69db4a9e6b06ed388b22fcd28e85d9d2f479694f328912152be69a1219bb15"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-STWVB/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-STWVB/journal.org"}]}
 :END:
+
+* tx-20260911-orgasmic-74b0d8ae-fca5-45d5-a907-a9ef100713fc task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260911-orgasmic-74b0d8ae-fca5-45d5-a907-a9ef100713fc
+:TIME:    [2026-09-11 Fri 20:21:36]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-STWVB
+:TARGET: .orgasmic/tasks/TASK-STWVB/node.org
+:REASON: Fix chain all DONE and merged; last registry exception retired by 7ff71fae (2026-09-07).
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: e3269c84-1203-491c-b8ca-541536288380
+:REQUEST_REPLAY_V1: {"request_id":"stwvb-review-20260911","mutation":{"operation":"task.state_transitioned","project_id":"orgasmic","payload_sha256":"e0a422135dfc3ff632724038c544bd77fab0241026dd8ea0401cf50d9a452c42"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-STWVB/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-STWVB/journal.org"}]}
+:END:
+
+* tx-20260911-orgasmic-9ee58466-ea07-4590-8977-a8d58aca1d12 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260911-orgasmic-9ee58466-ea07-4590-8977-a8d58aca1d12
+:TIME:    [2026-09-11 Fri 20:21:37]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-STWVB
+:TARGET: .orgasmic/tasks/TASK-STWVB/node.org
+:REASON: Operator approved closing 2026-09-11; remaining item was only waiting for a natural stall.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 9d56987c-105f-4ea9-aeb4-406b6a5e5f18
+:REQUEST_REPLAY_V1: {"request_id":"stwvb-done2-20260911","mutation":{"operation":"task.state_transitioned","project_id":"orgasmic","payload_sha256":"ff4a05f551cf33c7ebcba28ed89e59ebb539751f9cdacef2c409d4256c0285e1"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-STWVB/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-STWVB/journal.org"}]}
+:END:

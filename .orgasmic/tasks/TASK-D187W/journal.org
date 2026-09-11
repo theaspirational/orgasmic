@@ -166,3 +166,37 @@
 :EVENT_ID: c4063f76-b5af-440a-9b85-c07f379288e3
 :REQUEST_REPLAY_V1: {"request_id":"d187w-ac-split-20260911/tx","mutation":{"operation":"node.edited","project_id":"orgasmic","payload_sha256":"1d83765a01ba6cee9a6c575dd15a899feeb4e5750e47de8c323b464d68efd423"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-D187W/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-D187W/journal.org"}]}
 :END:
+
+* tx-20260911-orgasmic-6c4d3c1b-71b0-4540-b3c7-a344b491f8f1 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260911-orgasmic-6c4d3c1b-71b0-4540-b3c7-a344b491f8f1
+:TIME:    [2026-09-11 Fri 20:21:35]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-D187W
+:TARGET: .orgasmic/tasks/TASK-D187W/node.org
+:REASON: All items done on main (83866bee, 8fee5fd9); cosmetic leftover split to TASK-H85X7.
+:FROM_STATE: in_progress
+:TO_STATE: in_review
+:EVENT_ID: 98be8096-ce4d-4e79-b03c-d1ccd4aadb37
+:REQUEST_REPLAY_V1: {"request_id":"d187w-review-20260911","mutation":{"operation":"task.state_transitioned","project_id":"orgasmic","payload_sha256":"12836c2913730c1a5831133e9ed58a299fcd9c3cf1fa0c42b72239dae8f04a45"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-D187W/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-D187W/journal.org"}]}
+:END:
+
+* tx-20260911-orgasmic-2aef9dba-45cf-4fd0-b0f7-6995fae95634 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260911-orgasmic-2aef9dba-45cf-4fd0-b0f7-6995fae95634
+:TIME:    [2026-09-11 Fri 20:21:35]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-D187W
+:TARGET: .orgasmic/tasks/TASK-D187W/node.org
+:REASON: Operator approved closing 2026-09-11; nothing left in scope.
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 76b33177-bf98-4bf7-aef3-90187658c88e
+:REQUEST_REPLAY_V1: {"request_id":"d187w-done2-20260911","mutation":{"operation":"task.state_transitioned","project_id":"orgasmic","payload_sha256":"14544787b1c8e791beaa10af3b1f90842868d38a4ac6fa5007a892185b775c34"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-D187W/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-D187W/journal.org"}]}
+:END:

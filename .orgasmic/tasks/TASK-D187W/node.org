@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-D187W
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-D187W Plugins P2: reconcile registry reload and descriptor authority
+* DONE TASK-D187W Plugins P2: reconcile registry reload and descriptor authority
 :PROPERTIES:
 :ID: TASK-D187W
 :IMPLEMENTS: dec_882B4
