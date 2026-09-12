@@ -47,3 +47,19 @@
 :TO_STATE: in_review
 :EVENT_ID: 08cdc5f9-1bd1-4470-bd97-bcac0bf0c535
 :END:
+
+* tx-20260912-orgasmic-de4b689d-cef2-4042-a56b-2689ed44c7e3 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-de4b689d-cef2-4042-a56b-2689ed44c7e3
+:TIME:    [2026-09-12 Sat 12:08:16]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-1PFW6.1
+:TARGET: .orgasmic/tasks/TASK-1PFW6.1/node.org
+:REASON: merged to main (worker commit b585c23d); Opus review approve-with-follow-ups run-01M2AQR7T11BASKH4K2TKQTW67; follow-ups filed as TASK-1PFW6.2
+:FROM_STATE: in_review
+:TO_STATE: done
+:EVENT_ID: 2773c0eb-51fe-4b5c-87df-934b6c9aeb9d
+:END:

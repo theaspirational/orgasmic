@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-1PFW6.1
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-1PFW6.1 Marketplace registry follow-ups: bounded git, per-entry browse errors, sibling source cache :plugins:
+* DONE TASK-1PFW6.1 Marketplace registry follow-ups: bounded git, per-entry browse errors, sibling source cache :plugins:
 :PROPERTIES:
 :ID: TASK-1PFW6.1
 :PRIORITY: P1
@@ -9,3 +9,5 @@
 
 ** Description
 Bound the daemon git child (kill on timeout, no prompts, ssh batch mode), keep browse going past a bad entry without sticky errors, move the git-source cache out of the clone, reject .orgasmic* sources, lazy source clones, dedupe path_segment, reject file:// with a host.
+** Evidence
+- merged to main (worker commit b585c23d); Opus review approve-with-follow-ups run-01M2AQR7T11BASKH4K2TKQTW67; follow-ups filed as TASK-1PFW6.2
