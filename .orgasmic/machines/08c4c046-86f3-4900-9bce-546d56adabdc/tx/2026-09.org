@@ -10131,3 +10131,46 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-1PFW6/dispatches/tx-20260912-orgasmic-4b7fed24-395f-43f0-aa6c-07713f16ffbd/report.md
 :EVENT_ID:     45307939-4691-4307-88ac-245fc67a00f2
 :END:
+
+* TX 2026-09-12 Sat 11:02:29 reviewer.done TASK-1PFW6
+:PROPERTIES:
+:TX_ID:        tx-20260912-orgasmic-9e04a0b5-4ea2-4e6f-9879-2a91caaed997
+:TIME:         [2026-09-12 Sat 11:02:29]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-1PFW6
+:MODEL:        opus[1m]
+:EFFORT:       high
+:REVIEWED_DIFF: 5c7a8ad0
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260912-orgasmic-4b7fed24-395f-43f0-aa6c-07713f16ffbd
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-1PFW6/dispatches/tx-20260912-orgasmic-4b7fed24-395f-43f0-aa6c-07713f16ffbd/report.md
+:SALVAGE_SHA:  26ecd10d754ef88693c66dfcc0cf1a3ac74eb806
+:SALVAGE_REF:  refs/orgasmic/salvage/26ecd10d754ef88693c66dfcc0cf1a3ac74eb806
+:SALVAGE_FILE_COUNT: 19164
+:EVENT_ID:     e43489eb-68d2-4ea0-a44b-dbef6ba74908
+:END:
+
+* TX 2026-09-12 Sat 11:02:30 manager.dispatch_aborted TASK-1PFW6
+:PROPERTIES:
+:TX_ID:        tx-20260912-orgasmic-b126b0a9-e0cf-4a97-bc12-21f2a4cf248a
+:TIME:         [2026-09-12 Sat 11:02:30]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-1PFW6
+:REASON:       review requested changes; fix round 2 follows on the same worktree
+:CLOSED_TX:    tx-20260912-orgasmic-9b00f021-c756-4ed1-8d35-4ae8bf2f8589
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-1pfw6
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/tasks/TASK-1PFW6/dispatches/tx-20260912-orgasmic-9b00f021-c756-4ed1-8d35-4ae8bf2f8589/report.md
+:EVENT_ID:     551b42a8-df09-4af2-a85c-334e2b058ade
+:END:
