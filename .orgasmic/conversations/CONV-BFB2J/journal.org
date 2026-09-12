@@ -45,3 +45,18 @@
 :RUN_ID: run-01M2AHRZGNN9T0KRNR47B3XS5R
 :EVENT_ID: 0eea2ddd-7f41-44d9-8413-f4e2b2d4ad96
 :END:
+
+* tx-20260912-orgasmic-ba88f6bf-732f-416f-9c22-95d34967b018 conversation.run_started
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-ba88f6bf-732f-416f-9c22-95d34967b018
+:TIME:    [2026-09-12 Sat 11:02:38]
+:TYPE:    conversation.run_started
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/conversations/CONV-BFB2J/node.org
+:REASON: dispatch attempt started
+:NODE_ID: CONV-BFB2J
+:RUN_ID: run-01M2AMH3ZJ2YYSDBR544N5Z5KX
+:EVENT_ID: 597f268d-227e-4479-bd5f-17cecc56cded
+:END:
