@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-YBK2A
+#+orgasmic_version: 2
+
+* BACKLOG TASK-YBK2A Give the Meetings marketplace plugin a JS test runner and port the deleted player tests    :plugins:
+:PROPERTIES:
+:ID: TASK-YBK2A
+:PRIORITY: P3
+:END:
+
+** Description
+MeetingsPlayer.test.jsx (8 cases) was deleted with examples/plugins/meetings. Port it into github.com/theaspirational/orgasmic-plugins under plugins/meetings with a minimal vitest setup. Client-only logic with no host cover: 30 s range chip clamped to duration, no chip at the end, UTF-8-safe 4 KiB selection cut.

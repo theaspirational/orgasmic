@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-YBK2A
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-fa5c40af-c427-4842-a393-a6a9b29fae28 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-fa5c40af-c427-4842-a393-a6a9b29fae28
+:TIME:    [2026-09-12 Sat 10:13:04]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-YBK2A
+:TARGET: .orgasmic/tasks/TASK-YBK2A/node.org
+:REASON: review finding on TASK-N4QMC: 30 s range clamp and UTF-8 4 KiB selection truncation are untested after the example moved out
+:EVENT_ID: 2545b030-aa75-4e98-b62b-09a5e8a6ef83
+:REQUEST_REPLAY_V1: {"request_id":"create-4f5723f37465207a732fc3071cf69427/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"ed4644aa471e6e863ea85477698a7851c21d48813510ece3849242fd223821b6"},"mutation_id":"TASK-YBK2A","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-YBK2A/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-YBK2A/journal.org"}]}
+:END:
