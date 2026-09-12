@@ -1,0 +1,32 @@
+#+title: orgasmic journal CONV-H90E4
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-e43dea87-e273-479d-baa1-adb2ae4ba909 graph.conversations.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-e43dea87-e273-479d-baa1-adb2ae4ba909
+:TIME:    [2026-09-12 Sat 09:55:06]
+:TYPE:    graph.conversations.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/conversations/CONV-H90E4/node.org
+:REASON: created Conversation CONV-H90E4
+:NODE_ID: CONV-H90E4
+:EVENT_ID: acdf047c-9672-4cfe-a814-1d5f3dd4df7a
+:REQUEST_REPLAY_V1: {"request_id":"6089c370-57a3-4378-b9c8-af0c4e86d067","mutation":{"operation":"conversation.created","project_id":"orgasmic","payload_sha256":"5db1fc8dea0437c5301b7d21002f6ebb7a5785e3a0863dd2ef9fce2660c86fae"},"mutation_id":"CONV-H90E4","written_paths":[{"project":"orgasmic","relative":".orgasmic/conversations/CONV-H90E4/node.org"},{"project":"orgasmic","relative":".orgasmic/conversations/CONV-H90E4/links.org"},{"project":"orgasmic","relative":".orgasmic/conversations/CONV-H90E4/journal.org"}]}
+:END:
+
+* tx-20260912-orgasmic-f79af7d7-9381-4a94-b1cd-f91f45eb8592 conversation.run_started
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-f79af7d7-9381-4a94-b1cd-f91f45eb8592
+:TIME:    [2026-09-12 Sat 09:55:10]
+:TYPE:    conversation.run_started
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/conversations/CONV-H90E4/node.org
+:REASON: dispatch attempt started
+:NODE_ID: CONV-H90E4
+:RUN_ID: run-01M2AGNJ64JNS16WG57KPAZ28H
+:EVENT_ID: 2266112b-0845-4797-bfff-1ffa7d37c378
+:END:

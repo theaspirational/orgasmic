@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-N4QMC
 #+orgasmic_version: 2
 
-* BACKLOG TASK-N4QMC Move Meetings to the marketplace repos, add a fixture plugin, reverse decision 9    :plugins:
+* IN_PROGRESS TASK-N4QMC Move Meetings to the marketplace repos, add a fixture plugin, reverse decision 9 :plugins:
 :PROPERTIES:
 :ID: TASK-N4QMC
 :PRIORITY: P1
