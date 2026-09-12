@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-4BV1D.2
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-4BV1D.2 Critique — codex · openai · gpt-6-astra · effort xhigh
+:PROPERTIES:
+:ID: TASK-4BV1D.2
+:READ_SCOPE: target and optional focus in dispatch brief
+:WRITE_SCOPE: none; dispatch report only
+:END:
+
+** Description
+Critique the supplied target independently. This is report-only; do not edit project source.
+
+** Acceptance Criteria
+- [ ] A standalone evidence-anchored, severity-tagged critique report is promoted.

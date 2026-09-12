@@ -1,0 +1,32 @@
+#+title: orgasmic journal CONV-TE7H3
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-6afedcc6-2da8-4285-9372-3fc669dfe04d graph.conversations.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-6afedcc6-2da8-4285-9372-3fc669dfe04d
+:TIME:    [2026-09-12 Sat 19:15:59]
+:TYPE:    graph.conversations.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/conversations/CONV-TE7H3/node.org
+:REASON: created Conversation CONV-TE7H3
+:NODE_ID: CONV-TE7H3
+:EVENT_ID: 83e08123-8e57-45d1-85d2-2126684a14ed
+:REQUEST_REPLAY_V1: {"request_id":"897fee38-9ba6-48ae-bdd2-a3b01a01f352","mutation":{"operation":"conversation.created","project_id":"orgasmic","payload_sha256":"09edf0631ff33095cca02e7773c1342f90eefd68318b304084aa59d726178b07"},"mutation_id":"CONV-TE7H3","written_paths":[{"project":"orgasmic","relative":".orgasmic/conversations/CONV-TE7H3/node.org"},{"project":"orgasmic","relative":".orgasmic/conversations/CONV-TE7H3/links.org"},{"project":"orgasmic","relative":".orgasmic/conversations/CONV-TE7H3/journal.org"}]}
+:END:
+
+* tx-20260912-orgasmic-27fd28b5-1c54-431b-ba57-eb94bdddcfd2 conversation.run_started
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-27fd28b5-1c54-431b-ba57-eb94bdddcfd2
+:TIME:    [2026-09-12 Sat 19:16:02]
+:TYPE:    conversation.run_started
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/conversations/CONV-TE7H3/node.org
+:REASON: dispatch attempt started
+:NODE_ID: CONV-TE7H3
+:RUN_ID: run-01M2BGRHYX35CM45KA4R1QGVST
+:EVENT_ID: 8952af10-da89-410f-a71c-61d4ea9ec2b8
+:END:
