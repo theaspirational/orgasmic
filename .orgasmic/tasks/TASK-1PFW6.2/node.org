@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-1PFW6.2
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-1PFW6.2 Marketplace source cache: no git on the read path, stage-and-swap refresh, process-group kill :plugins:
+* IN_REVIEW TASK-1PFW6.2 Marketplace source cache: no git on the read path, stage-and-swap refresh, process-group kill :plugins:
 :PROPERTIES:
 :ID: TASK-1PFW6.2
 :PRIORITY: P1
