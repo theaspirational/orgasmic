@@ -1,0 +1,20 @@
+{
+  "event_count": 787,
+  "tool_call_count": 0,
+  "unparsed_events": 0,
+  "bounded_events": 7,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-DBKKK-implementer-20260912T114250.jsonl",
+    "size_bytes": 666082
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/12/rollout-2026-09-12T14-42-52-01a0956d-7189-73d2-b731-142229808430.jsonl",
+    "session_id": "01a0956d-7189-73d2-b731-142229808430",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
