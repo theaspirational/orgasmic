@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-MJE9K.3
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MJE9K.3 S1b singletons: events with project_id, open topics and actions, migrate step, goal, handoff, gotchas, deletions    :plugins:kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-MJE9K.2
+:ID: TASK-MJE9K.3
+:IMPLEMENTS: dec_EPDX3 dec_HSYKH dec_6NTGZ
+:PRIORITY: P1
+:END:
+
+** Description
+Section 13.7 row S1b. NodeChanged with project_id; open Topic, WorkerKind, Action; allowed_topics from declared topics. orgasmic project migrate per decision 22 with the interrupted-rerun fixture (goal history, handoff GOAL_ID, nested gotchas, legacy term: ids with inbound refs, schema-2 third-party node, both singleton paths). Goal and handoff as one-heading zero-code singletons (decision 44), gotchas as a zero-code node type (decision 43), all shipped. Deletions: grill and plan (decision 38), CLI content lifecycle (decision 39; daemon content.rs stays), three TASK-007 stubs. corpus-manifest.json regenerated.
+
+** Acceptance
+- Goal, handoff and gotchas are plugins; disable one: nav gone, writes refused, node readable
+- No grill, plan or content verb; no Griller or Planner kind; /skills and skills.all still work
+- Member granted project A receives no NodeChanged from project B
+- Phone app works; reviewed

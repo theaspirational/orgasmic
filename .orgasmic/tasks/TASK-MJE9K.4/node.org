@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-MJE9K.4
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MJE9K.4 S2 decisions and glossary: extended descriptor, generic tree and backlink projections, delete bespoke views    :plugins:kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-MJE9K.3
+:ID: TASK-MJE9K.4
+:PRIORITY: P1
+:END:
+
+** Description
+Section 13.7 row S2. Descriptor extensions from 13.5 including EDGES with exists and normalized UNIQUE; generic tree and backlink projections; CLI alias; EXAMPLE. Delete GraphLayer, the legacy routes, DecisionsView, GlossaryView, schema_examples.rs, the term: sites. Before deleting the views, register the artifact generate action through registerNodeAction from the host so it survives until S3.
+
+** Acceptance
+- Both are zero-code folders
+- Every PARENT rule enforced through EDGES including missing-parent refusal; glossary title and CANONICAL uniqueness normalized independently
+- Generate-artifact still reachable from a decision

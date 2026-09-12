@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-MJE9K.7
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MJE9K.7 S5 nightly: phone app and meetings plugin updated for the new paths and topics    :plugins:kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-MJE9K.6
+:ID: TASK-MJE9K.7
+:PRIORITY: P1
+:END:
+
+** Description
+Section 13.7 row S5. Apps updated for /projects/:p/plugins/:id/* and the open topics; meetings updated in orgasmic-plugins; runtime 0.1.0-nightly.
+
+** Acceptance
+- Phone app and meetings work against the new daemon

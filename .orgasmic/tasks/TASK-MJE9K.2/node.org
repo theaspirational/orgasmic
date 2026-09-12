@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-MJE9K.2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MJE9K.2 S1a trait: orgasmic-plugin-api, shipped plugin root, activation, PLUGIN_API 2, fixture plugin    :plugins:kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-MJE9K.1
+:ID: TASK-MJE9K.2
+:IMPLEMENTS: dec_9KT2N dec_SM5ZD
+:PRIORITY: P1
+:END:
+
+** Description
+Section 13.7 row S1a and section 13.5 contracts. orgasmic-plugin-api crate with PluginState, PluginCtx, CliContext, SlotProvider, DispatchService. Shipped plugin root in discovery, watch set, list, enable/disable, refuse-remove (gap 17). .orgasmic/plugins.json defaults (decision 10). Trait wired into daemon and CLI boot. Route namespace /projects/:p/plugins/:id/* with activation middleware. CLI verb registry. index.plugins[id]. PLUGIN_API 2 with REQUIRES/OPTIONAL graph (gap 18, decision 42). Capabilities to actions with viewer and editor defaults. registerPage and registerNodeAction. Tauri CSP matching the daemon's nonce policy. crates/orgasmic-plugin-fixture with one route, one verb, one hook, one projection, one topic; test-only, not shipped.
+
+** Acceptance
+- cargo tree shows no daemon or CLI to plugin cycle
+- Fixture enabled in project A, disabled in B: route 200 vs 404, write accepted vs refused before hooks, projection present vs absent, verb runs vs refuses, topic delivered to an A-only member and never to a B-only member
+- Reviewed and approved before S1b starts

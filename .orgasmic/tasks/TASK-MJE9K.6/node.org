@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-MJE9K.6
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MJE9K.6 S4 tasks: orgasmic-plugin-tasks crate, core.dispatch@1 service, UI bundle, LifecycleStage private    :plugins:kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-MJE9K.5
+:ID: TASK-MJE9K.6
+:PRIORITY: P1
+:END:
+
+** Description
+Section 13.7 row S4. crates/orgasmic-plugin-tasks. core.dispatch@1 service (dispatch, wait, close with generation handle and report promotion) in-process and over HTTP. Dispatch routes, subtasks, retro, projections, slots (three lists reconciled, task.test_cmd decided), registerDockPane, registerCommand, 22 CLI verbs and the task half of manager.rs move; task comment routes move; LifecycleStage private; ui/plugins/tasks bundle; tests move with the code. Forum's task calls and manager::*_quiet calls updated in this slice. identity_lint.rs made generic.
+
+** Acceptance
+- api.rs has no task handler
+- Dispatch runs against a task through plugin routes
+- Meetings dispatches a run against a meeting through core.dispatch@1 with tasks disabled
+- Disable is refused while a task run is open

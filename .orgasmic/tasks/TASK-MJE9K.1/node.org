@@ -1,0 +1,16 @@
+#+title: orgasmic task TASK-MJE9K.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MJE9K.1 S0 renames: task_id to subject_id, artifactor to generator, commit section 13    :plugins:kernel:
+:PROPERTIES:
+:ID: TASK-MJE9K.1
+:IMPLEMENTS: dec_Y498Y
+:PRIORITY: P1
+:END:
+
+** Description
+Section 13.7 row S0. Rename AcquireRequest.task_id to subject_id in supervisor.rs. Rename artifactor to generator per decision 45: the WorkerKind variant, the four shipped prompt specs (task-regenerate, decision-regenerate, glossary-regenerate, artifact-generator), GenerateArtifactDialog.tsx:147, NodeRegenerateControl.tsx, operations/chat.md, and tests naming the string. No serde alias.
+
+** Acceptance
+- Test suite green
+- An old record naming artifactor fails with a message naming the rename

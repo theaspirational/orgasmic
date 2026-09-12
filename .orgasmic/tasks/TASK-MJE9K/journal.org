@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-MJE9K
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-8a770810-c5a1-4172-93ae-7d2ca1a3279f task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-8a770810-c5a1-4172-93ae-7d2ca1a3279f
+:TIME:    [2026-09-12 Sat 20:23:47]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MJE9K
+:TARGET: .orgasmic/tasks/TASK-MJE9K/node.org
+:REASON: PLUGINS-SCOPE.md section 13 closed and forum-reviewed
+:EVENT_ID: fbaefae3-b761-42b4-9cc2-c7d167970248
+:REQUEST_REPLAY_V1: {"request_id":"s13-task-parent-20260912/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"a655b03a670c9522ac0f65c8d17973d48fd0cede4977ea0c7045954e94b5802c"},"mutation_id":"TASK-MJE9K","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-MJE9K/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-MJE9K/journal.org"}]}
+:END:

@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-MJE9K.8
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MJE9K.8 S6 forum plugin and stable 0.1.0    :plugins:kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-MJE9K.7
+:ID: TASK-MJE9K.8
+:IMPLEMENTS: dec_6NTGZ
+:PRIORITY: P1
+:END:
+
+** Description
+Section 13.7 row S6. crates/orgasmic-plugin-forum: forum.rs moves whole; manager::*_quiet calls replaced by PluginState.dispatch; skill pages, recipes, all 7 prompt specs and their corpus-manifest entries move into shipped/plugins/forum/; prompt-spec lookup gains the plugin root (gap 19); the orgasmic skill keeps one pointer. Stable 0.1.0 with release notes naming the manual reinstall (decision 46).
+
+** Acceptance
+- orgasmic-cli has no forum code
+- Disable forum: the verb refuses
+- Existing tmp/forum/*.json manifests still resume, including report-only promotion
+- Stable 0.1.0 published

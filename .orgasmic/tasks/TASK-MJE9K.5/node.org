@@ -1,0 +1,17 @@
+#+title: orgasmic task TASK-MJE9K.5
+#+orgasmic_version: 2
+
+* BACKLOG TASK-MJE9K.5 S3 artifacts: orgasmic-plugin-artifacts crate, UI bundle, artifacts role removed    :plugins:kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-MJE9K.4
+:ID: TASK-MJE9K.5
+:PRIORITY: P1
+:END:
+
+** Description
+Section 13.7 row S3. crates/orgasmic-plugin-artifacts: the 7 routes, both comment routes and both generic-handler forks move in. registerNodeAction ownership moves to the artifacts bundle. Block names pinned once. conversations.rs:2072 chat-context fork becomes a plugin-provided context provider. ui/plugins/artifacts bundle and npm run build:plugins; debug and test builds tolerate a missing shipped-tier UI file. artifacts role removed with the grant rewrite. Forum's /artifacts/:id/submit call updated in this slice.
+
+** Acceptance
+- api.rs has no artifact handler
+- Generate, submit, regenerate, comment add and resolve work through plugin routes for admin and for a former artifacts-role member
+- Clean checkout cargo build and cargo test pass without npm; packaged runtime serves the bundle

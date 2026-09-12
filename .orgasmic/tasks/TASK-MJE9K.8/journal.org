@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-MJE9K.8
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-26ace1f7-b46b-4845-b5be-ab43b45364f3 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-26ace1f7-b46b-4845-b5be-ab43b45364f3
+:TIME:    [2026-09-12 Sat 20:23:49]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MJE9K.8
+:TARGET: .orgasmic/tasks/TASK-MJE9K.8/node.org
+:REASON: created task TASK-MJE9K.8
+:EVENT_ID: 4c29dc0c-a967-4b48-bf6b-4d4f985ae39b
+:REQUEST_REPLAY_V1: {"request_id":"s13-s6-20260912/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"1182c8a5c5a00dfa97dbd70c4233a16045b76548f838d92916bd28946fc9ea46"},"mutation_id":"TASK-MJE9K.8","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-MJE9K.8/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-MJE9K.8/journal.org"}]}
+:END:
