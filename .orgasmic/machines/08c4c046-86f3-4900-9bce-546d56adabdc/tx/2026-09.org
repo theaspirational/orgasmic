@@ -9712,3 +9712,29 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-FY0TS/dispatches/tx-20260910-orgasmic-4f9795c2-3ca1-4d5a-a6d2-c7279a610880/report.md
 :EVENT_ID:     0d9aae53-f9f2-44fd-a079-24ea86ee3938
 :END:
+
+* TX 2026-09-12 Sat 07:06:14 org.file_rewritten orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260912-orgasmic-4cb18827-71bd-4b56-956c-f25a5fb02153
+:TIME:         [2026-09-12 Sat 07:06:14]
+:TYPE:         org.file_rewritten
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/gotchas.org
+:REASON:       org file rewrite requested
+:EVENT_ID:     412f9fa3-ea7d-44b3-9c50-467c9fa535ed
+:END:
+
+* TX 2026-09-12 Sat 07:06:16 org.file_rewritten orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260912-orgasmic-70b514fe-5e9c-4ed3-bd8b-75a3ed5dbe9d
+:TIME:         [2026-09-12 Sat 07:06:16]
+:TYPE:         org.file_rewritten
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/gotchas.org
+:REASON:       org file rewrite requested
+:EVENT_ID:     e470d3db-bc70-469b-905e-8ee8c8fa9867
+:END:

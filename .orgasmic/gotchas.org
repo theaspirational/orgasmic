@@ -924,3 +924,27 @@ and the ledger checkout vanished from its path. Fixed the same day
 (main =31344134=): ledgers live at =~/.orgasmic/ledgers/<id>=, following the
 =worktrees/<id>= convention. Any future per-project home state must go under a
 function dir (=ledgers/=, =worktrees/=), never =<id>/= at the root.
+
+** A full-workspace cargo test run reports failures that pass on rerun
+:PROPERTIES:
+:CREATED: [2026-09-12 Sat 07:06:13]
+:END:
+Evidence: 2026-09-11, 'cargo test -p orgasmic-core -p orgasmic-daemon -p orgasmic-cli --no-fail-fast' ran 38 minutes and failed 10 tests: git probes in index, ledger_sync convergence, two tmux stall tests in supervisor, concurrent_task_creates_preserve_every_heading, and one dispatch finalize test. Rerunning the same 9 with --test-threads 1 passed in under 15 seconds.
+
+Cause: the timing-sensitive tests (git subprocesses, tmux panes, stall windows) starve under full-workspace parallelism.
+
+Fix: never treat a full-run failure as a verdict. Rerun the named tests serially, e.g. 'cargo test -p orgasmic-daemon --lib -- --test-threads 1 <name> <name>', before diagnosing anything.
+
+Exit: a failure that reproduces serially is real.
+
+** The shipped-skills coverage test only counts backticked command mentions
+:PROPERTIES:
+:CREATED: [2026-09-12 Sat 07:06:16]
+:END:
+Evidence: every_visible_cli_subcommand_is_named_in_the_shipped_skills (crates/orgasmic-cli/src/main.rs) failed on main with 'CLI subcommand(s) missing from shipped skills: [member set-actions]' while shipped/skills/orgasmic/operations/chat.md named the command twice: once under 'aliases:' and once inside a bash block.
+
+Cause: the test concatenates the bundle markdown (SKILL.md, operations/, recipes/, references/, plus the plugin-author SKILL.md) and looks for the literal backticked 'orgasmic <command path>'. Alias lists and fenced code blocks do not satisfy it.
+
+Fix: when you add a visible CLI subcommand, name it inline in backticks in the prose of a bundle page.
+
+Exit: the test passes.
