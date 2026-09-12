@@ -15,3 +15,19 @@
 :EVENT_ID: 2545b030-aa75-4e98-b62b-09a5e8a6ef83
 :REQUEST_REPLAY_V1: {"request_id":"create-4f5723f37465207a732fc3071cf69427/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"ed4644aa471e6e863ea85477698a7851c21d48813510ece3849242fd223821b6"},"mutation_id":"TASK-YBK2A","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-YBK2A/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-YBK2A/journal.org"}]}
 :END:
+
+* tx-20260912-orgasmic-75deb110-176c-4463-80a7-e78aafce3136 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-75deb110-176c-4463-80a7-e78aafce3136
+:TIME:    [2026-09-12 Sat 12:58:38]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-YBK2A
+:TARGET: .orgasmic/tasks/TASK-YBK2A/node.org
+:REASON: implemented directly by the manager: vitest at the plugins repo root with test/plugin-sdk.js standing in for the host SDK; all 8 deleted MeetingsPlayer cases ported to plugins/meetings/test/meetings.test.jsx and green; the 30 s window assertion was strengthened because the original only exercised the duration clamp; both the 30 s window and the 4 KiB UTF-8 cut fail under mutation; pushed to github and ath as 901bae0e
+:FROM_STATE: backlog
+:TO_STATE: done
+:EVENT_ID: 99e90fe3-34cb-42f4-b7b6-74c56f130761
+:END:

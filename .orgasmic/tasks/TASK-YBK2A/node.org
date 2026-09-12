@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-YBK2A
 #+orgasmic_version: 2
 
-* BACKLOG TASK-YBK2A Give the Meetings marketplace plugin a JS test runner and port the deleted player tests    :plugins:
+* DONE TASK-YBK2A Give the Meetings marketplace plugin a JS test runner and port the deleted player tests :plugins:
 :PROPERTIES:
 :ID: TASK-YBK2A
 :PRIORITY: P3
@@ -9,3 +9,5 @@
 
 ** Description
 MeetingsPlayer.test.jsx (8 cases) was deleted with examples/plugins/meetings. Port it into github.com/theaspirational/orgasmic-plugins under plugins/meetings with a minimal vitest setup. Client-only logic with no host cover: 30 s range chip clamped to duration, no chip at the end, UTF-8-safe 4 KiB selection cut.
+** Evidence
+- implemented directly by the manager: vitest at the plugins repo root with test/plugin-sdk.js standing in for the host SDK; all 8 deleted MeetingsPlayer cases ported to plugins/meetings/test/meetings.test.jsx and green; the 30 s window assertion was strengthened because the original only exercised the duration clamp; both the 30 s window and the 4 KiB UTF-8 cut fail under mutation; pushed to github and ath as 901bae0e
