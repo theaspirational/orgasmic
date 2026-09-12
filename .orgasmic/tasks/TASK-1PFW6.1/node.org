@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-1PFW6.1
 #+orgasmic_version: 2
 
-* BACKLOG TASK-1PFW6.1 Marketplace registry follow-ups: bounded git, per-entry browse errors, sibling source cache    :plugins:
+* IN_PROGRESS TASK-1PFW6.1 Marketplace registry follow-ups: bounded git, per-entry browse errors, sibling source cache :plugins:
 :PROPERTIES:
 :ID: TASK-1PFW6.1
 :PRIORITY: P1
