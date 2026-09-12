@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-1PFW6.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-1PFW6.1 Marketplace registry follow-ups: bounded git, per-entry browse errors, sibling source cache    :plugins:
+:PROPERTIES:
+:ID: TASK-1PFW6.1
+:PRIORITY: P1
+:END:
+
+** Description
+Bound the daemon git child (kill on timeout, no prompts, ssh batch mode), keep browse going past a bad entry without sticky errors, move the git-source cache out of the clone, reject .orgasmic* sources, lazy source clones, dedupe path_segment, reject file:// with a host.

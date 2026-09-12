@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-1PFW6
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-1PFW6 Marketplace registry in core, daemon and CLI :plugins:
+* DONE TASK-1PFW6 Marketplace registry in core, daemon and CLI :plugins:
 :PROPERTIES:
 :DEPENDS_ON: TASK-N4QMC
 :ID: TASK-1PFW6
@@ -14,3 +14,5 @@ Git-repo marketplaces with a marketplace.org index. Clone under ~/.orgasmic/user
 - daemon route tests against local bare git repos, no network
 - admin-only mutations
 - update keeps activation, grown capabilities need re-approval
+** Evidence
+- merged to main at b1a5b0b3 (worker commits 5c7a8ad0, 9506effe); Opus review round 1 reject, round 2 approve-with-follow-ups (run-01M2APB8DDD1E7BGY7T46YNAY5); follow-ups filed as TASK-1PFW6.1

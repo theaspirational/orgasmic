@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-1PFW6.1
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-09a0af50-52e6-40a6-8446-bb7622fc9feb task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-09a0af50-52e6-40a6-8446-bb7622fc9feb
+:TIME:    [2026-09-12 Sat 11:42:45]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-1PFW6.1
+:TARGET: .orgasmic/tasks/TASK-1PFW6.1/node.org
+:REASON: round 2 Opus review of TASK-1PFW6 approved with follow-ups
+:EVENT_ID: 76972ea7-d667-4db4-b9e9-9240e235ac1b
+:REQUEST_REPLAY_V1: {"request_id":"create-77574eea740a3032b9fcdc35d88f3880/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"8bd2adfba157d557c69714b0393f196e4698f1a7b6391db1d7b9ed1930860640"},"mutation_id":"TASK-1PFW6.1","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-1PFW6.1/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-1PFW6.1/journal.org"}]}
+:END:

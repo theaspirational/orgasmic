@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DBKKK
 #+orgasmic_version: 2
 
-* BACKLOG TASK-DBKKK Plugins page in the app: Installed, Browse, Marketplaces    :plugins:ui:
+* IN_PROGRESS TASK-DBKKK Plugins page in the app: Installed, Browse, Marketplaces :plugins:ui:
 :PROPERTIES:
 :ID: TASK-DBKKK
 :PRIORITY: P1
