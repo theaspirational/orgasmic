@@ -1,0 +1,22 @@
+#+title: orgasmic Conversation CONV-NSTYB
+#+orgasmic_version: 2
+
+#+todo: OPEN | ARCHIVED
+
+* OPEN Review TASK-1PFW6.1
+:PROPERTIES:
+:ID: CONV-NSTYB
+:PURPOSE: review
+:OWNER: admin
+:PROVIDER: claude-sdk
+:MODEL: 
+:EFFORT: 
+:ACCESS: 
+:SERVICE_TIER: 
+:HARNESS_ARGS: 
+:MODE: chat
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:WORKTREE: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-1pfw6.1-review
+:RUNS:  run-01M2AQR7T11BASKH4K2TKQTW67
+:CREATED_AT: 2026-09-12T11:58:54Z
+:END:
