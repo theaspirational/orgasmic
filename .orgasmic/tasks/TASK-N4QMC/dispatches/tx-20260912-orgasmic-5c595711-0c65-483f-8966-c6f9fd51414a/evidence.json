@@ -1,0 +1,20 @@
+{
+  "event_count": 619,
+  "tool_call_count": 0,
+  "unparsed_events": 0,
+  "bounded_events": 7,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-N4QMC-implementer-20260912T095507.jsonl",
+    "size_bytes": 510586
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/12/rollout-2026-09-12T12-55-09-01a0950a-d2d1-7f71-8ffc-609c657e86bc.jsonl",
+    "session_id": "01a0950a-d2d1-7f71-8ffc-609c657e86bc",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
