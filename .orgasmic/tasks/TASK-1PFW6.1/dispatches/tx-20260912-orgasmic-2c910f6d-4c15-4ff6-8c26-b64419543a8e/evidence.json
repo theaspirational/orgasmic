@@ -1,0 +1,20 @@
+{
+  "event_count": 769,
+  "tool_call_count": 0,
+  "unparsed_events": 0,
+  "bounded_events": 3,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-1PFW6.1-implementer-20260912T114301.jsonl",
+    "size_bytes": 701297
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.codex/sessions/2026/09/12/rollout-2026-09-12T14-43-02-01a0956d-9824-7812-8cc4-c72f6f3124ca.jsonl",
+    "session_id": "01a0956d-9824-7812-8cc4-c72f6f3124ca",
+    "confidence": "high",
+    "correlation": "codex_thread_id_rollout_filename"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
