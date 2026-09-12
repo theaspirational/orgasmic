@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-1PFW6.2
+#+orgasmic_version: 2
+
+* IN_PROGRESS TASK-1PFW6.2 Marketplace source cache: no git on the read path, stage-and-swap refresh, process-group kill :plugins:
+:PROPERTIES:
+:ID: TASK-1PFW6.2
+:PRIORITY: P1
+:END:
+
+** Description
+GET /plugins must never clone; sticky source errors must not hide a valid cache; refresh clones fresh and swaps instead of pulling in place; kill the git process group on timeout; cache path gets a fixed segment; refresh response carries per-source results; prune stale caches; file://localhost normalised.

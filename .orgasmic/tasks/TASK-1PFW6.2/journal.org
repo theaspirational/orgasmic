@@ -1,0 +1,33 @@
+#+title: orgasmic journal TASK-1PFW6.2
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-088274ec-99f6-43a8-8108-8969fcf6d049 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-088274ec-99f6-43a8-8108-8969fcf6d049
+:TIME:    [2026-09-12 Sat 12:08:39]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-1PFW6.2
+:TARGET: .orgasmic/tasks/TASK-1PFW6.2/node.org
+:REASON: Opus review of TASK-1PFW6.1 approved with follow-ups
+:EVENT_ID: 351749c6-6448-4c4c-9dea-c8b4529a08fc
+:REQUEST_REPLAY_V1: {"request_id":"create-2338a4d207f364565e295176abc64681/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"f8e6652d316ba3ace99ee128a36c3dbad7360aa700677418add1ef1ce1bc995f"},"mutation_id":"TASK-1PFW6.2","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-1PFW6.2/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-1PFW6.2/journal.org"}]}
+:END:
+
+* tx-20260912-orgasmic-de4a1d03-3307-41f6-a331-271613fac1a9 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-de4a1d03-3307-41f6-a331-271613fac1a9
+:TIME:    [2026-09-12 Sat 12:08:40]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-1PFW6.2
+:TARGET: .orgasmic/tasks/TASK-1PFW6.2/node.org
+:REASON: transition TASK-1PFW6.2 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: e0e59b99-9b62-428b-a878-8d300d6f4b4e
+:END:
