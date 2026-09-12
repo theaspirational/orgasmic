@@ -32,3 +32,36 @@
 :EVENT_ID: d7ca0fbd-7600-49e8-950f-6c5f70ea9f7b
 :REQUEST_REPLAY_V1: {"request_id":"forum-critique-state-TASK-4BV1D-in_progress","mutation":{"operation":"task.state_transitioned","project_id":"orgasmic","payload_sha256":"a1a81cd6021d6d54ab9aea967492f2a90d7f106c31f2040ac37e7e3151575734"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D/journal.org"}]}
 :END:
+
+* tx-20260912-orgasmic-38373cd4-03f0-48b1-a5d1-6ec2d5f3fdf3 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-38373cd4-03f0-48b1-a5d1-6ec2d5f3fdf3
+:TIME:    [2026-09-12 Sat 19:56:29]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-4BV1D
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-4BV1D/node.org
+:REASON: edited task node TASK-4BV1D
+:NODE_ID: TASK-4BV1D
+:EVENT_ID: a50fca61-5a74-423c-a6c8-9421a439208a
+:REQUEST_REPLAY_V1: {"request_id":"forum-critique-evidence-TASK-4BV1D/tx","mutation":{"operation":"node.edited","project_id":"orgasmic","payload_sha256":"bf9598c011f7017c0379c79635e9d29958d16a2f66e7ebf921889bce1bbd721d"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D/journal.org"}]}
+:END:
+
+* tx-20260912-orgasmic-446b7c7e-438d-4d3e-bc06-0cba8a0a8e3d task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-446b7c7e-438d-4d3e-bc06-0cba8a0a8e3d
+:TIME:    [2026-09-12 Sat 19:56:29]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-4BV1D
+:TARGET: .orgasmic/tasks/TASK-4BV1D/node.org
+:REASON: report promoted and recorded as evidence
+:FROM_STATE: in_progress
+:TO_STATE: done
+:EVENT_ID: 76c9a306-ca25-4f62-b64e-94e57d05d15c
+:REQUEST_REPLAY_V1: {"request_id":"forum-critique-state-TASK-4BV1D-done","mutation":{"operation":"task.state_transitioned","project_id":"orgasmic","payload_sha256":"a468b75f34705e250b9e53eba7a24f2be37df57c7fafab78716189fe951212e9"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D/journal.org"}]}
+:END:

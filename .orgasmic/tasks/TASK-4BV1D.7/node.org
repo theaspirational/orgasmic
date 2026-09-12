@@ -1,0 +1,20 @@
+#+title: orgasmic task TASK-4BV1D.7
+#+orgasmic_version: 2
+
+* DONE TASK-4BV1D.7 Curate forum — claude · anthropic · claude-fable-5-1 · effort interactive
+:PROPERTIES:
+:ID: TASK-4BV1D.7
+:READ_SCOPE: all promoted reports named in the forum manifest
+:WRITE_SCOPE: session-authored draft and diagram; orgasmic task evidence and artifact store via CLI only
+:END:
+
+** Description
+Invoking session identity: claude · anthropic · claude-fable-5-1 · effort interactive
+
+** Acceptance Criteria
+- [ ] The session-authored draft and diagram pass the forum's curation gates and one artifact is submitted.
+** Evidence
+- Session curator: claude · anthropic · claude-fable-5-1 · effort interactive
+- Draft: /tmp/TASK-4BV1D-curation.mdx
+- Diagram JSON: /tmp/TASK-4BV1D-diagram.json
+- Artifact: ART-DHMGD
