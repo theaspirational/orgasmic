@@ -1,0 +1,17 @@
+#+title: orgasmic journal dec_Y498Y
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-f7f8f300-7836-4f61-81a1-972ceb64384e graph.decision.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-f7f8f300-7836-4f61-81a1-972ceb64384e
+:TIME:    [2026-09-12 Sat 20:23:10]
+:TYPE:    graph.decision.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/decisions/dec_Y498Y/node.org
+:REASON: created graph node dec_Y498Y
+:NODE_ID: dec_Y498Y
+:EVENT_ID: ae96aba1-09bb-4b1a-b862-59bf56ce8068
+:REQUEST_REPLAY_V1: {"request_id":"s13-breakage-20260912/tx","mutation":{"operation":"graph.decision.created","project_id":"orgasmic","payload_sha256":"0ce2b4e59fd80fed405035e48261f93d3397570a978448d151299d78cb6c46a4"},"mutation_id":"dec_Y498Y","written_paths":[{"project":"orgasmic","relative":".orgasmic/decisions/dec_Y498Y/node.org"},{"project":"orgasmic","relative":".orgasmic/decisions/dec_Y498Y/journal.org"}]}
+:END:

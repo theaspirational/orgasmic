@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_Y498Y
+#+orgasmic_version: 2
+
+* dec_Y498Y One breaking 0.1.0: manual reinstall, artifactor rename without alias, bounded migrate step, stable after forum
+:PROPERTIES:
+:DECIDED_AT: 2026-09-12
+:ID: dec_Y498Y
+:PARENT: dec_2SM4G
+:SOURCE: section 13.4 decisions 15, 22, 45, 46, 47
+:END:
+
+** Context
+The installed pre-0.1.0 CLI validates a new bundle by loading shipped/schema/node-types/, which 0.1.0 removes. artifactor is a serde wire value in four shipped prompt specs and user overrides. The first draft's migrate token #+orgasmic_plugin: is not what the landed write gate reads.
+
+** Decision
+0.1.0 drops shipped/schema/node-types/ and is a manual install.sh reinstall for every existing install; release notes say so. artifactor becomes generator with no serde alias; S0 rewrites the four shipped specs and the UI label, and old records fail with a message naming the rename. orgasmic project migrate is idempotent and rerunnable: it stamps #+plugin: <id> schema=1 only on unstamped built-in nodes, rewrites term: to term_ across directories, ids, inbound properties and journals, refuses collisions, moves goal and handoff files, and splits gotchas.org. Nightly from S1a through S5; stable 0.1.0 at the end of S6.
+
+** Consequences
+Losses recorded in section 13.6 items 9 and 10. The migrate fixture with every case, interrupted and rerun, is the S1b gate.

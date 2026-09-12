@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_6NTGZ
+#+orgasmic_version: 2
+
+* dec_6NTGZ Forum becomes a CLI-only compiled plugin; grill, plan and the content lifecycle command are removed
+:PROPERTIES:
+:DECIDED_AT: 2026-09-12
+:ID: dec_6NTGZ
+:PARENT: dec_2SM4G
+:SOURCE: section 13.4 decisions 36, 38, 39
+:END:
+
+** Context
+Forum is a 5,520-line CLI workflow with no node type that reaches tasks, artifacts and crate-private dispatch helpers. Grill and plan are task stages nobody uses. orgasmic content predates marketplaces. The forum caught that the daemon content.rs is the live skill loader, not obsolete content code.
+
+** Decision
+Forum becomes crates/orgasmic-plugin-forum with cli and run_cli only, requiring tasks, artifacts and core.dispatch@1; its skill pages, seven prompt specs, corpus-manifest entries and three recipes move into shipped/plugins/forum/ (slice S6). Grill and plan routes, verbs, worker kinds, prompt specs and skill mentions are removed in S1b. The CLI content lifecycle command, cli/src/content_lifecycle.rs, user/optional.org and user/hub.org are deleted in S1b. Daemon content.rs stays core.
+
+** Consequences
+orgasmic-cli has no forum code after S6. Existing forum manifests still resume through the dispatch service. Grill and plan may return as a skill recipe.

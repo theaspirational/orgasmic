@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_EPDX3
+#+orgasmic_version: 2
+
+* dec_EPDX3 Goal and handoff are one-heading zero-code singletons; gotchas become an ordinary node type
+:PROPERTIES:
+:DECIDED_AT: 2026-09-12
+:ID: dec_EPDX3
+:PARENT: dec_2SM4G
+:SOURCE: section 13.4 decisions 40, 43, 44; forum TASK-4BV1D
+:END:
+
+** Context
+Goal today mints dated ids, keeps superseded headings, and rewrites handoff's GOAL_ID. Gotcha add validates titles and stamps CREATED. The forum showed a zero-code PATH plus ID singleton cannot carry any of that, and dispatch_extras was a compiled method on a type declared zero-code.
+
+** Decision
+Goal and handoff are zero-code singleton plugins with exactly one heading each, fixed ids goal-current and handoff-current, stored at .orgasmic/goal.org and .orgasmic/handoff.org (moved out of tasks/ by migrate). goal set overwrites. Dropped: goal history, goal supersede, sync_handoff_goal_id, handoff's GOAL_ID, the GOAL_ID dispatch stamp, the dispatch_extras trait method, tasks' OPTIONAL edge to goal. Gotchas become a zero-code node-type plugin: collection gotchas, prefix gotcha-, UNIQUE title; migrate splits gotchas.org into nodes carrying CREATED. orgasmic gotcha add and list survive as CLI aliases.
+
+** Consequences
+Migrate discards prior goal headings and handoff's GOAL_ID; recorded as accepted losses. A worker that needs the goal reads .orgasmic/goal.org.

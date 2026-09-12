@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_9KT2N
+#+orgasmic_version: 2
+
+* dec_9KT2N Compiled plugins register through a host-neutral CompiledPlugin trait, proven by a fixture before any type moves
+:PROPERTIES:
+:DECIDED_AT: 2026-09-12
+:ID: dec_9KT2N
+:PARENT: dec_2SM4G
+:SOURCE: section 13.5, decisions 11, 12, 41
+:END:
+
+** Context
+No AppState, CliContext or SlotProvider exists; the daemon state is ApiState and its nested routers are crate-private. A plugin crate naming daemon types is a Cargo cycle. The forum found S1 as first drafted bundled fourteen changes with a gate that exercised only zero-code folders.
+
+** Decision
+New crate orgasmic-plugin-api owns PluginState (writer, index, events, authz, dispatch, activation as trait objects), PluginCtx (project, caller, state) and CliContext. The daemon adapts ApiState into PluginState. Trait discovery methods (id, hooks, routes, cli, worker_kinds, topics) are global; invocation methods (projection, slots, run_cli) take a project-scoped context. Activation is enforced by the host: route middleware 404s, the writer refuses disabled collections before hooks, the index skips disabled projections. S1 splits into S1a (api crate, shipped plugin root, activation file, PLUGIN_API 2, namespace, CLI verb registry, registerPage and registerNodeAction, Tauri CSP, and a test-only fixture crate with one route, one verb, one hook, one projection, one topic) and S1b (events, authz, migrate, singletons, deletions). S1a is reviewed before S1b. core.dispatch@1 is a core service with dispatch, wait and close, exposed in-process and over HTTP.
+
+** Consequences
+cargo tree proves no cycle. The fixture proves activation on in project A and off in project B across routes, hooks, projection, CLI and topics before goal or handoff move.

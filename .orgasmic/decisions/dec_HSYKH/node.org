@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_HSYKH
+#+orgasmic_version: 2
+
+* dec_HSYKH Events carry project_id; topics and actions open to declared strings with a subscribe rule; the artifacts role is dropped
+:PROPERTIES:
+:DECIDED_AT: 2026-09-12
+:ID: dec_HSYKH
+:PARENT: dec_2SM4G
+:SOURCE: section 13.4 decisions 21, 23, 35; forum blocking findings
+:END:
+
+** Context
+The first draft collapsed task and artifact events into NodeChanged with collection and node_id only. The websocket filter passes project-less payloads to every member, so that was a cross-project leak. Removing ArtifactsRead removed the only grant path to artifact events.
+
+** Decision
+NodeChanged carries project_id, collection and node_id; the bus refuses a plugin event without project_id. Topic, WorkerKind and Action open to validated strings the manifest declares. A member holding plugin.<id>.read is eligible for every topic <id> declares; allowed_topics derives from declared topics. Manifests list viewer and editor default capabilities. The artifacts role is removed and migrate rewrites holders to editor plus an explicit plugin.artifacts grant. Disable is refused while any open run has a subject in that collection; dependents disable with their provider.
+
+** Consequences
+Gate: a member granted project A receives no NodeChanged from project B; a non-admin member still receives artifact events after S3.

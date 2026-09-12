@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_SM5ZD
+#+orgasmic_version: 2
+
+* dec_SM5ZD Plugins may depend on other plugins' declared services, never on their internals
+:PROPERTIES:
+:DECIDED_AT: 2026-09-12
+:ID: dec_SM5ZD
+:PARENT: dec_2SM4G
+:SOURCE: section 13.4 decision 42, amends decision 14
+:END:
+
+** Context
+Section 1 and 3.2 said core provides and plugins consume. Decision 14 kept conversations core to avoid a plugin-to-plugin edge. Decisions 19 and 36 then made tasks use goal and forum use tasks and artifacts. The manifest could not express either: REQUIRES is checked against KNOWN_SERVICES and discarded, OPTIONAL is never validated.
+
+** Decision
+A manifest may REQUIRES or OPTIONAL core.*@n services or <plugin-id>@n. The loader keeps the graph, refuses cycles, refuses activation when a required provider is disabled, disables dependents when a provider is disabled, and exposes OPTIONAL presence to the plugin. Forum requires tasks and artifacts. Decision 14's rationale becomes conversations is foundational.
+
+** Consequences
+KNOWN_SERVICES becomes a derived list. Disable propagates through the graph, which the S1a fixture test covers.

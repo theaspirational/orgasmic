@@ -1,0 +1,19 @@
+#+title: orgasmic decision dec_2SM4G
+#+orgasmic_version: 2
+
+* dec_2SM4G Every built-in type becomes a pre-installed plugin; the core becomes the kernel
+:PROPERTIES:
+:DECIDED_AT: 2026-09-12
+:ID: dec_2SM4G
+:PARENT: dec_882B4
+:SOURCE: PLUGINS-SCOPE.md section 13, forum TASK-4BV1D, ART-DHMGD
+:END:
+
+** Context
+P0-P3 and the P5 minimum landed on main (cf4566f6) but tasks, artifacts, decisions, glossary, goal, handoff, gotchas and forum are still welded into the daemon and CLI. PLUGINS-SCOPE.md section 13 records the blast radius and the plan. A three-model forum critique (TASK-4BV1D, verdict ART-DHMGD) reviewed it the same day.
+
+** Decision
+Every node type except conversations ships as a plugin folder under shipped/plugins/<id>/, pre-installed, enabled by default, disableable per project. Core is the kernel: node kernel, writer and tx, index, events, authz and members, project identity, run supervisor with drivers and manager, the dispatch service, conversations as core.chat, links, attachments, skill loading, the plugin loader, UI shell and SDK. Typed code uses C1: a compiled crate per type behind a CompiledPlugin trait. Decisions and glossary become zero-code with an extended descriptor. Routes move to /projects/:p/plugins/:id/*, no aliases. One breaking release 0.1.0 with PLUGIN_API 2. Serial slices S0, S1a, S1b, S2 to S6, each a reviewed task.
+
+** Consequences
+api.rs loses roughly a third of its lines. Children of this decision record the trait contract, dependency rule, singleton shape, event and authz opening, breakage policy, and the forum and removals. Section 13 of PLUGINS-SCOPE.md at commit 5ab5c2f7 is the implementing brief; where it conflicts with sections 1 to 12, it wins.
