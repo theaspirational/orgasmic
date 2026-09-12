@@ -15,3 +15,19 @@
 :EVENT_ID: c7f88c35-228d-4ac7-b45b-49347d40702f
 :REQUEST_REPLAY_V1: {"request_id":"forum-critique-create-TASK-4BV1D.4/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"b7c36208ff2b0e017c2d814a753a3940a9a383b35c1eea48b3acb04e60c93bd4"},"mutation_id":"TASK-4BV1D.4","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D.4/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D.4/journal.org"}]}
 :END:
+
+* tx-20260912-orgasmic-ddb3d561-fbe9-48a3-a1c8-688b96ee79d9 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-ddb3d561-fbe9-48a3-a1c8-688b96ee79d9
+:TIME:    [2026-09-12 Sat 19:28:38]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-4BV1D.4
+:TARGET: .orgasmic/tasks/TASK-4BV1D.4/node.org
+:REASON: transition TASK-4BV1D.4 to in_progress
+:FROM_STATE: backlog
+:TO_STATE: in_progress
+:EVENT_ID: 30ad1ba7-4367-4c6b-9e74-bcbb0e63966c
+:END:

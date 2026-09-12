@@ -1,9 +1,9 @@
-#+title: orgasmic task TASK-4BV1D.4
+#+title: orgasmic task TASK-4BV1D.6
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-4BV1D.4 Blind cross-review — codex · openai · gpt-5.6-sol · effort xhigh
+* IN_PROGRESS TASK-4BV1D.6 Blind cross-review — claude · anthropic · opus[1m] · effort xhigh
 :PROPERTIES:
-:ID: TASK-4BV1D.4
+:ID: TASK-4BV1D.6
 :READ_SCOPE: other participants' report paths named in dispatch brief
 :WRITE_SCOPE: none; dispatch report only
 :END:
