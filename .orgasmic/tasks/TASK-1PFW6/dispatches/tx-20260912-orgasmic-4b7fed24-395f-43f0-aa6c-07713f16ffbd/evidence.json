@@ -1,0 +1,18 @@
+{
+  "event_count": 342,
+  "tool_call_count": 0,
+  "unparsed_events": 0,
+  "bounded_events": 8,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-1PFW6-reviewer-20260912T105103.jsonl",
+    "size_bytes": 490822
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
