@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-4BV1D.3
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-4BV1D.3 Critique — claude · anthropic · opus[1m] · effort xhigh
+* DONE TASK-4BV1D.3 Critique — claude · anthropic · opus[1m] · effort xhigh
 :PROPERTIES:
 :ID: TASK-4BV1D.3
 :READ_SCOPE: target and optional focus in dispatch brief
@@ -13,3 +13,6 @@ Critique the supplied target independently. This is report-only; do not edit pro
 
 ** Acceptance Criteria
 - [ ] A standalone evidence-anchored, severity-tagged critique report is promoted.
+** Evidence
+- Promoted dispatch report: TASK-4BV1D.3 generation tx-20260912-orgasmic-030b75b2-f21c-4324-b36e-6dece7464d31
+- Report path: .orgasmic/tasks/TASK-4BV1D.3/dispatches/tx-20260912-orgasmic-030b75b2-f21c-4324-b36e-6dece7464d31/report.md

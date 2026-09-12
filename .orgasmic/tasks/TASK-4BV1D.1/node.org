@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-4BV1D.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-4BV1D.1 Critique — codex · openai · gpt-5.6-sol · effort xhigh
+* DONE TASK-4BV1D.1 Critique — codex · openai · gpt-5.6-sol · effort xhigh
 :PROPERTIES:
 :ID: TASK-4BV1D.1
 :READ_SCOPE: target and optional focus in dispatch brief
@@ -13,3 +13,6 @@ Critique the supplied target independently. This is report-only; do not edit pro
 
 ** Acceptance Criteria
 - [ ] A standalone evidence-anchored, severity-tagged critique report is promoted.
+** Evidence
+- Promoted dispatch report: TASK-4BV1D.1 generation tx-20260912-orgasmic-baf35d91-058a-49ba-bb8c-13e1f368d1c9
+- Report path: .orgasmic/tasks/TASK-4BV1D.1/dispatches/tx-20260912-orgasmic-baf35d91-058a-49ba-bb8c-13e1f368d1c9/report.md

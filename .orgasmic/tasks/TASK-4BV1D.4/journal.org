@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-4BV1D.4
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-74fe8007-dfb1-44f7-a6ca-cbf3ae174224 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-74fe8007-dfb1-44f7-a6ca-cbf3ae174224
+:TIME:    [2026-09-12 Sat 19:28:38]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-4BV1D.4
+:TARGET: .orgasmic/tasks/TASK-4BV1D.4/node.org
+:REASON: multi-model forum critique run
+:EVENT_ID: c7f88c35-228d-4ac7-b45b-49347d40702f
+:REQUEST_REPLAY_V1: {"request_id":"forum-critique-create-TASK-4BV1D.4/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"b7c36208ff2b0e017c2d814a753a3940a9a383b35c1eea48b3acb04e60c93bd4"},"mutation_id":"TASK-4BV1D.4","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D.4/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D.4/journal.org"}]}
+:END:
