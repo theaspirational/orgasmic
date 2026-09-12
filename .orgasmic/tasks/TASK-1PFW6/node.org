@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-1PFW6
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-1PFW6 Marketplace registry in core, daemon and CLI :plugins:
+* IN_REVIEW TASK-1PFW6 Marketplace registry in core, daemon and CLI :plugins:
 :PROPERTIES:
 :DEPENDS_ON: TASK-N4QMC
 :ID: TASK-1PFW6
