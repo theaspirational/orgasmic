@@ -9867,3 +9867,60 @@
 :REPORT_PATH:  .orgasmic/tasks/TASK-N4QMC/dispatches/tx-20260912-orgasmic-5c595711-0c65-483f-8966-c6f9fd51414a/report.md
 :EVENT_ID:     0d4a3c5f-4fa2-48fc-b6f2-9328f5dec991
 :END:
+
+* TX 2026-09-12 Sat 10:06:16 manager.dispatch_started TASK-N4QMC
+:PROPERTIES:
+:TX_ID:        tx-20260912-orgasmic-080a9c0a-403e-4319-bfcb-0777aeb8b2a7
+:TIME:         [2026-09-12 Sat 10:06:16]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-N4QMC
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-n4qmc-review
+:BRANCH:       task-n4qmc-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-N4QMC-review/brief-N4QMC-review.md
+:STARTED_AT:   [2026-09-12 Sat 10:06:16]
+:LIVENESS:     a431f49000b2061c5fe61e3d0845fd74477060e4
+:NEXT:         reviewer-watch-then-fix-or-close
+:PREFLIGHT:    unchecked:inconclusive
+:RUNTIME:      canonical_chat
+:MODEL:        opus[1m]
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260912-orgasmic-5c595711-0c65-483f-8966-c6f9fd51414a
+:REASON_INITIAL: operator chose claude opus high for review; implementer was codex (different family)
+:EVENT_ID:     cb067f1e-1bb4-4dbd-8244-be595a414137
+:END:
+
+* TX 2026-09-12 Sat 10:06:16 run.created TASK-N4QMC
+:PROPERTIES:
+:TX_ID:        tx-20260912-orgasmic-ba3b5fe4-4fad-416a-af3c-a4c8319286ce
+:TIME:         [2026-09-12 Sat 10:06:16]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      orgasmic
+:TASK:         TASK-N4QMC
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-N4QMC-reviewer-20260912T100613.jsonl
+:REASON:       operator chose claude opus high for review; implementer was codex (different family)
+:RUN_ID:       run-01M2AH9X6625J44R3VWW7WDYTP
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-n4qmc-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-N4QMC-review/brief-N4QMC-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-N4QMC-review/brief-N4QMC-review-61029b13f78346ac8bf0293f3d9cc668-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-N4QMC-review/brief-N4QMC-review-61029b13f78346ac8bf0293f3d9cc668-stdout.log
+:DISPATCH_ATTEMPT: 61029b13f78346ac8bf0293f3d9cc668
+:PID:          4314
+:DISPATCH_TX:  tx-20260912-orgasmic-080a9c0a-403e-4319-bfcb-0777aeb8b2a7
+:MODEL_OVERRIDE: opus[1m]
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     0bca2803-879b-448e-b0bc-7365dc41f898
+:END:

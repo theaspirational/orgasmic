@@ -1,0 +1,22 @@
+#+title: orgasmic Conversation CONV-P205V
+#+orgasmic_version: 2
+
+#+todo: OPEN | ARCHIVED
+
+* OPEN Review TASK-N4QMC
+:PROPERTIES:
+:ID: CONV-P205V
+:PURPOSE: review
+:OWNER: admin
+:PROVIDER: claude-sdk
+:MODEL: 
+:EFFORT: 
+:ACCESS: 
+:SERVICE_TIER: 
+:HARNESS_ARGS: 
+:MODE: chat
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:WORKTREE: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-n4qmc-review
+:RUNS:  run-01M2AH9X6625J44R3VWW7WDYTP
+:CREATED_AT: 2026-09-12T10:06:13Z
+:END:
