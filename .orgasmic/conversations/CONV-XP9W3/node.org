@@ -1,0 +1,22 @@
+#+title: orgasmic Conversation CONV-XP9W3
+#+orgasmic_version: 2
+
+#+todo: OPEN | ARCHIVED
+
+* OPEN Review TASK-DBKKK.1
+:PROPERTIES:
+:ID: CONV-XP9W3
+:PURPOSE: review
+:OWNER: admin
+:PROVIDER: claude-sdk
+:MODEL: 
+:EFFORT: 
+:ACCESS: 
+:SERVICE_TIER: 
+:HARNESS_ARGS: 
+:MODE: chat
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:WORKTREE: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-dbkkk.1-review
+:RUNS:  run-01M2ARAWMFZ3TCF16PB0XJ7JQP
+:CREATED_AT: 2026-09-12T12:09:05Z
+:END:
