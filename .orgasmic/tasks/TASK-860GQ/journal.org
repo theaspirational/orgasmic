@@ -15,3 +15,19 @@
 :EVENT_ID: 6ae88d65-9a1b-465a-95de-636616d6e29f
 :REQUEST_REPLAY_V1: {"request_id":"create-8eaa9f505583e73ff0cc42bd01c69f7c/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"987658aa9593fbca7b3bd3d753d938a7c5ef22edb4d556d58db905d2e0a1f984"},"mutation_id":"TASK-860GQ","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-860GQ/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-860GQ/journal.org"}]}
 :END:
+
+* tx-20260912-orgasmic-d8b7b18e-6fe6-4767-9d50-18e417c2d6e3 task.state_transitioned
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-d8b7b18e-6fe6-4767-9d50-18e417c2d6e3
+:TIME:    [2026-09-12 Sat 12:55:24]
+:TYPE:    task.state_transitioned
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-860GQ
+:TARGET: .orgasmic/tasks/TASK-860GQ/node.org
+:REASON: implemented directly by the manager: reap_orphans + ls-remote skip in marketplaces.rs with a route test that fails without the skip, pid-file assertion in the timeout test, sources on MarketplaceStatus with a per-source failure line on the card; daemon marketplace tests 5+2+1 green, UI 451 tests green
+:FROM_STATE: backlog
+:TO_STATE: done
+:EVENT_ID: 2ceb72bf-867b-45b5-bd70-7b68b742579a
+:END:
