@@ -1,0 +1,14 @@
+#+title: orgasmic task TASK-860GQ
+#+orgasmic_version: 2
+
+* BACKLOG TASK-860GQ Marketplace cache housekeeping: reap orphaned clone temp dirs, skip unchanged git sources on refresh, show per-source refresh results in the UI    :plugins:
+:PROPERTIES:
+:ID: TASK-860GQ
+:PRIORITY: P3
+:END:
+
+** Description
+- Sweep marketplaces/ for .<name>-<uuid> and tmp dirs left by a crash mid-swap (L3).
+- Refresh: git ls-remote HEAD and skip the clone when the cached HEAD matches (L4).
+- Process-group timeout test: poll for the pid file instead of a 100 ms sleep (L5).
+- UI: add sources to MarketplaceStatus and show 'n of m sources failed' on the card (L6).

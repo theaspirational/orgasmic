@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-860GQ
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-8c805f54-d139-42fb-94a3-78b09bc3f7fb task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-8c805f54-d139-42fb-94a3-78b09bc3f7fb
+:TIME:    [2026-09-12 Sat 12:40:48]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-860GQ
+:TARGET: .orgasmic/tasks/TASK-860GQ/node.org
+:REASON: LOW follow-ups L3-L6 from the Opus review of TASK-1PFW6.2 (run-01M2ARxx, tx 1845bdf9)
+:EVENT_ID: 6ae88d65-9a1b-465a-95de-636616d6e29f
+:REQUEST_REPLAY_V1: {"request_id":"create-8eaa9f505583e73ff0cc42bd01c69f7c/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"987658aa9593fbca7b3bd3d753d938a7c5ef22edb4d556d58db905d2e0a1f984"},"mutation_id":"TASK-860GQ","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-860GQ/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-860GQ/journal.org"}]}
+:END:
