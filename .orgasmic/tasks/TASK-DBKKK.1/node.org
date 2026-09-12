@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DBKKK.1
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-DBKKK.1 Plugins page follow-ups: broken installs visible, confirm removes, admin gate by identity :plugins:ui:
+* DONE TASK-DBKKK.1 Plugins page follow-ups: broken installs visible, confirm removes, admin gate by identity :plugins:ui:
 :PROPERTIES:
 :ID: TASK-DBKKK.1
 :PRIORITY: P1
@@ -9,3 +9,5 @@
 
 ** Description
 Show plugins with a null manifest and an error as degraded rows with Remove; confirm plugin and marketplace Remove with the scope stated; gate mutations on identity === admin; refresh plugins after marketplace add/enable; name the offering marketplace in recommendation copy; test the path-encoded routes.
+** Evidence
+- merged to main; Opus review approve-with-follow-ups run-01M2ARxx (tx-...245849d6); the four small follow-ups fixed by the manager on the branch before merge, 17 PluginsView tests green
