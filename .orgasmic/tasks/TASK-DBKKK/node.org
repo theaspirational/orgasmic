@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-DBKKK
+#+orgasmic_version: 2
+
+* BACKLOG TASK-DBKKK Plugins page in the app: Installed, Browse, Marketplaces    :plugins:ui:
+:PROPERTIES:
+:ID: TASK-DBKKK
+:PRIORITY: P1
+:END:
+
+** Description
+Project nav page Plugins with three tabs. Installed shows recommended plugins from ledger ownership, enable toggle with capability approval, update and remove. Browse lists marketplace plugins with search and install. Marketplaces lists officials and user ones with add by git URL, refresh, disable, remove.
+** Acceptance
+- vitest coverage for the page
+- non-admin read-only
+- npm run build passes

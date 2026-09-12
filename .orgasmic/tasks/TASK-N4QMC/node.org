@@ -1,0 +1,15 @@
+#+title: orgasmic task TASK-N4QMC
+#+orgasmic_version: 2
+
+* BACKLOG TASK-N4QMC Move Meetings to the marketplace repos, add a fixture plugin, reverse decision 9    :plugins:
+:PROPERTIES:
+:ID: TASK-N4QMC
+:PRIORITY: P1
+:END:
+
+** Description
+Meetings now lives at github.com/theaspirational/orgasmic-plugins and git.ath/orgasmic/plugins. Remove examples/plugins/meetings, replace it in tests with a small fixture plugin, edit PLUGINS-SCOPE.md decision 9 and add section 12 Marketplaces.
+** Acceptance
+- rg examples/plugins finds nothing
+- all previously passing plugin tests pass with the fixture
+- PLUGINS-SCOPE.md records the reversal

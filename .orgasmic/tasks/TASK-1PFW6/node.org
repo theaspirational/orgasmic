@@ -1,0 +1,16 @@
+#+title: orgasmic task TASK-1PFW6
+#+orgasmic_version: 2
+
+* BACKLOG TASK-1PFW6 Marketplace registry in core, daemon and CLI    :plugins:
+:PROPERTIES:
+:DEPENDS_ON: TASK-N4QMC
+:ID: TASK-1PFW6
+:PRIORITY: P1
+:END:
+
+** Description
+Git-repo marketplaces with a marketplace.org index. Clone under ~/.orgasmic/user/marketplaces/<host>/<path>/, shipped official list holds github.com/theaspirational/orgasmic-plugins, routes for list/add/refresh/remove/activation, browse, install, update, recommended; CLI marketplace add|list|remove|refresh and plugin add <marketplace>/<id>, plugin update.
+** Acceptance
+- daemon route tests against local bare git repos, no network
+- admin-only mutations
+- update keeps activation, grown capabilities need re-approval

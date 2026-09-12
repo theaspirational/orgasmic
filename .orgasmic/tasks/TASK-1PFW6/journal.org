@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-1PFW6
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-ec58a588-ec38-4736-87f6-295d37ff5977 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-ec58a588-ec38-4736-87f6-295d37ff5977
+:TIME:    [2026-09-12 Sat 09:54:56]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-1PFW6
+:TARGET: .orgasmic/tasks/TASK-1PFW6/node.org
+:REASON: marketplace feature, step 2 of 3
+:EVENT_ID: 291a821e-ff30-48fb-aa18-060e8f82b51c
+:REQUEST_REPLAY_V1: {"request_id":"create-62e6fa4ca27d3fe47ab46dcf5a0c9790/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"39c35f98192e29fa6b33e78a63f37eb012a5c5e478976fc10d0a2b83ab50028d"},"mutation_id":"TASK-1PFW6","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-1PFW6/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-1PFW6/journal.org"}]}
+:END:
