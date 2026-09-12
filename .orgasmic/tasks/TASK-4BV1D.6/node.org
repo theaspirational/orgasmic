@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-4BV1D.6
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-4BV1D.6 Blind cross-review — claude · anthropic · opus[1m] · effort xhigh
+* DONE TASK-4BV1D.6 Blind cross-review — claude · anthropic · opus[1m] · effort xhigh
 :PROPERTIES:
 :ID: TASK-4BV1D.6
 :READ_SCOPE: other participants' report paths named in dispatch brief
@@ -13,3 +13,6 @@ Review only the other participants' promoted critique reports. This is a fresh r
 
 ** Acceptance Criteria
 - [ ] A ? / + / = delta report is promoted without access to this participant's own critique.
+** Evidence
+- Promoted dispatch report: TASK-4BV1D.6 generation tx-20260912-orgasmic-ddfdbccf-5070-4eb8-b340-8e02a7f57d6e
+- Report path: .orgasmic/tasks/TASK-4BV1D.6/dispatches/tx-20260912-orgasmic-ddfdbccf-5070-4eb8-b340-8e02a7f57d6e/report.md

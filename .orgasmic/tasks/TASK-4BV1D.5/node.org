@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-4BV1D.5
 #+orgasmic_version: 2
 
-* IN_PROGRESS TASK-4BV1D.5 Blind cross-review — codex · openai · gpt-6-astra · effort xhigh
+* DONE TASK-4BV1D.5 Blind cross-review — codex · openai · gpt-6-astra · effort xhigh
 :PROPERTIES:
 :ID: TASK-4BV1D.5
 :READ_SCOPE: other participants' report paths named in dispatch brief
@@ -13,3 +13,6 @@ Review only the other participants' promoted critique reports. This is a fresh r
 
 ** Acceptance Criteria
 - [ ] A ? / + / = delta report is promoted without access to this participant's own critique.
+** Evidence
+- Promoted dispatch report: TASK-4BV1D.5 generation tx-20260912-orgasmic-525b7f1e-89e5-41c9-b8dc-c83f64a29821
+- Report path: .orgasmic/tasks/TASK-4BV1D.5/dispatches/tx-20260912-orgasmic-525b7f1e-89e5-41c9-b8dc-c83f64a29821/report.md

@@ -31,3 +31,19 @@
 :TO_STATE: in_progress
 :EVENT_ID: 4c77157a-5fc7-4a3b-924d-bf39e1e66f0a
 :END:
+
+* tx-20260912-orgasmic-0c3f4187-caf8-4c89-aaa7-9827e8edf500 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-0c3f4187-caf8-4c89-aaa7-9827e8edf500
+:TIME:    [2026-09-12 Sat 19:34:47]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-4BV1D.6
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-4BV1D.6/node.org
+:REASON: edited task node TASK-4BV1D.6
+:NODE_ID: TASK-4BV1D.6
+:EVENT_ID: a755c40b-844a-46e7-ad21-c926a544e904
+:REQUEST_REPLAY_V1: {"request_id":"forum-critique-evidence-TASK-4BV1D.6/tx","mutation":{"operation":"node.edited","project_id":"orgasmic","payload_sha256":"bfbe10084d388a9d10231624e1ec78215ffe52624c3db668bcb7ed5e76f5d0dd"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D.6/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-4BV1D.6/journal.org"}]}
+:END:
