@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-DBKKK.1
+#+orgasmic_version: 2
+
+* tx-20260912-orgasmic-a6f240a1-e2f0-436f-aa9c-bc6553ecaac0 task.created
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-a6f240a1-e2f0-436f-aa9c-bc6553ecaac0
+:TIME:    [2026-09-12 Sat 12:00:57]
+:TYPE:    task.created
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-DBKKK.1
+:TARGET: .orgasmic/tasks/TASK-DBKKK.1/node.org
+:REASON: Opus review of TASK-DBKKK approved with follow-ups
+:EVENT_ID: 7d84502a-2bd8-47f0-8fe4-29f20b161a0d
+:REQUEST_REPLAY_V1: {"request_id":"create-222fa0ac44cd821b12ebe659c6366c03/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"7c19492be51821f43a394fc5e6adc5698a0cd9d992376870b047ba2f319c291a"},"mutation_id":"TASK-DBKKK.1","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-DBKKK.1/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-DBKKK.1/journal.org"}]}
+:END:

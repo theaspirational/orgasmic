@@ -1,7 +1,7 @@
 #+title: orgasmic task TASK-DBKKK
 #+orgasmic_version: 2
 
-* IN_REVIEW TASK-DBKKK Plugins page in the app: Installed, Browse, Marketplaces :plugins:ui:
+* DONE TASK-DBKKK Plugins page in the app: Installed, Browse, Marketplaces :plugins:ui:
 :PROPERTIES:
 :ID: TASK-DBKKK
 :PRIORITY: P1
@@ -14,3 +14,5 @@ Project nav page Plugins with three tabs. Installed shows recommended plugins fr
 - vitest coverage for the page
 - non-admin read-only
 - npm run build passes
+** Evidence
+- merged to main (worker commit 1d415d62); Opus review approve-with-follow-ups run-01M2AQFGRBMHXZ6KNA0PEAFMXQ; follow-ups filed as TASK-DBKKK.1

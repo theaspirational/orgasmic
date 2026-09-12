@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-DBKKK.1
+#+orgasmic_version: 2
+
+* BACKLOG TASK-DBKKK.1 Plugins page follow-ups: broken installs visible, confirm removes, admin gate by identity    :plugins:ui:
+:PROPERTIES:
+:ID: TASK-DBKKK.1
+:PRIORITY: P1
+:END:
+
+** Description
+Show plugins with a null manifest and an error as degraded rows with Remove; confirm plugin and marketplace Remove with the scope stated; gate mutations on identity === admin; refresh plugins after marketplace add/enable; name the offering marketplace in recommendation copy; test the path-encoded routes.
