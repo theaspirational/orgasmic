@@ -15,3 +15,19 @@
 :EVENT_ID: fbaefae3-b761-42b4-9cc2-c7d167970248
 :REQUEST_REPLAY_V1: {"request_id":"s13-task-parent-20260912/tx","mutation":{"operation":"task.created","project_id":"orgasmic","payload_sha256":"a655b03a670c9522ac0f65c8d17973d48fd0cede4977ea0c7045954e94b5802c"},"mutation_id":"TASK-MJE9K","written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-MJE9K/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-MJE9K/journal.org"}]}
 :END:
+
+* tx-20260912-orgasmic-90ce3652-ce1c-4393-b743-5d958cad2c64 task.edited
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-90ce3652-ce1c-4393-b743-5d958cad2c64
+:TIME:    [2026-09-12 Sat 20:35:15]
+:TYPE:    task.edited
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TASK: TASK-MJE9K
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/tasks/TASK-MJE9K/node.org
+:REASON: edited task node TASK-MJE9K
+:NODE_ID: TASK-MJE9K
+:EVENT_ID: 882d848d-4d6c-412d-9512-f0b44f8f9107
+:REQUEST_REPLAY_V1: {"request_id":"s13-umbrella-rules-20260912/tx","mutation":{"operation":"node.edited","project_id":"orgasmic","payload_sha256":"fc430eb6138f394d263e6274bbef213ec38fe61e5f67d3f68eaa61e4c9b596f5"},"mutation_id":null,"written_paths":[{"project":"orgasmic","relative":".orgasmic/tasks/TASK-MJE9K/node.org"},{"project":"orgasmic","relative":".orgasmic/tasks/TASK-MJE9K/journal.org"}]}
+:END:

@@ -11,6 +11,12 @@
 ** Description
 Umbrella for slices S0, S1a, S1b, S2, S3, S4, S5, S6 of PLUGINS-SCOPE.md section 13 (commit 5ab5c2f7). Each slice is a subtask, dispatched and reviewed, serial. Decisions: dec_2SM4G and children. Forum verdict: ART-DHMGD.
 
+Rules for the implementing agent:
+- PLUGINS-SCOPE.md section 13 (commit 5ab5c2f7 on main) is the brief. Where it conflicts with sections 1 to 12 of that file, section 13 wins.
+- Work the subtasks strictly in order: .1 S0, .2 S1a, .3 S1b, .4 S2, .5 S3, .6 S4, .7 S5, .8 S6. Each subtask is dispatched on its own branch, reviewed, and closed with its exit criteria as evidence before the next starts. Never do several slices in one branch.
+- Ask the operator for model and effort before every dispatch; never assume a default.
+- Push main before dispatching S0 so workers see section 13.
+
 ** Acceptance
 - Every subtask done with its section 13.7 exit criterion as evidence
 - Stable runtime 0.1.0 published at the end of S6
