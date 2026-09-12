@@ -1,0 +1,18 @@
+{
+  "event_count": 383,
+  "tool_call_count": 0,
+  "unparsed_events": 0,
+  "bounded_events": 5,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-TASK-N4QMC-reviewer-20260912T100613.jsonl",
+    "size_bytes": 422886
+  },
+  "native_transcript": {
+    "status": "unsupported",
+    "harness": "claude-sdk",
+    "reason": "no transcript finder adapter for harness 'claude-sdk'"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
