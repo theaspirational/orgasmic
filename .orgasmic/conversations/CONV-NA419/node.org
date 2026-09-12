@@ -1,0 +1,22 @@
+#+title: orgasmic Conversation CONV-NA419
+#+orgasmic_version: 2
+
+#+todo: OPEN | ARCHIVED
+
+* OPEN Review TASK-DBKKK
+:PROPERTIES:
+:ID: CONV-NA419
+:PURPOSE: review
+:OWNER: admin
+:PROVIDER: claude-sdk
+:MODEL: 
+:EFFORT: 
+:ACCESS: 
+:SERVICE_TIER: 
+:HARNESS_ARGS: 
+:MODE: chat
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:WORKTREE: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-dbkkk-review
+:RUNS:  run-01M2AQFGRBMHXZ6KNA0PEAFMXQ
+:CREATED_AT: 2026-09-12T11:54:08Z
+:END:
