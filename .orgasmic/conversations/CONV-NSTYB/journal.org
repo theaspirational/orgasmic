@@ -30,3 +30,18 @@
 :RUN_ID: run-01M2AQR7T11BASKH4K2TKQTW67
 :EVENT_ID: 15d308e1-ebfc-4326-986c-197414047474
 :END:
+
+* tx-20260912-orgasmic-9181452c-8560-46c2-b4b1-b78726330f0b conversation.run_released
+:PROPERTIES:
+:TX_ID:   tx-20260912-orgasmic-9181452c-8560-46c2-b4b1-b78726330f0b
+:TIME:    [2026-09-12 Sat 12:06:40]
+:TYPE:    conversation.run_released
+:ACTOR:   aspirational
+:MACHINE: 08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT: orgasmic
+:TARGET: /Users/aspirational/.orgasmic/ledgers/orgasmic/.orgasmic/conversations/CONV-NSTYB/node.org
+:REASON: worker finalize for TASK-1PFW6.1
+:NODE_ID: CONV-NSTYB
+:RUN_ID: run-01M2AQR7T11BASKH4K2TKQTW67
+:EVENT_ID: 5a479447-9c1e-4f08-a0fd-167f6adff6bc
+:END:
